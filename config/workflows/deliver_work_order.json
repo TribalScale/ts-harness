@@ -1,0 +1,110 @@
+{
+  "workflow_type": "deliver_work_order",
+  "definition_version": "1.3.0",
+  "display_name": "Deliver one work order",
+  "contracts": {
+    "deliver_work_order": {
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "work_order_id",
+          "pr_url"
+        ],
+        "properties": {
+          "work_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pr_url": {
+            "type": "string",
+            "pattern": "^https://"
+          }
+        }
+      },
+      "required_artifacts": {
+        "pr_url": "/pr_url"
+      },
+      "semantic_validators": [
+        "validate_coding_backend_pr_url"
+      ]
+    }
+  },
+  "notifications": {
+    "bound_channel": false,
+    "events": []
+  },
+  "on_workflow_cancel": {
+    "hook": "cancel_workflow"
+  },
+  "stages": [
+    {
+      "name": "deliver_work_order",
+      "kind": "task",
+      "agent_id": "dev-agent",
+      "allowed_agents": [
+        "dev-agent"
+      ],
+      "contract_ref": "deliver_work_order",
+      "skill_hints": [
+        "verified-merge-governed"
+      ],
+      "present_prompt": "none",
+      "input_map": {
+        "work_order_id": "$workflow.work_order_id",
+        "work_order_ref": "$workflow.work_order_ref",
+        "work_order_body": "$workflow.work_order_body",
+        "work_orders_markdown": "$workflow.work_orders_markdown",
+        "completed_work_order_ids": "$workflow.completed_work_order_ids",
+        "repo_url": "$workflow.repo_url",
+        "base_branch": "$workflow.base_branch",
+        "refinery_artifacts": "$workflow.refinery_artifacts",
+        "foundry_artifacts": "$workflow.foundry_artifacts",
+        "planner_artifacts": "$workflow.planner_artifacts"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "qa_gate"
+        ]
+      },
+      "on_failure": {
+        "hook": "compensate_on_failure",
+        "compensate_stage": "record_implement_failure"
+      },
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 7200
+      }
+    },
+    {
+      "name": "record_implement_failure",
+      "kind": "compensate",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      }
+    },
+    {
+      "name": "verified_merge",
+      "kind": "fragment",
+      "fragment": "verified_merge",
+      "version": "1.5.0",
+      "params": {
+        "implement_stage": "deliver_work_order"
+      },
+      "inputs": {
+        "repo_url": "$workflow.repo_url",
+        "base_branch": "$workflow.base_branch",
+        "work_order_body": "$workflow.work_order_body",
+        "work_order_ref": "$prior.deliver_work_order.output.work_order_id"
+      },
+      "depends_on": [
+        "deliver_work_order"
+      ]
+    }
+  ]
+}

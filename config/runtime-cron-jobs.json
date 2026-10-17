@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "name": "poll-github-merges",
+      "kind": "system",
+      "handler": "poll_github_merges",
+      "interval_seconds": 60,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
+    },
+    {
+      "name": "escalate-stale-waits",
+      "kind": "system",
+      "handler": "escalate_stale_waits",
+      "interval_seconds": 900,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
+    }
+  ]
+}

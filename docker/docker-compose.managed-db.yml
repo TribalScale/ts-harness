@@ -1,0 +1,14 @@
+# Managed PostgreSQL overlay (RDS / Cloud SQL).
+# No local DB container — connection identity comes from the host environment:
+#
+#   Preferred (cloud-neutral):
+#     MANAGED_DB_HOST / MANAGED_DB_PORT / MANAGED_DB_NAME
+#     MANAGED_DB_USER / MANAGED_DB_PASSWORD / MANAGED_DB_CREDENTIAL_REF
+#
+#   Legacy aliases (still accepted):
+#     RDS_ENDPOINT / RDS_DB_NAME / RDS_SECRET_ARN
+#     TS_HARNESS_DB_* / TS_HARNESS_DB_*
+#
+# Bootstrap (12-compose-up.sh) resolves MANAGED_DB_* into TS_HARNESS_DB_* and
+# TS_HARNESS_DB_* before `docker compose` interpolates memory-api.
+services: {}

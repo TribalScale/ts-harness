@@ -1,0 +1,1 @@
+"""Google Workspace connector package."""

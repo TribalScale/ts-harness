@@ -1,0 +1,46 @@
+{
+  "workflow_type": "implement_work_orders",
+  "definition_version": "2.0.0",
+  "display_name": "Implement work order delivery",
+  "program": {
+    "phase": "implement",
+    "next_phase": null,
+    "required_artifacts": ["next_work_order_id"],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "deliver_wave",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "deliver_wave",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "barrier": { "hook": "fork_work_order_wave", "workflow_type": "deliver_work_order" },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "join_wave",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["deliver_wave"],
+      "approval_required": false,
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "workflow.child_terminal",
+        "children": { "source": "$prior.deliver_wave.output.children" },
+        "timeout_seconds": 604800
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 604800 }
+    }
+  ]
+}

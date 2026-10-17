@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ts-harness:schemas:prd-to-work-orders:work-order",
+  "title": "Work Order Contract",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "epic",
+    "status",
+    "complexity",
+    "phase",
+    "contextGraph",
+    "summary",
+    "agentExecutabilityScore",
+    "inScope",
+    "outOfScope",
+    "requirements",
+    "blueprints",
+    "e2eAcceptanceTests",
+    "subtasks"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(WO|CWO)-[0-9]{3}$"
+    },
+    "title": { "type": "string" },
+    "epic": {
+      "type": "string",
+      "pattern": "^(CE|FE)-[0-9]{3}"
+    },
+    "status": {
+      "enum": ["Backlog", "Ready", "In Progress", "In Review", "Done"]
+    },
+    "complexity": {
+      "enum": ["S", "M", "L"]
+    },
+    "phase": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "contextGraph": {
+      "type": "object",
+      "required": ["dependsOn", "dependedOnBy", "sharesContractWith", "relatedBlueprints", "relatedFrds"],
+      "properties": {
+        "dependsOn": { "type": "array", "items": { "type": "string" } },
+        "dependedOnBy": { "type": "array", "items": { "type": "string" } },
+        "sharesContractWith": { "type": "array", "items": { "type": "string" } },
+        "relatedBlueprints": { "type": "array", "items": { "type": "string" } },
+        "relatedFrds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "summary": { "type": "string" },
+    "agentExecutabilityScore": {
+      "type": "object",
+      "required": ["rollup", "status", "dimensions"],
+      "properties": {
+        "rollup": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "status": {
+          "enum": ["Ready", "Needs review", "Blocked"]
+        },
+        "dimensions": {
+          "type": "array",
+          "minItems": 5,
+          "items": {
+            "type": "object",
+            "required": ["name", "score", "evidence"],
+            "properties": {
+              "name": { "type": "string" },
+              "score": { "type": "integer", "minimum": 1, "maximum": 3 },
+              "evidence": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "inScope": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "outOfScope": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "requirements": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "blueprints": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "e2eAcceptanceTests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["coverageId", "steps", "assertions"],
+        "properties": {
+          "coverageId": { "type": "string", "pattern": "^COV_[A-Z0-9_]+$" },
+          "steps": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "assertions": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "subtasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    }
+  }
+}

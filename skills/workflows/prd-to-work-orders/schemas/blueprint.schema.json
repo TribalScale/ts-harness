@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ts-harness:schemas:prd-to-work-orders:blueprint",
+  "title": "Blueprint Contract",
+  "type": "object",
+  "required": [
+    "blueprintId",
+    "blueprintType",
+    "title",
+    "sourceRefs",
+    "components",
+    "dataModels",
+    "contracts",
+    "adrs"
+  ],
+  "properties": {
+    "blueprintId": {
+      "type": "string",
+      "pattern": "^(CB|COMP|FB)-[0-9]{3}[a-z]?$"
+    },
+    "blueprintType": {
+      "enum": ["container", "component", "feature"]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "responsibilities"],
+        "properties": {
+          "name": { "type": "string" },
+          "container": { "type": "string" },
+          "responsibilities": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "dataModels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "fields"],
+        "properties": {
+          "name": { "type": "string" },
+          "store": { "type": "string" },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "type", "required", "constraints"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "required": { "type": "boolean" },
+                "constraints": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "shape"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "enum": ["api", "event", "invariant", "integration"] },
+          "shape": { "type": "string" }
+        }
+      }
+    },
+    "adrs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "context",
+          "alternativesConsidered",
+          "decision",
+          "rejectionRationale",
+          "tradeoffScorecard",
+          "consequences"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^ADR-[0-9]{3}$" },
+          "context": { "type": "string" },
+          "alternativesConsidered": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+          "decision": { "type": "string" },
+          "rejectionRationale": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+          "tradeoffScorecard": { "type": "string" },
+          "consequences": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TS Harness workflow skeleton",
+  "type": "object",
+  "required": ["workflow_type", "definition_version", "stages"],
+  "properties": {
+    "workflow_type": { "type": "string", "minLength": 1 },
+    "definition_version": { "type": "string", "minLength": 1 },
+    "display_name": { "type": "string" },
+    "promotion": { "type": "object" },
+    "notifications": { "type": "object" },
+    "on_workflow_cancel": { "type": "object" },
+    "session": { "type": "object" },
+    "bridge": { "type": "object" },
+    "program": { "type": "object" },
+    "deprecated": { "type": "boolean" },
+    "experimental": { "type": "boolean" },
+    "superseded_by": { "type": "string" },
+    "on_workflow_complete": { "type": "object" },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/contract" }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/stage" },
+          { "$ref": "#/definitions/fragment_include" }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output_schema": { "type": "object" },
+        "required_artifacts": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "semantic_validators": { "type": "array", "items": { "type": "string" } },
+        "outcome": {
+          "type": "object",
+          "required": ["pointer", "succeeded_values"],
+          "properties": {
+            "pointer": { "type": "string" },
+            "succeeded_values": { "type": "array", "minItems": 1 },
+            "blocked_values": { "type": "array" }
+          }
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "required": ["name", "kind", "agent_id"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["task", "expand", "compensate"] },
+        "agent_id": { "type": "string" },
+        "allowed_agents": { "type": "array", "items": { "type": "string" } },
+        "allowed_external_effects": { "type": "array", "items": { "type": "string" } },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "required_artifacts": { "type": "array", "items": { "type": "string" } },
+        "contract_ref": { "type": "string" },
+        "allowed_contracts": { "type": "array", "items": { "type": "string" } },
+        "output_schema": { "type": "object" },
+        "skill_hints": { "type": "array", "items": { "type": "string" } },
+        "tool_allow": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "retry": {
+          "type": "object",
+          "properties": {
+            "max_retries": { "type": "integer", "minimum": 0 },
+            "timeout_seconds": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "approval_required": { "type": "boolean" },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required_roles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "expires_after_seconds": { "type": "integer", "minimum": 1 },
+            "escalate_to_role": { "type": "string", "minLength": 1 },
+            "decision_kind": { "enum": ["gate", "promote"] },
+            "require_dependencies_succeeded": { "type": "boolean" }
+          }
+        },
+        "plan_approval_required": { "type": "boolean" },
+        "present_output": { "type": "boolean" },
+        "present_prompt": { "enum": ["approval", "inform", "intake", "merge", "none"] },
+        "input_map": { "type": "object", "additionalProperties": { "type": "string" } },
+        "on_reject": { "type": "object" },
+        "on_block": { "type": "object" },
+        "on_failure": { "type": "object" },
+        "on_complete": {
+          "type": "object",
+          "properties": {
+            "hook": {
+              "type": "string",
+              "enum": [
+                "hydrate_input",
+                "mark_artifact_approved",
+                "mark_prd_approved",
+                "bridge_workflow"
+              ]
+            },
+            "downstream": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "wait_external": { "type": "object" },
+        "join": { "type": "object" },
+        "barrier": { "type": "object" }
+      }
+    },
+    "fragment_include": {
+      "type": "object",
+      "required": ["name", "kind", "fragment", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "const": "fragment" },
+        "fragment": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "params": { "type": "object", "additionalProperties": { "type": "string" } },
+        "inputs": { "type": "object", "additionalProperties": { "type": "string" } },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "prefix": { "type": "string" }
+      }
+    }
+  }
+}

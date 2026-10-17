@@ -1,0 +1,79 @@
+{
+  "workflow_type": "rollback_release",
+  "definition_version": "1.0.0",
+  "display_name": "Roll back release",
+  "program": {
+    "phase": "rollback",
+    "next_phase": null,
+    "required_artifacts": ["rollback_environment"],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "plan_release",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "plan_release",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "barrier": {
+        "hook": "plan_release",
+        "mode": "rollback",
+        "gates": { "target": "approve_rollback" }
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "approve_rollback",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["plan_release"],
+      "approval_required": true,
+      "approval": { "decision_kind": "promote", "require_dependencies_succeeded": true },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "trigger_rollback",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["approve_rollback"],
+      "barrier": { "hook": "trigger_deploy", "slot": "target", "gate": "approve_rollback" },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "await_rollback_deployment",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["trigger_rollback"],
+      "approval_required": false,
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "github.deployment_status",
+        "deployment": { "trigger_step": "trigger_rollback" },
+        "timeout_seconds": 3600
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "record_rollback",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["await_rollback_deployment"],
+      "barrier": {
+        "hook": "record_release",
+        "trigger_step": "trigger_rollback",
+        "wait_step": "await_rollback_deployment"
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "workflow_type": "file_work_orders_as_jira",
+  "definition_version": "1.0.0",
+  "display_name": "File work orders as Jira tickets",
+  "contracts": {
+    "jira_filing": {
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "jira_epic_key": { "type": "string" },
+          "jira_story_keys": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "file_jira",
+    "next_phase": null,
+    "required_artifacts": ["work_order_ids"],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "choose_epic",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "choose_epic",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "skill_hints": ["file-work-orders-as-jira"],
+      "present_prompt": "intake",
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["file_tickets"]
+      },
+      "input_map": {
+        "jira_epic_key": "$workflow.jira_epic_key",
+        "work_order_ids": "$workflow.work_order_ids"
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "file_tickets",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["choose_epic"],
+      "allowed_agents": ["pm-agent"],
+      "approval_required": true,
+      "contract_ref": "jira_filing",
+      "allowed_external_effects": ["jira_write"],
+      "skill_hints": ["file-work-orders-as-jira"],
+      "present_prompt": "approval",
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "work_order_ids": "$workflow.work_order_ids",
+        "work_orders_markdown": "$workflow.work_orders_markdown",
+        "jira_epic_key": "$prior.choose_epic.output.jira_epic_key",
+        "jira_project_key": "$prior.choose_epic.output.jira_project_key",
+        "repo": "$workflow.repo",
+        "default_branch": "$workflow.default_branch",
+        "drive_library": "$workflow.drive_library",
+        "default_issue_type": "$workflow.default_issue_type",
+        "issue_type_by_project": "$workflow.issue_type_by_project"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    }
+  ]
+}

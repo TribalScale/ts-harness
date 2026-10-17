@@ -1,0 +1,76 @@
+{
+  "program_type": "bug_to_jira_work_orders",
+  "definition_version": "1.0.0",
+  "display_name": "Bug to Jira work order",
+  "startable_nodes": ["bug_intake", "file_jira"],
+  "config": {
+    "repo_picker": { "repos": [] },
+    "jira_filing": {
+      "mode": "custom",
+      "default_issue_type": "Bug",
+      "issue_type_by_project": {}
+    }
+  },
+  "nodes": [
+    {
+      "id": "bug_intake",
+      "default_workflow_type": "bug_to_plan",
+      "workflow_variants": [],
+      "required_artifacts": [],
+      "produces_artifacts": ["bug_report", "repo", "default_branch"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "transcript_context", "target": "context", "limit": 20 }
+      ],
+      "completion_adapter": "extract_declared_outputs",
+      "terminal": false
+    },
+    {
+      "id": "work_order",
+      "default_workflow_type": "bug_work_order",
+      "workflow_variants": [],
+      "required_artifacts": ["bug_report"],
+      "produces_artifacts": ["work_order_ids", "work_orders_markdown", "next_work_order_id"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "bug_report", "target": "bug_report" }
+      ],
+      "completion_adapter": "extract_declared_outputs",
+      "terminal": false
+    },
+    {
+      "id": "file_jira",
+      "default_workflow_type": "file_work_orders_as_jira",
+      "workflow_variants": [],
+      "required_artifacts": ["work_order_ids", "work_orders_markdown"],
+      "produces_artifacts": ["jira_epic_key", "jira_story_keys"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "work_order_ids", "target": "work_order_ids" },
+        { "kind": "artifact", "name": "work_orders_markdown", "target": "work_orders_markdown" },
+        { "kind": "artifact", "name": "jira_epic_key", "target": "jira_epic_key" },
+        { "kind": "artifact", "name": "repo", "target": "repo" },
+        { "kind": "artifact", "name": "default_branch", "target": "default_branch" }
+      ],
+      "completion_adapter": "extract_file_jira_outputs",
+      "terminal": true,
+      "complete_channel_text": "Filed an unassigned Jira Bug from the approved work order. Assign it in Jira; engineers pick it up with jira_to_pr."
+    }
+  ],
+  "edges": [
+    {
+      "source": "bug_intake",
+      "target": "work_order",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["draft the work order"]
+    },
+    {
+      "source": "work_order",
+      "target": "file_jira",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["file these tickets", "file work orders as jira", "create jira from work orders"]
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "workflow_type": "implement_delivery",
+  "definition_version": "1.3.0",
+  "display_name": "Implement delivery tickets",
+  "contracts": {
+    "implement_delivery_task": {
+      "output_schema": {
+        "type": "object",
+        "required": ["pr_url"],
+        "properties": {
+          "pr_url": { "type": "string", "pattern": "^https://" },
+          "work_item_ref": { "type": "string" }
+        }
+      },
+      "required_artifacts": {
+        "pr_url": "/pr_url"
+      }
+    },
+    "qa_gate": {
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "result"],
+        "properties": {
+          "status": { "enum": ["success", "failed"] },
+          "result": {
+            "type": "object",
+            "required": ["prs"],
+            "properties": {
+              "summary": { "type": "string" },
+              "prs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["pr_url", "work_item_ref", "status"],
+                  "properties": {
+                    "pr_url": { "type": "string", "pattern": "^https://" },
+                    "work_item_ref": { "type": "string", "minLength": 1 },
+                    "status": { "enum": ["success", "failed"] },
+                    "acceptance_criteria": { "type": "array" },
+                    "tests": { "type": "array" },
+                    "defects": { "type": "array" },
+                    "summary": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "warnings": { "type": "array" },
+          "follow_up_needed": { "type": "boolean" }
+        }
+      },
+      "outcome": {
+        "pointer": "/status",
+        "succeeded_values": ["success"],
+        "blocked_values": ["failed"]
+      },
+      "semantic_validators": ["validate_qa_pr_url_set"]
+    }
+  },
+  "program": {
+    "phase": "implement",
+    "next_phase": null,
+    "required_artifacts": ["jira_epic_key"],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "implement_tickets",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "implement_tickets",
+      "kind": "expand",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent", "dev-agent", "qa-agent"],
+      "allowed_external_effects": ["jira_write"],
+      "allowed_contracts": ["implement_delivery_task"],
+      "plan_approval_required": true,
+      "skill_hints": ["delivery-planning"],
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "collect_delivery_results",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["implement_tickets"],
+      "barrier": {
+        "hook": "collect_delivery_results"
+      },
+      "on_complete": { "hook": "hydrate_input", "downstream": ["qa_gate"] },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "await_pr_checks",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["collect_delivery_results"],
+      "approval_required": false,
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "github.pr_checks",
+        "pr_checks": { "pr_urls": "$prior.collect_delivery_results.output.pr_urls" },
+        "timeout_seconds": 86400
+      },
+      "on_complete": { "hook": "hydrate_input", "downstream": ["qa_gate"] },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "qa_gate",
+      "kind": "task",
+      "agent_id": "qa-agent",
+      "allowed_agents": ["qa-agent"],
+      "depends_on": ["await_pr_checks"],
+      "contract_ref": "qa_gate",
+      "skill_hints": ["governed-qa-gate"],
+      "present_prompt": "merge",
+      "input_map": {
+        "pr_urls": "$prior.collect_delivery_results.output.pr_urls",
+        "work_items": "$prior.collect_delivery_results.output.result.prs",
+        "jira_epic_key": "$workflow.jira_epic_key",
+        "checks_state": "$prior.await_pr_checks.output.checks_state",
+        "pr_checks": "$prior.await_pr_checks.output.prs",
+        "failed_checks": "$prior.await_pr_checks.output.failed_checks"
+      },
+      "retry": { "max_retries": 1, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "await_human_merge",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["qa_gate"],
+      "approval_required": false,
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "github.merge",
+        "match_all": {
+          "source": "$prior.qa_gate.output.result.prs",
+          "item_key": "pr_url"
+        },
+        "timeout_seconds": 86400
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      }
+    }
+  ]
+}

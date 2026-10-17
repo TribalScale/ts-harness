@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+
+      - name: Scan repository history
+        run: gitleaks git . --no-banner --redact
+
+  admin-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: admin-ui/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  validate:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ts_harness
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ts_harness_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ts_harness"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python test dependencies
+        run: |
+          python3 -m pip install -e ".[dev]"
+          python3 -m pip install -r requirements-dev.txt 2>/dev/null || true
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+
+      - name: Terraform fmt/validate (AWS)
+        working-directory: infra/aws
+        run: |
+          terraform init -backend=false
+          terraform validate
+          terraform fmt -check -recursive
+
+      - name: Terraform fmt/validate (GCP)
+        working-directory: infra/gcp
+        run: |
+          terraform init -backend=false
+          terraform validate
+          terraform fmt -check -recursive
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=warning scripts/*.sh scripts/phases/*.sh scripts/ops/*.sh
+
+      - name: Validate placeholders (rendered workspace)
+        run: |
+          python3 scripts/render-workspace.py \
+            --config config/organization.example.yaml \
+            --src workspace \
+            --dst /tmp/ts-harness-workspace-rendered \
+            --strict
+          bash scripts/validate-placeholders.sh /tmp/ts-harness-workspace-rendered
+
+      - name: Validate placeholders (skills)
+        run: bash scripts/validate-placeholders.sh skills
+
+      - name: Lint Markdown (optional)
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: "docs/**/*.md,workspace/**/*.md,skills/**/*.md"
+        continue-on-error: true
+
+      - name: Validate SQL migrations
+        run: |
+          for f in database/migrations/*.sql; do
+            echo "Checking $f ..."
+            grep -q '^BEGIN;' "$f" && grep -q '^COMMIT;' "$f" \
+              || { echo "ERROR: $f missing BEGIN/COMMIT transaction wrapper"; exit 1; }
+          done
+
+      - name: Run database migrations
+        run: bash scripts/ops/migrate-db.sh
+        env:
+          DATABASE_URL: postgres://ts_harness:ci_password@localhost:5432/ts_harness_test
+
+      - name: Validate runtime config template
+        run: |
+          python3 -c "
+          import os
+          os.environ['GATEWAY_TOKEN'] = 'ci-token'
+          from ts_harness.config.schema import load_runtime_config
+          load_runtime_config('config/ts-harness-runtime.test.yaml')
+          print('ts-harness runtime config: valid')
+          "
+
+      - name: Ruff
+        run: ruff check runtime tests scripts
+
+      - name: Python unit and runtime contract tests
+        run: python3 -m pytest tests -q
+        env:
+          GATEWAY_TOKEN: test-token
+          RUNTIME_FAKE_PROVIDER: "true"
+          TS_HARNESS_SKIP_MCP_DISCOVERY: "true"
+
+      - name: Postgres session store tests
+        run: python3 -m pytest tests -q -k "postgres_session or test_postgres"
+        env:
+          GATEWAY_TOKEN: test-token
+          RUNTIME_FAKE_PROVIDER: "true"
+          TS_HARNESS_SKIP_MCP_DISCOVERY: "true"
+          TS_HARNESS_SESSION_DB_URL: postgres://ts_harness:ci_password@localhost:5432/ts_harness_test
+
+  release-gates-compose:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start quickstart stack
+        run: bash scripts/quickstart.sh up
+
+      - name: Run release gates inside agent runtime
+        run: bash scripts/quickstart.sh gates
+
+      - name: Tag agent-runtime image for scanning
+        run: |
+          cid="$(docker compose --env-file .quickstart/.env -f docker/docker-compose.quickstart.yml ps -q agent-runtime)"
+          docker tag "$(docker inspect -f '{{.Image}}' "${cid}")" docker-agent-runtime
+
+      - name: Scan agent-runtime image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: docker-agent-runtime
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Show quickstart logs on failure
+        if: failure()
+        run: docker compose --env-file .quickstart/.env -f docker/docker-compose.quickstart.yml logs --no-color --tail=200 || true
+
+      - name: Stop quickstart stack
+        if: always()
+        run: bash scripts/quickstart.sh down

@@ -1,0 +1,54 @@
+required:
+  - id: runtime_health
+  - id: memory_smoke
+  - id: workflow_dispatch
+  - id: mcp_discovery
+  - id: sandbox_denial
+  - id: subagent_delegation
+  - id: cron_heartbeat
+  - id: tenant_isolation
+  - id: rbac_identity
+  - id: audit_export
+  - id: secrets_redaction
+  - id: agent_harness_security
+  - id: agent_harness_quality
+  - id: budget_hard_stop
+  - id: channel_chat
+  - id: workflow_record_create
+  - id: workflow_promotion_smoke
+  - id: workflow_hook_smoke
+  - id: prd_request_smoke
+    workflow_type: prd_request
+  - id: continue_bridge_smoke
+    source: prd_request
+    bridge_target: jira_from_prd
+  - id: continue_delivery_smoke
+    alias_of: continue_bridge_smoke
+  - id: delivery_program
+    workflow_types: [jira_from_prd, work_orders_from_prd, implement_delivery, implement_work_orders, deploy_release]
+  - id: work_orders_delivery_smoke
+    workflow_types: [work_orders_from_prd, implement_work_orders]
+  - id: intent_routing_smoke
+    routing_rules: [governed_prd, informal_prd, code_intake]
+  - id: workflow_runner_import_smoke
+  - id: skeleton_hooks_registered
+
+optional:
+  - id: slack_round_trip
+    requires_env: [SLACK_RELEASE_GATE_CHANNEL]
+  - id: agent_redteam
+    requires_env: [OPENAI_API_KEY]
+  - id: agent_output_judge
+    requires_env: [OPENAI_API_KEY]
+  - id: google_workspace_smoke
+    requires_env: [GOOGLE_WORKSPACE_SA_JSON_PATH]
+  - id: coding_backend_readiness
+    requires_env: [CODING_BACKEND_API_KEY, CODING_BACKEND_PROVIDER, GITHUB_TOKEN]
+
+post_deploy:
+  - id: google_gmail_send_smoke
+    requires_env: [GOOGLE_WORKSPACE_SA_JSON_PATH, SMOKE_GMAIL_TO]
+  - id: google_doc_create_smoke
+    requires_env: [GOOGLE_WORKSPACE_SA_JSON_PATH]
+  - id: prd_workflow_live_smoke
+    requires_env: [GATEWAY_TOKEN]

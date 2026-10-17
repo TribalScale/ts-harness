@@ -1,0 +1,379 @@
+gateway:
+  token: test-token
+  allowed_origins: ["http://localhost", "http://localhost:5173"]
+  single_tenant_mode: true
+  default_tenant_id: default
+
+tenants:
+  - id: default
+    display_name: Default Tenant
+    enabled_connectors: [slack, mcp-atlassian, google-workspace]
+    data_residency: us
+
+connectors:
+  google-workspace:
+    enabled: true
+    auth:
+      delegation:
+        default_impersonate_email: default@test.local
+    accounts:
+      comms:
+        impersonate_email: comms@test.local
+      marketing:
+        impersonate_email: marketing@test.local
+      sales:
+        impersonate_email: sales@test.local
+      pm:
+        impersonate_email: pm@test.local
+    artifact_publish:
+      enabled: true
+      folder_id: ""
+      min_chars: 3000
+      chunk_chars: 50000
+      library:
+        enabled: true
+        publish_on: present
+        share_folder_with_requester: true
+        step_phase_map:
+          prd_request:
+            draft_prd: prd
+            revise_prd: prd
+          work_orders_from_prd:
+            refine_requirements: refinery
+            design_blueprints: foundry
+            plan_work_orders: planner
+
+identity:
+  provider: static
+  slack_user_emails:
+    U_TEST: tester@test.local
+  jira_account_ids:
+    tester@test.local: acct-test-1
+
+sandbox:
+  mode: docker
+  backend: docker
+
+policy:
+  approval_required_tools:
+    - exec
+    - write_file
+    - delegate_task
+    - google_workspace_gmail_send
+  channel_ingress_deny: [exec, write_file, delegation, workflow_update]
+  delegation_auto_allow_agents: [pm-agent, analyst-agent]
+  budget_warn_usd: 50.0
+  budget_hard_stop_usd: 100.0
+  model_allowlist:
+    review-agent:
+      - openai/gpt-6-astra
+    qa-agent:
+      - openai/gpt-6-astra
+
+implementation:
+  coding_backend: opencode
+  tools_root: /tmp/ts-harness-tools
+  backends:
+    opencode:
+      version: "latest"
+      binary: opencode
+      provider: anthropic
+      auth_env: CODING_BACKEND_API_KEY
+      model: ""
+      run_args: ["run", "--auto"]
+  repos:
+    implement_work_orders:
+      url: ""
+      base_branch: main
+      clone_depth: 1
+    implement_jira_ticket:
+      url: ""
+      base_branch: dev
+      clone_depth: 1
+
+program_builder:
+  agent_id: builder-agent
+
+program_defaults:
+  repo_picker:
+    repos: []
+  jira_filing:
+    default_issue_type: Story
+    issue_type_by_project: {}
+  ticket_picker:
+    assignee: mapped_user
+    statuses:
+      - To Do
+      - Open
+      - Ready for Dev
+      - In Progress
+
+toolsets:
+  core-read: [recall_memory, read_file, session_status, remember_memory, sessions_list, sessions_history, search_sessions, read_skill_reference]
+  core-write: [write_file, patch_file]
+  terminal: [exec]
+  coding-backend: [run_coding_backend]
+  workflow: [workflow_update]
+  google-workspace: []
+  google-workspace-docs:
+    - google_workspace_drive_search
+    - google_workspace_drive_get
+    - google_workspace_drive_create
+    - google_workspace_docs_read
+    - google_workspace_docs_append
+  channel: [channel_send]
+  delegation: [delegate_task, propose_delegate_task]
+  channel-chat: [propose_delegate_task, propose_start_workflow, propose_start_program, propose_continue_delivery, propose_bridge_workflow, propose_advance_program, propose_set_program_project, propose_link_program, unlink_program, set_program_autoshare, workflow_status, program_status]
+  skill-authoring: [propose_skill]
+  program-builder: [builder_catalog, propose_program_bundle]
+  workflow-promotion: [propose_start_workflow, start_workflow, propose_start_program, start_program, propose_continue_delivery, continue_delivery, propose_bridge_workflow, bridge_workflow, propose_advance_program, advance_program, propose_set_program_project, set_program_project, propose_link_program, link_program, unlink_program, set_program_autoshare, workflow_status, program_status, workflow_approve, workflow_reject, workflow_reject_with_feedback, cancel_workflow, resume_external_event]
+
+bindings:
+  slack: orchestrator
+  discord: orchestrator
+  telegram: orchestrator
+
+routing:
+  default: ad_hoc_delegate
+  intents:
+    - id: governed_prd
+      workflow_type: prd_request
+      signals: ["create a prd", "create prd", "draft prd", "write a prd", "product requirements document"]
+      exclude: ["quick", "rough draft", "no approval"]
+      orchestrator_hint: >
+        User request requires a governed workflow. Call propose_start_workflow
+        with workflow_type=prd_request. Do not call propose_delegate_task.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+        deny_start_workflow_types: [governed_delivery, jira_from_prd, work_orders_from_prd, implement_delivery, implement_work_orders, deploy_release]
+    - id: content_to_jira
+      program_type: content_to_jira_work_orders
+      entry_phase: intake
+      signals: ["plan work from this content", "content to work orders", "file work orders as jira"]
+      orchestrator_hint: >
+        User wants the decoupled planning program. Call propose_start_program
+        with program_type=content_to_jira_work_orders and entry_phase=intake.
+        Do not call propose_delegate_task or start software_delivery.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: bug_to_jira
+      program_type: bug_to_jira_work_orders
+      entry_phase: bug_intake
+      signals: ["file this bug", "investigate this error", "bug report", "production incident", "fix bug", "regression", "broken", "error"]
+      exclude: ["what error", "error handling"]
+      orchestrator_hint: >
+        User wants a bug filed as one unassigned Jira Bug. Call propose_start_program
+        with program_type=bug_to_jira_work_orders and entry_phase=bug_intake.
+        Do not call propose_delegate_task or start software_delivery.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: jira_to_pr
+      program_type: jira_to_pr
+      entry_phase: pick
+      signals: ["my tickets", "pick up my jira", "implement TFS-"]
+      orchestrator_hint: >
+        User wants the decoupled implement program. Call propose_start_program
+        with program_type=jira_to_pr. If they pasted a ticket key, use
+        entry_phase=implement and artifacts.jira_issue_key. Otherwise entry_phase=pick.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: start_jira_from_prd
+      signals: ["create jira", "file jira", "file tickets from prd", "jira from prd"]
+      orchestrator_hint: >
+        User wants to enter delivery at Jira filing. Call propose_start_program
+        with entry_phase=jira and artifacts.approved_prd set.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: start_work_orders_from_prd
+      signals: ["work orders", "plan work orders", "generate work orders", "start work orders"]
+      exclude: ["content to work orders", "file work orders as jira", "plan work from this content"]
+      orchestrator_hint: >
+        User wants to enter delivery at work-order planning. Call propose_start_program
+        with entry_phase=work_orders and artifacts.approved_prd set.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: implement_delivery_entry
+      signals: ["implement tickets", "start implementation", "implement delivery"]
+      orchestrator_hint: >
+        User wants to enter delivery at implementation. Call propose_start_program
+        with entry_phase=implement and artifacts.jira_epic_key or work_orders_handoff set.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: deploy_release_entry
+      signals: ["deploy staging", "deploy production", "start deploy"]
+      orchestrator_hint: >
+        User wants to enter delivery at deploy. Call propose_start_program
+        with entry_phase=deploy and artifacts.pr_url set.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: informal_prd
+      delegate_agent: pm-agent
+      signals: ["quick prd", "rough outline", "rough draft", "quick draft", "no approval"]
+      policy:
+        mode: require_delegate
+        deny_start_workflow_types: [prd_request]
+    - id: governed_rfp
+      workflow_type: rfp_request
+      signals: ["create rfp", "draft rfp", "request for proposal"]
+      exclude: ["quick", "rough draft", "no approval"]
+      orchestrator_hint: >
+        User request requires a governed RFP workflow. Call propose_start_workflow
+        with workflow_type=rfp_request. Do not call propose_delegate_task.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: code_intake
+      signals: ["open pr", "refactor", "change the"]
+      orchestrator_hint: >
+        Vague code request. Ask once whether this is a bug or a feature.
+        Do not draft, do not call propose_delegate_task, and do not start software_delivery.
+        After they answer, call propose_start_program with
+        program_type=bug_to_jira_work_orders and entry_phase=bug_intake, or
+        program_type=content_to_jira_work_orders and entry_phase=intake.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+        allow_program_types: [bug_to_jira_work_orders, content_to_jira_work_orders]
+
+mcp_servers:
+  atlassian:
+    transport: stdio
+    command: mcporter
+    enabled: true
+
+agents:
+  list:
+    - id: orchestrator
+      default: true
+      workspace: /workspace/orchestrator
+      model: openai/gpt-4o-mini
+      skills: [orchestrator, memory-api, workflow, workflows, governed-workflows]
+      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion]
+      tools:
+        allow:
+          [
+            recall_memory,
+            read_file,
+            session_status,
+            remember_memory,
+            sessions_list,
+            sessions_history,
+            search_sessions,
+            delegate_task,
+            propose_delegate_task,
+            workflow_update,
+            propose_start_workflow,
+            propose_start_program,
+            propose_continue_delivery,
+            propose_bridge_workflow,
+            propose_advance_program,
+            propose_set_program_project,
+            propose_link_program,
+            start_workflow,
+            start_program,
+            set_program_project,
+            link_program,
+            unlink_program,
+            set_program_autoshare,
+            continue_delivery,
+            bridge_workflow,
+            advance_program,
+            workflow_status,
+            program_status,
+            workflow_approve,
+            workflow_reject,
+            workflow_reject_with_feedback,
+            cancel_workflow,
+            resume_external_event,
+          ]
+        deny: [exec, write_file]
+      subagents:
+        allowAgents: [dev-agent, ops-agent, pm-agent, qa-agent, review-agent]
+      heartbeat:
+        every: 30m
+        target: none
+        activeHours:
+          start: "00:00"
+          end: "23:59"
+          timezone: UTC
+
+    - id: dev-agent
+      workspace: /workspace/dev-agent
+      model: openai/gpt-4o-mini
+      skills: [dev, memory, workflows, integrate, governed-workflows]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring]
+      tools:
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        deny: [delegate_task]
+
+    - id: ops-agent
+      workspace: /workspace/ops-agent
+      model: openai/gpt-4o-mini
+      skills: [ops, memory]
+      toolsets: [core-read, terminal, skill-authoring]
+      tools:
+        allow: [read_file, exec, recall_memory, propose_skill]
+        deny: [write_file, patch_file, delegate_task]
+
+    - id: pm-agent
+      workspace: /workspace/pm-agent
+      model: openai/gpt-4o-mini
+      skills: [pm, memory-api, workflows, governed-workflows]
+      connector_bindings:
+        google-workspace: pm
+      toolsets: [core-read, workflow, google-workspace-docs]
+      tools:
+        allow: [read_file, recall_memory, workflow_update]
+        deny: [exec, delegate_task]
+
+    - id: comms-agent
+      workspace: /workspace/comms-agent
+      model: openai/gpt-4o-mini
+      skills: [comms, memory-api]
+      connector_bindings:
+        google-workspace: comms
+      toolsets: [core-read, channel, google-workspace]
+      tools:
+        allow:
+          - read_file
+          - channel_send
+          - recall_memory
+          - google_workspace_gmail_search
+          - google_workspace_gmail_get
+          - google_workspace_gmail_send
+          - google_workspace_docs_read
+        deny: [exec, delegate_task, write_file]
+
+    - id: qa-agent
+      workspace: /workspace/qa-agent
+      model: openai/gpt-6-astra
+      skills: [qa, memory, workflows, governed-workflows]
+      toolsets: [core-read]
+      tools:
+        allow: [read_file, recall_memory]
+        deny: [write_file, patch_file, exec, run_coding_backend, delegate_task]
+
+    - id: review-agent
+      workspace: /workspace/review-agent
+      model: openai/gpt-6-astra
+      skills: [review, memory, governed-workflows]
+      toolsets: [core-read]
+      tools:
+        allow: [read_file, recall_memory]
+        deny: [write_file, patch_file, exec, delegate_task, run_coding_backend]
+
+    - id: builder-agent
+      workspace: /workspace/builder-agent
+      model: openai/gpt-4o-mini
+      skills: [program-builder]
+      toolsets: [core-read, program-builder, skill-authoring]
+      tools:
+        deny: [exec, write_file, patch_file, delegate_task]

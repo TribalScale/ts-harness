@@ -1,0 +1,14 @@
+# Operator console — serve built SPA and reverse-proxy API to agent-runtime.
+# Usage (with agent-runtime compose already up):
+#   docker compose -f docker/docker-compose.agent-runtime.yml \
+#                  -f docker/docker-compose.admin-ui.yml up -d --build admin-ui
+services:
+  admin-ui:
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.admin-ui
+    ports:
+      - "${ADMIN_UI_PORT:-8080}:8080"
+    depends_on:
+      - agent-runtime
+    restart: unless-stopped

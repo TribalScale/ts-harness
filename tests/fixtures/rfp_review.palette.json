@@ -1,0 +1,133 @@
+{
+  "workflow_type": "rfp_review",
+  "definition_version": "1.0.0",
+  "display_name": "RFP review",
+  "contracts": {
+    "rfp_intake": {
+      "output_schema": {
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "rfp_draft": {
+      "output_schema": {
+        "type": "object",
+        "required": ["rfp_markdown"],
+        "properties": {
+          "rfp_markdown": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "rfp",
+    "next_phase": null,
+    "required_artifacts": [],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "intake",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "session": {
+    "orchestrator_agent_id": "orchestrator",
+    "phase_tracking": {
+      "intake_step": "intake",
+      "draft_steps": ["draft_rfp", "revise_rfp"],
+      "gate_steps": ["approve_rfp"],
+      "approved_value": "approved"
+    },
+    "artifact_steps": ["draft_rfp", "revise_rfp"],
+    "artifact_step_prompts": {
+      "draft_rfp": "approval",
+      "revise_rfp": "approval"
+    },
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "stages": [
+    {
+      "name": "intake",
+      "kind": "task",
+      "agent_id": "sales-agent",
+      "allowed_agents": ["sales-agent"],
+      "contract_ref": "rfp_intake",
+      "skill_hints": ["clarify-rfp"],
+      "present_prompt": "intake",
+      "retry": { "max_retries": 2, "timeout_seconds": 600 }
+    },
+    {
+      "name": "await_intake_answers",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["intake"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": false,
+      "present_output": false,
+      "wait_external": { "event_type": "channel.intake_response" },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["draft_rfp"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "draft_rfp",
+      "kind": "task",
+      "agent_id": "sales-agent",
+      "depends_on": ["await_intake_answers"],
+      "allowed_agents": ["sales-agent"],
+      "contract_ref": "rfp_draft",
+      "skill_hints": ["draft-rfp"],
+      "present_prompt": "approval",
+      "input_map": {
+        "clarified_requirements": "$prior.await_intake_answers.output.clarified_requirements",
+        "intake_output": "$prior.intake.output"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "approve_rfp",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_rfp"],
+      "approval_required": true,
+      "on_complete": { "hook": "mark_artifact_approved" },
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "revise_rfp",
+          "agent_id": "sales-agent",
+          "present_prompt": "approval",
+          "source_steps": ["draft_rfp", "revise_rfp"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments",
+            "revision_number": "$runtime.revision_count:revise_rfp"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_rfp",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        }
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    }
+  ]
+}

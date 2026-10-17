@@ -1,0 +1,32 @@
+name: Live evals
+
+on:
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Skip without provider credentials
+        if: env.OPENAI_API_KEY == ''
+        run: echo "::notice::OPENAI_API_KEY is not configured; skipping live evals."
+
+      - uses: actions/checkout@v4
+        if: env.OPENAI_API_KEY != ''
+
+      - uses: actions/setup-python@v5
+        if: env.OPENAI_API_KEY != ''
+        with:
+          python-version: "3.11"
+
+      - name: Install eval dependencies
+        if: env.OPENAI_API_KEY != ''
+        run: python3 -m pip install -e ".[dev,eval]"
+
+      - name: Run live release gates
+        if: env.OPENAI_API_KEY != ''
+        env:
+          RELEASE_GATES_PROFILE: live
+        run: python scripts/release-gates.py

@@ -1,0 +1,133 @@
+# Local TS Harness stack: no cloud account, fake model provider by default.
+# Start it with scripts/quickstart.sh, which writes .quickstart/.env.
+name: ts-harness-quickstart
+
+x-db-env: &db-env
+  TS_HARNESS_DB_HOST: db
+  TS_HARNESS_DB_PORT: "5432"
+  TS_HARNESS_DB_USER: ts_harness
+  TS_HARNESS_DB_NAME: ts_harness
+  TS_HARNESS_DB_PASSWORD: ${QUICKSTART_DB_PASSWORD:?run scripts/quickstart.sh}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ts_harness
+      POSTGRES_PASSWORD: ${QUICKSTART_DB_PASSWORD:?run scripts/quickstart.sh}
+      POSTGRES_DB: ts_harness
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ts_harness -d ts_harness"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db-migrate:
+    image: pgvector/pgvector:pg16
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://ts_harness:${QUICKSTART_DB_PASSWORD:?run scripts/quickstart.sh}@db:5432/ts_harness
+    volumes:
+      - ..:/repo:ro
+    working_dir: /repo
+    command: ["bash", "scripts/ops/migrate-db.sh"]
+    restart: "no"
+
+  sandbox-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sandbox
+    environment:
+      SANDBOX_WORKER_PORT: 18880
+      SANDBOX_EGRESS_POLICY: deny
+      SANDBOX_WORKER_TOKEN: ${SANDBOX_WORKER_TOKEN:?run scripts/quickstart.sh}
+
+  agent-runtime:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent-runtime
+    command: ["bash", "/app/scripts/quickstart-runtime.sh"]
+    ports:
+      - "127.0.0.1:${AGENT_RUNTIME_PORT:-18789}:18789"
+    environment:
+      AGENT_RUNTIME_HOST: 0.0.0.0
+      AGENT_RUNTIME_PORT: 18789
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN:?run scripts/quickstart.sh}
+      RUNTIME_FAKE_PROVIDER: ${RUNTIME_FAKE_PROVIDER:-true}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MEMORY_API_URL: http://127.0.0.1:18792
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:?run scripts/quickstart.sh}
+      TS_HARNESS_ROOT: /app
+      TS_HARNESS_WORKFLOW_DEFINITION_STORE: /workflow-definitions
+      TS_HARNESS_MANAGED_WORKFLOWS_DIR: /workflow-definitions/active
+      TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
+      TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
+      SKILLS_DIR: /app/skills
+      SKILLS_MANAGED_DIR: /skills-managed
+      TS_HARNESS_SESSION_STORE: /state/sessions.jsonl
+      TS_HARNESS_APPROVAL_STORE: /state/approvals.jsonl
+      TS_HARNESS_AUDIT_LOG: /state/audit.jsonl
+      TS_HARNESS_SCHEDULER_STATE: /state/scheduler.json
+      TS_HARNESS_CHANNEL_DEDUP: /state/channel-dedup.txt
+      TS_HARNESS_DELEGATION_STATE: /state/delegation.json
+      TS_HARNESS_SKIP_GOOGLE_PROBE: "true"
+      SLACK_SOCKET_MODE: "false"
+      SANDBOX_ENABLED: "true"
+      SANDBOX_WORKER_URL: http://sandbox-worker:18880
+      SANDBOX_WORKER_TOKEN: ${SANDBOX_WORKER_TOKEN:?run scripts/quickstart.sh}
+    volumes:
+      - state:/state
+      - workflow-definitions:/workflow-definitions
+      - skills-managed:/skills-managed
+    depends_on:
+      sandbox-worker:
+        condition: service_started
+      db-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18789/healthz', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  memory-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.memory-api
+    network_mode: "service:agent-runtime"
+    environment:
+      <<: *db-env
+      PGSSLMODE: disable
+      MEMORY_API_PORT: "18792"
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:?run scripts/quickstart.sh}
+      EMBEDDINGS_PROVIDER: openai
+      EMBEDDINGS_MODEL: text-embedding-3-small
+      EMBEDDINGS_DIMENSIONS: "1536"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SCRIPTS_DIR: /scripts
+    depends_on:
+      agent-runtime:
+        condition: service_started
+      db-migrate:
+        condition: service_completed_successfully
+
+  admin-ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.admin-ui
+    ports:
+      - "127.0.0.1:${ADMIN_UI_PORT:-8080}:8080"
+    depends_on:
+      - agent-runtime
+
+volumes:
+  db-data:
+  state:
+  workflow-definitions:
+  skills-managed:

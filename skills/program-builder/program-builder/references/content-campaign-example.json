@@ -1,0 +1,102 @@
+{
+  "workflow": {
+    "workflow_type": "content_campaign",
+    "definition_version": "1.0.0",
+    "display_name": "Content campaign",
+    "stages": [
+      {
+        "name": "keywords",
+        "kind": "task",
+        "agent_id": "marketing-agent",
+        "skill_hints": ["content-campaign"],
+        "present_output": true,
+        "tool_allow": ["read_file", "recall_memory", "google_workspace_docs_read"]
+      },
+      {
+        "name": "approve_keywords",
+        "kind": "task",
+        "agent_id": "orchestrator",
+        "depends_on": ["keywords"],
+        "approval_required": true,
+        "present_prompt": "approval"
+      },
+      {
+        "name": "draft_asset",
+        "kind": "task",
+        "agent_id": "marketing-agent",
+        "depends_on": ["approve_keywords"],
+        "skill_hints": ["content-campaign"],
+        "present_output": true,
+        "tool_allow": [
+          "read_file",
+          "recall_memory",
+          "google_workspace_docs_read",
+          "google_workspace_drive_create",
+          "google_workspace_docs_append"
+        ]
+      },
+      {
+        "name": "approve_asset",
+        "kind": "task",
+        "agent_id": "orchestrator",
+        "depends_on": ["draft_asset"],
+        "approval_required": true,
+        "present_prompt": "approval"
+      },
+      {
+        "name": "publish_plan",
+        "kind": "task",
+        "agent_id": "marketing-agent",
+        "depends_on": ["approve_asset"],
+        "skill_hints": ["content-campaign"],
+        "present_output": true,
+        "tool_allow": ["read_file", "recall_memory", "google_workspace_docs_read"]
+      },
+      {
+        "name": "approve_publish",
+        "kind": "task",
+        "agent_id": "orchestrator",
+        "depends_on": ["publish_plan"],
+        "approval_required": true,
+        "present_prompt": "approval"
+      },
+      {
+        "name": "publish",
+        "kind": "task",
+        "agent_id": "marketing-agent",
+        "depends_on": ["approve_publish"],
+        "skill_hints": ["content-campaign"],
+        "present_output": true,
+        "tool_allow": ["read_file", "recall_memory"]
+      }
+    ]
+  },
+  "program": {
+    "program_type": "content_campaign",
+    "definition_version": "1.0.0",
+    "display_name": "Content campaign",
+    "startable_nodes": ["campaign"],
+    "nodes": [
+      {
+        "id": "campaign",
+        "default_workflow_type": "content_campaign",
+        "workflow_variants": [],
+        "required_artifacts": [],
+        "produces_artifacts": ["approved_asset", "publish_result"],
+        "input_bindings": [
+          { "kind": "program_summary", "target": "summary" },
+          { "kind": "transcript_context", "target": "context", "limit": 20 }
+        ],
+        "completion_adapter": "extract_declared_outputs",
+        "terminal": true
+      }
+    ],
+    "edges": []
+  },
+  "routing_intent": {
+    "id": "content_campaign",
+    "signals": ["start a content campaign", "draft a blog from keywords"],
+    "program_type": "content_campaign",
+    "entry_phase": "campaign"
+  }
+}

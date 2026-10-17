@@ -1,0 +1,4 @@
+# Minimum versions for transitive dependencies with known HIGH/CRITICAL advisories.
+# Applied to the runtime install and the pip-audit tool environment.
+msgpack>=1.2.3
+urllib3>=2.8.0

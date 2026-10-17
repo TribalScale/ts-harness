@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    jq \
+    awscli \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir "psycopg[binary]" "psycopg-pool"
+
+COPY scripts/memory-gateway.py /app/memory-gateway.py
+COPY scripts/embed.sh /scripts/embed.sh
+
+RUN chmod +x /scripts/embed.sh
+
+CMD ["python3", "/app/memory-gateway.py"]

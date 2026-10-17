@@ -1,0 +1,94 @@
+{
+  "workflow_type": "bug_work_order",
+  "definition_version": "1.0.0",
+  "display_name": "One work order from a bug report",
+  "contracts": {
+    "one_work_order": {
+      "output_schema": {
+        "type": "object",
+        "required": ["work_orders_markdown", "work_order_ids", "next_work_order_id"],
+        "properties": {
+          "work_orders_markdown": { "type": "string", "minLength": 1 },
+          "work_order_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": { "type": "string", "const": "WO-001" }
+          },
+          "next_work_order_id": { "type": "string", "const": "WO-001" }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "work_order",
+    "next_phase": "file_jira",
+    "required_artifacts": ["bug_report"],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "draft_work_order",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "session": {
+    "orchestrator_agent_id": "orchestrator",
+    "phase_tracking": {
+      "intake_step": "draft_work_order",
+      "draft_steps": ["draft_work_order"],
+      "gate_steps": ["approve_work_order"],
+      "approved_value": "approved"
+    },
+    "artifact_steps": ["draft_work_order"],
+    "artifact_step_prompts": {
+      "draft_work_order": "approval"
+    },
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "stages": [
+    {
+      "name": "draft_work_order",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "one_work_order",
+      "skill_hints": ["bug-intake"],
+      "present_prompt": "approval",
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "approve_work_order",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_work_order"],
+      "approval_required": true,
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "draft_work_order",
+          "agent_id": "pm-agent",
+          "present_prompt": "approval",
+          "source_steps": ["draft_work_order"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_work_order",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        }
+      },
+      "on_complete": { "hook": "mark_artifact_approved" },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    }
+  ]
+}

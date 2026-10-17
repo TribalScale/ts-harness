@@ -1,0 +1,70 @@
+# Example AWS install-time configuration.
+# Select exactly one provider per installation (aws OR gcp, never both).
+cloud_provider: aws
+environment: prod
+project_name: ts-harness
+cloud_region: us-east-1
+cloud_zone: us-east-1a
+aws_account_id: "123456789012"
+secret_prefix: ts-harness
+notification_email: ops@example.com
+monthly_budget_limit: 500
+
+vm:
+  instance_type: t3.medium
+  root_volume_size_gb: 40
+  data_disk_size_gb: 60
+  admin_username: artemis
+  ssh_key_name: ts-harness-prod
+  ssh_allowed_cidrs:
+    - 10.0.0.0/8
+  # tailscale_authkey_secret_ref: arn:aws:secretsmanager:us-east-1:123456789012:secret:tailscale
+
+managed_db:
+  instance_class: db.t3.micro
+  db_name: ts_harness
+  db_username: ts_harness
+  backup_retention_days: 7
+  # multi_az defaults to true. Set false on a dev account.
+  # apply_immediately: false
+  backup_window: "03:00-04:00"
+  skip_final_snapshot: false
+  engine_version: "16"
+
+terraform_state:
+  backend_type: s3
+  bucket: example-ts-harness-tfstate
+  key: prod/aws/terraform.tfstate
+  region: us-east-1
+
+runtime:
+  agent_runtime_version: "0.1.0"
+  enterprise_repo_url: https://github.com/TribalScale/ts-harness.git
+  multi_agent_enabled: true
+  workflow_runner_enabled: true
+  workflow_runner_poll_interval_seconds: 10
+  workflow_runner_batch_size: 5
+  workflow_runner_lease_seconds: 1800
+  workflow_runner_stale_policy: block
+  embeddings_provider: openai
+  embeddings_model: text-embedding-3-small
+  embeddings_dimensions: 1536
+  embeddings_fallback: none
+  agent_timezone: UTC
+  implement_work_orders_repo_url: ""
+  implement_work_orders_base_branch: main
+  slack_standup_channel: ""
+  slack_ops_channel: ""
+  slack_dev_channel: ""
+  slack_team_channel: ""
+  slack_marketing_channel: ""
+  slack_sales_channel: ""
+  approved_slack_channels: []
+  # Admin identity (Auth0/OIDC). Leave static unless you set all oidc_* fields.
+  identity_provider: static
+  oidc_issuer: ""
+  oidc_audience: ""
+  oidc_jwks_url: ""
+  oidc_client_id: ""
+  oidc_authorization_endpoint: ""
+  oidc_token_endpoint: ""

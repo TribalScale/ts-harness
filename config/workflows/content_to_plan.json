@@ -1,0 +1,171 @@
+{
+  "workflow_type": "content_to_plan",
+  "definition_version": "1.0.0",
+  "display_name": "Content to approved plan",
+  "contracts": {
+    "repo_pick": {
+      "output_schema": {
+        "type": "object",
+        "required": ["repo", "default_branch"],
+        "properties": {
+          "repo": { "type": "string", "minLength": 1 },
+          "default_branch": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "plan_draft": {
+      "output_schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "required": ["prd_markdown"],
+            "properties": {
+              "prd_markdown": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "required": ["result"],
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["prd_markdown"],
+                "properties": {
+                  "prd_markdown": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "program": {
+    "phase": "intake",
+    "next_phase": "work_orders",
+    "required_artifacts": [],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "pick_repo",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "session": {
+    "orchestrator_agent_id": "orchestrator",
+    "phase_tracking": {
+      "intake_step": "pick_repo",
+      "draft_steps": ["draft_plan"],
+      "gate_steps": ["approve_plan"],
+      "approved_value": "approved"
+    },
+    "artifact_steps": ["draft_plan"],
+    "artifact_step_prompts": {
+      "draft_plan": "approval"
+    },
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "stages": [
+    {
+      "name": "pick_repo",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "contract_ref": "repo_pick",
+      "skill_hints": ["content-to-plan"],
+      "present_prompt": "intake",
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "compare_codebase",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["pick_repo"],
+      "allowed_agents": ["pm-agent"],
+      "skill_hints": ["content-to-plan"],
+      "input_map": {
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "clarify",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["compare_codebase"],
+      "allowed_agents": ["pm-agent"],
+      "skill_hints": ["content-to-plan"],
+      "present_prompt": "intake",
+      "input_map": {
+        "compare_output": "$prior.compare_codebase.output"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "await_ready",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["clarify"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "present_prompt": "intake",
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["draft_plan"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "draft_plan",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["await_ready"],
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "plan_draft",
+      "skill_hints": ["content-to-plan"],
+      "present_prompt": "approval",
+      "input_map": {
+        "clarified_requirements": "$prior.await_ready.output",
+        "compare_output": "$prior.compare_codebase.output",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "approve_plan",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_plan"],
+      "approval_required": true,
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "draft_plan",
+          "agent_id": "pm-agent",
+          "present_prompt": "approval",
+          "source_steps": ["draft_plan"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_plan",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        }
+      },
+      "on_complete": { "hook": "mark_artifact_approved" },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    }
+  ]
+}

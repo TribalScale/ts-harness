@@ -1,0 +1,235 @@
+{
+  "workflow_type": "work_orders_from_prd",
+  "definition_version": "1.1.0",
+  "display_name": "Work orders from approved PRD",
+  "contracts": {
+    "work_orders_refinery": {
+      "output_schema": {
+        "type": "object",
+        "required": ["artifacts"],
+        "properties": {
+          "artifacts": {
+            "type": "object",
+            "required": [
+              "requirements_markdown",
+              "frds_markdown",
+              "feature_tree_markdown",
+              "product_overview_markdown"
+            ],
+            "properties": {
+              "requirements_markdown": { "type": "string", "minLength": 1 },
+              "frds_markdown": { "type": "string", "minLength": 1 },
+              "feature_tree_markdown": { "type": "string", "minLength": 1 },
+              "product_overview_markdown": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "required_artifacts": {
+        "requirements_markdown": "/artifacts/requirements_markdown",
+        "frds_markdown": "/artifacts/frds_markdown",
+        "feature_tree_markdown": "/artifacts/feature_tree_markdown",
+        "product_overview_markdown": "/artifacts/product_overview_markdown"
+      },
+      "semantic_validators": ["validate_work_order_artifacts"]
+    },
+    "work_orders_foundry": {
+      "output_schema": {
+        "type": "object",
+        "required": ["artifacts"],
+        "properties": {
+          "artifacts": {
+            "type": "object",
+            "required": [
+              "blueprints_markdown",
+              "architecture_decisions_markdown",
+              "architecture_summary_markdown"
+            ],
+            "properties": {
+              "blueprints_markdown": { "type": "string", "minLength": 1 },
+              "architecture_decisions_markdown": { "type": "string", "minLength": 1 },
+              "architecture_summary_markdown": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "required_artifacts": {
+        "blueprints_markdown": "/artifacts/blueprints_markdown",
+        "architecture_decisions_markdown": "/artifacts/architecture_decisions_markdown",
+        "architecture_summary_markdown": "/artifacts/architecture_summary_markdown"
+      },
+      "semantic_validators": ["validate_work_order_artifacts"]
+    },
+    "work_orders_planner": {
+      "output_schema": {
+        "type": "object",
+        "required": ["artifacts"],
+        "properties": {
+          "artifacts": {
+            "type": "object",
+            "required": [
+              "work_orders_markdown",
+              "context_graph_markdown",
+              "execution_phases_markdown"
+            ],
+            "properties": {
+              "work_orders_markdown": { "type": "string", "minLength": 1 },
+              "context_graph_markdown": { "type": "string", "minLength": 1 },
+              "execution_phases_markdown": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "required_artifacts": {
+        "work_orders_markdown": "/artifacts/work_orders_markdown",
+        "context_graph_markdown": "/artifacts/context_graph_markdown",
+        "execution_phases_markdown": "/artifacts/execution_phases_markdown"
+      },
+      "semantic_validators": ["validate_work_order_artifacts"]
+    },
+    "work_orders_prepare_handoff": {
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "planner_complete",
+          "work_orders_handoff",
+          "next_work_order_id",
+          "work_order_ids"
+        ],
+        "properties": {
+          "planner_complete": { "const": true },
+          "work_orders_handoff": { "const": true },
+          "next_work_order_id": { "type": "string", "minLength": 1 },
+          "work_order_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "work_orders",
+    "next_phase": "implement",
+    "required_artifacts": ["approved_prd"],
+    "auto_advance": true,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "refine_requirements",
+    "requires_source_artifact": true,
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "refine_requirements",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "work_orders_refinery",
+      "skill_hints": ["prd-to-work-orders-governed"],
+      "present_prompt": "approval",
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "stage": "refinery"
+      },
+      "retry": { "max_retries": 3, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "approve_refinery",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["refine_requirements"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["design_blueprints"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "design_blueprints",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["approve_refinery"],
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "work_orders_foundry",
+      "skill_hints": ["prd-to-work-orders-governed"],
+      "present_prompt": "approval",
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "stage": "foundry",
+        "prior_refinery": "$prior.refine_requirements.output.artifacts"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "approve_foundry",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["design_blueprints"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["plan_work_orders"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "plan_work_orders",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["approve_foundry"],
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "work_orders_planner",
+      "skill_hints": ["prd-to-work-orders-governed"],
+      "present_prompt": "approval",
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "stage": "planner",
+        "prior_refinery": "$prior.refine_requirements.output.artifacts",
+        "prior_foundry": "$prior.design_blueprints.output.artifacts"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "approve_work_orders",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["plan_work_orders"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["prepare_work_order_delivery"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "prepare_work_order_delivery",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["approve_work_orders"],
+      "allowed_agents": ["orchestrator"],
+      "contract_ref": "work_orders_prepare_handoff",
+      "skill_hints": ["source-work-order-governed"],
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "planner_output": "$prior.plan_work_orders.output",
+        "planner_artifacts": "$prior.plan_work_orders.output.artifacts",
+        "completed_work_order_ids": "$workflow.completed_work_order_ids"
+      },
+      "retry": { "max_retries": 1, "timeout_seconds": 1800 }
+    }
+  ]
+}

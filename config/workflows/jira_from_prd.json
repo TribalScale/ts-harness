@@ -1,0 +1,51 @@
+{
+  "workflow_type": "jira_from_prd",
+  "definition_version": "1.1.0",
+  "display_name": "Jira filing from approved PRD",
+  "contracts": {
+    "jira_filing": {
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "jira",
+    "next_phase": "implement",
+    "required_artifacts": ["approved_prd"],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "create_jira",
+    "requires_source_artifact": true,
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "stages": [
+    {
+      "name": "create_jira",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent"],
+      "approval_required": true,
+      "contract_ref": "jira_filing",
+      "allowed_external_effects": ["jira_write"],
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd"
+      },
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 1800
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "install_contract_version": "0.1.0",
+  "cloud_provider": "aws",
+  "environment": "prod",
+  "project_name": "ts-harness",
+  "aws_account_id": "123456789012",
+  "cloud_region": "us-east-1",
+  "cloud_zone": "us-east-1a",
+  "compute_resource_id": "i-0freezeawscontract01",
+  "data_disk_resource_id": "vol-0freezeawsdisk01",
+  "data_disk_device_hint": "/dev/sdf",
+  "data_mountpoint": "/vol/ts-harness-data",
+  "secret_prefix": "ts-harness",
+  "managed_db_host": "ts-harness.abcdef.us-east-1.rds.amazonaws.com",
+  "managed_db_port": 5432,
+  "managed_db_name": "ts_harness_memory",
+  "managed_db_user": "ts_harness",
+  "managed_db_credential_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-freeze",
+  "credentials_encryption_key_id": "alias/ts-harness-agent-credentials",
+  "runtime_private_url": "http://100.64.0.10:18789",
+  "operator_connection_command": "ssh -p 2222 artemis@203.0.113.10",
+  "monitoring_namespace": "TSHarness",
+  "notification_channel_id": "arn:aws:sns:us-east-1:123456789012:ts-harness-alerts",
+  "terraform_state": {
+    "backend_type": "s3",
+    "bucket": "example-ts-harness-tfstate",
+    "key": "prod/aws/terraform.tfstate",
+    "region": "us-east-1"
+  },
+  "legacy_outputs": {
+    "instance_id": "i-0freezeawscontract01",
+    "elastic_ip": "203.0.113.10",
+    "ebs_volume_id": "vol-0freezeawsdisk01",
+    "ssh_command": "ssh -p 2222 artemis@203.0.113.10",
+    "rds_address": "ts-harness.abcdef.us-east-1.rds.amazonaws.com",
+    "rds_endpoint": "ts-harness.abcdef.us-east-1.rds.amazonaws.com:5432",
+    "rds_master_secret_arn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-freeze"
+  },
+  "frozen_resource_addresses": [
+    "aws_instance.harness",
+    "aws_eip.harness",
+    "aws_ebs_volume.harness_data",
+    "aws_volume_attachment.harness_data",
+    "aws_secretsmanager_secret.harness",
+    "aws_kms_key.agent_credentials"
+  ]
+}

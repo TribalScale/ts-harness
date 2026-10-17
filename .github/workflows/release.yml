@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to build (defaults to git ref)"
+        required: false
+        default: ""
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # needed for keyless cosign signing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Resolve image tag
+      # ------------------------------------------------------------------
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ------------------------------------------------------------------
+      # Build Docker image
+      # ------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build agent-runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.agent-runtime
+          tags: ts-harness:${{ steps.tag.outputs.value }}
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ------------------------------------------------------------------
+      # SBOM generation (syft stub – install syft to enable)
+      # ------------------------------------------------------------------
+      - name: Generate SBOM
+        run: |
+          if command -v syft &>/dev/null; then
+            syft ts-harness:${{ steps.tag.outputs.value }} \
+              -o cyclonedx-json=sbom.json \
+              -o spdx-json=sbom-spdx.json
+          else
+            echo "syft not installed – generating stub SBOM"
+            echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > sbom.json
+          fi
+        continue-on-error: true
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sbom-${{ steps.tag.outputs.value }}
+          path: sbom*.json
+          if-no-files-found: ignore
+
+      # ------------------------------------------------------------------
+      # Vulnerability scan (Trivy – continue on findings)
+      # ------------------------------------------------------------------
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ts-harness:${{ steps.tag.outputs.value }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+        continue-on-error: true
+
+      - name: Trivy SARIF output
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ts-harness:${{ steps.tag.outputs.value }}
+          format: sarif
+          output: trivy-results.sarif
+        continue-on-error: true
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+      # ------------------------------------------------------------------
+      # Image signing (cosign stub – configure COSIGN_KEY to enable)
+      # ------------------------------------------------------------------
+      - name: Sign image with cosign (stub)
+        run: |
+          # To enable keyless signing:
+          #   1. Install cosign: https://docs.sigstore.dev/cosign/installation/
+          #   2. Add COSIGN_KEY or use OIDC keyless signing
+          #   3. Push image to a registry and uncomment the cosign sign command below
+          #
+          # cosign sign --yes ts-harness:${{ steps.tag.outputs.value }}
+          echo "cosign signing stub – set COSIGN_KEY secret and push to registry to enable"
+        continue-on-error: true

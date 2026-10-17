@@ -1,0 +1,191 @@
+{
+  "workflow_type": "prd_request",
+  "definition_version": "1.3.0",
+  "display_name": "PRD review",
+  "contracts": {
+    "prd_intake": {
+      "output_schema": {
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "prd_draft": {
+      "output_schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "required": ["result"],
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["prd_markdown"],
+                "properties": {
+                  "prd_markdown": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "required": ["prd_markdown"],
+            "properties": {
+              "prd_markdown": { "type": "string", "minLength": 1 }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "program": {
+    "phase": "prd",
+    "next_phase": null,
+    "required_artifacts": [],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "intake",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "session": {
+    "orchestrator_agent_id": "orchestrator",
+    "phase_tracking": {
+      "intake_step": "intake",
+      "draft_steps": ["draft_prd", "revise_prd"],
+      "gate_steps": ["approve_prd"],
+      "approved_value": "approved"
+    },
+      "artifact_steps": ["draft_prd", "revise_prd"],
+      "artifact_step_prompts": {
+        "draft_prd": "approval",
+        "revise_prd": "approval"
+      },
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "bridge": {
+    "target_workflow_type": null,
+    "artifact_session_key": "approved_artifact",
+    "artifact_input_key": "approved_prd",
+    "confirm_required": true,
+    "bridge_intent_id": "continue_bridge",
+    "signals": [
+      "continue delivery",
+      "create jira",
+      "file tickets",
+      "work orders",
+      "plan work orders",
+      "start work orders"
+    ],
+    "targets": {
+      "jira": {
+        "target_workflow_type": "jira_from_prd",
+        "signals": ["create jira", "file tickets", "jira"]
+      },
+      "work_orders": {
+        "target_workflow_type": "work_orders_from_prd",
+        "signals": ["work orders", "plan work orders", "start work orders"]
+      }
+    }
+  },
+  "stages": [
+    {
+      "name": "intake",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent"],
+      "required_artifacts": ["clarified_requirements"],
+      "contract_ref": "prd_intake",
+      "skill_hints": ["clarify-requirements"],
+      "present_prompt": "intake",
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 600
+      }
+    },
+    {
+      "name": "await_intake_answers",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["intake"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": false,
+      "present_output": false,
+      "wait_external": {
+        "event_type": "channel.intake_response"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["draft_prd"]
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      }
+    },
+    {
+      "name": "draft_prd",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["await_intake_answers"],
+      "allowed_agents": ["pm-agent"],
+      "required_artifacts": ["prd_draft"],
+      "contract_ref": "prd_draft",
+      "skill_hints": ["draft-prd"],
+      "present_prompt": "approval",
+      "input_map": {
+        "clarified_requirements": "$prior.await_intake_answers.output.clarified_requirements",
+        "intake_output": "$prior.intake.output"
+      },
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "approve_prd",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_prd"],
+      "approval_required": true,
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "revise_prd",
+          "agent_id": "pm-agent",
+          "present_prompt": "approval",
+          "source_steps": ["draft_prd", "revise_prd"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments",
+            "revision_number": "$runtime.revision_count:revise_prd"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_prd",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        }
+      },
+      "on_complete": {
+        "hook": "mark_artifact_approved"
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      }
+    }
+  ]
+}

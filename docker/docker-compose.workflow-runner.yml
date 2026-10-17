@@ -1,0 +1,52 @@
+services:
+  workflow-runner:
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.workflow-runner
+    # Shares agent-runtime netns so localhost reaches memory-api and runtime HTTP.
+    # single-replica only; do not scale without changing the deployment model.
+    network_mode: "service:agent-runtime"
+    environment:
+      WORKFLOW_RUNNER_ENABLED: ${WORKFLOW_RUNNER_ENABLED:-false}
+      WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS: ${WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS:-10}
+      WORKFLOW_RUNNER_BATCH_SIZE: ${WORKFLOW_RUNNER_BATCH_SIZE:-5}
+      WORKFLOW_RUNNER_LEASE_SECONDS: ${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}
+      WORKFLOW_RUNNER_DISPATCH_TIMEOUT_SECONDS: ${WORKFLOW_RUNNER_DISPATCH_TIMEOUT_SECONDS:-7200}
+      WORKFLOW_RUNNER_STALE_POLICY: ${WORKFLOW_RUNNER_STALE_POLICY:-block}
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      WORKFLOW_RUNNER_ADAPTER: ${WORKFLOW_RUNNER_ADAPTER:-gateway-http}
+      AGENT_RUNTIME_URL: ${AGENT_RUNTIME_URL:-http://127.0.0.1:18789}
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+      # Merge-readiness system steps (await_pr_checks, review_precheck, merge gates) call GitHub.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKFLOW_DEFINITIONS_DIR: /config/workflows
+      TS_HARNESS_WORKFLOW_DEFINITION_STORE: /workflow-definitions
+      TS_HARNESS_MANAGED_WORKFLOWS_DIR: /workflow-definitions/active
+      TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
+      TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
+      TS_HARNESS_FRAGMENTS_DIR: /config/fragments
+      # Needed so complete_program_phase / advance_program materialize implement
+      # tasks with the real repo_url + base_branch (not ImplementationRepoConfig defaults).
+      TS_HARNESS_ROOT: /app
+      TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
+    volumes:
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/workflows:/config/workflows:ro
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/fragments:/config/fragments:ro
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
+      - ts-harness-workflow-definitions:/workflow-definitions:ro
+    command: ["python3", "/app/scripts/workflow-runner.py"]
+    stop_grace_period: ${WORKFLOW_RUNNER_STOP_GRACE:-120s}
+    restart: unless-stopped
+    depends_on:
+      - agent-runtime
+      - memory-api
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p='/tmp/workflow-runner.tick'; interval=int(os.environ.get('WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS','10')); sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < interval*3 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  ts-harness-workflow-definitions:

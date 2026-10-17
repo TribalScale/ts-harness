@@ -1,0 +1,43 @@
+services:
+  memory-api:
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.memory-api
+    # Share the runtime network namespace so agents reach memory-api at 127.0.0.1:18792
+    network_mode: "service:agent-runtime"
+    environment:
+      TS_HARNESS_DB_HOST: ${TS_HARNESS_DB_HOST:-ts-harness-db}
+      TS_HARNESS_DB_PORT: ${TS_HARNESS_DB_PORT:-5432}
+      TS_HARNESS_DB_USER: ${TS_HARNESS_DB_USER:-ts_harness}
+      TS_HARNESS_DB_NAME: ${TS_HARNESS_DB_NAME:-ts_harness_memory}
+      TS_HARNESS_DB_PASSWORD: ${TS_HARNESS_DB_PASSWORD}
+      PGSSLMODE: ${PGSSLMODE:-require}
+      EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-openai}
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
+      EMBEDDINGS_DIMENSIONS: ${EMBEDDINGS_DIMENSIONS:-1536}
+      CLOUD_PROVIDER: ${CLOUD_PROVIDER:-aws}
+      CLOUD_REGION: ${CLOUD_REGION:-${AWS_REGION:-us-east-1}}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      AWS_REGION: ${CLOUD_REGION:-${AWS_REGION:-us-east-1}}
+      AWS_DEFAULT_REGION: ${CLOUD_REGION:-${AWS_REGION:-us-east-1}}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      SCRIPTS_DIR: /scripts
+      MEMORY_API_PORT: "18792"
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+    volumes:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}:/config:ro
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/scripts:/scripts:ro
+    command: ["python3", "/app/memory-gateway.py"]
+    restart: unless-stopped
+    depends_on:
+      - agent-runtime
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18792/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

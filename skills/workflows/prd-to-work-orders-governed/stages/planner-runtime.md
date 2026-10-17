@@ -1,0 +1,69 @@
+# Stage: Planner (Governed Runtime)
+
+Transform Foundry JSON artifacts into implementation-ready Work Orders.
+
+## Inputs
+
+- `input.approved_prd` — source PRD
+- `input.prior_refinery` — refinery artifacts
+- `input.prior_foundry` — foundry artifacts
+- `input.stage` — must be `planner`
+
+## Outputs (JSON artifacts)
+
+| Key | Content |
+|---|---|
+| `work_orders_markdown` | All work orders (`# WO-001 Title` sections) |
+| `context_graph_markdown` | Dependencies, dependents, shared contracts |
+| `execution_phases_markdown` | Topologically sorted phases |
+
+## Top-level output fields
+
+Also set on the task output (not only inside `artifacts`):
+
+- `work_order_ids`: `["WO-001", "WO-002", ...]`
+- `planner_complete`: `true`
+
+## Phases
+
+1. **Epic extraction** — component epics (`CE-NNN`) and feature epics (`FE-NNN`).
+2. **Work Order slicing** — independently implementable story-level WOs.
+3. **Context graph** — link WOs to blueprints, FRDs, dependencies.
+4. **Execution phasing** — topological sort into phases.
+
+## Work Order Template (inline)
+
+Each WO in `work_orders_markdown`:
+
+```markdown
+# WO-001 Title
+
+## Summary
+...
+
+## Requirements
+(verbatim from FRD)
+
+## In Scope
+...
+
+## Out of Scope
+...
+
+## E2E Acceptance Tests
+Given ... When ... Then ...
+
+## Context Graph
+- Depends on: WO-002
+- Blueprints: FB-001
+- FRDs: FRD-001
+```
+
+## Rules
+
+- Requirements copied verbatim from FRDs in `input.prior_refinery`.
+- Each WO independently implementable unless dependencies are explicit.
+- A fresh coding agent should execute without clarifying questions.
+- Do not silently edit blueprints or FRDs; note issues in `warnings`.
+
+Apply `quality-gates/planner-runtime.md` before returning JSON.

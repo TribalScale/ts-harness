@@ -1,0 +1,334 @@
+"""Admin BFF helpers: inbox aggregate, cron CRUD, auth config, sessions."""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+from urllib.parse import quote
+
+from ts_harness.gateway.auth import AuthContext
+from ts_harness.gateway.cron_store import (
+    cron_config_path,
+    load_cron_file,
+    save_cron_file,
+    validate_cron_job,
+    validate_skill_hints_against_catalog,
+)
+from ts_harness.tools.approvals import get_approval_queue
+
+
+def auth_config_payload(runtime: Any) -> dict[str, Any]:
+    identity = runtime.config.identity
+    allow_static = os.environ.get("TS_HARNESS_ALLOW_STATIC_TOKEN", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if getattr(identity, "provider", "static") == "oidc":
+        issuer = (identity.issuer or "").rstrip("/")
+        client_id = (
+            getattr(identity, "client_id", None)
+            or os.environ.get("OIDC_CLIENT_ID")
+            or ""
+        )
+        authz = (
+            getattr(identity, "authorization_endpoint", None)
+            or os.environ.get("OIDC_AUTHORIZATION_ENDPOINT")
+            or (f"{issuer}/authorize" if issuer else "")
+        )
+        token_ep = (
+            getattr(identity, "token_endpoint", None)
+            or os.environ.get("OIDC_TOKEN_ENDPOINT")
+            or (f"{issuer}/oauth/token" if issuer else "")
+        )
+        return {
+            "mode": "oidc",
+            "issuer": identity.issuer,
+            "client_id": client_id,
+            "authorization_endpoint": authz,
+            "token_endpoint": token_ep,
+            "audience": identity.audience,
+            "scopes": (os.environ.get("OIDC_SCOPES") or "openid profile email").split(),
+            "jwks_url": identity.jwks_url,
+            "allow_static_fallback": allow_static
+            and os.environ.get("TS_HARNESS_OIDC_STATIC_FALLBACK", "false").lower()
+            in {"1", "true", "yes"},
+        }
+    if not allow_static:
+        return {
+            "mode": "disabled",
+            "error": "static token auth disabled; configure identity.provider=oidc",
+            "scopes": [],
+        }
+    return {"mode": "static", "scopes": [], "allow_static_fallback": True}
+
+
+def auth_config_for_request(runtime: Any, auth: Any | None) -> dict[str, Any]:
+    payload = auth_config_payload(runtime)
+    payload["authenticated"] = auth is not None
+    if auth is None:
+        payload["permissions"] = []
+        return payload
+    from ts_harness.policy.permissions import actor_permissions
+
+    payload["permissions"] = sorted(actor_permissions(auth, getattr(runtime, "config", None)))
+    payload["roles"] = [str(role) for role in (getattr(auth, "roles", None) or [])]
+    return payload
+
+
+def is_admin(auth: AuthContext, runtime: Any) -> bool:
+    from ts_harness.policy.permissions import actor_permissions
+
+    return "edit_config" in actor_permissions(auth, getattr(runtime, "config", None))
+
+
+def build_inbox(
+    runtime: Any,
+    auth: AuthContext,
+    *,
+    memory: Any,
+    skills_root: str,
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+
+    if is_admin(auth, runtime):
+        try:
+            from ts_harness.skills.authoring import list_drafts
+
+            drafts = list_drafts(skills_root)
+        except Exception:
+            drafts = []
+        for draft in drafts:
+            skill_id = str(draft.get("id") or draft.get("skill_id") or "")
+            items.append(
+                {
+                    "type": "skill_draft",
+                    "id": skill_id,
+                    "title": skill_id,
+                    "subtitle": f"Proposed skill · {draft.get('approval_status') or 'draft'}",
+                    "created_at": draft.get("updated_at") or draft.get("created_at"),
+                    "href": f"/#/inbox/skill_draft/{quote(skill_id, safe='')}",
+                    "meta": draft,
+                }
+            )
+
+    for approval in list(get_approval_queue()._requests.values()):
+        data = approval.__dict__ if hasattr(approval, "__dict__") else dict(approval)
+        approval_id = str(data.get("approval_id") or data.get("id") or "")
+        if data.get("status") not in {None, "pending"}:
+            continue
+        items.append(
+            {
+                "type": "tool_approval",
+                "id": approval_id,
+                "title": str(data.get("tool_name") or "tool"),
+                "subtitle": f"{data.get('agent_id') or 'agent'} · tool approval",
+                "created_at": data.get("requested_at"),
+                "href": f"/#/inbox/tool_approval/{quote(approval_id, safe='')}",
+                "meta": data,
+            }
+        )
+
+    try:
+        listed = memory.list_programs(tenant_id=auth.tenant_id, status=None, limit=100, offset=0)
+    except Exception:
+        listed = {"programs": []}
+    for program in list(listed.get("programs") or []):
+        program_id = str(program.get("id") or "")
+        if not program_id:
+            continue
+        if program.get("status") not in {"running", "blocked"}:
+            continue
+        try:
+            status = memory.get_program_status(program_id)
+        except Exception:
+            continue
+        waiting = status.get("waiting_on") or {}
+        if waiting.get("kind") != "approval":
+            continue
+        match = waiting.get("match") or {}
+        task_id = str(match.get("task_id") or "")
+        step = str(match.get("step_name") or status.get("active_step") or "gate")
+        items.append(
+            {
+                "type": "workflow_gate",
+                "id": task_id or program_id,
+                "title": step,
+                "subtitle": f"Program {program.get('display_name') or program.get('summary') or program_id}",
+                "created_at": waiting.get("since"),
+                "href": f"/#/inbox/workflow_gate/{quote(task_id or program_id, safe='')}",
+                "meta": {
+                    "program_id": program_id,
+                    "task_id": task_id,
+                    "step_name": step,
+                    "waiting_on": waiting,
+                    "recommended_action": status.get("recommended_action"),
+                },
+            }
+        )
+
+    items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {"items": items, "total": len(items)}
+
+
+def build_portfolio(
+    memory: Any,
+    auth: AuthContext,
+    *,
+    status: str | None = None,
+    phase: str | None = None,
+    owner: str | None = None,
+    waiting_hours: float | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Root programs with their wait, escalation and recommended action for the portfolio board."""
+    listed = memory.list_programs(
+        tenant_id=auth.tenant_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+        roots_only=True,
+        phase=phase,
+        owner=owner,
+    )
+    rows: list[dict[str, Any]] = []
+    for program in list(listed.get("programs") or []):
+        program_id = str(program.get("id") or "")
+        try:
+            program_status = memory.get_program_status(program_id) if program_id else {}
+        except Exception:
+            program_status = {}
+        waiting = program_status.get("waiting_on") or {}
+        age = waiting.get("age_seconds")
+        rows.append(
+            {
+                **program,
+                "owner": program.get("requester_actor_id"),
+                "phase": program.get("current_phase"),
+                "status": program_status.get("status") or program.get("status"),
+                "waiting_on_kind": waiting.get("kind"),
+                "waiting_on_event": waiting.get("event_type"),
+                "wait_age_seconds": age,
+                "escalated": bool(waiting.get("escalated")),
+                "recommended_action": program_status.get("recommended_action"),
+                "compensation_status": (program.get("artifacts") or {}).get("compensation_status"),
+            }
+        )
+    if waiting_hours is not None and waiting_hours > 0:
+        threshold = waiting_hours * 3600
+        rows = [row for row in rows if (row.get("wait_age_seconds") or 0) >= threshold]
+    return {
+        "programs": rows,
+        "total": listed.get("total", len(rows)),
+        "limit": listed.get("limit", limit),
+        "offset": listed.get("offset", offset),
+    }
+
+
+def list_cron_jobs_admin(runtime: Any) -> dict[str, Any]:
+    jobs = runtime.scheduler.list_cron_jobs()
+    return {"jobs": jobs, "total": len(jobs), "path": str(cron_config_path())}
+
+
+def create_cron_job_admin(runtime: Any, body: dict[str, Any]) -> dict[str, Any]:
+    jobs = load_cron_file()
+    names = {str(j.get("name")) for j in jobs}
+    job = validate_cron_job(body, existing_names=names)
+    hints = list(job.get("skill_hints") or [])
+    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+    jobs.append(job)
+    save_cron_file(jobs)
+    runtime.scheduler.replace_cron_jobs(jobs)
+    return {"job": job}
+
+
+def update_cron_job_admin(runtime: Any, name: str, body: dict[str, Any]) -> dict[str, Any]:
+    jobs = load_cron_file()
+    idx = next((i for i, j in enumerate(jobs) if str(j.get("name")) == name), -1)
+    if idx < 0:
+        raise KeyError(f"cron job not found: {name}")
+    merged = {**jobs[idx], **body, "name": name}
+    job = validate_cron_job(merged, existing_names=None)
+    hints = list(job.get("skill_hints") or [])
+    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+    jobs[idx] = job
+    save_cron_file(jobs)
+    runtime.scheduler.replace_cron_jobs(jobs)
+    return {"job": job}
+
+
+def delete_cron_job_admin(runtime: Any, name: str) -> dict[str, Any]:
+    jobs = load_cron_file()
+    kept = [j for j in jobs if str(j.get("name")) != name]
+    if len(kept) == len(jobs):
+        raise KeyError(f"cron job not found: {name}")
+    save_cron_file(kept)
+    runtime.scheduler.replace_cron_jobs(kept)
+    return {"deleted": name}
+
+
+def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None = "web") -> dict[str, Any]:
+    from ts_harness.agent.sessions import get_session_store
+
+    store = get_session_store()
+    sessions = store.list_for_tenant(auth.tenant_id)
+    if channel:
+        sessions = [
+            s
+            for s in sessions
+            if s.source == channel or (s.routing_key or "").startswith(f"{channel}:")
+        ]
+    # Prefer actor-owned web sessions when available
+    actor = auth.actor_id
+    if actor:
+        owned = [s for s in sessions if actor in (s.routing_key or "") or s.agent_id]
+        if owned:
+            sessions = sessions
+    payload = [
+        {
+            "session_id": s.session_id,
+            "tenant_id": s.tenant_id,
+            "agent_id": s.agent_id,
+            "source": s.source,
+            "routing_key": s.routing_key,
+            "started_at": getattr(s, "started_at", None),
+        }
+        for s in sorted(
+            sessions,
+            key=lambda s: str(getattr(s, "started_at", None) or ""),
+            reverse=True,
+        )[:100]
+    ]
+    return {"sessions": payload, "total": len(payload)}
+
+
+def search_sessions_admin(
+    auth: AuthContext, *, q: str, limit: int = 20
+) -> dict[str, Any]:
+    from dataclasses import asdict
+
+    from ts_harness.agent.transcript import get_transcript_store
+
+    hits = get_transcript_store().search(
+        tenant_id=auth.tenant_id, query=q, limit=limit
+    )
+    return {"hits": [asdict(hit) for hit in hits]}
+
+
+def session_messages_admin(session_id: str, auth: AuthContext) -> dict[str, Any]:
+    from ts_harness.agent.sessions import get_session_store
+    from ts_harness.agent.transcript import get_transcript_store
+
+    session = get_session_store().get(session_id)
+    # A cross-tenant session is reported as missing so callers cannot probe for
+    # session existence in other tenants.
+    if session is None or session.tenant_id != auth.tenant_id:
+        raise KeyError("session not found")
+    messages = get_transcript_store().load_messages(session_id)
+    return {
+        "session_id": session_id,
+        "agent_id": session.agent_id,
+        "source": session.source,
+        "messages": messages,
+    }

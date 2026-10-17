@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "1.0.0",
+  "skillName": "prd-to-work-orders",
+  "skillVersion": "0.1.0",
+  "projectName": "Example Project",
+  "sourcePrd": {
+    "path": "PRD.md",
+    "sha256": "replace-with-source-hash",
+    "lastProcessedAt": "2026-06-08T00:00:00Z"
+  },
+  "stages": {
+    "refinery": {
+      "status": "complete",
+      "version": "0.1.0",
+      "artifacts": [
+        {
+          "path": "docs/refinery/feature-tree.md",
+          "sha256": "replace-with-artifact-hash",
+          "version": "1.0.0"
+        }
+      ],
+      "qualityGates": {
+        "status": "pass",
+        "report": "docs/refinery/phase-5-cross-frd-consistency.md"
+      },
+      "reviews": [
+        {
+          "path": "docs/prd-to-work-orders/reviews/refinery-review.md",
+          "status": "pass"
+        }
+      ],
+      "openAssumptions": [],
+      "humanApprovals": [
+        "APPROVAL-001"
+      ]
+    },
+    "foundry": {
+      "status": "not_started",
+      "version": null,
+      "artifacts": [],
+      "qualityGates": null,
+      "reviews": [],
+      "openAssumptions": [],
+      "humanApprovals": []
+    },
+    "planner": {
+      "status": "not_started",
+      "version": null,
+      "artifacts": [],
+      "qualityGates": null,
+      "reviews": [],
+      "openAssumptions": [],
+      "humanApprovals": []
+    },
+    "validator": {
+      "status": "not_started",
+      "version": null,
+      "artifacts": [],
+      "qualityGates": null,
+      "reviews": [],
+      "openAssumptions": [],
+      "humanApprovals": []
+    }
+  },
+  "lineage": [
+    {
+      "timestamp": "2026-06-08T00:00:00Z",
+      "action": "refinery_complete",
+      "stage": "refinery",
+      "summary": "Initial Refinery output generated from PRD.md."
+    }
+  ]
+}

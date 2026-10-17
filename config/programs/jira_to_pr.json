@@ -1,0 +1,57 @@
+{
+  "program_type": "jira_to_pr",
+  "definition_version": "1.0.0",
+  "display_name": "Jira to PR",
+  "startable_nodes": ["pick", "implement"],
+  "config": {
+    "ticket_picker": {
+      "assignee": "mapped_user",
+      "statuses": ["To Do", "Open", "Ready for Dev", "In Progress"]
+    }
+  },
+  "nodes": [
+    {
+      "id": "pick",
+      "default_workflow_type": "pick_assigned_jira",
+      "workflow_variants": [],
+      "required_artifacts": [],
+      "produces_artifacts": ["jira_issue_key", "jira_project_key"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "jira_issue_key", "target": "jira_issue_key" }
+      ],
+      "completion_adapter": "extract_pick_ticket_outputs",
+      "terminal": false
+    },
+    {
+      "id": "implement",
+      "default_workflow_type": "implement_jira_ticket",
+      "workflow_variants": [],
+      "required_artifacts": ["jira_issue_key"],
+      "produces_artifacts": ["pr_url", "pr_urls", "qa_status", "qa_summary", "qa_evidence"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "jira_issue_key", "target": "jira_issue_key" }
+      ],
+      "completion_adapter": "extract_implement_outputs",
+      "terminal": true,
+      "complete_channel_text": "This ticket is merged. Say yes if you want the remaining assigned tickets in this project."
+    }
+  ],
+  "edges": [
+    {
+      "source": "pick",
+      "target": "implement",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["implement this ticket", "start this ticket"]
+    },
+    {
+      "source": "implement",
+      "target": "pick",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["next ticket", "show my tickets", "remaining tickets"]
+    }
+  ]
+}

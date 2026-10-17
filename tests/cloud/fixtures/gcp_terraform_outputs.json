@@ -1,0 +1,20 @@
+{
+  "cloud_provider": "gcp",
+  "cloud_region": "us-central1",
+  "compute_resource_id": "projects/example-gcp-project/zones/us-central1-a/instances/ts-harness",
+  "data_disk_resource_id": "projects/example-gcp-project/zones/us-central1-a/disks/ts-harness-data",
+  "data_disk_device_hint": "/dev/disk/by-id/google-ts-harness-data",
+  "secret_prefix": "ts-harness",
+  "managed_db_host": "10.1.2.3",
+  "managed_db_port": 5432,
+  "managed_db_name": "ts_harness",
+  "managed_db_user": "ts_harness",
+  "managed_db_credential_ref": "projects/example-gcp-project/secrets/ts-harness-managed-db/versions/latest",
+  "credentials_encryption_key_id": "projects/example-gcp-project/locations/us-central1/keyRings/ts-harness/cryptoKeys/agent-credentials",
+  "runtime_private_url": "http://100.64.0.20:18789",
+  "operator_connection_command": "gcloud compute ssh artemis@ts-harness --project=example-gcp-project --zone=us-central1-a -- -p 2222",
+  "monitoring_namespace": "TSHarness",
+  "notification_channel_id": "projects/example-gcp-project/notificationChannels/123",
+  "instance_name": "ts-harness",
+  "external_ip": "203.0.113.20"
+}

@@ -1,0 +1,67 @@
+# Example GCP install-time configuration.
+# Select exactly one provider per installation (aws OR gcp, never both).
+cloud_provider: gcp
+environment: prod
+project_name: ts-harness
+cloud_region: us-central1
+cloud_zone: us-central1-a
+gcp_project_id: example-gcp-project
+secret_prefix: ts-harness
+notification_email: ops@example.com
+monthly_budget_limit: 500
+
+vm:
+  instance_type: e2-medium
+  root_volume_size_gb: 40
+  data_disk_size_gb: 60
+  admin_username: artemis
+  ssh_key_name: ts-harness-prod
+  ssh_allowed_cidrs:
+    - 10.0.0.0/8
+  # tailscale_authkey_secret_ref: projects/example-gcp-project/secrets/tailscale/versions/latest
+
+managed_db:
+  instance_class: db-custom-1-3840
+  db_name: ts_harness
+  db_username: ts_harness
+  backup_retention_days: 7
+  # multi_az defaults to true (Cloud SQL REGIONAL). Set false for ZONAL on a dev account.
+  skip_final_snapshot: false
+  engine_version: "16"
+
+terraform_state:
+  backend_type: gcs
+  bucket: example-ts-harness-tfstate
+  key: prod/gcp/terraform.tfstate
+
+runtime:
+  agent_runtime_version: "0.1.0"
+  enterprise_repo_url: https://github.com/TribalScale/ts-harness.git
+  multi_agent_enabled: true
+  workflow_runner_enabled: true
+  workflow_runner_poll_interval_seconds: 10
+  workflow_runner_batch_size: 5
+  workflow_runner_lease_seconds: 1800
+  workflow_runner_stale_policy: block
+  embeddings_provider: gemini
+  embeddings_model: text-embedding-004
+  embeddings_dimensions: 768
+  embeddings_fallback: none
+  agent_timezone: UTC
+  implement_work_orders_repo_url: ""
+  implement_work_orders_base_branch: main
+  slack_standup_channel: ""
+  slack_ops_channel: ""
+  slack_dev_channel: ""
+  slack_team_channel: ""
+  slack_marketing_channel: ""
+  slack_sales_channel: ""
+  approved_slack_channels: []
+  # Admin identity (Auth0/OIDC). Leave static unless you set all oidc_* fields.
+  identity_provider: static
+  oidc_issuer: ""
+  oidc_audience: ""
+  oidc_jwks_url: ""
+  oidc_client_id: ""
+  oidc_authorization_endpoint: ""
+  oidc_token_endpoint: ""

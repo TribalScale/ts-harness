@@ -1,0 +1,176 @@
+services:
+  sandbox-worker:
+    image: ts-harness-sandbox:latest
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.sandbox
+    environment:
+      SANDBOX_WORKER_PORT: 18880
+      SANDBOX_EGRESS_POLICY: ${SANDBOX_EGRESS_POLICY:-deny}
+      SANDBOX_WORKER_TOKEN: ${SANDBOX_WORKER_TOKEN:-}
+    restart: unless-stopped
+
+  agent-runtime:
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.agent-runtime
+    ports:
+      - "${AGENT_RUNTIME_PORT:-18789}:18789"
+    environment:
+      AGENT_RUNTIME_HOST: 0.0.0.0
+      AGENT_RUNTIME_PORT: 18789
+      # GATEWAY_TOKEN and provider secrets load from env_file (.env) to avoid blank compose overrides.
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
+      TS_HARNESS_ROOT: /app
+      TS_HARNESS_WORKFLOW_DEFINITION_STORE: /workflow-definitions
+      TS_HARNESS_MANAGED_WORKFLOWS_DIR: /workflow-definitions/active
+      TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
+      TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
+      SKILLS_DIR: /skills
+      SKILLS_MANAGED_DIR: /skills-managed
+      RUNTIME_FAKE_PROVIDER: ${RUNTIME_FAKE_PROVIDER:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      MODEL_API_MODE: ${MODEL_API_MODE:-openai}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_SOCKET_MODE: ${SLACK_SOCKET_MODE:-true}
+      SLACK_REQUIRE_MENTION: ${SLACK_REQUIRE_MENTION:-true}
+      SLACK_REACTION_MODE: ${SLACK_REACTION_MODE:-own}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+      TS_HARNESS_CRON_CONFIG: /config/runtime-cron-jobs.json
+      TS_HARNESS_SESSION_STORE: /state/sessions.jsonl
+      TS_HARNESS_APPROVAL_STORE: /state/approvals.jsonl
+      TS_HARNESS_AUDIT_LOG: /state/audit.jsonl
+      TS_HARNESS_SCHEDULER_STATE: /state/scheduler.json
+      TS_HARNESS_CHANNEL_DEDUP: /state/channel-dedup.txt
+      TS_HARNESS_DELEGATION_STATE: /state/delegation.json
+      TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
+      SANDBOX_STRICT: ${SANDBOX_STRICT:-true}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
+      SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://sandbox-worker:18880}
+      SANDBOX_WORKER_TOKEN: ${SANDBOX_WORKER_TOKEN:-}
+      # Coding-backend secrets (CODING_BACKEND_*, GITHUB_TOKEN) load from env_file only.
+      TS_HARNESS_TOOLS_ROOT: ${TS_HARNESS_TOOLS_ROOT:-/tools}
+      # Long deliver/OpenCode dispatches must outlive the default 300s API timeout.
+      TS_HARNESS_REQUEST_TIMEOUT: ${TS_HARNESS_REQUEST_TIMEOUT:-300}
+      TS_HARNESS_DISPATCH_REQUEST_TIMEOUT: ${TS_HARNESS_DISPATCH_REQUEST_TIMEOUT:-7200}
+    env_file:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env
+    volumes:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
+      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
+      # rw: admin-created skill drafts and approvals (single-replica only)
+      - ts-harness-skills-managed:/skills-managed:rw
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
+      - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
+      - ts-harness-state:/state
+      - ts-harness-workflow-definitions:/workflow-definitions:rw
+    depends_on:
+      - sandbox-worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:18789/healthz', timeout=5)); sys.exit(0 if data.get('status') != 'unavailable' else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Production profile – requires SESSION_DB_URL for durable session storage.
+  # Activate with: docker compose --profile prod up
+  # ---------------------------------------------------------------------------
+  agent-runtime-prod:
+    profiles: [prod]
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.agent-runtime
+    ports:
+      - "${AGENT_RUNTIME_PORT:-18789}:18789"
+    environment:
+      AGENT_RUNTIME_HOST: 0.0.0.0
+      AGENT_RUNTIME_PORT: 18789
+      # GATEWAY_TOKEN loads from env_file (.env) written by bootstrap phases 12/14.
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
+      TS_HARNESS_ROOT: /app
+      TS_HARNESS_WORKFLOW_DEFINITION_STORE: /workflow-definitions
+      TS_HARNESS_MANAGED_WORKFLOWS_DIR: /workflow-definitions/active
+      TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
+      TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
+      SKILLS_DIR: /skills
+      SKILLS_MANAGED_DIR: /skills-managed
+      RUNTIME_FAKE_PROVIDER: "false"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      MODEL_API_MODE: ${MODEL_API_MODE:-openai}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_SOCKET_MODE: ${SLACK_SOCKET_MODE:-true}
+      SLACK_REQUIRE_MENTION: ${SLACK_REQUIRE_MENTION:-true}
+      SLACK_REACTION_MODE: ${SLACK_REACTION_MODE:-own}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+      TS_HARNESS_CRON_CONFIG: /config/runtime-cron-jobs.json
+      # Prod: SESSION_DB_URL is required – file-based store is not used.
+      TS_HARNESS_SESSION_DB_URL: ${SESSION_DB_URL:-}
+      TS_HARNESS_SESSION_POOL_MIN: ${TS_HARNESS_SESSION_POOL_MIN:-2}
+      TS_HARNESS_SESSION_POOL_MAX: ${TS_HARNESS_SESSION_POOL_MAX:-10}
+      TS_HARNESS_APPROVAL_STORE: /state/approvals.jsonl
+      TS_HARNESS_AUDIT_LOG: /state/audit.jsonl
+      TS_HARNESS_SCHEDULER_STATE: /state/scheduler.json
+      TS_HARNESS_CHANNEL_DEDUP: /state/channel-dedup.txt
+      TS_HARNESS_DELEGATION_STATE: /state/delegation.json
+      SANDBOX_STRICT: "true"
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
+      SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://sandbox-worker:18880}
+      SANDBOX_WORKER_TOKEN: ${SANDBOX_WORKER_TOKEN:-}
+      # Coding-backend secrets (CODING_BACKEND_*, GITHUB_TOKEN) load from env_file only.
+      TS_HARNESS_TOOLS_ROOT: ${TS_HARNESS_TOOLS_ROOT:-/tools}
+      TS_HARNESS_REQUEST_TIMEOUT: ${TS_HARNESS_REQUEST_TIMEOUT:-300}
+      TS_HARNESS_DISPATCH_REQUEST_TIMEOUT: ${TS_HARNESS_DISPATCH_REQUEST_TIMEOUT:-7200}
+    env_file:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env
+    volumes:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
+      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
+      # rw: admin-created skill drafts and approvals (single-replica only)
+      - ts-harness-skills-managed:/skills-managed:rw
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
+      - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
+      - ts-harness-state:/state
+      - ts-harness-workflow-definitions:/workflow-definitions:rw
+    depends_on:
+      - sandbox-worker
+    restart: always
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:18789/healthz', timeout=5)); sys.exit(0 if data.get('status') != 'unavailable' else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  ts-harness-state:
+  ts-harness-workflow-definitions:
+  ts-harness-skills-managed:

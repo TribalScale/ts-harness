@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ts-harness:schemas:prd-to-work-orders:manifest",
+  "title": "PRD to Work Orders Manifest",
+  "type": "object",
+  "required": ["schemaVersion", "skillName", "skillVersion", "projectName", "sourcePrd", "stages", "lineage"],
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "skillName": { "const": "prd-to-work-orders" },
+    "skillVersion": { "type": "string" },
+    "projectName": { "type": "string" },
+    "sourcePrd": {
+      "type": "object",
+      "required": ["path", "sha256", "lastProcessedAt"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string" },
+        "lastProcessedAt": { "type": "string" }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "required": ["refinery", "foundry", "planner", "validator"],
+      "properties": {
+        "refinery": { "$ref": "#/$defs/stage" },
+        "foundry": { "$ref": "#/$defs/stage" },
+        "planner": { "$ref": "#/$defs/stage" },
+        "validator": { "$ref": "#/$defs/stage" }
+      }
+    },
+    "lineage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "action", "stage"],
+        "properties": {
+          "timestamp": { "type": "string" },
+          "action": { "type": "string" },
+          "stage": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "required": ["status", "version", "artifacts", "qualityGates", "openAssumptions", "humanApprovals"],
+      "properties": {
+        "status": {
+          "enum": ["not_started", "in_progress", "complete", "stale", "blocked"]
+        },
+        "version": {
+          "type": ["string", "null"]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string" },
+              "sha256": { "type": "string" },
+              "version": { "type": "string" }
+            }
+          }
+        },
+        "qualityGates": {
+          "type": ["object", "null"],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "not_run"] },
+            "report": { "type": "string" }
+          }
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "status"],
+            "properties": {
+              "path": { "type": "string" },
+              "status": { "enum": ["pass", "fail", "not_run"] }
+            }
+          }
+        },
+        "openAssumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "humanApprovals": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

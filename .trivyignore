@@ -1,0 +1,16 @@
+# Accepted image-scan findings. Every entry needs a reason and an expiry date;
+# Trivy reports the finding again once the date passes.
+
+# The four entries below are libraries vendored inside pip 26.2.1 (pip/_vendor/vendor.txt)
+# in the pip-audit tool environment at /opt/uv-tools/pip-audit. pip-audit needs pip to
+# resolve requirements targets, 26.2.1 is the latest pip release, and the installed
+# msgpack/urllib3 packages in both environments are already the fixed versions
+# (docker/agent-runtime-constraints.txt). Remove these once pip ships updated vendored copies.
+
+# msgpack 1.1.2: out-of-bounds read on Unpacker reuse (pip only unpacks its own HTTP cache)
+GHSA-6v7p-g79w-8964 exp:2027-01-31
+# setuptools 70.3.0: path traversal in PackageIndex.download (pip does not use PackageIndex)
+CVE-2025-47273 exp:2027-01-31
+# urllib3 2.7.0: pip's vendored HTTP client
+CVE-2026-97687 exp:2027-01-31
+CVE-2026-97689 exp:2027-01-31

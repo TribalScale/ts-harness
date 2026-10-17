@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ts-harness:schemas:prd-to-work-orders:drift-report",
+  "title": "Drift Report Contract",
+  "type": "object",
+  "required": ["id", "date", "scope", "phase", "status", "items", "summary"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^DR-[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "status": {
+      "enum": ["Clean", "Minor drift", "Major drift", "Mixed drift"]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "expected",
+          "actual",
+          "impact",
+          "correctiveAction"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^DRIFT-[0-9]{3}$"
+          },
+          "severity": {
+            "enum": ["Minor", "Major"]
+          },
+          "category": {
+            "enum": ["Data model", "Contract", "AC coverage", "Boundary", "Naming", "ADR", "Spec drift", "Intent drift"]
+          },
+          "expected": {
+            "type": "object",
+            "required": ["source", "specification"],
+            "properties": {
+              "source": { "type": "string" },
+              "specification": { "type": "string" }
+            }
+          },
+          "actual": {
+            "type": "object",
+            "required": ["file", "description"],
+            "properties": {
+              "file": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "impact": { "type": "string" },
+          "correctiveAction": { "type": "string" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["minor", "major", "total"],
+      "properties": {
+        "minor": { "type": "integer", "minimum": 0 },
+        "major": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

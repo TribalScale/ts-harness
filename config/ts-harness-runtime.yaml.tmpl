@@ -1,0 +1,551 @@
+gateway:
+  token: "{{GATEWAY_TOKEN}}"
+  allowed_origins:
+    - "{{CONTROL_UI_ALLOWED_ORIGIN}}"
+  single_tenant_mode: true
+  default_tenant_id: default
+
+# identity.provider: static (dev token) or oidc (production SSO)
+identity:
+  # departments:
+  #   lead@example.com: engineering
+  provider: "{{IDENTITY_PROVIDER}}"
+  issuer: "{{OIDC_ISSUER}}"
+  audience: "{{OIDC_AUDIENCE}}"
+  jwks_url: "{{OIDC_JWKS_URL}}"
+  client_id: "{{OIDC_CLIENT_ID}}"
+  authorization_endpoint: "{{OIDC_AUTHORIZATION_ENDPOINT}}"
+  token_endpoint: "{{OIDC_TOKEN_ENDPOINT}}"
+  scim_enabled: false
+  jira_account_ids: {}
+
+tenants:
+  - id: default
+    display_name: Default Tenant
+    enabled_connectors:
+      - slack
+      - mcp-atlassian
+      - google-workspace
+    data_residency: us
+
+connectors:
+  google-workspace:
+    enabled: true
+    auth:
+      delegation:
+        credentials_secret: google-workspace-sa-json
+        default_impersonate_email: "{{GOOGLE_WORKSPACE_DEFAULT_EMAIL}}"
+      oauth:
+        client_id_secret: google-oauth-client-id
+        client_secret_secret: google-oauth-client-secret
+        callback_url: "{{GOOGLE_OAUTH_CALLBACK_URL}}"
+        kms_key_id: "{{CREDENTIALS_ENCRYPTION_KEY_ID}}"
+    accounts:
+      comms:
+        impersonate_email: "{{GOOGLE_COMMS_EMAIL}}"
+      marketing:
+        impersonate_email: "{{GOOGLE_MARKETING_EMAIL}}"
+      sales:
+        impersonate_email: "{{GOOGLE_SALES_EMAIL}}"
+      pm:
+        impersonate_email: "{{GOOGLE_PM_EMAIL}}"
+    artifact_publish:
+      enabled: true
+      folder_id: "{{GOOGLE_DELIVERY_ARTIFACTS_FOLDER_ID}}"
+      min_chars: 3000
+      chunk_chars: 50000
+      library:
+        enabled: true
+        publish_on: present
+        share_folder_with_requester: true
+        program_subfolder: programs
+        step_phase_map:
+          prd_request:
+            draft_prd: prd
+            revise_prd: prd
+          work_orders_from_prd:
+            refine_requirements: refinery
+            design_blueprints: foundry
+            plan_work_orders: planner
+    scopes:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/documents
+
+sandbox:
+  mode: docker
+  backend: docker
+  cpu_limit: 1.0
+  memory_mb: 512
+  timeout_seconds: 300
+  egress_policy: deny
+
+policy:
+  approval_required_tools:
+    - exec
+    - write_file
+    - delegate_task
+    - google_workspace_gmail_send
+    - google_workspace_calendar_create
+    - google_workspace_calendar_update
+    - google_workspace_calendar_cancel
+  channel_ingress_deny:
+    - exec
+    - write_file
+    - delegation
+    - workflow_update
+  delegation_auto_allow_agents:
+    - pm-agent
+    - analyst-agent
+  budget_warn_usd: 50.0
+  budget_hard_stop_usd: 100.0
+  model_allowlist:
+    review-agent:
+      - openai/gpt-6-astra
+    qa-agent:
+      - openai/gpt-6-astra
+
+implementation:
+  coding_backend: opencode
+  tools_root: "/tools"
+  backends:
+    opencode:
+      version: "{{OPENCODE_VERSION}}"
+      binary: opencode
+      provider: "{{CODING_BACKEND_PROVIDER}}"
+      auth_env: CODING_BACKEND_API_KEY
+      model: "{{CODING_BACKEND_MODEL}}"
+      run_args: ["run", "--auto"]
+  repos:
+    implement_work_orders:
+      url: "{{IMPLEMENT_WORK_ORDERS_REPO_URL}}"
+      base_branch: "{{IMPLEMENT_WORK_ORDERS_BASE_BRANCH}}"
+      clone_depth: 1
+    implement_jira_ticket:
+      url: "{{IMPLEMENT_JIRA_TICKET_REPO_URL}}"
+      base_branch: "{{IMPLEMENT_JIRA_TICKET_BASE_BRANCH}}"
+      clone_depth: 1
+
+toolsets:
+  core-read:
+    - recall_memory
+    - read_file
+    - session_status
+    - remember_memory
+    - sessions_list
+    - sessions_history
+    - search_sessions
+    - read_skill_reference
+  core-write:
+    - write_file
+    - patch_file
+  terminal:
+    - exec
+  coding-backend:
+    - run_coding_backend
+  workflow:
+    - workflow_update
+  mcp: []
+  google-workspace: []
+  google-workspace-docs:
+    - google_workspace_drive_search
+    - google_workspace_drive_get
+    - google_workspace_drive_create
+    - google_workspace_docs_read
+    - google_workspace_docs_append
+  channel:
+    - channel_send
+  delegation:
+    - delegate_task
+    - propose_delegate_task
+  channel-chat:
+    - propose_delegate_task
+    - propose_start_workflow
+    - propose_continue_delivery
+    - propose_bridge_workflow
+    - propose_set_program_project
+    - propose_link_program
+    - unlink_program
+    - set_program_autoshare
+    - workflow_status
+  skill-authoring:
+    - propose_skill
+  program-builder:
+    - builder_catalog
+    - propose_program_bundle
+  workflow-promotion:
+    - propose_start_workflow
+    - start_workflow
+    - propose_continue_delivery
+    - continue_delivery
+    - propose_bridge_workflow
+    - bridge_workflow
+    - workflow_status
+    - workflow_approve
+    - workflow_reject
+    - workflow_reject_with_feedback
+    - cancel_workflow
+    - resume_external_event
+    - propose_set_program_project
+    - set_program_project
+    - propose_link_program
+    - link_program
+    - unlink_program
+    - set_program_autoshare
+
+bindings:
+  slack: orchestrator
+  discord: orchestrator
+  telegram: orchestrator
+
+program_builder:
+  agent_id: builder-agent
+
+program_defaults:
+  repo_picker:
+    repos: []
+  jira_filing:
+    default_issue_type: Story
+    issue_type_by_project: {}
+  ticket_picker:
+    assignee: mapped_user
+    statuses:
+      - To Do
+      - Open
+      - Ready for Dev
+      - In Progress
+
+routing:
+  default: ad_hoc_delegate
+  intents:
+    - id: governed_prd
+      workflow_type: prd_request
+      signals: ["create a prd", "create prd", "draft prd", "write a prd", "product requirements document"]
+      exclude: ["quick", "rough draft", "no approval"]
+      orchestrator_hint: >
+        User request requires a governed workflow. Call propose_start_workflow
+        with workflow_type=prd_request. Do not call propose_delegate_task.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+        deny_start_workflow_types: [governed_delivery]
+    - id: informal_prd
+      delegate_agent: pm-agent
+      signals: ["quick prd", "rough outline", "rough draft", "quick draft", "no approval"]
+      policy:
+        mode: require_delegate
+        deny_start_workflow_types: [prd_request]
+    - id: content_to_jira
+      program_type: content_to_jira_work_orders
+      entry_phase: intake
+      signals: ["plan work from this content", "content to work orders", "file work orders as jira"]
+      orchestrator_hint: >
+        User wants the decoupled planning program. Call propose_start_program
+        with program_type=content_to_jira_work_orders and entry_phase=intake.
+        Do not call propose_delegate_task or start software_delivery.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: bug_to_jira
+      program_type: bug_to_jira_work_orders
+      entry_phase: bug_intake
+      signals: ["file this bug", "investigate this error", "bug report", "production incident", "fix bug", "regression", "broken", "error"]
+      exclude: ["what error", "error handling"]
+      orchestrator_hint: >
+        User wants a bug filed as one unassigned Jira Bug. Call propose_start_program
+        with program_type=bug_to_jira_work_orders and entry_phase=bug_intake.
+        Do not call propose_delegate_task or start software_delivery.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: jira_to_pr
+      program_type: jira_to_pr
+      entry_phase: pick
+      signals: ["my tickets", "pick up my jira", "implement TFS-"]
+      orchestrator_hint: >
+        User wants the decoupled implement program. Call propose_start_program
+        with program_type=jira_to_pr. If they pasted a ticket key, use
+        entry_phase=implement and artifacts.jira_issue_key. Otherwise entry_phase=pick.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+    - id: code_intake
+      signals: ["open pr", "refactor", "change the"]
+      orchestrator_hint: >
+        Vague code request. Ask once whether this is a bug or a feature.
+        Do not draft, do not call propose_delegate_task, and do not start software_delivery.
+        After they answer, call propose_start_program with
+        program_type=bug_to_jira_work_orders and entry_phase=bug_intake, or
+        program_type=content_to_jira_work_orders and entry_phase=intake.
+      policy:
+        mode: require_workflow
+        deny_tools: [propose_delegate_task, delegate_task]
+        allow_program_types: [bug_to_jira_work_orders, content_to_jira_work_orders]
+
+mcp_servers:
+  atlassian:
+    transport: stdio
+    command: mcporter
+    enabled: true
+
+agents:
+  list:
+    - id: orchestrator
+      default: true
+      workspace: /workspace/orchestrator
+      model: openai/gpt-4o
+      skills:
+        - orchestrator
+        - memory-api
+        - workflow
+        - workflows
+        - governed-workflows
+        - cost-awareness
+        - audit-logging
+      toolsets:
+        - core-read
+        - workflow
+        - delegation
+        - channel-chat
+        - workflow-promotion
+      tools:
+        allow:
+          - recall_memory
+          - read_file
+          - session_status
+          - remember_memory
+          - sessions_list
+          - sessions_history
+          - search_sessions
+          - delegate_task
+          - propose_delegate_task
+          - workflow_update
+          - propose_start_workflow
+          - start_workflow
+          - propose_start_program
+          - start_program
+          - propose_advance_program
+          - advance_program
+          - propose_set_program_project
+          - set_program_project
+          - propose_link_program
+          - link_program
+          - unlink_program
+          - set_program_autoshare
+          - program_status
+          - propose_continue_delivery
+          - continue_delivery
+          - propose_bridge_workflow
+          - bridge_workflow
+          - workflow_status
+          - workflow_approve
+          - workflow_reject
+          - workflow_reject_with_feedback
+          - cancel_workflow
+          - resume_external_event
+        deny:
+          - exec
+          - write_file
+          - patch_file
+      subagents:
+        allowAgents:
+          - dev-agent
+          - ops-agent
+          - qa-agent
+          - review-agent
+          - analyst-agent
+          - pm-agent
+          - comms-agent
+          - marketing-agent
+          - sales-agent
+      heartbeat:
+        every: 30m
+        model: openai/gpt-4o-mini
+        target: none
+        lightContext: true
+        isolatedSession: true
+        activeHours:
+          start: "07:00"
+          end: "22:00"
+          timezone: "{{AGENT_TIMEZONE}}"
+        prompt: "Read HEARTBEAT.md. If any item needs human attention, escalate per standing orders. Else reply HEARTBEAT_OK."
+
+    - id: dev-agent
+      workspace: /workspace/dev-agent
+      model: openai/gpt-4o
+      skills: [dev, memory, workflows, integrate, governed-workflows]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring]
+      tools:
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        deny: [delegate_task]
+
+    - id: ops-agent
+      workspace: /workspace/ops-agent
+      model: openai/gpt-4o
+      skills: [ops, memory]
+      toolsets: [core-read, terminal, skill-authoring]
+      tools:
+        allow: [read_file, exec, recall_memory, propose_skill]
+        deny: [write_file, patch_file, delegate_task]
+      heartbeat:
+        every: 30m
+        model: openai/gpt-4o-mini
+        target: slack
+        to: "channel:{{SLACK_OPS_CHANNEL}}"
+        lightContext: true
+        isolatedSession: true
+        activeHours:
+          start: "07:00"
+          end: "22:00"
+          timezone: "{{AGENT_TIMEZONE}}"
+        prompt: "Run the System Monitoring program in HEARTBEAT.md. Return only deltas; reply HEARTBEAT_OK if nothing changed."
+
+    - id: qa-agent
+      workspace: /workspace/qa-agent
+      model: openai/gpt-6-astra
+      skills: [qa, memory, workflows, governed-workflows]
+      toolsets: [core-read]
+      tools:
+        allow: [read_file, recall_memory]
+        deny: [write_file, patch_file, exec, run_coding_backend, delegate_task]
+
+    - id: review-agent
+      workspace: /workspace/review-agent
+      model: openai/gpt-6-astra
+      skills: [review, memory, governed-workflows]
+      toolsets: [core-read]
+      tools:
+        allow: [read_file, recall_memory]
+        deny: [write_file, patch_file, exec, delegate_task, run_coding_backend]
+
+    - id: analyst-agent
+      workspace: /workspace/analyst-agent
+      model: openai/gpt-4o-mini
+      skills: [memory]
+      toolsets: [core-read, terminal]
+      tools:
+        allow: [read_file, exec, recall_memory]
+        deny: [write_file, patch_file, delegate_task]
+
+    - id: pm-agent
+      workspace: /workspace/pm-agent
+      model: openai/gpt-4o
+      skills: [pm, memory-api, workflows, governed-workflows]
+      connector_bindings:
+        google-workspace: pm
+      toolsets: [core-read, workflow, google-workspace-docs]
+      tools:
+        allow: [read_file, recall_memory, workflow_update]
+        deny: [exec, write_file, patch_file, delegate_task]
+
+    - id: comms-agent
+      workspace: /workspace/comms-agent
+      model: openai/gpt-4o-mini
+      skills: [comms, memory-api]
+      connector_bindings:
+        google-workspace: comms
+      toolsets: [core-read, channel, google-workspace]
+      tools:
+        allow:
+          - read_file
+          - channel_send
+          - recall_memory
+          - google_workspace_gmail_search
+          - google_workspace_gmail_get
+          - google_workspace_gmail_send
+          - google_workspace_calendar_list
+          - google_workspace_calendar_get
+          - google_workspace_calendar_create
+          - google_workspace_calendar_update
+          - google_workspace_calendar_cancel
+          - google_workspace_drive_search
+          - google_workspace_drive_get
+          - google_workspace_docs_read
+          - google_workspace_connect
+          - google_workspace_disconnect
+        deny: [write_file, patch_file, delegate_task, exec]
+      heartbeat:
+        every: 30m
+        target: none
+        lightContext: true
+        isolatedSession: true
+        activeHours:
+          start: "07:00"
+          end: "22:00"
+          timezone: "{{AGENT_TIMEZONE}}"
+        prompt: "Scan unread mentions and DMs per HEARTBEAT.md. Surface only items requiring a human reply within 1h."
+
+    - id: marketing-agent
+      workspace: /workspace/marketing-agent
+      model: openai/gpt-4o
+      skills: [memory-api]
+      connector_bindings:
+        google-workspace: marketing
+      toolsets: [core-read, channel, google-workspace-docs]
+      tools:
+        allow:
+          - read_file
+          - channel_send
+          - recall_memory
+          - google_workspace_gmail_search
+          - google_workspace_gmail_get
+          - google_workspace_calendar_list
+          - google_workspace_calendar_get
+          - google_workspace_connect
+          - google_workspace_disconnect
+        deny: [write_file, patch_file, delegate_task, exec, google_workspace_gmail_send]
+      heartbeat:
+        every: 30m
+        model: openai/gpt-4o-mini
+        target: none
+        lightContext: true
+        isolatedSession: true
+        activeHours:
+          start: "07:00"
+          end: "22:00"
+          timezone: "{{AGENT_TIMEZONE}}"
+        prompt: "Read HEARTBEAT.md. Check for campaign deadlines in the next 48h and overdue drafts. Reply HEARTBEAT_OK if nothing requires attention."
+
+    - id: sales-agent
+      workspace: /workspace/sales-agent
+      model: openai/gpt-4o
+      skills: [memory-api, clarify-rfp, draft-rfp]
+      connector_bindings:
+        google-workspace: sales
+      toolsets: [core-read, channel, google-workspace]
+      tools:
+        allow:
+          - read_file
+          - channel_send
+          - recall_memory
+          - google_workspace_gmail_search
+          - google_workspace_gmail_get
+          - google_workspace_gmail_send
+          - google_workspace_calendar_list
+          - google_workspace_calendar_get
+          - google_workspace_calendar_create
+          - google_workspace_drive_search
+          - google_workspace_connect
+          - google_workspace_disconnect
+        deny: [write_file, patch_file, delegate_task, exec]
+      heartbeat:
+        every: 30m
+        model: openai/gpt-4o-mini
+        target: none
+        lightContext: true
+        isolatedSession: true
+        activeHours:
+          start: "07:00"
+          end: "22:00"
+          timezone: "{{AGENT_TIMEZONE}}"
+        prompt: "Read HEARTBEAT.md. Check pipeline follow-ups due today. Reply HEARTBEAT_OK if nothing requires attention."
+
+    - id: builder-agent
+      workspace: /workspace/builder-agent
+      model: openai/gpt-4o
+      skills: [program-builder]
+      toolsets: [core-read, program-builder, skill-authoring]
+      tools:
+        deny: [exec, write_file, patch_file, delegate_task]

@@ -1,0 +1,8 @@
+{
+  "stages": {
+    "refinery": { "status": "complete" },
+    "foundry": { "status": "complete" },
+    "planner": { "status": "complete" }
+  },
+  "work_orders": ["WO-001"]
+}

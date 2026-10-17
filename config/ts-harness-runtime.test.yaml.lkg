@@ -1,0 +1,618 @@
+agents:
+  list:
+  - default: true
+    heartbeat:
+      activeHours:
+        end: '23:59'
+        start: 00:00
+        timezone: UTC
+      every: 30m
+      target: none
+    id: orchestrator
+    model: openai/gpt-4o-mini
+    skills:
+    - orchestrator
+    - memory-api
+    - workflow
+    - workflows
+    - governed-workflows
+    subagents:
+      allowAgents:
+      - dev-agent
+      - ops-agent
+      - pm-agent
+      - qa-agent
+      - review-agent
+    tools:
+      allow:
+      - recall_memory
+      - read_file
+      - session_status
+      - remember_memory
+      - sessions_list
+      - sessions_history
+      - search_sessions
+      - delegate_task
+      - propose_delegate_task
+      - workflow_update
+      - propose_start_workflow
+      - propose_start_program
+      - propose_continue_delivery
+      - propose_bridge_workflow
+      - propose_advance_program
+      - propose_set_program_project
+      - propose_link_program
+      - start_workflow
+      - start_program
+      - set_program_project
+      - link_program
+      - unlink_program
+      - set_program_autoshare
+      - continue_delivery
+      - bridge_workflow
+      - advance_program
+      - workflow_status
+      - program_status
+      - workflow_approve
+      - workflow_reject
+      - workflow_reject_with_feedback
+      - cancel_workflow
+      - resume_external_event
+      deny:
+      - exec
+      - write_file
+    toolsets:
+    - core-read
+    - workflow
+    - delegation
+    - channel-chat
+    - workflow-promotion
+    workspace: /workspace/orchestrator
+  - id: dev-agent
+    model: openai/gpt-4o-mini
+    skills:
+    - dev
+    - memory
+    - workflows
+    - integrate
+    - governed-workflows
+    tools:
+      allow:
+      - read_file
+      - write_file
+      - patch_file
+      - exec
+      - recall_memory
+      - run_coding_backend
+      - propose_skill
+      deny:
+      - delegate_task
+    toolsets:
+    - core-read
+    - core-write
+    - terminal
+    - coding-backend
+    - skill-authoring
+    workspace: /workspace/dev-agent
+  - id: ops-agent
+    model: openai/gpt-4o-mini
+    skills:
+    - ops
+    - memory
+    tools:
+      allow:
+      - read_file
+      - exec
+      - recall_memory
+      - propose_skill
+      deny:
+      - write_file
+      - patch_file
+      - delegate_task
+    toolsets:
+    - core-read
+    - terminal
+    - skill-authoring
+    workspace: /workspace/ops-agent
+  - connector_bindings:
+      google-workspace: pm
+    id: pm-agent
+    model: openai/gpt-4o-mini
+    skills:
+    - pm
+    - memory-api
+    - workflows
+    - governed-workflows
+    tools:
+      allow:
+      - read_file
+      - recall_memory
+      - workflow_update
+      deny:
+      - exec
+      - delegate_task
+    toolsets:
+    - core-read
+    - workflow
+    - google-workspace-docs
+    workspace: /workspace/pm-agent
+  - connector_bindings:
+      google-workspace: comms
+    id: comms-agent
+    model: openai/gpt-4o-mini
+    skills:
+    - comms
+    - memory-api
+    tools:
+      allow:
+      - read_file
+      - channel_send
+      - recall_memory
+      - google_workspace_gmail_search
+      - google_workspace_gmail_get
+      - google_workspace_gmail_send
+      - google_workspace_docs_read
+      deny:
+      - exec
+      - delegate_task
+      - write_file
+    toolsets:
+    - core-read
+    - channel
+    - google-workspace
+    workspace: /workspace/comms-agent
+  - id: qa-agent
+    model: openai/gpt-6-astra
+    skills:
+    - qa
+    - memory
+    - workflows
+    - governed-workflows
+    tools:
+      allow:
+      - read_file
+      - recall_memory
+      deny:
+      - write_file
+      - patch_file
+      - exec
+      - run_coding_backend
+      - delegate_task
+    toolsets:
+    - core-read
+    workspace: /workspace/qa-agent
+  - id: review-agent
+    model: openai/gpt-6-astra
+    skills:
+    - review
+    - memory
+    - governed-workflows
+    tools:
+      allow:
+      - read_file
+      - recall_memory
+      deny:
+      - write_file
+      - patch_file
+      - exec
+      - delegate_task
+      - run_coding_backend
+    toolsets:
+    - core-read
+    workspace: /workspace/review-agent
+  - id: builder-agent
+    model: openai/gpt-4o-mini
+    skills:
+    - program-builder
+    tools:
+      deny:
+      - exec
+      - write_file
+      - patch_file
+      - delegate_task
+    toolsets:
+    - core-read
+    - program-builder
+    - skill-authoring
+    workspace: /workspace/builder-agent
+bindings:
+  discord: orchestrator
+  slack: orchestrator
+  telegram: orchestrator
+connectors:
+  google-workspace:
+    accounts:
+      comms:
+        impersonate_email: comms@test.local
+      marketing:
+        impersonate_email: marketing@test.local
+      pm:
+        impersonate_email: pm@test.local
+      sales:
+        impersonate_email: sales@test.local
+    artifact_publish:
+      chunk_chars: 50000
+      enabled: true
+      folder_id: ''
+      library:
+        enabled: true
+        publish_on: present
+        share_folder_with_requester: true
+        step_phase_map:
+          prd_request:
+            draft_prd: prd
+            revise_prd: prd
+          work_orders_from_prd:
+            design_blueprints: foundry
+            plan_work_orders: planner
+            refine_requirements: refinery
+      min_chars: 3000
+    auth:
+      delegation:
+        default_impersonate_email: default@test.local
+    enabled: true
+gateway:
+  allowed_origins:
+  - http://localhost
+  - http://localhost:5173
+  default_tenant_id: default
+  single_tenant_mode: true
+  token: test-token
+identity:
+  jira_account_ids:
+    tester@test.local: acct-test-1
+  provider: static
+  slack_user_emails:
+    U_TEST: tester@test.local
+implementation:
+  backends:
+    opencode:
+      auth_env: CODING_BACKEND_API_KEY
+      binary: opencode
+      model: ''
+      provider: anthropic
+      run_args:
+      - run
+      - --auto
+      version: latest
+  coding_backend: opencode
+  repos:
+    implement_jira_ticket:
+      base_branch: dev
+      clone_depth: 1
+      url: ''
+    implement_work_orders:
+      base_branch: main
+      clone_depth: 1
+      url: ''
+  tools_root: /tmp/ts-harness-tools
+mcp_servers:
+  atlassian:
+    command: mcporter
+    enabled: true
+    transport: stdio
+policy:
+  approval_required_tools:
+  - exec
+  - write_file
+  - delegate_task
+  - google_workspace_gmail_send
+  budget_hard_stop_usd: 100.0
+  budget_warn_usd: 50.0
+  channel_ingress_deny:
+  - exec
+  - write_file
+  - delegation
+  - workflow_update
+  delegation_auto_allow_agents:
+  - pm-agent
+  - analyst-agent
+  model_allowlist:
+    qa-agent:
+    - openai/gpt-6-astra
+    review-agent:
+    - openai/gpt-6-astra
+program_builder:
+  agent_id: builder-agent
+program_defaults:
+  jira_filing:
+    default_issue_type: Story
+    issue_type_by_project: {}
+  repo_picker:
+    repos: []
+  ticket_picker:
+    assignee: mapped_user
+    statuses:
+    - To Do
+    - Open
+    - Ready for Dev
+    - In Progress
+routing:
+  default: ad_hoc_delegate
+  intents:
+  - exclude:
+    - quick
+    - rough draft
+    - no approval
+    id: governed_prd
+    orchestrator_hint: 'User request requires a governed workflow. Call propose_start_workflow
+      with workflow_type=prd_request. Do not call propose_delegate_task.
+
+      '
+    policy:
+      deny_start_workflow_types:
+      - governed_delivery
+      - jira_from_prd
+      - work_orders_from_prd
+      - implement_delivery
+      - implement_work_orders
+      - deploy_release
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - create a prd
+    - create prd
+    - draft prd
+    - write a prd
+    - product requirements document
+    workflow_type: prd_request
+  - entry_phase: intake
+    id: content_to_jira
+    orchestrator_hint: 'User wants the decoupled planning program. Call propose_start_program
+      with program_type=content_to_jira_work_orders and entry_phase=intake. Do not
+      call propose_delegate_task or start software_delivery.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    program_type: content_to_jira_work_orders
+    signals:
+    - plan work from this content
+    - content to work orders
+    - file work orders as jira
+  - entry_phase: bug_intake
+    exclude:
+    - what error
+    - error handling
+    id: bug_to_jira
+    orchestrator_hint: 'User wants a bug filed as one unassigned Jira Bug. Call propose_start_program
+      with program_type=bug_to_jira_work_orders and entry_phase=bug_intake. Do not
+      call propose_delegate_task or start software_delivery.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    program_type: bug_to_jira_work_orders
+    signals:
+    - file this bug
+    - investigate this error
+    - bug report
+    - production incident
+    - fix bug
+    - regression
+    - broken
+    - error
+  - entry_phase: pick
+    id: jira_to_pr
+    orchestrator_hint: 'User wants the decoupled implement program. Call propose_start_program
+      with program_type=jira_to_pr. If they pasted a ticket key, use entry_phase=implement
+      and artifacts.jira_issue_key. Otherwise entry_phase=pick.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    program_type: jira_to_pr
+    signals:
+    - my tickets
+    - pick up my jira
+    - implement TFS-
+  - id: start_jira_from_prd
+    orchestrator_hint: 'User wants to enter delivery at Jira filing. Call propose_start_program
+      with entry_phase=jira and artifacts.approved_prd set.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - create jira
+    - file jira
+    - file tickets from prd
+    - jira from prd
+  - exclude:
+    - content to work orders
+    - file work orders as jira
+    - plan work from this content
+    id: start_work_orders_from_prd
+    orchestrator_hint: 'User wants to enter delivery at work-order planning. Call
+      propose_start_program with entry_phase=work_orders and artifacts.approved_prd
+      set.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - work orders
+    - plan work orders
+    - generate work orders
+    - start work orders
+  - id: implement_delivery_entry
+    orchestrator_hint: 'User wants to enter delivery at implementation. Call propose_start_program
+      with entry_phase=implement and artifacts.jira_epic_key or work_orders_handoff
+      set.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - implement tickets
+    - start implementation
+    - implement delivery
+  - id: deploy_release_entry
+    orchestrator_hint: 'User wants to enter delivery at deploy. Call propose_start_program
+      with entry_phase=deploy and artifacts.pr_url set.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - deploy staging
+    - deploy production
+    - start deploy
+  - delegate_agent: pm-agent
+    id: informal_prd
+    policy:
+      deny_start_workflow_types:
+      - prd_request
+      mode: require_delegate
+    signals:
+    - quick prd
+    - rough outline
+    - rough draft
+    - quick draft
+    - no approval
+  - exclude:
+    - quick
+    - rough draft
+    - no approval
+    id: governed_rfp
+    orchestrator_hint: 'User request requires a governed RFP workflow. Call propose_start_workflow
+      with workflow_type=rfp_request. Do not call propose_delegate_task.
+
+      '
+    policy:
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - create rfp
+    - draft rfp
+    - request for proposal
+    workflow_type: rfp_request
+  - id: code_intake
+    orchestrator_hint: 'Vague code request. Ask once whether this is a bug or a feature.
+      Do not draft, do not call propose_delegate_task, and do not start software_delivery.
+      After they answer, call propose_start_program with program_type=bug_to_jira_work_orders
+      and entry_phase=bug_intake, or program_type=content_to_jira_work_orders and
+      entry_phase=intake.
+
+      '
+    policy:
+      allow_program_types:
+      - bug_to_jira_work_orders
+      - content_to_jira_work_orders
+      deny_tools:
+      - propose_delegate_task
+      - delegate_task
+      mode: require_workflow
+    signals:
+    - open pr
+    - refactor
+    - change the
+sandbox:
+  backend: docker
+  mode: docker
+tenants:
+- data_residency: us
+  display_name: Default Tenant
+  enabled_connectors:
+  - slack
+  - mcp-atlassian
+  - google-workspace
+  id: default
+toolsets:
+  channel:
+  - channel_send
+  channel-chat:
+  - propose_delegate_task
+  - propose_start_workflow
+  - propose_start_program
+  - propose_continue_delivery
+  - propose_bridge_workflow
+  - propose_advance_program
+  - propose_set_program_project
+  - propose_link_program
+  - unlink_program
+  - set_program_autoshare
+  - workflow_status
+  - program_status
+  coding-backend:
+  - run_coding_backend
+  core-read:
+  - recall_memory
+  - read_file
+  - session_status
+  - remember_memory
+  - sessions_list
+  - sessions_history
+  - search_sessions
+  - read_skill_reference
+  core-write:
+  - write_file
+  - patch_file
+  delegation:
+  - delegate_task
+  - propose_delegate_task
+  google-workspace: []
+  google-workspace-docs:
+  - google_workspace_drive_search
+  - google_workspace_drive_get
+  - google_workspace_drive_create
+  - google_workspace_docs_read
+  - google_workspace_docs_append
+  program-builder:
+  - builder_catalog
+  - propose_program_bundle
+  skill-authoring:
+  - propose_skill
+  terminal:
+  - exec
+  workflow:
+  - workflow_update
+  workflow-promotion:
+  - propose_start_workflow
+  - start_workflow
+  - propose_start_program
+  - start_program
+  - propose_continue_delivery
+  - continue_delivery
+  - propose_bridge_workflow
+  - bridge_workflow
+  - propose_advance_program
+  - advance_program
+  - propose_set_program_project
+  - set_program_project
+  - propose_link_program
+  - link_program
+  - unlink_program
+  - set_program_autoshare
+  - workflow_status
+  - program_status
+  - workflow_approve
+  - workflow_reject
+  - workflow_reject_with_feedback
+  - cancel_workflow
+  - resume_external_event

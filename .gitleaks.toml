@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Empty key placeholders in bootstrap scripts; local quickstart tokens and bytecode caches"
+regexTarget = "match"
+regexes = ['''[A-Z_]+_API_KEY=""''']
+paths = ['''^\.quickstart/''', '''(^|/)__pycache__/''']

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TS Harness Organization Config",
+  "type": "object",
+  "required": [
+    "organization",
+    "channels",
+    "tooling",
+    "contacts",
+    "environments",
+    "teams",
+    "systems",
+    "glossary",
+    "runbooks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "organization": {
+      "type": "object",
+      "required": ["company_name", "github_org", "agent_name", "timezone", "expertise_areas"],
+      "additionalProperties": false,
+      "properties": {
+        "company_name": { "type": "string", "minLength": 1 },
+        "github_org": { "type": "string", "minLength": 1 },
+        "agent_name": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 },
+        "expertise_areas": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "jira_projects": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" }
+        }
+      }
+    },
+    "channels": {
+      "type": "object",
+      "required": ["approved", "standup", "ops", "dev", "team", "sales", "marketing", "leadership", "admin"],
+      "additionalProperties": false,
+      "properties": {
+        "approved": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "standup": { "type": "string", "minLength": 1 },
+        "ops": { "type": "string", "minLength": 1 },
+        "dev": { "type": "string", "minLength": 1 },
+        "team": { "type": "string", "minLength": 1 },
+        "sales": { "type": "string", "minLength": 1 },
+        "marketing": { "type": "string", "minLength": 1 },
+        "leadership": { "type": "string", "minLength": 1 },
+        "admin": { "type": "string", "minLength": 1 }
+      }
+    },
+    "tooling": {
+      "type": "object",
+      "required": ["monitoring_tool", "secrets_manager", "feature_flag_system", "config_location"],
+      "additionalProperties": false,
+      "properties": {
+        "monitoring_tool": { "type": "string", "minLength": 1 },
+        "secrets_manager": { "type": "string", "minLength": 1 },
+        "feature_flag_system": { "type": "string", "minLength": 1 },
+        "config_location": { "type": "string", "minLength": 1 }
+      }
+    },
+    "contacts": {
+      "type": "object",
+      "required": ["security_lead", "qa_lead", "platform_admin", "engineering_lead"],
+      "additionalProperties": false,
+      "properties": {
+        "security_lead": { "$ref": "#/$defs/contact" },
+        "qa_lead": { "$ref": "#/$defs/contact" },
+        "platform_admin": { "$ref": "#/$defs/contact" },
+        "engineering_lead": { "$ref": "#/$defs/contact" }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "required": ["dev", "staging", "prod", "preview_url_pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "dev": { "$ref": "#/$defs/environment" },
+        "staging": { "$ref": "#/$defs/environment" },
+        "prod": { "$ref": "#/$defs/environment" },
+        "preview_url_pattern": { "type": "string", "minLength": 1 }
+      }
+    },
+    "teams": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/team" }
+    },
+    "systems": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/system" }
+    },
+    "glossary": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/glossary_item" }
+    },
+    "runbooks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/runbook" }
+    }
+  },
+  "$defs": {
+    "contact": {
+      "type": "object",
+      "required": ["name", "contact"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "contact": { "type": "string", "minLength": 1 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1 }
+      }
+    },
+    "team": {
+      "type": "object",
+      "required": ["name", "lead", "members", "repo", "jira", "slack"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "lead": { "type": "string", "minLength": 1 },
+        "members": { "type": "string", "minLength": 1 },
+        "repo": { "type": "string", "minLength": 1 },
+        "jira": { "type": "string", "minLength": 1 },
+        "slack": { "type": "string", "minLength": 1 }
+      }
+    },
+    "system": {
+      "type": "object",
+      "required": ["name", "purpose", "stack", "host", "owner"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string", "minLength": 1 },
+        "stack": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 }
+      }
+    },
+    "glossary_item": {
+      "type": "object",
+      "required": ["term", "definition"],
+      "additionalProperties": false,
+      "properties": {
+        "term": { "type": "string", "minLength": 1 },
+        "definition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runbook": {
+      "type": "object",
+      "required": ["name", "desc", "location"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "desc": { "type": "string", "minLength": 1 },
+        "location": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

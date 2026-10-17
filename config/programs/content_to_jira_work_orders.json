@@ -1,0 +1,86 @@
+{
+  "program_type": "content_to_jira_work_orders",
+  "definition_version": "1.0.0",
+  "display_name": "Content to Jira work orders",
+  "startable_nodes": ["intake", "file_jira"],
+  "config": {
+    "repo_picker": { "repos": [] },
+    "jira_filing": {
+      "default_issue_type": "Story",
+      "issue_type_by_project": {}
+    }
+  },
+  "nodes": [
+    {
+      "id": "intake",
+      "default_workflow_type": "content_to_plan",
+      "workflow_variants": [],
+      "required_artifacts": [],
+      "produces_artifacts": ["approved_prd", "repo", "default_branch"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "transcript_context", "target": "context", "limit": 20 }
+      ],
+      "completion_adapter": "extract_declared_outputs",
+      "terminal": false
+    },
+    {
+      "id": "work_orders",
+      "default_workflow_type": "work_orders_from_prd",
+      "workflow_variants": [],
+      "required_artifacts": ["approved_prd"],
+      "produces_artifacts": [
+        "planner_complete",
+        "work_order_ids",
+        "work_orders_markdown",
+        "refinery_artifacts",
+        "foundry_artifacts",
+        "planner_artifacts",
+        "work_orders_handoff",
+        "next_work_order_id",
+        "work_orders_manifest_path"
+      ],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" }
+      ],
+      "completion_adapter": "extract_work_orders_outputs",
+      "terminal": false
+    },
+    {
+      "id": "file_jira",
+      "default_workflow_type": "file_work_orders_as_jira",
+      "workflow_variants": [],
+      "required_artifacts": ["work_order_ids", "work_orders_markdown"],
+      "produces_artifacts": ["jira_epic_key", "jira_story_keys"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" },
+        { "kind": "artifact", "name": "work_order_ids", "target": "work_order_ids" },
+        { "kind": "artifact", "name": "work_orders_markdown", "target": "work_orders_markdown" },
+        { "kind": "artifact", "name": "jira_epic_key", "target": "jira_epic_key" },
+        { "kind": "artifact", "name": "repo", "target": "repo" },
+        { "kind": "artifact", "name": "default_branch", "target": "default_branch" }
+      ],
+      "completion_adapter": "extract_file_jira_outputs",
+      "terminal": true,
+      "complete_channel_text": "Filed unassigned Jira tickets from the approved work-order pack. Assign them in Jira; engineers pick them up with jira_to_pr."
+    }
+  ],
+  "edges": [
+    {
+      "source": "intake",
+      "target": "work_orders",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["generate work orders", "plan work orders", "ready for work orders"]
+    },
+    {
+      "source": "work_orders",
+      "target": "file_jira",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["file these tickets", "file work orders as jira", "create jira from work orders"]
+    }
+  ]
+}

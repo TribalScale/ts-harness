@@ -1,0 +1,140 @@
+# Example organizational workspace context.
+# Copy to config/organization.yaml (gitignored) and fill in your organization.
+# Keep credentials in your secrets manager or .env, never in this file.
+
+organization:
+  company_name: Example Corp
+  github_org: example-org
+  agent_name: Atlas
+  timezone: America/New_York
+  expertise_areas:
+    - enterprise AI agents
+    - software delivery
+    - infrastructure automation
+    - memory-backed agent workflows
+  # Jira project keys agents may touch. Runtime enforcement comes from
+  # program_defaults.jira_filing.allowed_projects in System Settings.
+  jira_projects:
+    - PROJ
+
+channels:
+  approved:
+    - "#platform"
+    - "#product"
+    - "#incidents"
+  standup: "#standup"
+  ops: "#platform"
+  dev: "#engineering"
+  team: "#platform"
+  sales: "#sales"
+  marketing: "#marketing"
+  leadership: "#leadership"
+  admin: "#platform"
+
+tooling:
+  monitoring_tool: CloudWatch
+  secrets_manager: AWS Secrets Manager
+  feature_flag_system: TBD
+  config_location: config/
+
+contacts:
+  security_lead:
+    name: Security Lead
+    contact: "#security"
+  qa_lead:
+    name: QA Lead
+    contact: "#qa"
+  platform_admin:
+    name: Platform Admin
+    contact: "#platform"
+  engineering_lead:
+    name: Engineering Lead
+    contact: "#platform"
+
+environments:
+  dev:
+    url: "https://github.com/example-org/app-dev.git"
+  staging:
+    url: "https://github.com/example-org/app-staging.git"
+  prod:
+    url: "https://github.com/example-org/app-prod.git"
+  preview_url_pattern: "https://github.com/example-org/app-pr-${PR_NUMBER}.git"
+
+teams:
+  - name: Platform / Core
+    lead: Engineering Lead
+    members: Platform engineering team
+    repo: ts-harness
+    jira: PROJ
+    slack: "#platform"
+  - name: "-"
+    lead: "-"
+    members: "-"
+    repo: "-"
+    jira: "-"
+    slack: "-"
+  - name: "-"
+    lead: "-"
+    members: "-"
+    repo: "-"
+    jira: "-"
+    slack: "-"
+  - name: "-"
+    lead: "-"
+    members: "-"
+    repo: "-"
+    jira: "-"
+    slack: "-"
+
+systems:
+  - name: TS Harness
+    purpose: Governed multi-agent runtime and workflow engine
+    stack: Python, Docker Compose, Terraform
+    host: AWS EC2 or GCP Compute Engine
+    owner: Platform / Core
+  - name: Memory Database
+    purpose: Postgres-backed agent memory with pgvector
+    stack: PostgreSQL, pgvector
+    host: RDS, Cloud SQL, or Docker Compose
+    owner: Platform / Core
+  - name: Admin Console
+    purpose: Inbox, chat, programs, builders, and system settings
+    stack: React, Vite
+    host: Served by agent-runtime
+    owner: Platform / Core
+  - name: Assets Repository
+    purpose: Workspace, scripts, skills, and infrastructure definitions
+    stack: GitHub, Terraform, Markdown
+    host: GitHub
+    owner: Platform / Core
+  - name: Tailscale Network
+    purpose: Private operator access to runtime services
+    stack: Tailscale
+    host: Tailscale
+    owner: Platform / Core
+
+glossary:
+  - term: TS Harness
+    definition: Governed multi-agent runtime deployed and configured by this repository.
+  - term: Harness
+    definition: The shared runtime, workflow engine, memory API, and console that clients compose on.
+  - term: Memory Backend
+    definition: The configured storage for long-term agent memory, either local Postgres or a managed database.
+  - term: Gateway
+    definition: Agent-runtime HTTP interface used to access and operate the agent stack.
+  - term: Specialist Agent
+    definition: Domain-specific agent delegated to by the orchestrator.
+
+runbooks:
+  - name: Automation Smoke Test
+    desc: Validate scheduled automation and heartbeat behavior.
+    location: docs/runbooks/automation-smoke-test.md
+  - name: Database Restore
+    desc: Restore the memory database from backup.
+    location: docs/runbooks/db-restore.md
+  - name: Secret Rotation
+    desc: Rotate secrets used by the deployment.
+    location: docs/runbooks/secret-rotation.md
+  - name: Compatibility Checklist
+    desc: Validate runtime version and enterprise integration compatibility.
+    location: docs/compatibility.md

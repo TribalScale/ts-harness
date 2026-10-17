@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in TS Harness does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, tokens, or customer data. Report security problems
+        privately (see SECURITY.md), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, ideally against `scripts/quickstart.sh up`.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Gateway / HTTP API
+        - Agent loop / tools / policy
+        - Workflows / workflow runner
+        - Memory API
+        - Sandbox worker
+        - Admin console
+        - Channels (Slack, Discord, Telegram)
+        - Install / bootstrap (AWS or GCP)
+        - Local quickstart
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens and personal data.
+      render: shell

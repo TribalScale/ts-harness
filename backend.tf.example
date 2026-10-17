@@ -1,0 +1,11 @@
+# Remote state for team deployments — copy to backend.tf and fill in your bucket/table.
+#
+# terraform {
+#   backend "s3" {
+#     bucket         = "your-terraform-state-bucket"
+#     key            = "ts-harness/terraform.tfstate"
+#     region         = "us-east-1"
+#     dynamodb_table = "terraform-locks"
+#     encrypt        = true
+#   }
+# }

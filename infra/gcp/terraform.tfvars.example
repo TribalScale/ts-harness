@@ -1,0 +1,70 @@
+# ──────────────────────────────────────────────────────────────
+# Required variables (no defaults — must be set)
+# ──────────────────────────────────────────────────────────────
+
+gcp_project_id = "my-gcp-project"
+
+# CIDR blocks allowed to reach SSH on port 2222
+ssh_allowed_cidrs = ["203.0.113.0/24"]
+
+# SSH public key for the admin user (contents of ~/.ssh/id_ed25519.pub)
+ssh_public_key = "ssh-ed25519 AAAA... operator@example.com"
+
+# Git URL the instance clones for scripts/docker/workspace/skills
+enterprise_repo_url = "https://github.com/TribalScale/ts-harness.git"
+
+# ──────────────────────────────────────────────────────────────
+# Install-contract / optional overrides
+# ──────────────────────────────────────────────────────────────
+
+# cloud_provider = "gcp"
+# environment    = "prod"
+# project_name   = "ts-harness"
+# cloud_region   = "us-central1"
+# cloud_zone     = "us-central1-a"
+# secret_prefix  = "ts-harness"
+
+# notification_email   = "ops@example.com"
+# monthly_budget_limit = 500
+# # Required when monthly_budget_limit > 0 (google-beta billing budget)
+# billing_account_id   = "012345-ABCDEF-678901"
+
+# vm_instance_type       = "e2-medium"
+# vm_root_volume_size_gb = 40
+# vm_data_disk_size_gb   = 60
+# admin_username         = "artemis"
+
+# Memory backend — set to "managed" to provision Cloud SQL PostgreSQL 16
+# memory_backend = "local"
+
+# managed_db_instance_class        = "db-f1-micro"
+# managed_db_name                  = "ts_harness"
+# managed_db_user                  = "ts_harness"
+# managed_db_backup_retention_days = 7
+
+# Cloud SQL networking (default: private IP via Service Networking)
+# cloud_sql_private_ip = true
+# # Only used when cloud_sql_private_ip = false:
+# cloud_sql_authorized_networks = [
+#   { name = "ops", cidr = "203.0.113.0/24" },
+# ]
+
+# assign_public_ip = true
+
+# Application repo for implement_work_orders / OpenCode
+# implement_work_orders_repo_url    = "https://github.com/your-org/your-app.git"
+# implement_work_orders_base_branch = "main"
+# Pin OpenCode install (phase 11h OPENCODE_VERSION); prefer semver over latest
+# implement_work_orders_opencode_version = "1.18.4"
+
+# Admin identity (phase 11 renders these into runtime YAML via instance-env)
+# identity_provider            = "oidc"
+# oidc_issuer                  = "https://your-tenant.auth0.com/"
+# oidc_audience                = "ts-harness"
+# oidc_jwks_url                = "https://your-tenant.auth0.com/.well-known/jwks.json"
+# oidc_client_id               = "your-spa-client-id"
+# oidc_authorization_endpoint  = "https://your-tenant.auth0.com/authorize"
+# oidc_token_endpoint          = "https://your-tenant.auth0.com/oauth/token"
+
+# workflow_runner_enabled = false
+# multi_agent_enabled     = false

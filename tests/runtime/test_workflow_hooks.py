@@ -1,0 +1,538 @@
+"""Fixture-based tests for individual workflow hooks."""
+
+from __future__ import annotations
+
+import unittest
+from unittest.mock import MagicMock, patch
+
+from ts_harness.workflows.hooks import (
+    hydrate_input,
+    notify_bound_channel,
+    revise_on_reject,
+    wait_external,
+)
+from ts_harness.workflows.materialize import load_skeleton
+from ts_harness.workflows.registry import HookContext
+
+
+class WorkflowHookTests(unittest.TestCase):
+    def _ctx(self, **overrides):
+        skeleton = load_skeleton("prd_request")
+        base = {
+            "workflow_id": "wf-1",
+            "workflow_type": "prd_request",
+            "tenant_id": "default",
+            "task": {"id": "gate-1", "step_name": "approve_prd", "approval_status": "pending"},
+            "stage": skeleton.stage("approve_prd"),
+            "skeleton": skeleton,
+            "actor": "orchestrator",
+            "memory_client": MagicMock(),
+            "reject_comments": "revise intro",
+            "tasks": [
+                {
+                    "id": "draft-1",
+                    "step_name": "draft_prd",
+                    "status": "succeeded",
+                    "output": {"body": "draft"},
+                    "created_at": "2026-01-01",
+                },
+            ],
+            "workflow": {"source_channel": "slack:C1:123.456"},
+        }
+        base.update(overrides)
+        return HookContext(**base)
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_revise_on_reject_hook(self, mock_bulk):
+        mock_bulk.side_effect = [["rev-1"], ["gate-2"]]
+        ctx = self._ctx()
+        ctx.memory_client.get_workflow.return_value = {
+            "workflow": ctx.workflow,
+            "tasks": ctx.tasks + [ctx.task],
+        }
+        result = revise_on_reject.handle(ctx)
+        self.assertEqual(result["revise_task_id"], "rev-1")
+        ctx.memory_client.reject_task.assert_called_once()
+
+    def test_hydrate_input_skips_without_map(self):
+        skeleton = load_skeleton("implement_ticket")
+        ctx = self._ctx(
+            skeleton=skeleton,
+            stage=skeleton.stage("implement"),
+            task={"id": "t1", "step_name": "implement", "input": {}},
+        )
+        result = hydrate_input.handle(ctx)
+        self.assertEqual(result["status"], "skipped")
+
+    def test_program_artifact_extras_include_related_context(self):
+        client = MagicMock()
+        client.get_program.return_value = {
+            "program": {
+                "metadata": {
+                    "artifacts": {
+                        "related_program_context": {"project_id": "TFS", "sources": []},
+                    }
+                }
+            }
+        }
+        extras = hydrate_input._program_artifact_extras(client, {"program_id": "prog-1"})
+        self.assertEqual(extras["related_program_context"]["project_id"], "TFS")
+
+    def test_hydrate_downstream_uses_dispatch_output_before_db_persist(self):
+        skeleton = load_skeleton("deliver_work_order")
+        client = MagicMock()
+        client.get_workflow.return_value = {
+            "workflow": {"id": "wf-1", "program_id": None},
+            "tasks": [
+                {
+                    "id": "deliver-1",
+                    "step_name": "deliver_work_order",
+                    "status": "running",
+                    "output": {},
+                    "created_at": "2026-01-01",
+                },
+                {
+                    "id": "qa-1",
+                    "step_name": "qa_gate",
+                    "status": "pending",
+                    "input": {"pr_url": None, "work_order_ref": "WO-001"},
+                    "created_at": "2026-01-02",
+                },
+            ],
+        }
+        client.patch_task_input.side_effect = lambda task_id, merged, actor=None: {
+            "id": task_id,
+            "input": merged,
+        }
+        ctx = self._ctx(
+            skeleton=skeleton,
+            stage=skeleton.stage("deliver_work_order"),
+            task={
+                "id": "deliver-1",
+                "step_name": "deliver_work_order",
+                "status": "running",
+                "output": {},
+            },
+            dispatch_result={
+                "output": {
+                    "pr_url": "https://github.com/org/app/pull/7",
+                    "work_order_id": "WO-002",
+                }
+            },
+            memory_client=client,
+        )
+
+        results = hydrate_input.hydrate_downstream(ctx, ["qa_gate"])
+
+        self.assertEqual(len(results), 1)
+        patched = client.patch_task_input.call_args.args[1]
+        self.assertEqual(patched["pr_url"], "https://github.com/org/app/pull/7")
+        self.assertEqual(patched["work_order_id"], "WO-002")
+        self.assertEqual(patched["work_order_ref"], "WO-002")
+
+    def test_hydrate_downstream_patches_latest_pending_qa_gate(self):
+        skeleton = load_skeleton("deliver_work_order")
+        client = MagicMock()
+        client.get_workflow.return_value = {
+            "workflow": {"id": "wf-1", "program_id": None},
+            "tasks": [
+                {
+                    "id": "deliver-2",
+                    "step_name": "deliver_work_order",
+                    "status": "running",
+                    "output": {},
+                    "created_at": "2026-01-03",
+                },
+                {
+                    "id": "qa-1",
+                    "step_name": "qa_gate",
+                    "status": "cancelled",
+                    "input": {"pr_url": "https://github.com/org/app/pull/8"},
+                    "created_at": "2026-01-02",
+                },
+                {
+                    "id": "qa-2",
+                    "step_name": "qa_gate",
+                    "status": "pending",
+                    "input": {"pr_url": None, "work_order_ref": "WO-003"},
+                    "created_at": "2026-01-04",
+                },
+            ],
+        }
+        client.patch_task_input.side_effect = lambda task_id, merged, actor=None: {
+            "id": task_id,
+            "input": merged,
+        }
+        ctx = self._ctx(
+            skeleton=skeleton,
+            stage=skeleton.stage("deliver_work_order"),
+            task={
+                "id": "deliver-2",
+                "step_name": "deliver_work_order",
+                "status": "running",
+                "output": {},
+            },
+            dispatch_result={
+                "output": {
+                    "pr_url": "https://github.com/org/app/pull/8",
+                    "work_order_id": "WO-003",
+                }
+            },
+            memory_client=client,
+        )
+
+        results = hydrate_input.hydrate_downstream(ctx, ["qa_gate"])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(client.patch_task_input.call_args.args[0], "qa-2")
+        patched = client.patch_task_input.call_args.args[1]
+        self.assertEqual(patched["pr_url"], "https://github.com/org/app/pull/8")
+        self.assertEqual(patched["work_order_id"], "WO-003")
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_revise_on_block_spawns_deliver_checks_qa_and_merge(self, mock_bulk):
+        mock_bulk.side_effect = [["deliver-2"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
+        skeleton = load_skeleton("deliver_work_order")
+        qa_stage = skeleton.stage("qa_gate")
+        deliver = {
+            "id": "deliver-1",
+            "step_name": "deliver_work_order",
+            "status": "succeeded",
+            "input": {
+                "work_order_id": "WO-003",
+                "work_order_body": "# WO-003 Checkers",
+                "repo_url": "https://github.com/org/app.git",
+            },
+            "output": {
+                "pr_url": "https://github.com/org/app/pull/8",
+                "work_order_id": "WO-003",
+            },
+            "created_at": "2026-01-01",
+        }
+        gate = {
+            "id": "qa-1",
+            "step_name": "qa_gate",
+            "status": "blocked",
+            "output": {"status": "failed", "result": {"summary": "No evidence"}},
+            "created_at": "2026-01-02",
+        }
+        merge = {
+            "id": "merge-1",
+            "step_name": "await_human_merge",
+            "status": "pending",
+            "created_at": "2026-01-02",
+        }
+        ctx = self._ctx(
+            workflow_type="deliver_work_order",
+            skeleton=skeleton,
+            stage=qa_stage,
+            task=gate,
+            runner_event="blocked",
+            reject_comments="No evidence of implementation or testing",
+            tasks=[deliver, gate, merge],
+        )
+        ctx.memory_client.get_workflow.return_value = {
+            "workflow": ctx.workflow,
+            "tasks": [deliver, gate, merge],
+        }
+        ctx.memory_client.cancel_task.return_value = {"status": "cancelled"}
+
+        result = revise_on_reject.handle(ctx)
+
+        self.assertEqual(result["status"], "revising")
+        self.assertEqual(result["revise_task_id"], "deliver-2")
+        self.assertEqual(result["re_gate_task_ids"], ["checks-2"])
+        self.assertEqual(
+            result["resume_after_task_ids"],
+            ["precheck-2", "review-2", "finalize-2", "qa-2", "fresh-2", "merge-2"],
+        )
+        ctx.memory_client.reject_task.assert_not_called()
+        cancelled = [call.args[0] for call in ctx.memory_client.cancel_task.call_args_list]
+        self.assertIn("qa-1", cancelled)
+        self.assertIn("merge-1", cancelled)
+        deliver_payload = mock_bulk.call_args_list[0].kwargs["tasks"][0]
+        self.assertEqual(deliver_payload["step_name"], "deliver_work_order")
+        self.assertEqual(deliver_payload["input"]["work_order_id"], "WO-003")
+        self.assertEqual(
+            deliver_payload["input"]["qa_feedback"],
+            "No evidence of implementation or testing",
+        )
+        self.assertEqual(
+            deliver_payload["input"]["pr_url"],
+            "https://github.com/org/app/pull/8",
+        )
+        self.assertTrue(deliver_payload.get("contract"))
+        checks_payload = mock_bulk.call_args_list[1].kwargs["tasks"][0]
+        self.assertEqual(checks_payload["step_name"], "await_pr_checks")
+        self.assertEqual(checks_payload["depends_on"], ["deliver-2"])
+        self.assertFalse(checks_payload.get("approval_required"))
+        chain = [call.kwargs["tasks"][0] for call in mock_bulk.call_args_list[2:]]
+        self.assertEqual(
+            [(task["step_name"], task["depends_on"]) for task in chain],
+            [
+                ("review_precheck", ["checks-2"]),
+                ("code_review", ["precheck-2"]),
+                ("finalize_code_review", ["review-2"]),
+                ("qa_gate", ["finalize-2"]),
+                ("ensure_fresh", ["qa-2"]),
+                ("await_human_merge", ["fresh-2"]),
+            ],
+        )
+        self.assertEqual(chain[1]["agent_id"], "review-agent")
+        self.assertTrue(chain[1].get("contract"))
+        qa_payload = chain[3]
+        self.assertFalse(qa_payload.get("approval_required"))
+        self.assertTrue(qa_payload.get("contract"))
+        merge_payload = mock_bulk.call_args_list[7].kwargs["tasks"][0]
+        self.assertEqual(merge_payload["step_name"], "await_human_merge")
+        self.assertEqual(merge_payload["depends_on"], ["fresh-2"])
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_revise_on_block_stops_at_revision_limit(self, mock_bulk):
+        skeleton = load_skeleton("deliver_work_order")
+        delivers = [
+            {
+                "id": f"deliver-{i}",
+                "step_name": "deliver_work_order",
+                "status": "succeeded",
+                "input": {"work_order_id": "WO-003"},
+                "output": {"pr_url": "https://github.com/org/app/pull/8"},
+                "created_at": f"2026-01-0{i}",
+            }
+            for i in range(1, 5)
+        ]
+        gate = {
+            "id": "qa-4",
+            "step_name": "qa_gate",
+            "status": "blocked",
+            "created_at": "2026-01-05",
+        }
+        ctx = self._ctx(
+            workflow_type="deliver_work_order",
+            skeleton=skeleton,
+            stage=skeleton.stage("qa_gate"),
+            task=gate,
+            runner_event="blocked",
+            reject_comments="still failing",
+            tasks=delivers + [gate],
+        )
+        ctx.memory_client.get_workflow.return_value = {
+            "workflow": ctx.workflow,
+            "tasks": delivers + [gate],
+        }
+
+        result = revise_on_reject.handle(ctx)
+
+        self.assertEqual(result["status"], "revision_limit")
+        mock_bulk.assert_not_called()
+        ctx.memory_client.cancel_task.assert_not_called()
+
+    def _budget_ctx(self, tasks, *, budget="refresh", max_revisions=2):
+        import dataclasses
+
+        skeleton = load_skeleton("deliver_work_order")
+        qa_stage = skeleton.stage("qa_gate")
+        on_block = {
+            **qa_stage.on_block,
+            "max_revisions": max_revisions,
+            "revise": {
+                **qa_stage.on_block["revise"],
+                "budget": budget,
+                "static_input": {"refresh": True},
+                "input_map": {"pr_url": "$prior.deliver_work_order.output.pr_url"},
+            },
+        }
+        stage = dataclasses.replace(qa_stage, on_block=on_block)
+        gate = next(t for t in tasks if t["step_name"] == "qa_gate")
+        ctx = self._ctx(
+            workflow_type="deliver_work_order",
+            skeleton=skeleton,
+            stage=stage,
+            task=gate,
+            runner_event="blocked",
+            reject_comments="base moved",
+            tasks=tasks,
+        )
+        ctx.memory_client.get_workflow.return_value = {"workflow": ctx.workflow, "tasks": tasks}
+        return ctx
+
+    def _deliver(self, i, **input_extra):
+        return {
+            "id": f"deliver-{i}",
+            "step_name": "deliver_work_order",
+            "status": "succeeded",
+            "input": {"work_order_id": "WO-003", "qa_feedback": "old", **input_extra},
+            "output": {"pr_url": "https://github.com/org/app/pull/8"},
+            "created_at": f"2026-01-0{i}",
+        }
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_budgeted_revision_ignores_default_revisions_and_merges_static_input(self, mock_bulk):
+        mock_bulk.side_effect = [["deliver-4"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
+        gate = {"id": "qa-3", "step_name": "qa_gate", "status": "blocked", "created_at": "2026-01-04"}
+        tasks = [self._deliver(1), self._deliver(2), self._deliver(3), gate]
+        result = revise_on_reject.handle(self._budget_ctx(tasks))
+        self.assertEqual(result["status"], "revising")
+        self.assertEqual(result["max_revisions"], 2)
+        payload = mock_bulk.call_args_list[0].kwargs["tasks"][0]["input"]
+        self.assertEqual(payload["_revision_budget"], "refresh")
+        self.assertTrue(payload["refresh"])
+        self.assertEqual(payload["revision_number"], 1)
+        self.assertNotIn("qa_feedback", payload)
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_budgeted_revision_limit_counts_only_its_budget(self, mock_bulk):
+        gate = {"id": "qa-3", "step_name": "qa_gate", "status": "blocked", "created_at": "2026-01-04"}
+        tasks = [
+            self._deliver(1),
+            self._deliver(2, _revision_budget="refresh"),
+            self._deliver(3, _revision_budget="refresh"),
+            gate,
+        ]
+        result = revise_on_reject.handle(self._budget_ctx(tasks))
+        self.assertEqual(result["status"], "revision_limit")
+        mock_bulk.assert_not_called()
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_default_budget_ignores_refresh_revisions(self, mock_bulk):
+        mock_bulk.side_effect = [["deliver-5"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
+        gate = {"id": "qa-3", "step_name": "qa_gate", "status": "blocked", "created_at": "2026-01-05"}
+        tasks = [
+            self._deliver(1),
+            self._deliver(2, _revision_budget="refresh"),
+            self._deliver(3, _revision_budget="refresh"),
+            self._deliver(4, _revision_budget="refresh"),
+            gate,
+        ]
+        result = revise_on_reject.handle(self._budget_ctx(tasks, budget="", max_revisions=1))
+        self.assertEqual(result["status"], "revising")
+        payload = mock_bulk.call_args_list[0].kwargs["tasks"][0]["input"]
+        self.assertNotIn("_revision_budget", payload)
+
+    @patch("ts_harness.notifications.slack.SlackNotifier")
+    def test_notify_bound_channel(self, mock_notifier_cls):
+        mock_notifier_cls.return_value.notify_workflow_event.return_value = None
+        ctx = self._ctx(runner_event="failed", extras={"error": "boom"})
+        result = notify_bound_channel.handle(ctx)
+        self.assertEqual(result["status"], "notified")
+
+    @patch("ts_harness.notifications.slack.SlackNotifier")
+    def test_notify_bound_channel_posts_channel_text(self, mock_notifier_cls):
+        mock_notifier_cls.return_value.post_thread_text.return_value = {"ok": True}
+        ctx = self._ctx(
+            runner_event="completed",
+            extras={"channel_text": "All work orders are delivered. Implement is complete."},
+        )
+        result = notify_bound_channel.handle(ctx)
+        self.assertEqual(result["status"], "notified")
+        mock_notifier_cls.return_value.notify_workflow_event.assert_not_called()
+        kwargs = mock_notifier_cls.return_value.post_thread_text.call_args.kwargs
+        self.assertEqual(kwargs["channel"], "C1")
+        self.assertEqual(kwargs["thread_ts"], "123.456")
+        self.assertIn("Implement is complete", kwargs["text"])
+
+    @patch("ts_harness.notifications.slack.SlackNotifier")
+    def test_notify_bound_channel_terminal_block_includes_guidance(self, mock_notifier_cls):
+        mock_notifier_cls.return_value.notify_workflow_event.return_value = None
+        ctx = self._ctx(
+            runner_event="blocked",
+            extras={"error": "missing required artifact keys: requirements_markdown"},
+            task={"id": "t-refine", "step_name": "refine_requirements", "agent_id": "pm-agent"},
+        )
+        result = notify_bound_channel.handle(ctx)
+        self.assertEqual(result["status"], "notified")
+        kwargs = mock_notifier_cls.return_value.notify_workflow_event.call_args.kwargs
+        self.assertIn("will not retry automatically", kwargs.get("error") or "")
+        self.assertIn("refine_requirements", kwargs.get("error") or "")
+
+    @patch("ts_harness.notifications.slack.SlackNotifier")
+    def test_notify_bound_channel_revise_loop_skips_terminal_guidance(
+        self, mock_notifier_cls
+    ):
+        mock_notifier_cls.return_value.notify_workflow_event.return_value = None
+        ctx = self._ctx(
+            runner_event="blocked",
+            extras={
+                "error": "QA rejected the PR; sending it back to OpenCode (revision 2/3)."
+            },
+            task={"id": "qa-1", "step_name": "qa_gate", "agent_id": "qa-agent"},
+        )
+        result = notify_bound_channel.handle(ctx)
+        self.assertEqual(result["status"], "notified")
+        kwargs = mock_notifier_cls.return_value.notify_workflow_event.call_args.kwargs
+        self.assertNotIn("will not retry automatically", kwargs.get("error") or "")
+        self.assertIn("sending it back to OpenCode", kwargs.get("error") or "")
+
+    def test_failed_pr_checks_block_instead_of_resuming(self):
+        skeleton = load_skeleton("deliver_work_order")
+        wait_task = {
+            "id": "wait-1",
+            "step_name": "await_pr_checks",
+            "status": "blocked",
+            "error": "awaiting_external:github.pr_checks",
+            "expected_event_type": "github.pr_checks",
+        }
+        output = {"checks_state": "failure", "failed_checks": ["lint", "dependency-audit"], "checks": {}}
+        ctx = self._ctx(
+            skeleton=skeleton,
+            stage=skeleton.stage("await_pr_checks"),
+            workflow_type="deliver_work_order",
+            extras={"event_type": "github.pr_checks", "payload": output, "task_output": output},
+            tasks=[wait_task],
+            workflow={"workflow_type": "deliver_work_order"},
+        )
+        ctx.memory_client.get_workflow.return_value = {"workflow": ctx.workflow, "tasks": ctx.tasks}
+        result = wait_external.resume(ctx)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("dependency-audit", result["reason"])
+        ctx.memory_client.resume_external.assert_not_called()
+        ctx.memory_client.block_task_api.assert_called_once()
+
+    def test_wait_external_resume_uses_dedicated_resume_endpoint(self):
+        skeleton = load_skeleton("prd_request")
+        wait_task = {
+            "id": "wait-1",
+            "step_name": "await_intake_answers",
+            "status": "blocked",
+            "error": "awaiting_external:channel.intake_response",
+            "expected_event_type": "channel.intake_response",
+        }
+        ctx = self._ctx(
+            task=None,
+            stage=None,
+            skeleton=skeleton,
+            extras={
+                "event_type": "channel.intake_response",
+                "payload": {"user_text": "looks good"},
+                "task_output": {
+                    "clarified_requirements": {"answers": "looks good"},
+                },
+            },
+            tasks=[wait_task],
+            workflow={"workflow_type": "prd_request"},
+        )
+        ctx.memory_client.get_workflow.return_value = {
+            "workflow": ctx.workflow,
+            "tasks": ctx.tasks,
+        }
+        ctx.memory_client.resume_external.return_value = {
+            "status": "resumed",
+            "task_id": "wait-1",
+        }
+
+        result = wait_external.resume(ctx)
+
+        self.assertEqual(result["status"], "resumed")
+        ctx.memory_client.resume_external.assert_called_once_with(
+            "wf-1",
+            event_type="channel.intake_response",
+            payload={"user_text": "looks good"},
+            actor="orchestrator",
+            task_output={"clarified_requirements": {"answers": "looks good"}},
+        )
+        ctx.memory_client.complete_task_api.assert_not_called()
+        ctx.memory_client.clear_task_wait.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

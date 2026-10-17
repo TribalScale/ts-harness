@@ -1,0 +1,878 @@
+{
+  "workflow_type": "deliver_work_order",
+  "definition_version": "1.3.0",
+  "display_name": "Deliver one work order",
+  "contracts": {
+    "deliver_work_order": {
+      "name": "deliver_work_order",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "work_order_id",
+          "pr_url"
+        ],
+        "properties": {
+          "work_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pr_url": {
+            "type": "string",
+            "pattern": "^https://"
+          }
+        }
+      },
+      "required_artifacts": {
+        "pr_url": "/pr_url"
+      },
+      "semantic_validators": [
+        "validate_coding_backend_pr_url"
+      ],
+      "outcome": null
+    },
+    "code_review": {
+      "name": "code_review",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "object",
+            "required": [
+              "verdict",
+              "summary",
+              "prs",
+              "findings"
+            ],
+            "properties": {
+              "verdict": {
+                "enum": [
+                  "pass",
+                  "block"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "prs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "pr_url"
+                  ],
+                  "properties": {
+                    "pr_url": {
+                      "type": "string",
+                      "pattern": "^https://"
+                    },
+                    "head_sha": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "severity",
+                    "category",
+                    "pr_url",
+                    "message"
+                  ],
+                  "properties": {
+                    "severity": {
+                      "enum": [
+                        "blocker",
+                        "major",
+                        "minor",
+                        "nit"
+                      ]
+                    },
+                    "category": {
+                      "enum": [
+                        "correctness",
+                        "security",
+                        "scope",
+                        "tests",
+                        "maintainability"
+                      ]
+                    },
+                    "pr_url": {
+                      "type": "string"
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required_artifacts": {},
+      "semantic_validators": [
+        "validate_code_review_envelope"
+      ],
+      "outcome": null
+    },
+    "qa_gate": {
+      "name": "qa_gate",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "status",
+          "result"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "success",
+              "failed"
+            ]
+          },
+          "result": {
+            "type": "object",
+            "required": [
+              "prs"
+            ],
+            "properties": {
+              "summary": {
+                "type": "string"
+              },
+              "prs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "pr_url",
+                    "work_item_ref",
+                    "status"
+                  ],
+                  "properties": {
+                    "pr_url": {
+                      "type": "string",
+                      "pattern": "^https://"
+                    },
+                    "work_item_ref": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "enum": [
+                        "success",
+                        "failed"
+                      ]
+                    },
+                    "acceptance_criteria": {
+                      "type": "array"
+                    },
+                    "tests": {
+                      "type": "array"
+                    },
+                    "defects": {
+                      "type": "array"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "warnings": {
+            "type": "array"
+          },
+          "follow_up_needed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "required_artifacts": {},
+      "semantic_validators": [
+        "validate_qa_pr_url_set"
+      ],
+      "outcome": {
+        "pointer": "/status",
+        "succeeded_values": [
+          "success"
+        ],
+        "blocked_values": [
+          "failed"
+        ]
+      }
+    }
+  },
+  "notifications": {
+    "bound_channel": false,
+    "events": []
+  },
+  "on_workflow_cancel": {
+    "hook": "cancel_workflow"
+  },
+  "stages": [
+    {
+      "name": "deliver_work_order",
+      "kind": "task",
+      "agent_id": "dev-agent",
+      "allowed_agents": [
+        "dev-agent"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [],
+      "required_artifacts": [],
+      "skill_hints": [
+        "verified-merge-governed"
+      ],
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 7200
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {
+        "work_order_id": "$workflow.work_order_id",
+        "work_order_ref": "$workflow.work_order_ref",
+        "work_order_body": "$workflow.work_order_body",
+        "work_orders_markdown": "$workflow.work_orders_markdown",
+        "completed_work_order_ids": "$workflow.completed_work_order_ids",
+        "repo_url": "$workflow.repo_url",
+        "base_branch": "$workflow.base_branch",
+        "refinery_artifacts": "$workflow.refinery_artifacts",
+        "foundry_artifacts": "$workflow.foundry_artifacts",
+        "planner_artifacts": "$workflow.planner_artifacts"
+      },
+      "on_reject": {},
+      "on_failure": {
+        "hook": "compensate_on_failure",
+        "compensate_stage": "record_implement_failure"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "qa_gate"
+        ]
+      },
+      "wait_external": {},
+      "join": {},
+      "barrier": {},
+      "present_prompt": "none",
+      "contract_ref": "deliver_work_order",
+      "allowed_contracts": [],
+      "output_schema": {}
+    },
+    {
+      "name": "record_implement_failure",
+      "kind": "compensate",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {},
+      "join": {},
+      "barrier": {},
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {}
+    },
+    {
+      "name": "await_pr_checks",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "deliver_work_order"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 3,
+        "timeout_seconds": 86400
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "review_precheck",
+          "code_review",
+          "qa_gate"
+        ]
+      },
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "github.pr_checks",
+        "pr_checks": {
+          "pr_url": "$prior.deliver_work_order.output.pr_url",
+          "security": "$prior.deliver_work_order.output.security"
+        },
+        "timeout_seconds": 86400
+      },
+      "join": {},
+      "barrier": {},
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {}
+    },
+    {
+      "name": "review_precheck",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "await_pr_checks"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "code_review"
+        ]
+      },
+      "wait_external": {},
+      "join": {},
+      "barrier": {
+        "hook": "review_precheck",
+        "pr_url": "$prior.deliver_work_order.output.pr_url",
+        "work_order_body": "$workflow.work_order_body",
+        "refresh": "$prior.deliver_work_order.output.refresh_method"
+      },
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {}
+    },
+    {
+      "name": "code_review",
+      "kind": "task",
+      "agent_id": "review-agent",
+      "allowed_agents": [
+        "review-agent"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "review_precheck"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [
+        "governed-code-review"
+      ],
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 3600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {
+        "pr_url": "$prior.deliver_work_order.output.pr_url",
+        "work_order_id": "$prior.deliver_work_order.output.work_order_id",
+        "work_order_ref": "$prior.deliver_work_order.output.work_order_id",
+        "work_order_body": "$workflow.work_order_body",
+        "prs": "$prior.review_precheck.output.prs",
+        "files": "$prior.review_precheck.output.files",
+        "diff_stats": "$prior.review_precheck.output.diff_stats",
+        "scope_findings": "$prior.review_precheck.output.scope_findings",
+        "refresh": "$prior.review_precheck.output.refresh"
+      },
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {},
+      "join": {},
+      "barrier": {},
+      "present_prompt": "",
+      "contract_ref": "code_review",
+      "allowed_contracts": [],
+      "output_schema": {}
+    },
+    {
+      "name": "finalize_code_review",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "code_review"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {},
+      "join": {},
+      "barrier": {
+        "hook": "finalize_code_review",
+        "review": "$prior.code_review.output",
+        "precheck": "$prior.review_precheck.output"
+      },
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {},
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 3,
+        "revise": {
+          "step_name": "deliver_work_order",
+          "agent_id": "dev-agent",
+          "source_steps": [
+            "deliver_work_order"
+          ],
+          "input_map": {
+            "review_feedback": "$reject.comments",
+            "revision_files": "$prior.finalize_code_review.output.revision_files",
+            "pr_url": "$prior.deliver_work_order.output.pr_url",
+            "revision_number": "$runtime.revision_count:deliver_work_order"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "qa_gate",
+      "kind": "task",
+      "agent_id": "qa-agent",
+      "allowed_agents": [
+        "qa-agent"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "finalize_code_review"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [
+        "governed-qa-gate"
+      ],
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 3600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {
+        "pr_url": "$prior.deliver_work_order.output.pr_url",
+        "work_order_id": "$prior.deliver_work_order.output.work_order_id",
+        "work_order_ref": "$prior.deliver_work_order.output.work_order_id",
+        "work_order_body": "$workflow.work_order_body",
+        "repo_url": "$workflow.repo_url",
+        "base_branch": "$workflow.base_branch",
+        "host_verify_summary": "$prior.deliver_work_order.output.verify_summary",
+        "files": "$prior.review_precheck.output.files",
+        "diff_stats": "$prior.review_precheck.output.diff_stats",
+        "prs": "$prior.review_precheck.output.prs",
+        "checks_state": "$prior.await_pr_checks.output.checks_state",
+        "checks": "$prior.await_pr_checks.output.checks",
+        "failed_checks": "$prior.await_pr_checks.output.failed_checks",
+        "host_security": "$prior.deliver_work_order.output.security"
+      },
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {},
+      "join": {},
+      "barrier": {},
+      "present_prompt": "merge",
+      "contract_ref": "qa_gate",
+      "allowed_contracts": [],
+      "output_schema": {},
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 3,
+        "revise": {
+          "step_name": "deliver_work_order",
+          "agent_id": "dev-agent",
+          "source_steps": [
+            "deliver_work_order"
+          ],
+          "input_map": {
+            "qa_feedback": "$reject.comments",
+            "pr_url": "$prior.deliver_work_order.output.pr_url",
+            "revision_number": "$runtime.revision_count:deliver_work_order"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ensure_fresh",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "qa_gate"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {},
+      "join": {},
+      "barrier": {
+        "hook": "ensure_fresh",
+        "pr_urls": "$prior.qa_gate.output.result.prs"
+      },
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {},
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 5,
+        "revise": {
+          "step_name": "deliver_work_order",
+          "agent_id": "dev-agent",
+          "budget": "refresh",
+          "static_input": {
+            "refresh": true
+          },
+          "source_steps": [
+            "deliver_work_order"
+          ],
+          "input_map": {
+            "pr_url": "$prior.deliver_work_order.output.pr_url"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_human_merge",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "allowed_external_effects": [],
+      "depends_on": [
+        "ensure_fresh"
+      ],
+      "required_artifacts": [],
+      "skill_hints": [],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      },
+      "approval_required": false,
+      "plan_approval_required": false,
+      "input_map": {},
+      "on_reject": {},
+      "on_failure": {},
+      "on_complete": {},
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "github.merge",
+        "match_all": {
+          "source": "$prior.qa_gate.output.result.prs",
+          "item_key": "pr_url"
+        },
+        "timeout_seconds": 86400
+      },
+      "join": {},
+      "barrier": {},
+      "present_prompt": "",
+      "contract_ref": "",
+      "allowed_contracts": [],
+      "output_schema": {},
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 5,
+        "revise": {
+          "step_name": "deliver_work_order",
+          "agent_id": "dev-agent",
+          "budget": "refresh",
+          "static_input": {
+            "refresh": true
+          },
+          "source_steps": [
+            "deliver_work_order"
+          ],
+          "input_map": {
+            "pr_url": "$prior.deliver_work_order.output.pr_url"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

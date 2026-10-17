@@ -1,0 +1,2160 @@
+:root,
+[data-astryx-theme="neutral"] {
+  --bg: var(--color-background-body, #f4f6f9);
+  --surface: var(--color-background-card, #ffffff);
+  --surface-subtle: var(--color-background-muted, #f8fafc);
+  --sidebar: var(--color-background-surface, #172033);
+  --sidebar-muted: var(--color-text-secondary, #aeb9cc);
+  --border: var(--color-border, #dfe5ed);
+  --border-strong: var(--color-border-emphasized, #c8d1df);
+  --text: var(--color-text-primary, #172033);
+  --muted: var(--color-text-secondary, #667085);
+  --accent: var(--color-accent, #2f6fed);
+  --accent-soft: var(--color-background-muted, #eaf1ff);
+  --ok: var(--color-text-green, #18794e);
+  --ok-bg: var(--color-background-green, #e8f5ee);
+  --warn: var(--color-text-yellow, #9a6700);
+  --warn-bg: var(--color-background-yellow, #fff7e6);
+  --bad: var(--color-text-red, #b42318);
+  --bad-bg: var(--color-background-red, #fff0ee);
+  /* 4.5:1 against white surfaces and 3.5:1 against the dark sidebar. */
+  --focus: var(--color-border-blue, #2f6fed);
+  --focus-on-dark: var(--color-border-blue, #b8ccff);
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 6%);
+  --radius: 8px;
+  --font: var(--font-family-body, "Segoe UI", sans-serif);
+  --mono: var(--font-family-code, ui-monospace, monospace);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Astryx fields draw focus on their rounded shell. A square outline on the inner control clips those corners. */
+.astryx-text-input input:focus-visible,
+.astryx-field textarea:focus-visible,
+.astryx-field select:focus-visible {
+  outline: none;
+}
+
+.app-sidebar button:focus-visible,
+.app-sidebar a:focus-visible,
+.app-topbar button:focus-visible {
+  outline-color: var(--focus-on-dark);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg);
+}
+
+.app-sidebar {
+  flex: 0 0 184px;
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 16px 12px;
+  background: var(--color-background-surface, var(--surface));
+  color: var(--color-text-primary, var(--text));
+  border-right: 1px solid var(--color-border, var(--border));
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin-bottom: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.app-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-text-secondary, var(--muted));
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+}
+
+.app-nav button:hover,
+.app-nav button.active {
+  background: var(--color-background-muted, var(--accent-soft));
+  color: var(--color-text-primary, var(--text));
+}
+
+.app-nav button[aria-current="page"] {
+  border-color: var(--color-border, var(--border));
+}
+
+.nav-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+
+.nav-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.operator-footer {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border, var(--border));
+}
+
+.operator-role {
+  color: var(--color-text-secondary, var(--muted));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.split {
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+}
+
+.split-list {
+  flex: 0 0 280px;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  background: var(--surface);
+}
+
+.split-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 20px;
+  background: var(--bg);
+}
+
+.panel-pad {
+  padding: 16px 20px;
+}
+
+.panel-pad h2,
+.split-detail h2,
+.login h1 {
+  margin-top: 0;
+}
+
+.row-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.row-card:hover,
+.row-card.selected {
+  background: var(--accent-soft);
+}
+
+.definition-studio {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100%;
+}
+
+.definition-studio-tabs {
+  padding-bottom: 0;
+}
+
+.definition-studio-tabs .tabs {
+  margin-bottom: 0;
+}
+
+.definition-studio-panel {
+  min-height: 0;
+}
+
+.definition-studio-workflows {
+  display: grid;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.program-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.program-canvas-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.program-canvas-grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.program-node {
+  display: grid;
+  min-width: 180px;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.program-node-terminal {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.program-node span,
+.program-node small {
+  color: var(--muted);
+}
+
+.workflow-library {
+  display: grid;
+  gap: 16px;
+}
+
+.workflow-library-header,
+.workflow-builder-header,
+.row-between {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.row-between {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.workflow-builder-header {
+  min-height: 0;
+}
+
+.workflow-builder-header .muted {
+  margin: 4px 0 0;
+}
+
+.workflow-library-header h2,
+.workflow-builder-header h2 {
+  margin: 0;
+}
+
+.workflow-library-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.program-builder-agent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+  padding: 12px 16px 16px;
+}
+
+.program-builder-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.program-builder-chat .chat-toolbar {
+  flex-wrap: wrap;
+}
+
+.program-builder-chat .chat-toolbar button {
+  white-space: nowrap;
+}
+
+.program-builder-chat .chat-detail {
+  flex: 1;
+  min-height: 0;
+}
+
+.program-builder-session-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.program-builder-session-picker select {
+  min-width: 0;
+  max-width: 220px;
+}
+
+.program-builder-intake {
+  display: grid;
+  gap: 8px;
+}
+
+.program-builder-intake .muted {
+  margin: 0;
+}
+
+.program-builder-drafts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  gap: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.program-builder-drafts h2 {
+  margin: 0;
+}
+
+.builder-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.builder-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.builder-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.builder-card p {
+  margin: 6px 0 0;
+}
+
+.builder-issues,
+.builder-problems,
+.builder-steps {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.builder-issue-error strong,
+.builder-step-failed strong {
+  color: var(--bad);
+}
+
+.builder-issue-warning strong {
+  color: var(--warn);
+}
+
+.builder-status-draft {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.builder-status-activated,
+.builder-status-approved {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.builder-status-missing,
+.builder-status-none {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.program-builder-activate .muted {
+  margin: 6px 0 0;
+}
+
+.builder-success p {
+  margin: 0 0 4px;
+}
+
+.workflow-library-section {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-library-section h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.workflow-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.workflow-card-main {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-card .row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 12px;
+}
+
+.workflow-builder {
+  display: grid;
+  gap: 14px;
+  min-height: 100%;
+}
+
+.workflow-builder-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.workflow-canvas-shell,
+.workflow-inspector,
+.validation-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-canvas-shell,
+.program-canvas-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.workflow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workflow-canvas-grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.workflow-flow {
+  min-height: 220px;
+  height: auto;
+  background: var(--surface-subtle);
+}
+
+@media (min-width: 1024px) {
+  .split-detail .workflow-builder-grid {
+    min-height: 720px;
+  }
+}
+
+.workflow-node {
+  display: grid;
+  min-width: 150px;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-node-gate {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.workflow-node span,
+.workflow-node small {
+  color: var(--muted);
+}
+
+.workflow-node-fragment {
+  border-style: dashed;
+  border-width: 2px;
+}
+
+.workflow-node-fragment-stages {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+
+.workflow-node .workflow-node-child {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.workflow-fragment-picker {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.workflow-stage-list {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.workflow-stage-list h3,
+.workflow-inspector h3,
+.validation-panel h3 {
+  margin-top: 0;
+}
+
+.workflow-stage-list h3 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.workflow-stage-list ul {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-stage-list li {
+  flex: 0 0 auto;
+}
+
+.validation-panel ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-stage-list button {
+  width: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workflow-stage-list button.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.workflow-inspector {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.workflow-inspector section {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-inspector fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.workflow-inspector legend {
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.inspector-settings-link {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+}
+
+.workflow-inspector textarea,
+.start-workflow-dialog textarea {
+  min-height: 140px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.form-grid-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.form-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.form-pair-wide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.form-pair .form-field,
+.form-pair-wide .form-field {
+  min-width: 0;
+}
+
+.input-map-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.input-map-editor h4 {
+  margin: 0;
+}
+
+.key-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 8px;
+}
+
+.link-button {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.validation-panel {
+  padding: 14px;
+}
+
+.validation-panel-ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.validation-panel li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.validation-panel p {
+  margin: 4px 0;
+}
+
+.validation-error {
+  border-color: var(--bad) !important;
+  background: var(--bad-bg);
+}
+
+.validation-warning,
+.warning {
+  border-color: var(--warn) !important;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.row-title {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inbox-detail {
+  display: grid;
+  gap: 16px;
+  min-height: calc(100vh - 40px);
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-header h2,
+.detail-header p,
+.detail-card h3,
+.detail-card p {
+  margin: 0;
+}
+
+.row-subtitle,
+.detail-subtitle {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.detail-sections {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding-bottom: 76px;
+}
+
+.detail-card,
+.detail-raw {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.detail-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.detail-card h3 {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-card p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.detail-raw {
+  padding: 12px 14px;
+}
+
+.detail-raw summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.detail-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(rgb(244 246 249 / 72%), var(--bg) 38%);
+}
+
+.short-id {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.badge-skill {
+  background: #efeafd;
+  color: #5b3db2;
+}
+.badge-tool {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.badge-gate {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.filters button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.filters button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.phase-strip-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.phase-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 16px 0 0;
+  list-style: none;
+}
+
+.phase-pin {
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.topology-expander {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px 12px;
+}
+
+.topology-expander summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.topology-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.topology-body ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.topology-body .linkish {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.program-pin {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.program-pin a {
+  color: var(--accent);
+}
+
+.phase-item {
+  min-width: 0;
+}
+
+.phase-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+}
+
+.phase-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.phase-block.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.phase-item.complete .phase-index {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.phase-item.current .phase-index {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.phase-block .state {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.kanban-col {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 180px;
+  padding: 8px;
+}
+
+.kanban-col h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.kanban-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.kanban-empty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.program-panel,
+.program-actions,
+.key-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.program-panel {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.program-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.program-header h2 {
+  margin: 0 0 6px;
+}
+
+.program-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.program-waiting {
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.callout {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.callout strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.key-links a {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.artifact-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.artifact-row dt {
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.artifact-row dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-thread {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 240px;
+  margin-bottom: 0;
+  overflow: auto;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.react-flow {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.react-flow .react-flow__node {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.react-flow .react-flow__edge-path {
+  stroke: var(--accent);
+}
+
+.chat-list {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.chat-list > button {
+  justify-self: start;
+}
+
+.chat-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.chat-list-header h2,
+.chat-detail h2 {
+  margin-bottom: 4px;
+}
+
+.chat-new-button {
+  width: auto;
+  margin-left: auto;
+}
+
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.chat-layout .split-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 16px;
+}
+
+.chat-layout .chat-detail {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.chat-detail.is-empty .chat-thread {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-composer-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--color-background-card, var(--surface));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 16px;
+}
+
+.transcript-search {
+  display: grid;
+  gap: 8px;
+}
+
+.transcript-search label {
+  display: grid;
+  gap: 6px;
+}
+
+.transcript-search input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.thread-list {
+  display: grid;
+  gap: 8px;
+}
+
+.bubble {
+  max-width: 80%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--color-on-accent, #ffffff);
+}
+
+.bubble.user.failed {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border: 1px solid #ffd4cf;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.bubble-status {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Tool and system events are transcript annotations, not conversation turns. */
+.chat-event {
+  align-self: center;
+  max-width: 90%;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.sample-prompts {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.sample-prompts > button {
+  flex: 0 0 auto;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: 64px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.skill-pin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-height: 160px;
+  overflow: auto;
+}
+
+.skill-pin-list button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.login {
+  width: min(420px, calc(100% - 32px));
+  margin: 10vh auto;
+  padding: 24px;
+  background: var(--color-background-card, var(--surface));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgb(16 24 40 / 10%);
+  color: var(--color-text-primary, var(--text));
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.login-form button {
+  align-self: flex-start;
+}
+
+.error:not([class*="astryx-"]) {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border: 1px solid #ffd4cf;
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.astryx-banner-frame.error {
+  margin-bottom: 12px;
+}
+
+.success {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border: 1px solid #bfe6d1;
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 32px;
+  text-align: center;
+}
+
+.slide-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(23 32 51 / 42%);
+  z-index: 20;
+}
+
+.slide-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 480px);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  z-index: 21;
+  overflow: auto;
+  padding: 16px;
+}
+
+.slide-close {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  align-self: flex-end;
+  margin: 0 0 8px;
+}
+
+/* Builders keep the map beside the form. The drawer grows so those columns are not crushed. */
+.slide-panel:has(.workflow-builder) {
+  width: min(100%, 1120px);
+}
+
+.slide-panel .workflow-builder {
+  gap: 10px;
+}
+
+.slide-panel .workflow-builder-grid {
+  min-height: 0;
+  height: calc(100vh - 150px);
+}
+
+.slide-panel .workflow-toolbar > button {
+  flex: 0 0 auto;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.status-ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.status-degraded {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.status-unavailable {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.status-neutral {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.status-warning {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.status-success {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.status-danger {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.status-muted {
+  color: var(--muted);
+  background: var(--surface-subtle);
+}
+
+.page-state {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 28px;
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 12px;
+  background: var(--color-background-card, var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+
+.page-state h3,
+.page-state p {
+  margin: 0;
+}
+
+.page-state p {
+  color: var(--color-text-secondary, var(--muted));
+}
+
+.page-state-error {
+  border-color: var(--color-border-red, var(--bad));
+  background: var(--color-background-red, var(--bad-bg));
+}
+
+.page-state-stale {
+  border-color: var(--color-border-yellow, var(--warn));
+  background: var(--color-background-yellow, var(--warn-bg));
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border, var(--border));
+  margin-bottom: 16px;
+}
+
+.tabs [role="tab"] {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary, var(--muted));
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.tabs [role="tab"].active,
+.tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--color-accent, var(--accent));
+  color: var(--color-text-accent, var(--accent));
+}
+
+.dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 12px;
+  color: var(--color-text-primary, var(--text));
+  background: var(--color-background-card, var(--surface));
+  box-shadow: 0 20px 60px rgb(16 24 40 / 18%);
+}
+
+.dialog.dialog-form {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.dialog::backdrop {
+  background: rgb(23 32 51 / 46%);
+}
+
+.dialog h2 {
+  margin: 0 0 8px;
+}
+
+.dialog p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+pre,
+code {
+  font-family: var(--mono);
+}
+
+pre {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text);
+  padding: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+th,
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+th {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.system-page {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-page {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-page [role="tabpanel"] > div {
+  display: grid;
+  gap: 20px;
+}
+
+.settings-page [role="tabpanel"] > div > h3 {
+  margin: 0;
+}
+
+.settings-page section {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--color-background-card, var(--surface));
+}
+
+.settings-page section h4,
+.settings-page section > p {
+  margin: 0;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.system-header,
+.cron-toolbar,
+.system-summary,
+.health-card-header,
+.row-actions,
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.system-header,
+.cron-toolbar,
+.system-summary,
+.health-card-header {
+  justify-content: space-between;
+}
+
+.system-header h2,
+.system-header p,
+.cron-toolbar h3,
+.cron-toolbar p,
+.system-summary h3,
+.system-summary p,
+.health-card h4,
+.health-card p {
+  margin: 0;
+}
+
+.system-health,
+.cron-editor,
+.mcp-page,
+.skills-catalog {
+  display: grid;
+  gap: 16px;
+}
+
+.skill-dropzone {
+  border: 1px dashed var(--border, #c8ccd2);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--muted, #6b7280);
+}
+
+.skill-dropzone.active {
+  border-color: var(--accent, #2563eb);
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pagination p {
+  margin: 0;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-forms {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.mcp-add-form {
+  display: grid;
+  gap: 12px;
+}
+
+.mcp-add-form [role="tabpanel"]:not([hidden]) {
+  display: grid;
+  gap: 12px;
+}
+
+.mcp-form,
+.mcp-detail {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.system-summary,
+.health-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.system-summary {
+  padding: 18px;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.health-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.health-card-ok {
+  border-left: 4px solid var(--ok);
+}
+
+.health-card-degraded {
+  border-left: 4px solid var(--warn);
+}
+
+.health-card-unavailable {
+  border-left: 4px solid var(--bad);
+}
+
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cron-toolbar {
+  flex-wrap: wrap;
+}
+
+.cron-table-wrap {
+  overflow-x: auto;
+}
+
+.cron-table {
+  font-size: 13px;
+}
+
+.row-actions {
+  flex-wrap: wrap;
+}
+
+.cron-form {
+  display: grid;
+  gap: 12px;
+}
+
+.cron-form h2 {
+  margin: 0;
+}
+
+.form-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.form-field > input,
+.form-field > textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.agent-form {
+  display: grid;
+  gap: 12px;
+  max-width: 40rem;
+}
+
+.form-field > textarea {
+  min-height: 8rem;
+}
+
+.form-field > input:disabled {
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--bad);
+  font-weight: 700;
+}
+
+form {
+  color: var(--text);
+}
+
+/* Phone/tablet: navigation collapses into a drawer so content owns the viewport. */
+.app-shell-compact {
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--color-background-surface, var(--surface));
+  color: var(--color-text-primary, var(--text));
+  border-bottom: 1px solid var(--color-border, var(--border));
+}
+
+.app-topbar .app-brand {
+  margin-bottom: 0;
+  font-size: 14px;
+}
+
+.app-topbar .menu-button {
+  color: var(--color-text-primary, var(--text));
+  border-color: var(--color-border, var(--border));
+  background: transparent;
+  min-height: 40px;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(23 32 51 / 48%);
+  z-index: 30;
+}
+
+.nav-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 31;
+  width: min(80vw, 260px);
+  flex-basis: auto;
+  padding: 20px 14px;
+  box-shadow: 0 12px 40px rgb(16 24 40 / 24%);
+}
+
+.nav-drawer .app-nav button {
+  min-height: 44px;
+}
+
+@media (max-width: 1023px) {
+  .app-brand {
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .app-main {
+    flex: 1;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .split {
+    display: flex;
+    width: 100%;
+    height: calc(100vh - 56px);
+  }
+  .split-list {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+  }
+  .split-detail.desktop-only {
+    display: none;
+  }
+  .kanban {
+    grid-template-columns: 1fr;
+  }
+
+  .row-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .artifact-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog-actions {
+    flex-direction: column-reverse;
+  }
+}
+
+.portfolio-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.portfolio-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.portfolio-filters input,
+.portfolio-filters select {
+  min-width: 0;
+  width: 120px;
+}

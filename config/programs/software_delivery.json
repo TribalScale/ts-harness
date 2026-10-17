@@ -1,0 +1,211 @@
+{
+  "program_type": "software_delivery",
+  "definition_version": "1.2.0",
+  "display_name": "Software delivery",
+  "startable_nodes": ["prd", "jira", "work_orders", "implement", "rollback"],
+  "nodes": [
+    {
+      "id": "prd",
+      "default_workflow_type": "prd_request",
+      "workflow_variants": [],
+      "required_artifacts": [],
+      "produces_artifacts": ["approved_prd"],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "transcript_context", "target": "context", "limit": 20}
+      ],
+      "completion_adapter": "extract_prd_outputs",
+      "terminal": false
+    },
+    {
+      "id": "jira",
+      "default_workflow_type": "jira_from_prd",
+      "workflow_variants": [],
+      "required_artifacts": ["approved_prd"],
+      "produces_artifacts": ["jira_epic_key", "planning_track"],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "artifact", "name": "approved_prd", "target": "approved_prd"}
+      ],
+      "completion_adapter": "extract_jira_outputs",
+      "terminal": false
+    },
+    {
+      "id": "work_orders",
+      "default_workflow_type": "work_orders_from_prd",
+      "workflow_variants": [],
+      "required_artifacts": ["approved_prd"],
+      "produces_artifacts": [
+        "planner_complete",
+        "work_orders_handoff",
+        "next_work_order_id",
+        "work_order_ids",
+        "work_orders_manifest_path",
+        "work_orders_markdown",
+        "refinery_artifacts",
+        "foundry_artifacts",
+        "planner_artifacts",
+        "planning_track"
+      ],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "artifact", "name": "approved_prd", "target": "approved_prd"},
+        {"kind": "static", "target": "stage", "value": "refinery"},
+        {
+          "kind": "artifact",
+          "name": "completed_work_order_ids",
+          "target": "completed_work_order_ids"
+        }
+      ],
+      "completion_adapter": "extract_work_orders_outputs",
+      "terminal": false
+    },
+    {
+      "id": "implement",
+      "default_workflow_type": "implement_delivery",
+      "workflow_variants": [
+        {
+          "workflow_type": "implement_work_orders",
+          "when": {"planning_track": "work_orders"}
+        },
+        {
+          "workflow_type": "implement_work_orders",
+          "when": {"work_orders_handoff": true}
+        }
+      ],
+      "required_artifacts": [],
+      "produces_artifacts": [
+        "pr_url",
+        "pr_urls",
+        "qa_status",
+        "qa_summary",
+        "qa_evidence",
+        "completed_work_order_ids",
+        "merge_sha"
+      ],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "artifact", "name": "jira_epic_key", "target": "jira_epic_key"},
+        {"kind": "artifact", "name": "jira_story_keys", "target": "jira_story_keys"},
+        {"kind": "artifact", "name": "next_work_order_id", "target": "work_order_id"},
+        {"kind": "artifact", "name": "work_order_ref", "target": "work_order_ref"},
+        {
+          "kind": "artifact",
+          "name": "work_orders_manifest_path",
+          "target": "work_orders_manifest_path"
+        },
+        {
+          "kind": "artifact",
+          "name": "completed_work_order_ids",
+          "target": "completed_work_order_ids"
+        },
+        {
+          "kind": "artifact",
+          "name": "work_orders_markdown",
+          "target": "work_orders_markdown"
+        },
+        {
+          "kind": "artifact",
+          "name": "refinery_artifacts",
+          "target": "refinery_artifacts"
+        },
+        {
+          "kind": "artifact",
+          "name": "foundry_artifacts",
+          "target": "foundry_artifacts"
+        },
+        {
+          "kind": "artifact",
+          "name": "planner_artifacts",
+          "target": "planner_artifacts"
+        }
+      ],
+      "completion_adapter": "extract_implement_outputs",
+      "terminal": false,
+      "reentry": {
+        "target_node": "implement",
+        "next_item_artifact": "next_work_order_id",
+        "completed_list_artifact": "completed_work_order_ids",
+        "remaining_list_artifact": "work_order_ids"
+      },
+      "complete_channel_text": "All work orders are delivered and merged. Starting the release: CI on the merged commit, then a promote approval per environment."
+    },
+    {
+      "id": "release",
+      "default_workflow_type": "deploy_release",
+      "workflow_variants": [],
+      "required_artifacts": ["merge_sha"],
+      "produces_artifacts": ["released_environments"],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "artifact", "name": "merge_sha", "target": "merge_sha"},
+        {"kind": "artifact", "name": "repo_url", "target": "repo_url"},
+        {"kind": "artifact", "name": "base_branch", "target": "base_branch"},
+        {"kind": "artifact", "name": "pr_urls", "target": "pr_urls"}
+      ],
+      "completion_adapter": "extract_deploy_outputs",
+      "terminal": true,
+      "await_children": true,
+      "complete_channel_text": "Release complete: every environment reported a successful deployment."
+    },
+    {
+      "id": "rollback",
+      "default_workflow_type": "rollback_release",
+      "workflow_variants": [],
+      "required_artifacts": ["rollback_environment"],
+      "produces_artifacts": ["released_environments"],
+      "input_bindings": [
+        {"kind": "program_summary", "target": "summary"},
+        {"kind": "artifact", "name": "repo_url", "target": "repo_url"},
+        {"kind": "artifact", "name": "base_branch", "target": "base_branch"},
+        {"kind": "artifact", "name": "rollback_environment", "target": "rollback_environment"},
+        {"kind": "artifact", "name": "rollback_sha", "target": "rollback_sha"}
+      ],
+      "completion_adapter": "extract_deploy_outputs",
+      "terminal": true,
+      "complete_channel_text": "Rollback complete: the previous release is deployed again."
+    }
+  ],
+  "edges": [
+    {
+      "source": "prd",
+      "target": "jira",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["create jira", "file tickets", "jira"],
+      "artifact_patch": {"planning_track": "jira"}
+    },
+    {
+      "source": "prd",
+      "target": "work_orders",
+      "mode": "manual",
+      "confirm_required": true,
+      "signals": ["work orders", "plan work orders", "start work orders"],
+      "artifact_patch": {"planning_track": "work_orders"}
+    },
+    {
+      "source": "jira",
+      "target": "implement",
+      "mode": "manual",
+      "confirm_required": false,
+      "signals": [],
+      "artifact_patch": {"planning_track": "jira"}
+    },
+    {
+      "source": "work_orders",
+      "target": "implement",
+      "mode": "automatic",
+      "confirm_required": false,
+      "signals": [],
+      "artifact_patch": {"planning_track": "work_orders"}
+    },
+    {
+      "source": "implement",
+      "target": "release",
+      "mode": "automatic",
+      "confirm_required": false,
+      "signals": [],
+      "artifact_patch": {}
+    }
+  ]
+}

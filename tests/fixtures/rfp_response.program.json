@@ -1,0 +1,23 @@
+{
+  "program_type": "rfp_response",
+  "definition_version": "1.0.0",
+  "display_name": "RFP response",
+  "startable_nodes": ["rfp"],
+  "nodes": [
+    {
+      "id": "rfp",
+      "default_workflow_type": "rfp_review",
+      "workflow_variants": [],
+      "required_artifacts": [],
+      "produces_artifacts": ["approved_rfp"],
+      "input_bindings": [
+        { "kind": "program_summary", "target": "summary" },
+        { "kind": "transcript_context", "target": "context", "limit": 20 }
+      ],
+      "completion_adapter": "extract_declared_outputs",
+      "terminal": true,
+      "complete_channel_text": "RFP approved and recorded. The response artifact is ready for the next sales step."
+    }
+  ],
+  "edges": []
+}

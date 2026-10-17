@@ -1,0 +1,78 @@
+{
+  "workflow_type": "implement_ticket",
+  "definition_version": "1.0.0",
+  "display_name": "Implement single ticket",
+  "experimental": true,
+  "promotion": {
+    "intake_stage": "implement"
+  },
+  "contracts": {
+    "qa_gate": {
+      "output_schema": {
+        "type": "object",
+        "required": ["status", "result"],
+        "properties": {
+          "status": { "enum": ["success", "failed"] },
+          "result": {
+            "type": "object",
+            "required": ["prs"],
+            "properties": {
+              "summary": { "type": "string" },
+              "prs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["pr_url", "work_item_ref", "status"],
+                  "properties": {
+                    "pr_url": { "type": "string", "pattern": "^https://" },
+                    "work_item_ref": { "type": "string", "minLength": 1 },
+                    "status": { "enum": ["success", "failed"] },
+                    "acceptance_criteria": { "type": "array" },
+                    "tests": { "type": "array" },
+                    "defects": { "type": "array" },
+                    "summary": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "warnings": { "type": "array" },
+          "follow_up_needed": { "type": "boolean" }
+        }
+      },
+      "outcome": {
+        "pointer": "/status",
+        "succeeded_values": ["success"],
+        "blocked_values": ["failed"]
+      },
+      "semantic_validators": ["validate_qa_pr_url_set"]
+    }
+  },
+  "stages": [
+    {
+      "name": "implement",
+      "kind": "task",
+      "agent_id": "dev-agent",
+      "allowed_agents": ["dev-agent"],
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 3600
+      }
+    },
+    {
+      "name": "qa",
+      "kind": "task",
+      "agent_id": "qa-agent",
+      "depends_on": ["implement"],
+      "allowed_agents": ["qa-agent"],
+      "contract_ref": "qa_gate",
+      "skill_hints": ["governed-qa-gate"],
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 1800
+      }
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+
+# Environment / secrets
+.env
+terraform.tfvars
+terraform/terraform.tfvars
+infra/aws/terraform.tfvars
+infra/gcp/terraform.tfvars
+terraform/backend.tf
+infra/aws/backend.tf
+infra/gcp/backend.tf
+
+# Generated previews
+.rendered-workspace/
+.worktrees/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+#platform
+.venv/
+infra/aws/migration.tfplan
+.terraform-migration-backups/
+
+# Local installer metadata / generated tfvars
+.install/
+
+# Admin UI build artifacts
+admin-ui/node_modules/
+admin-ui/dist/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Organization context (copy config/organization.example.yaml)
+config/organization.yaml
+
+# Agent session working notes
+.superpowers/
+
+# Packaging metadata
+*.egg-info/
+
+# Local definition store (builder drafts, locks)
+workflow-definitions/
+
+# Python build output
+build/
+
+# Local agent rules
+.cursor/rules/
+
+# Local quickstart state
+.quickstart/

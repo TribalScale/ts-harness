@@ -1,0 +1,187 @@
+{
+  "workflow_type": "bug_to_plan",
+  "definition_version": "1.0.0",
+  "display_name": "Bug report to approved diagnosis",
+  "contracts": {
+    "repo_pick": {
+      "output_schema": {
+        "type": "object",
+        "required": ["repo", "default_branch"],
+        "properties": {
+          "repo": { "type": "string", "minLength": 1 },
+          "default_branch": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "diagnosis": {
+      "output_schema": {
+        "type": "object",
+        "required": ["diagnosis"],
+        "properties": {
+          "diagnosis": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "bug_draft": {
+      "output_schema": {
+        "type": "object",
+        "required": ["bug_report", "repo", "default_branch"],
+        "properties": {
+          "bug_report": { "type": "string", "minLength": 1 },
+          "repo": { "type": "string", "minLength": 1 },
+          "default_branch": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "bug_intake",
+    "next_phase": "work_order",
+    "required_artifacts": [],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "pick_repo",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "session": {
+    "orchestrator_agent_id": "orchestrator",
+    "phase_tracking": {
+      "intake_step": "pick_repo",
+      "draft_steps": ["draft_bug"],
+      "gate_steps": ["approve_bug"],
+      "approved_value": "approved"
+    },
+    "artifact_steps": ["draft_bug"],
+    "artifact_step_prompts": {
+      "draft_bug": "approval"
+    },
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "stages": [
+    {
+      "name": "pick_repo",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "contract_ref": "repo_pick",
+      "skill_hints": ["bug-intake"],
+      "present_prompt": "intake",
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "gather_context",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["pick_repo"],
+      "barrier": {
+        "hook": "gather_bug_context",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["investigate"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "investigate",
+      "kind": "task",
+      "agent_id": "review-agent",
+      "depends_on": ["gather_context"],
+      "allowed_agents": ["review-agent"],
+      "contract_ref": "diagnosis",
+      "skill_hints": ["investigate-bug"],
+      "input_map": {
+        "repo": "$prior.gather_context.output.repo",
+        "default_branch": "$prior.gather_context.output.default_branch",
+        "tree": "$prior.gather_context.output.tree",
+        "files": "$prior.gather_context.output.files"
+      },
+      "retry": { "max_retries": 1, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "clarify",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["investigate"],
+      "allowed_agents": ["pm-agent"],
+      "skill_hints": ["bug-intake"],
+      "present_prompt": "intake",
+      "input_map": {
+        "diagnosis": "$prior.investigate.output.diagnosis",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 3600 }
+    },
+    {
+      "name": "await_ready",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["clarify"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "present_prompt": "intake",
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["draft_bug"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "draft_bug",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["await_ready"],
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "bug_draft",
+      "skill_hints": ["bug-intake"],
+      "present_prompt": "approval",
+      "input_map": {
+        "clarified_requirements": "$prior.await_ready.output",
+        "diagnosis": "$prior.investigate.output.diagnosis",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "approve_bug",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_bug"],
+      "approval_required": true,
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "draft_bug",
+          "agent_id": "pm-agent",
+          "present_prompt": "approval",
+          "source_steps": ["draft_bug"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_bug",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        }
+      },
+      "on_complete": { "hook": "mark_artifact_approved" },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    }
+  ]
+}

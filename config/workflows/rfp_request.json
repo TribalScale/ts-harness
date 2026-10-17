@@ -1,0 +1,84 @@
+{
+  "workflow_type": "rfp_request",
+  "definition_version": "1.1.0",
+  "display_name": "RFP review",
+  "contracts": {
+    "rfp_intake": {
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "rfp_draft": {
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  },
+  "promotion": {
+    "confirm_required": true,
+    "intake_stage": "intake",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "session": {
+    "phase_tracking": {
+      "intake_step": "intake",
+      "draft_steps": ["draft_rfp"],
+      "gate_steps": ["approve_rfp"],
+      "approved_value": "approved"
+    },
+    "artifact_steps": ["draft_rfp"],
+    "on_gate_complete_hook": "mark_artifact_approved"
+  },
+  "stages": [
+    {
+      "name": "intake",
+      "kind": "task",
+      "agent_id": "sales-agent",
+      "allowed_agents": ["sales-agent"],
+      "required_artifacts": ["clarified_requirements"],
+      "contract_ref": "rfp_intake",
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 600
+      }
+    },
+    {
+      "name": "draft_rfp",
+      "kind": "task",
+      "agent_id": "sales-agent",
+      "depends_on": ["intake"],
+      "allowed_agents": ["sales-agent"],
+      "required_artifacts": ["rfp_draft"],
+      "contract_ref": "rfp_draft",
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "approve_rfp",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["draft_rfp"],
+      "approval_required": true,
+      "on_complete": {
+        "hook": "mark_artifact_approved"
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "workflow_type": "governed_delivery",
+  "definition_version": "1.2.0",
+  "display_name": "Legacy governed delivery (loader only)",
+  "deprecated": true,
+  "superseded_by": "delivery_program",
+  "promotion": {
+    "disabled": true,
+    "intake_stage": "create_jira",
+    "requires_source_artifact": true
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "stages": [
+    {
+      "name": "create_jira",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "allowed_agents": ["pm-agent"],
+      "approval_required": true,
+      "allowed_external_effects": ["jira_write"],
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "implement_tickets",
+      "kind": "expand",
+      "agent_id": "pm-agent",
+      "depends_on": ["create_jira"],
+      "allowed_agents": ["pm-agent", "dev-agent", "qa-agent"],
+      "allowed_external_effects": ["jira_write"],
+      "plan_approval_required": true,
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "await_human_merge",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["implement_tickets"],
+      "approval_required": false,
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "deploy_staging",
+      "kind": "task",
+      "agent_id": "ops-agent",
+      "depends_on": ["await_human_merge"],
+      "approval_required": true,
+      "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "deploy_production",
+      "kind": "task",
+      "agent_id": "ops-agent",
+      "depends_on": ["deploy_staging"],
+      "approval_required": true,
+      "retry": { "max_retries": 1, "timeout_seconds": 1800 }
+    }
+  ]
+}

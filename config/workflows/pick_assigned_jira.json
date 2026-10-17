@@ -1,0 +1,68 @@
+{
+  "workflow_type": "pick_assigned_jira",
+  "definition_version": "1.0.0",
+  "display_name": "Pick an assigned Jira ticket",
+  "contracts": {
+    "ticket_pick": {
+      "output_schema": {
+        "type": "object",
+        "required": ["jira_issue_key"],
+        "properties": {
+          "jira_issue_key": { "type": "string", "minLength": 1 },
+          "jira_project_key": { "type": "string" },
+          "jira_issue_description": { "type": "string" },
+          "owner_program_id": { "type": "string" }
+        }
+      }
+    }
+  },
+  "program": {
+    "phase": "pick",
+    "next_phase": "implement",
+    "required_artifacts": [],
+    "auto_advance": false,
+    "terminal": false
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "list_projects",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed", "awaiting_approval", "awaiting_external"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "list_projects",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "skill_hints": ["jira-to-pr"],
+      "present_prompt": "intake",
+      "input_map": {
+        "jira_issue_key": "$workflow.jira_issue_key"
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    },
+    {
+      "name": "pick_ticket",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["list_projects"],
+      "allowed_agents": ["orchestrator"],
+      "approval_required": true,
+      "contract_ref": "ticket_pick",
+      "skill_hints": ["jira-to-pr"],
+      "present_prompt": "intake",
+      "input_map": {
+        "jira_project_key": "$prior.list_projects.output.jira_project_key",
+        "jira_issue_key": "$workflow.jira_issue_key"
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 86400 }
+    }
+  ]
+}

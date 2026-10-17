@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ts-harness.local/schemas/install-contract.schema.json",
+  "title": "TS Harness Install Contract",
+  "description": "Machine-readable install-time configuration for exactly one cloud provider (aws or gcp).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cloud_provider",
+    "environment",
+    "project_name",
+    "cloud_region",
+    "cloud_zone",
+    "secret_prefix",
+    "notification_email",
+    "monthly_budget_limit",
+    "vm",
+    "managed_db",
+    "terraform_state",
+    "runtime"
+  ],
+  "properties": {
+    "cloud_provider": {
+      "type": "string",
+      "enum": ["aws", "gcp"]
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Logical environment name (e.g. prod, staging)."
+    },
+    "project_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Resource naming prefix; also used as the default secret prefix when identical."
+    },
+    "cloud_region": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cloud_zone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Availability zone (AWS) or zone (GCP) for the VM and data disk."
+    },
+    "aws_account_id": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$",
+      "description": "Required when cloud_provider is aws. Must not be set for gcp."
+    },
+    "gcp_project_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required when cloud_provider is gcp. Must not be set for aws."
+    },
+    "secret_prefix": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Prefix for provider secret names (e.g. ts-harness)."
+    },
+    "notification_email": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Email for budget and health alert notifications."
+    },
+    "monthly_budget_limit": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Monthly spend limit in USD. 0 disables budget alerts."
+    },
+    "vm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_type",
+        "root_volume_size_gb",
+        "data_disk_size_gb",
+        "admin_username",
+        "ssh_key_name",
+        "ssh_allowed_cidrs"
+      ],
+      "properties": {
+        "instance_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider machine type (e.g. t3.medium or e2-medium)."
+        },
+        "root_volume_size_gb": {
+          "type": "integer",
+          "minimum": 20
+        },
+        "data_disk_size_gb": {
+          "type": "integer",
+          "minimum": 20,
+          "description": "Size of the persistent data disk mounted at /vol/ts-harness-data."
+        },
+        "admin_username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ssh_key_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ssh_allowed_cidrs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tailscale_authkey_secret_ref": {
+          "type": "string",
+          "description": "Optional pre-existing secret reference for Tailscale auth key."
+        }
+      }
+    },
+    "managed_db": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_class",
+        "db_name",
+        "db_username",
+        "backup_retention_days"
+      ],
+      "properties": {
+        "instance_class": {
+          "type": "string",
+          "minLength": 1,
+          "description": "RDS instance class or Cloud SQL tier."
+        },
+        "db_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "db_username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backup_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 35
+        },
+        "backup_window": {
+          "type": "string",
+          "description": "Optional daily backup window (provider-specific format)."
+        },
+        "skip_final_snapshot": {
+          "type": "boolean",
+          "default": false
+        },
+        "engine_version": {
+          "type": "string",
+          "description": "PostgreSQL major/minor version hint (default 16)."
+        }
+      }
+    },
+    "terraform_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend_type", "bucket", "key"],
+      "properties": {
+        "backend_type": {
+          "type": "string",
+          "enum": ["s3", "gcs"],
+          "description": "Must be s3 for aws and gcs for gcp."
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Object key (S3) or prefix/object name (GCS)."
+        },
+        "region": {
+          "type": "string",
+          "description": "Required for S3 backends."
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_runtime_version",
+        "enterprise_repo_url",
+        "multi_agent_enabled",
+        "workflow_runner_enabled",
+        "embeddings_provider",
+        "embeddings_model",
+        "embeddings_dimensions",
+        "agent_timezone"
+      ],
+      "properties": {
+        "agent_runtime_version": { "type": "string", "minLength": 1 },
+        "enterprise_repo_url": { "type": "string", "minLength": 1 },
+        "multi_agent_enabled": { "type": "boolean" },
+        "workflow_runner_enabled": { "type": "boolean" },
+        "workflow_runner_poll_interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_runner_batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_runner_lease_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_runner_stale_policy": {
+          "type": "string",
+          "enum": ["block", "fail"]
+        },
+        "embeddings_provider": {
+          "type": "string",
+          "enum": ["openai", "voyage", "gemini", "mistral", "bedrock", "local"]
+        },
+        "embeddings_model": { "type": "string", "minLength": 1 },
+        "embeddings_dimensions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "embeddings_fallback": { "type": "string" },
+        "agent_timezone": { "type": "string", "minLength": 1 },
+        "implement_work_orders_repo_url": { "type": "string" },
+        "implement_work_orders_base_branch": { "type": "string" },
+        "slack_standup_channel": { "type": "string" },
+        "slack_ops_channel": { "type": "string" },
+        "slack_dev_channel": { "type": "string" },
+        "slack_team_channel": { "type": "string" },
+        "slack_marketing_channel": { "type": "string" },
+        "slack_sales_channel": { "type": "string" },
+        "approved_slack_channels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "identity_provider": {
+          "type": "string",
+          "enum": ["static", "oidc"],
+          "description": "Admin console identity. oidc requires the oidc_* fields below."
+        },
+        "oidc_issuer": { "type": "string" },
+        "oidc_audience": { "type": "string" },
+        "oidc_jwks_url": { "type": "string" },
+        "oidc_client_id": { "type": "string" },
+        "oidc_authorization_endpoint": { "type": "string" },
+        "oidc_token_endpoint": { "type": "string" }
+      }
+    }
+  }
+}

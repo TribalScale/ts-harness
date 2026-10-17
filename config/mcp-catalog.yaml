@@ -1,0 +1,8 @@
+entries:
+  - id: atlassian
+    display_name: Atlassian
+    transport: stdio
+    command: mcporter
+    args: []
+    env_names: []
+    notes: Existing runtime stdio server via mcporter

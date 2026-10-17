@@ -1,0 +1,163 @@
+{
+  "workflow_type": "implement_jira_ticket",
+  "definition_version": "1.4.0",
+  "display_name": "Implement one Jira ticket",
+  "contracts": {
+    "deliver_work_order": {
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "work_order_id",
+          "pr_url"
+        ],
+        "properties": {
+          "work_order_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pr_url": {
+            "type": "string",
+            "pattern": "^https://"
+          }
+        }
+      },
+      "required_artifacts": {
+        "pr_url": "/pr_url"
+      },
+      "semantic_validators": [
+        "validate_coding_backend_pr_url"
+      ]
+    }
+  },
+  "program": {
+    "phase": "implement",
+    "next_phase": null,
+    "required_artifacts": [
+      "jira_issue_key"
+    ],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "hydrate_ticket",
+    "binding": {
+      "format": "{channel}:{channel_id}:{thread_id}"
+    }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": [
+      "completed",
+      "blocked",
+      "failed",
+      "awaiting_approval",
+      "awaiting_external"
+    ]
+  },
+  "on_workflow_cancel": {
+    "hook": "cancel_workflow"
+  },
+  "on_workflow_complete": {
+    "hook": "complete_program_phase"
+  },
+  "stages": [
+    {
+      "name": "hydrate_ticket",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "approval_required": true,
+      "skill_hints": [
+        "jira-to-pr"
+      ],
+      "present_prompt": "intake",
+      "input_map": {
+        "jira_issue_key": "$workflow.jira_issue_key"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "deliver_work_order"
+        ]
+      },
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "deliver_work_order",
+      "kind": "task",
+      "agent_id": "dev-agent",
+      "depends_on": [
+        "hydrate_ticket"
+      ],
+      "allowed_agents": [
+        "dev-agent"
+      ],
+      "contract_ref": "deliver_work_order",
+      "skill_hints": [
+        "verified-merge-governed",
+        "implement-work-order"
+      ],
+      "present_prompt": "none",
+      "input_map": {
+        "work_order_id": "$prior.hydrate_ticket.output.work_order_id",
+        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "repo_url": "$prior.hydrate_ticket.output.repo_url",
+        "base_branch": "$prior.hydrate_ticket.output.base_branch",
+        "refinery_artifacts": "$prior.hydrate_ticket.output.refinery_artifacts",
+        "foundry_artifacts": "$prior.hydrate_ticket.output.foundry_artifacts",
+        "planner_artifacts": "$prior.hydrate_ticket.output.planner_artifacts",
+        "jira_issue_key": "$workflow.jira_issue_key"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "qa_gate"
+        ]
+      },
+      "on_failure": {
+        "hook": "compensate_on_failure",
+        "compensate_stage": "record_implement_failure"
+      },
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 7200
+      }
+    },
+    {
+      "name": "record_implement_failure",
+      "kind": "compensate",
+      "agent_id": "orchestrator",
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      }
+    },
+    {
+      "name": "verified_merge",
+      "kind": "fragment",
+      "fragment": "verified_merge",
+      "version": "1.5.0",
+      "params": {
+        "implement_stage": "deliver_work_order"
+      },
+      "inputs": {
+        "repo_url": "$prior.hydrate_ticket.output.repo_url",
+        "base_branch": "$prior.hydrate_ticket.output.base_branch",
+        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_ref": "$workflow.jira_issue_key"
+      },
+      "depends_on": [
+        "deliver_work_order"
+      ]
+    }
+  ]
+}

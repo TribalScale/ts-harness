@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md LICENSE NOTICE ./
+COPY runtime ./runtime
+COPY scripts/workflow-runner.py ./scripts/workflow-runner.py
+COPY scripts/workflow_definitions.py ./scripts/workflow_definitions.py
+COPY scripts/workflow_fragments.py ./scripts/workflow_fragments.py
+COPY scripts/program_definitions.py ./scripts/program_definitions.py
+COPY scripts/program_legacy_compat.py ./scripts/program_legacy_compat.py
+# Keep under /app so repo_root()/workflows_dir() resolve correctly. Compose may
+# also mount live skeletons at WORKFLOW_DEFINITIONS_DIR (/config/workflows).
+COPY config/workflows /app/config/workflows
+COPY config/workflows /config/workflows
+COPY config/programs /app/config/programs
+COPY config/programs /config/programs
+# Built-in workflows include fragments; the runner cannot load them without these.
+COPY config/fragments /app/config/fragments
+
+RUN pip install --no-cache-dir .
+
+ENV PYTHONPATH=/app/runtime:/app/scripts
+ENV TS_HARNESS_ROOT=/app
+
+CMD ["python3", "/app/scripts/workflow-runner.py"]
