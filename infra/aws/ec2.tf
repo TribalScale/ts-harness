@@ -17,7 +17,7 @@ locals {
     "__TF_AWS_REGION__"                    = var.aws_region
     "__TF_CLOUD_PROVIDER__"                = "aws"
     "__TF_CLOUD_REGION__"                  = var.aws_region
-    "__TF_SECRETS_PREFIX__"                = var.project_name
+    "__TF_SECRETS_PREFIX__"                = local.secret_prefix_effective
     "__TF_ENTERPRISE_REPO__"               = var.enterprise_repo_url
     "__TF_MEMORY_BACKEND__"                = var.memory_backend
     "__TF_RDS_ENDPOINT__"                  = local.rds_endpoint_rendered

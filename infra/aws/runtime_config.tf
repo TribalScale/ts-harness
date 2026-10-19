@@ -32,7 +32,7 @@ locals {
 }
 
 resource "aws_ssm_parameter" "runtime_config" {
-  name        = "/${var.project_name}/runtime-config"
+  name        = "/${local.secret_prefix_effective}/runtime-config"
   description = "Mutable non-secret runtime knobs (Slack, OIDC, timezone)"
   type        = "String"
   value       = jsonencode(local.runtime_config_object)
@@ -51,7 +51,7 @@ data "aws_iam_policy_document" "runtime_config_read" {
     effect  = "Allow"
     actions = ["ssm:GetParameter", "ssm:GetParameters"]
     resources = [
-      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.runtime_config.account_id}:parameter/${var.project_name}/runtime-config"
+      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.runtime_config.account_id}:parameter/${local.secret_prefix_effective}/runtime-config"
     ]
   }
 }

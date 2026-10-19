@@ -18,6 +18,8 @@ from install_checks import (
     CODE_GCLOUD_CLI_MISSING,
     CODE_STATE_PROVIDER_CONFLICT,
     CODE_TERRAFORM_MISSING,
+    CODE_SECRET_PREFIX_CHANGED,
+    CODE_TERRAFORM_TOO_OLD,
     CheckResult,
     run_preflight,
 )
@@ -345,6 +347,206 @@ class InstallerCliTests(unittest.TestCase):
             self.assertIn("gcp", "\n".join(buf))
 
 
+def _ok_preflight():
+    return mock.patch.object(
+        install_mod,
+        "run_preflight",
+        return_value=[CheckResult(True, "OK", "ok")],
+    )
+
+
+def _subcommand(cmd: list[str]) -> str:
+    return next(c for c in cmd[1:] if not c.startswith("-"))
+
+
+class InstallerPipelineTests(unittest.TestCase):
+    """Behaviour needed to run plan/apply from CI."""
+
+    def _run(self, argv, *, returncodes=None):
+        calls: list[list[str]] = []
+        returncodes = returncodes or {}
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            rc = returncodes.get(_subcommand(list(cmd)), 0)
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+
+        with mock.patch.object(install_mod, "run_terraform", side_effect=fake_run):
+            with _ok_preflight():
+                code = install_mod.main(argv)
+        return code, calls
+
+    def test_backend_config_args_s3_defaults_to_native_lockfile(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        self.assertEqual(
+            install_mod.backend_config_args(cfg),
+            [
+                "-backend-config=bucket=example-ts-harness-tfstate",
+                "-backend-config=key=prod/aws/terraform.tfstate",
+                "-backend-config=region=us-east-1",
+                "-backend-config=encrypt=true",
+                "-backend-config=use_lockfile=true",
+            ],
+        )
+
+    def test_backend_config_args_s3_uses_lock_table_when_set(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        cfg["terraform_state"] = {**cfg["terraform_state"], "lock_table": "terraform-locks"}
+        args = install_mod.backend_config_args(cfg)
+        self.assertIn("-backend-config=dynamodb_table=terraform-locks", args)
+        self.assertNotIn("-backend-config=use_lockfile=true", args)
+
+    def test_backend_config_args_gcs_maps_key_to_prefix(self):
+        cfg = load_install_config(GCP_EXAMPLE)
+        state = cfg["terraform_state"]
+        self.assertEqual(
+            install_mod.backend_config_args(cfg),
+            [
+                f"-backend-config=bucket={state['bucket']}",
+                f"-backend-config=prefix={state['key']}",
+            ],
+        )
+
+    def test_contract_accepts_lock_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            text = AWS_EXAMPLE.read_text(encoding="utf-8").replace(
+                "\n  region: us-east-1\n",
+                "\n  region: us-east-1\n  lock_table: terraform-locks\n",
+                1,
+            )
+            self.assertIn("lock_table", text)
+            path = Path(tmp) / "aws.yaml"
+            path.write_text(text, encoding="utf-8")
+            cfg = load_install_config(path)
+        self.assertEqual(cfg["terraform_state"]["lock_table"], "terraform-locks")
+
+    def test_contract_rejects_lock_table_on_gcs(self):
+        from install_contract import InstallContractError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            text = GCP_EXAMPLE.read_text(encoding="utf-8")
+            marker = "backend_type: gcs\n"
+            self.assertIn(marker, text)
+            path = Path(tmp) / "gcp.yaml"
+            path.write_text(
+                text.replace(marker, marker + "  lock_table: terraform-locks\n"),
+                encoding="utf-8",
+            )
+            with self.assertRaises(InstallContractError):
+                load_install_config(path)
+
+    def test_init_receives_backend_config_for_every_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = ["--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp]
+            for argv in (
+                ["plan", *base],
+                ["apply", *base],
+                ["destroy", *base, "--confirm", "prod"],
+            ):
+                code, calls = self._run(argv)
+                self.assertEqual(code, 0, argv)
+                init = next(c for c in calls if _subcommand(c) == "init")
+                self.assertIn("-backend-config=bucket=example-ts-harness-tfstate", init)
+
+    def test_plan_with_plan_file_saves_plan_to_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rel = os.path.relpath(Path(tmp) / "prod.tfplan")
+            code, calls = self._run(
+                ["plan", "--cloud", "aws", "--config", str(AWS_EXAMPLE),
+                 "--state-dir", tmp, "--plan-file", rel]
+            )
+        self.assertEqual(code, 0)
+        plan = next(c for c in calls if _subcommand(c) == "plan")
+        self.assertIn(f"-out={Path(rel).resolve()}", plan)
+
+    def test_apply_with_plan_file_applies_saved_plan_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rel = os.path.relpath(Path(tmp) / "prod.tfplan")
+            code, calls = self._run(
+                ["apply", "--cloud", "aws", "--config", str(AWS_EXAMPLE),
+                 "--state-dir", tmp, "--plan-file", rel]
+            )
+        self.assertEqual(code, 0)
+        apply = next(c for c in calls if _subcommand(c) == "apply")
+        self.assertEqual(apply[-1], str(Path(rel).resolve()))
+        self.assertNotIn("-auto-approve", apply)
+        self.assertFalse(any(c.startswith("-var-file=") for c in apply))
+
+    def test_apply_without_plan_file_keeps_auto_approve(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, calls = self._run(
+                ["apply", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp]
+            )
+        self.assertEqual(code, 0)
+        apply = next(c for c in calls if _subcommand(c) == "apply")
+        self.assertIn("-auto-approve", apply)
+
+    def test_plan_detailed_exitcode_returns_2_when_changes_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, calls = self._run(
+                ["plan", "--cloud", "aws", "--config", str(AWS_EXAMPLE),
+                 "--state-dir", tmp, "--detailed-exitcode"],
+                returncodes={"plan": 2},
+            )
+            meta = json.loads(
+                (Path(tmp) / "aws" / "prod" / "install-metadata.json").read_text("utf-8")
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(meta["status"], "planned")
+        plan = next(c for c in calls if _subcommand(c) == "plan")
+        self.assertIn("-detailed-exitcode", plan)
+
+    def test_plan_detailed_exitcode_returns_0_when_no_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = self._run(
+                ["plan", "--cloud", "aws", "--config", str(AWS_EXAMPLE),
+                 "--state-dir", tmp, "--detailed-exitcode"],
+            )
+            meta = json.loads(
+                (Path(tmp) / "aws" / "prod" / "install-metadata.json").read_text("utf-8")
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(meta["status"], "planned_no_changes")
+
+    def test_plan_exit_2_without_detailed_flag_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = self._run(
+                ["plan", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp],
+                returncodes={"plan": 2},
+            )
+        self.assertEqual(code, 2)
+
+    def test_var_file_is_absolute_with_relative_state_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rel = os.path.relpath(tmp)
+            code, calls = self._run(
+                ["plan", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", rel]
+            )
+        self.assertEqual(code, 0)
+        plan = next(c for c in calls if _subcommand(c) == "plan")
+        var_file = next(c for c in plan if c.startswith("-var-file="))
+        self.assertTrue(Path(var_file.split("=", 1)[1]).is_absolute(), var_file)
+
+    def test_generate_tfvars_aws_passes_account_id(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual(tfvars["aws_account_id"], "123456789012")
+
+    def test_generate_tfvars_aws_passes_secret_prefix(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        cfg["secret_prefix"] = "acme"
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual(tfvars["secret_prefix"], "acme")
+
+    def test_run_terraform_streams_output(self):
+        with mock.patch.object(install_mod.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(["terraform"], 0)
+            install_mod.run_terraform(["terraform", "version"], cwd=REPO_ROOT, check=False)
+        kwargs = run.call_args.kwargs
+        self.assertNotIn("capture_output", kwargs)
+        self.assertNotIn("stdout", kwargs)
+
+
 class InstallChecksTests(unittest.TestCase):
     def test_check_result_shape(self):
         r = CheckResult(ok=False, code=CODE_TERRAFORM_MISSING, message="missing")
@@ -427,6 +629,100 @@ class InstallChecksTests(unittest.TestCase):
         )
         codes = {r.code for r in results if not r.ok}
         self.assertIn(CODE_CLOUD_FLAG_MISMATCH, codes)
+
+    def test_preflight_rejects_old_terraform_for_s3_native_locking(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        results = run_preflight(
+            cloud="aws",
+            config=cfg,
+            which=lambda n: f"/bin/{n}",
+            terraform_version=lambda: (1, 6, 1),
+        )
+        codes = {r.code for r in results if not r.ok}
+        self.assertIn(CODE_TERRAFORM_TOO_OLD, codes)
+
+    def test_preflight_accepts_terraform_1_10_for_s3_native_locking(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        results = run_preflight(
+            cloud="aws",
+            config=cfg,
+            which=lambda n: f"/bin/{n}",
+            terraform_version=lambda: (1, 10, 0),
+        )
+        self.assertFalse([r for r in results if not r.ok])
+
+    def test_preflight_accepts_old_terraform_with_lock_table(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        cfg["terraform_state"] = {**cfg["terraform_state"], "lock_table": "terraform-locks"}
+        results = run_preflight(
+            cloud="aws",
+            config=cfg,
+            which=lambda n: f"/bin/{n}",
+            terraform_version=lambda: (1, 6, 1),
+        )
+        self.assertFalse([r for r in results if not r.ok])
+
+    def test_preflight_skips_version_check_when_unknown(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        results = run_preflight(
+            cloud="aws",
+            config=cfg,
+            which=lambda n: f"/bin/{n}",
+            terraform_version=lambda: None,
+        )
+        self.assertFalse([r for r in results if not r.ok])
+
+    def _aws_cfg_with_prefix(self, prefix):
+        cfg = load_install_config(AWS_EXAMPLE)
+        cfg["secret_prefix"] = prefix
+        return cfg
+
+    def _preflight_codes(self, cfg, secret_exists):
+        results = run_preflight(
+            cloud="aws",
+            config=cfg,
+            which=lambda n: f"/bin/{n}",
+            terraform_version=lambda: (1, 10, 0),
+            secret_exists=secret_exists,
+        )
+        return {r.code for r in results if not r.ok}
+
+    def test_preflight_blocks_secret_prefix_change_on_existing_install(self):
+        existing = {"ts-harness/gateway-token"}
+        codes = self._preflight_codes(
+            self._aws_cfg_with_prefix("acme"),
+            lambda secret_id, region: secret_id in existing,
+        )
+        self.assertIn(CODE_SECRET_PREFIX_CHANGED, codes)
+
+    def test_preflight_allows_custom_secret_prefix_on_new_install(self):
+        codes = self._preflight_codes(
+            self._aws_cfg_with_prefix("acme"),
+            lambda secret_id, region: False,
+        )
+        self.assertNotIn(CODE_SECRET_PREFIX_CHANGED, codes)
+
+    def test_preflight_allows_prefix_once_new_secrets_exist(self):
+        existing = {"ts-harness/gateway-token", "acme/gateway-token"}
+        codes = self._preflight_codes(
+            self._aws_cfg_with_prefix("acme"),
+            lambda secret_id, region: secret_id in existing,
+        )
+        self.assertNotIn(CODE_SECRET_PREFIX_CHANGED, codes)
+
+    def test_preflight_skips_secret_lookup_when_prefix_matches_project(self):
+        def boom(secret_id, region):
+            raise AssertionError("should not look up secrets")
+
+        codes = self._preflight_codes(self._aws_cfg_with_prefix("ts-harness"), boom)
+        self.assertEqual(codes, set())
+
+    def test_preflight_tolerates_unknown_secret_lookup(self):
+        codes = self._preflight_codes(
+            self._aws_cfg_with_prefix("acme"),
+            lambda secret_id, region: None,
+        )
+        self.assertNotIn(CODE_SECRET_PREFIX_CHANGED, codes)
 
     def test_validate_wires_preflight_failures(self):
         with mock.patch.object(

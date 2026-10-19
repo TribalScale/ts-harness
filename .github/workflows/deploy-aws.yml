@@ -1,0 +1,127 @@
+name: Deploy (AWS)
+
+# Plans with the unified installer, then applies that exact saved plan after a
+# reviewer approves the `<environment>` GitHub Environment.
+# Setup (state bucket, OIDC role, environments): docs/runbooks/aws-install.md#run-from-ci
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Install config to deploy: config/install/aws-<environment>.yaml"
+        type: choice
+        options:
+          - dev
+          - prod
+
+concurrency:
+  group: deploy-aws-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VERSION: "1.10.5"
+  INSTALL_CONFIG: config/install/aws-${{ inputs.environment }}.yaml
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-plan
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install installer dependencies
+        run: python3 -m pip install "pyyaml>=6.0" "jsonschema>=4.20"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Validate install config
+        run: ./scripts/install.sh validate --cloud aws --config "$INSTALL_CONFIG"
+
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          ./scripts/install.sh plan --cloud aws --config "$INSTALL_CONFIG" \
+            --plan-file "$RUNNER_TEMP/plan/tfplan" --detailed-exitcode
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "has_changes=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "has_changes=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Plan summary
+        if: steps.plan.outputs.has_changes == 'true'
+        run: |
+          terraform -chdir=infra/aws show -no-color "$RUNNER_TEMP/plan/tfplan" > "$RUNNER_TEMP/plan.txt"
+          {
+            echo "## Terraform plan: ${{ inputs.environment }}"
+            echo '```'
+            head -c 60000 "$RUNNER_TEMP/plan.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The plan file holds every input variable; keep it short-lived.
+      - name: Upload plan
+        if: steps.plan.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/plan/tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install installer dependencies
+        run: python3 -m pip install "pyyaml>=6.0" "jsonschema>=4.20"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/plan
+
+      - name: Apply saved plan
+        run: |
+          ./scripts/install.sh apply --cloud aws --config "$INSTALL_CONFIG" \
+            --plan-file "$RUNNER_TEMP/plan/tfplan"

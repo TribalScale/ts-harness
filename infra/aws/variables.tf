@@ -4,6 +4,22 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "secret_prefix" {
+  description = "Prefix for Secrets Manager names (<prefix>/<key>) and the SSM runtime-config path. Empty means project_name."
+  type        = string
+  default     = ""
+}
+
+locals {
+  secret_prefix_effective = var.secret_prefix != "" ? var.secret_prefix : var.project_name
+}
+
+variable "aws_account_id" {
+  description = "AWS account this install targets. When set, Terraform refuses to run with credentials for any other account."
+  type        = string
+  default     = null
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the TS Harness agent runtime server"
   type        = string

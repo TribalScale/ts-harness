@@ -140,6 +140,10 @@ def validate_install_config(
         raise InstallContractError(
             "Ambiguous terraform state location: S3 backend requires region"
         )
+    if backend != "s3" and state.get("lock_table"):
+        raise InstallContractError(
+            "terraform_state.lock_table is only valid for S3 backends"
+        )
 
     runtime = config.get("runtime") or {}
     if isinstance(runtime, Mapping) and str(runtime.get("identity_provider") or "static") == "oidc":

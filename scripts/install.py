@@ -87,6 +87,25 @@ def terraform_state_identity(config: Mapping[str, Any]) -> str:
     return f"{backend}:{bucket}/{key}"
 
 
+def backend_config_args(config: Mapping[str, Any]) -> list[str]:
+    """Partial backend settings for `terraform init`, taken from terraform_state."""
+    state = config.get("terraform_state") or {}
+    if state.get("backend_type") == "gcs":
+        pairs = [("bucket", state["bucket"]), ("prefix", state["key"])]
+    else:
+        pairs = [
+            ("bucket", state["bucket"]),
+            ("key", state["key"]),
+            ("region", state["region"]),
+            ("encrypt", "true"),
+        ]
+        if state.get("lock_table"):
+            pairs.append(("dynamodb_table", state["lock_table"]))
+        else:
+            pairs.append(("use_lockfile", "true"))
+    return [f"-backend-config={k}={v}" for k, v in pairs]
+
+
 def account_or_project(config: Mapping[str, Any]) -> str:
     provider = config.get("cloud_provider")
     if provider == "aws":
@@ -118,7 +137,9 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
     if cloud == "aws":
         tfvars: dict[str, Any] = {
             "aws_region": config["cloud_region"],
+            "aws_account_id": config.get("aws_account_id"),
             "project_name": config["project_name"],
+            "secret_prefix": config.get("secret_prefix"),
             "instance_type": vm.get("instance_type"),
             "root_volume_size": vm.get("root_volume_size_gb"),
             "ebs_size": vm.get("data_disk_size_gb"),
@@ -251,18 +272,16 @@ def run_terraform(
     dry_run: bool = False,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a terraform command (mockable via TS_HARNESS_TF_BIN / patch)."""
+    """Run a terraform command (mockable via TS_HARNESS_TF_BIN / patch).
+
+    Output streams to the caller's terminal; long applies (RDS) must not look hung in CI.
+    """
     full = list(cmd)
     if dry_run:
         print(f"[dry-run] would run in {cwd}: {' '.join(full)}")
         return subprocess.CompletedProcess(full, 0, stdout="", stderr="")
-    return subprocess.run(
-        full,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=check,
-    )
+    sys.stdout.flush()
+    return subprocess.run(full, cwd=str(cwd), text=True, check=check)
 
 
 def _print_tf_output(result: subprocess.CompletedProcess[str]) -> None:
@@ -334,8 +353,11 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
 
     tf_root = select_terraform_root(args.cloud)
     tfvars = generate_tfvars(config, cloud=args.cloud)
-    tfvars_path = state_dir / TFVARS_NAME
+    # Terraform resolves relative paths after -chdir, so pass absolute ones.
+    tfvars_path = (state_dir / TFVARS_NAME).resolve()
     write_tfvars(tfvars_path, tfvars)
+    plan_file = Path(args.plan_file).resolve() if args.plan_file else None
+    detailed = command == "plan" and args.detailed_exitcode
 
     meta = _base_metadata(config, args.cloud)
     meta.update(
@@ -345,13 +367,15 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
             "tfvars_path": str(tfvars_path),
         }
     )
+    if plan_file:
+        meta["plan_file"] = str(plan_file)
     write_metadata(state_dir, meta)
 
     tf = terraform_bin()
     var_file_args = [f"-var-file={tfvars_path}"]
     try:
         init = run_terraform(
-            [tf, f"-chdir={tf_root}", "init", "-input=false"],
+            [tf, f"-chdir={tf_root}", "init", "-input=false", *backend_config_args(config)],
             cwd=REPO_ROOT,
             dry_run=args.dry_run,
             check=False,
@@ -363,36 +387,39 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
             return init.returncode
 
         if command == "plan":
-            action = run_terraform(
-                [tf, f"-chdir={tf_root}", "plan", "-input=false", *var_file_args],
-                cwd=REPO_ROOT,
-                dry_run=args.dry_run,
-                check=False,
-            )
+            cmd = [tf, f"-chdir={tf_root}", "plan", "-input=false", *var_file_args]
+            if plan_file:
+                plan_file.parent.mkdir(parents=True, exist_ok=True)
+                cmd.append(f"-out={plan_file}")
+            if detailed:
+                cmd.append("-detailed-exitcode")
+        elif plan_file:
+            # Variables and approval are baked into the saved plan.
+            cmd = [tf, f"-chdir={tf_root}", "apply", "-input=false", str(plan_file)]
         else:
-            action = run_terraform(
-                [
-                    tf,
-                    f"-chdir={tf_root}",
-                    "apply",
-                    "-input=false",
-                    "-auto-approve",
-                    *var_file_args,
-                ],
-                cwd=REPO_ROOT,
-                dry_run=args.dry_run,
-                check=False,
-            )
+            cmd = [
+                tf,
+                f"-chdir={tf_root}",
+                "apply",
+                "-input=false",
+                "-auto-approve",
+                *var_file_args,
+            ]
+        action = run_terraform(cmd, cwd=REPO_ROOT, dry_run=args.dry_run, check=False)
         if not args.dry_run:
             _print_tf_output(action)
-        if action.returncode != 0:
+        has_changes = detailed and action.returncode == 2
+        if action.returncode != 0 and not has_changes:
             write_metadata(state_dir, {**meta, "status": f"{command}_failed"})
             return action.returncode
     except FileNotFoundError:
         print("FAIL TERRAFORM_MISSING: terraform binary not found", file=sys.stderr)
         return 1
 
-    status = "planned" if command == "plan" else "applied"
+    if command == "plan":
+        status = "planned" if has_changes or not detailed else "planned_no_changes"
+    else:
+        status = "applied"
     write_metadata(state_dir, {**meta, "status": status, "last_command": command})
     print(f"{command} ok: cloud={args.cloud} root=infra/{args.cloud} state={state_dir}")
 
@@ -408,7 +435,7 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
         )
     else:
         print("Next: ./scripts/install.sh apply --cloud", args.cloud, "--config", args.config)
-    return 0
+    return 2 if has_changes else 0
 
 
 def cmd_destroy(args: argparse.Namespace) -> int:
@@ -437,7 +464,7 @@ def cmd_destroy(args: argparse.Namespace) -> int:
 
     tf_root = select_terraform_root(args.cloud)
     tfvars = generate_tfvars(config, cloud=args.cloud)
-    tfvars_path = state_dir / TFVARS_NAME
+    tfvars_path = (state_dir / TFVARS_NAME).resolve()
     write_tfvars(tfvars_path, tfvars)
     meta = _base_metadata(config, args.cloud)
     meta.update({"last_command": "destroy", "status": "destroying"})
@@ -446,7 +473,7 @@ def cmd_destroy(args: argparse.Namespace) -> int:
     tf = terraform_bin()
     try:
         init = run_terraform(
-            [tf, f"-chdir={tf_root}", "init", "-input=false"],
+            [tf, f"-chdir={tf_root}", "init", "-input=false", *backend_config_args(config)],
             cwd=REPO_ROOT,
             dry_run=args.dry_run,
             check=False,
@@ -557,11 +584,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_plan = sub.add_parser("plan", help="Terraform plan in the selected provider root")
     add_cloud_config(p_plan)
+    p_plan.add_argument(
+        "--plan-file",
+        default=None,
+        help="Save the plan to this file (terraform plan -out) for a later apply",
+    )
+    p_plan.add_argument(
+        "--detailed-exitcode",
+        action="store_true",
+        help="Exit 0 when there are no changes, 2 when changes are pending, 1 on error",
+    )
     p_plan.set_defaults(func=cmd_plan)
 
     p_apply = sub.add_parser("apply", help="Terraform apply in the selected provider root")
     add_cloud_config(p_apply)
-    p_apply.set_defaults(func=cmd_apply)
+    p_apply.add_argument(
+        "--plan-file",
+        default=None,
+        help="Apply this saved plan exactly (no re-plan, no -auto-approve)",
+    )
+    p_apply.set_defaults(func=cmd_apply, detailed_exitcode=False)
 
     p_destroy = sub.add_parser("destroy", help="Terraform destroy (requires --confirm)")
     add_cloud_config(p_destroy)
