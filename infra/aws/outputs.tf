@@ -83,7 +83,7 @@ output "data_disk_device_hint" {
 
 output "secret_prefix" {
   description = "Secrets Manager name prefix"
-  value       = var.project_name
+  value       = local.secret_prefix_effective
 }
 
 output "managed_db_host" {

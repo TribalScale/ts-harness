@@ -80,7 +80,7 @@ resource "random_password" "sandbox_worker_token" {
 
 resource "aws_secretsmanager_secret" "harness" {
   for_each = local.all_secrets
-  name     = "${var.project_name}/${each.key}"
+  name     = "${local.secret_prefix_effective}/${each.key}"
 
   tags = {
     Name      = "${var.project_name}-${each.key}"

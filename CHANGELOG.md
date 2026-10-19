@@ -17,6 +17,12 @@ First public release.
 - Secret scanning with gitleaks in CI.
 - Governance files: code of conduct, issue and pull request templates,
   CODEOWNERS, Dependabot configuration, and this changelog.
+- `deploy-aws.yml` workflow: plans, waits for environment approval, then applies
+  the saved plan.
+- Installer `plan --plan-file` / `apply --plan-file` and `plan --detailed-exitcode`.
+- Optional `terraform_state.lock_table` in the install contract for DynamoDB locking.
+- `validate` fails with `TERRAFORM_TOO_OLD` when S3-native locking needs a newer
+  Terraform.
 
 ### Changed
 
@@ -27,9 +33,25 @@ First public release.
   command, the webhook signature, and Terraform addresses use TS Harness names.
 - The agent-runtime image builds `gh`, gitleaks, and osv-scanner from pinned
   release commits with a current Go toolchain.
+- Terraform backends are committed as empty `backend "s3" {}` / `backend "gcs" {}`
+  blocks; the installer supplies the location from `terraform_state`. Remove any
+  hand-copied `infra/<cloud>/backend.tf` before pulling. The `backend.tf.example`
+  files are gone.
+- Provider lock files (`infra/aws/.terraform.lock.hcl`, `infra/gcp/.terraform.lock.hcl`)
+  are committed.
+- The AWS providers refuse credentials for any account other than `aws_account_id`.
+- Installer Terraform output streams live instead of printing after each command.
+- CI pins Terraform 1.10.5.
 
 ### Fixed
 
 - Workflow dispatch errors returned a server error instead of a blocked result.
 - The embeddings preflight never detected a missing API key.
 - Migrations 018 and 024 now run inside a transaction.
+- AWS ignored `secret_prefix`: secrets and the SSM runtime-config were always
+  named after `project_name`, while the installer printed population commands
+  using `secret_prefix`. AWS now uses `secret_prefix` (falling back to
+  `project_name`), as GCP does. `validate` fails with `SECRET_PREFIX_CHANGED`
+  instead of renaming an existing install's secrets.
+- The installer passed a relative `-var-file` path that broke under `-chdir`
+  when `--state-dir` was relative.

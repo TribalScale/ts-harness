@@ -4,6 +4,8 @@
 *.tfstate.*
 *.tfplan
 .terraform.lock.hcl
+!infra/aws/.terraform.lock.hcl
+!infra/gcp/.terraform.lock.hcl
 
 # Environment / secrets
 .env
@@ -12,8 +14,6 @@ terraform/terraform.tfvars
 infra/aws/terraform.tfvars
 infra/gcp/terraform.tfvars
 terraform/backend.tf
-infra/aws/backend.tf
-infra/gcp/backend.tf
 
 # Generated previews
 .rendered-workspace/

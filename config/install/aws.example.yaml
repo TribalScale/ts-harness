@@ -36,6 +36,9 @@ terraform_state:
   bucket: example-ts-harness-tfstate
   key: prod/aws/terraform.tfstate
   region: us-east-1
+  # Locking defaults to S3-native lockfiles (terraform >= 1.10).
+  # On older terraform, name an existing DynamoDB table instead:
+  # lock_table: terraform-locks
 
 runtime:
   agent_runtime_version: "0.1.0"

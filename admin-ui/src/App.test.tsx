@@ -372,8 +372,8 @@ it("opens the inbox after static sign-in from the login hash", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Enter console" }));
 
   await waitFor(() => expect(window.location.hash).toBe("#/inbox"));
-  expect(screen.queryByRole("heading", { name: "TS Harness" })).not.toBeInTheDocument();
   expect(await screen.findByText("Inbox page")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "TS Harness" })).not.toBeInTheDocument();
   expect(sessionPosts[0]).toContain("dev-token");
   expect(localStorage.getItem("ec_admin_token")).toBeNull();
 });
