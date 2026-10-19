@@ -403,7 +403,15 @@ export default function App() {
   }, [authed, route.nav]);
 
   if (!authed || route.nav === "login") {
-    return <LoginPage onAuthed={() => setAuthed(true)} />;
+    return (
+      <LoginPage
+        onAuthed={() => {
+          // LoginPage moves to #/inbox with replaceState, which fires no hashchange.
+          setAuthed(true);
+          setRoute(parseHash(window.location.hash));
+        }}
+      />
+    );
   }
 
   return (
