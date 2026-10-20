@@ -42,7 +42,9 @@ if [[ -n "${TAILSCALE_AUTHKEY//[[:space:]]/}" ]]; then
     tailscale up --authkey="$TAILSCALE_AUTHKEY" --accept-routes
     echo "[phase:${PHASE_NAME}] Tailscale authenticated and connected."
 
-    tailscale serve --bg http://localhost:${GATEWAY_PORT:-18789}
+    # The admin console nginx proxies every gateway route, so the tailnet root
+    # can serve the console; CONTROL_UI_ALLOWED_ORIGIN (phase 11) expects it here.
+    tailscale serve --bg http://localhost:8080
     TS_FQDN="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
     echo "[phase:${PHASE_NAME}] Tailscale HTTPS proxy enabled: https://${TS_FQDN}"
 else
