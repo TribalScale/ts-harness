@@ -61,6 +61,9 @@ config/organization.yaml
 # Local definition store (builder drafts, locks)
 workflow-definitions/
 
+# Last-known-good config copies the gateway writes beside its config file
+*.lkg
+
 # Python build output
 build/
 
