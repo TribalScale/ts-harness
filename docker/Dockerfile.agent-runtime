@@ -58,6 +58,7 @@ COPY scripts ./scripts
 COPY config ./config
 COPY skills ./skills
 COPY workspace ./workspace
+COPY evals ./evals
 
 COPY scripts/mcporter /usr/local/bin/mcporter
 RUN chmod +x /usr/local/bin/mcporter
