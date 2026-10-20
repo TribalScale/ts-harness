@@ -108,6 +108,15 @@ else
     exit 1
 fi
 
+ADMIN_UI_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.admin-ui.yml"
+if [[ -f "$ADMIN_UI_COMPOSE" ]]; then
+    COMPOSE_FILES+=(-f "$ADMIN_UI_COMPOSE")
+    echo "[phase:${PHASE_NAME}] Including admin console (admin-ui on port 8080)"
+else
+    echo "[phase:${PHASE_NAME}] ERROR: admin-ui compose file not found at $ADMIN_UI_COMPOSE" >&2
+    exit 1
+fi
+
 if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     WORKFLOW_RUNNER_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml"
     if [[ -f "$WORKFLOW_RUNNER_COMPOSE" ]]; then

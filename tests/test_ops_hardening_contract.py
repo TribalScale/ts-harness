@@ -239,6 +239,8 @@ class OpsHardeningContractTests(unittest.TestCase):
                 self.assertIn('test "$(git -C "/src/$4" rev-parse HEAD)" = "$3"', text)
                 self.assertIn("COPY --from=go-tools /out/gh /out/gitleaks /out/osv-scanner", text)
                 self.assertIn("uv tool install --constraints /tmp/constraints.txt pip-audit", text)
+                # gitleaks 8.30.1 only. A shared patch would downgrade gh and osv-scanner.
+                self.assertIn("go get github.com/klauspost/compress@v1.18.7", text)
 
 
 if __name__ == "__main__":

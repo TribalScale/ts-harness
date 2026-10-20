@@ -113,6 +113,8 @@ persist_runtime_secret_keys
 refresh_compose_env
 # shellcheck disable=SC1090
 source "$COMPOSE_ENV"
+TS_HARNESS_SESSION_DB_URL="$(session_db_url)"
+export TS_HARNESS_SESSION_DB_URL
 reconstruct_enterprise_compose_files
 recreate_secret_consumers
 

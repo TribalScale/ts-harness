@@ -555,6 +555,51 @@ PY
     chmod 600 "$compose_env_file"
 }
 
+# Postgres URL for runtime sessions, transcripts, and Google OAuth tokens, built
+# from TS_HARNESS_DB_* so password rotation carries through. An explicit
+# TS_HARNESS_SESSION_DB_URL wins. Prints nothing (JSONL session store) when the
+# DB identity is incomplete.
+session_db_url() {
+    if ! is_blank_or_placeholder "${TS_HARNESS_SESSION_DB_URL:-}"; then
+        printf '%s' "$TS_HARNESS_SESSION_DB_URL"
+        return 0
+    fi
+    local key
+    for key in TS_HARNESS_DB_HOST TS_HARNESS_DB_USER TS_HARNESS_DB_NAME TS_HARNESS_DB_PASSWORD; do
+        if is_blank_or_placeholder "${!key:-}"; then
+            return 0
+        fi
+    done
+    local sslmode="${PGSSLMODE:-}"
+    if [[ -z "$sslmode" ]]; then
+        if is_managed_memory_backend; then
+            sslmode=require
+        else
+            sslmode=disable
+        fi
+    fi
+    DB_USER="$TS_HARNESS_DB_USER" DB_PASSWORD="$TS_HARNESS_DB_PASSWORD" \
+        DB_HOST="$TS_HARNESS_DB_HOST" DB_PORT="${TS_HARNESS_DB_PORT:-5432}" \
+        DB_NAME="$TS_HARNESS_DB_NAME" DB_SSLMODE="$sslmode" \
+        python3 -c '
+import os
+from urllib.parse import quote
+
+e = os.environ
+print(
+    "postgresql://{}:{}@{}:{}/{}?sslmode={}".format(
+        quote(e["DB_USER"], safe=""),
+        quote(e["DB_PASSWORD"], safe=""),
+        e["DB_HOST"],
+        e["DB_PORT"],
+        quote(e["DB_NAME"], safe=""),
+        quote(e["DB_SSLMODE"], safe=""),
+    ),
+    end="",
+)
+'
+}
+
 # Docker Compose interpolates all services (including inactive profiles) from the shell env.
 run_docker_compose_as_admin() {
     sudo -u "$ADMIN_USER" \
@@ -563,6 +608,7 @@ run_docker_compose_as_admin() {
             TS_HARNESS_DB_PORT="${TS_HARNESS_DB_PORT:-5432}" \
             TS_HARNESS_DB_USER="${TS_HARNESS_DB_USER:-}" \
             TS_HARNESS_DB_NAME="${TS_HARNESS_DB_NAME:-}" \
+            TS_HARNESS_SESSION_DB_URL="$(session_db_url)" \
             ENTERPRISE_ASSETS_DIR="${ENTERPRISE_ASSETS_DIR:-}" \
             TS_HARNESS_CONFIG_DIR="${TS_HARNESS_CONFIG_DIR:-$DATA_DIR/.ts-harness}" \
             TS_HARNESS_TOOLS_ROOT_HOST="${TS_HARNESS_TOOLS_ROOT_HOST:-${DATA_DIR}/.ts-harness/tools}" \
