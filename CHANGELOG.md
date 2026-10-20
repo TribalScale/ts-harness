@@ -83,3 +83,6 @@ First public release.
   transcripts stayed in JSONL files on the host and Google OAuth token storage
   could not work. Bootstrap now points them at the install's Postgres, and
   `sync-compose-db-env.sh` recreates agent-runtime after a DB password change.
+- The agent-runtime image's gitleaks build upgrades
+  `github.com/klauspost/compress` from v1.17.11 to v1.18.7, clearing
+  CVE-2026-63209 (HIGH), which failed the release-gates Trivy scan.
