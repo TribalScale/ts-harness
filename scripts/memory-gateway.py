@@ -26,6 +26,8 @@ from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import task_claims as task_claim_routes  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes import scale_metrics as scale_metric_routes  # noqa: E402
+from memory_routes import shared_state as shared_state_routes  # noqa: E402
+from memory_routes import skill_index as skill_index_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
     apply_directory_snapshot,
     disable_directory_users,
@@ -4757,6 +4759,76 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    _SHARED_STATE_PREFIXES = ("shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup")
+
+    @classmethod
+    def _is_shared_state_path(cls, path: str) -> bool:
+        head = path.split("?", 1)[0].strip("/").split("/", 1)[0]
+        return head in cls._SHARED_STATE_PREFIXES
+
+    def _shared_state(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        head, rest = parts[0], parts[1:]
+        try:
+            with connect_db() as conn:
+                if head == "shared-files" and len(rest) == 1 and method == "GET":
+                    result = shared_state_routes.pull_files(conn, rest[0], query)
+                elif head == "shared-files" and rest[1:] == ["generation"] and method == "GET":
+                    result = shared_state_routes.namespace_generation(conn, rest[0])
+                elif head == "shared-files" and rest[1:] == ["commit"] and method == "POST":
+                    result = shared_state_routes.commit_files(conn, rest[0], body)
+                elif head == "shared-files" and len(rest) == 3 and rest[1] == "locks" and method == "POST":
+                    result = shared_state_routes.acquire_lock(conn, rest[0], rest[2], body)
+                elif head == "shared-files" and len(rest) == 3 and rest[1] == "locks" and method == "DELETE":
+                    result = shared_state_routes.release_lock(conn, rest[0], rest[2], {**query, **body})
+                elif head == "runtime-kv" and len(rest) >= 2 and method == "GET":
+                    result = shared_state_routes.kv_get(conn, rest[0], "/".join(rest[1:]))
+                elif head == "runtime-kv" and len(rest) >= 2 and method == "PUT":
+                    result = shared_state_routes.kv_put(conn, rest[0], "/".join(rest[1:]), body)
+                elif head == "audit-events" and not rest and method == "POST":
+                    result = shared_state_routes.append_audit_events(conn, body)
+                elif head == "audit-events" and not rest and method == "GET":
+                    result = shared_state_routes.list_audit_events(conn, query)
+                elif head == "channel-dedup" and not rest and method == "POST":
+                    result = shared_state_routes.mark_channel_event(conn, body)
+                elif head == "channel-dedup" and rest == ["sweep"] and method == "POST":
+                    result = shared_state_routes.sweep_channel_dedup(conn, body)
+                elif head == "skill-index" and not rest and method == "GET":
+                    result = skill_index_routes.list_skill_index(conn, query)
+                elif head == "skill-index" and rest == ["drafts"] and method in {"POST", "PUT"}:
+                    result = skill_index_routes.upsert_draft(conn, body)
+                elif head == "skill-index" and len(rest) == 3 and rest[0] == "drafts" and method == "POST":
+                    if rest[2] == "approve":
+                        result = skill_index_routes.approve_draft(conn, rest[1], body)
+                    elif rest[2] == "reject":
+                        result = skill_index_routes.reject_draft(conn, rest[1], body)
+                    else:
+                        raise LookupError("not found")
+                else:
+                    raise LookupError("not found")
+            self._send_json(200, result)
+        except shared_state_routes.StaleGeneration as exc:
+            self._send_json(409, {"error": str(exc), "code": "stale_generation", "generation": exc.current})
+        except shared_state_routes.VersionConflict as exc:
+            self._send_json(409, {"error": str(exc), "code": "version_conflict", "version": exc.current})
+        except skill_index_routes.SkillIndexConflict as exc:
+            self._send_json(409, {"error": str(exc), "code": exc.code})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     @staticmethod
     def _is_projects_path(path: str) -> bool:
         return path == "/registry-hosts" or path == "/projects" or path.startswith(("/projects?", "/projects/"))
@@ -4787,6 +4859,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_budgets_path(self.path):
             self._budgets("GET")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("GET")
             return
         if self.path == "/metrics/scale-out" or self.path.startswith("/metrics/scale-out?"):
             self._scale_metrics()
@@ -5155,6 +5230,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_budgets_path(self.path):
             self._budgets("POST")
             return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("POST")
+            return
         if self.path.startswith("/github/"):
             self._github("POST")
             return
@@ -5338,6 +5416,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_budgets_path(self.path):
             self._budgets("PUT")
             return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("PUT")
+            return
         if self.path.startswith("/github/"):
             self._github("PUT")
             return
@@ -5388,6 +5469,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/github/"):
             self._github("DELETE")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("DELETE")
             return
         if self.path.startswith("/programs/") and "/access/" in self.path:
             from urllib.parse import unquote

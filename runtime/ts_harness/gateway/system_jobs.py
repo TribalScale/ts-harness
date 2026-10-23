@@ -662,6 +662,22 @@ def github_rate_limits() -> dict[str, Any]:
     return refresh_github_rate_limits()
 
 
+def sweep_channel_dedup() -> dict[str, Any]:
+    """Forget inbound channel event ids older than a week; platforms stop retrying long before that."""
+    from ts_harness.storage.backend import state_backend
+
+    if state_backend() != "postgres":
+        return {"status": "skipped", "reason": "state backend is local"}
+    from ts_harness.memory.client import get_memory_client
+
+    try:
+        result = get_memory_client().sweep_channel_dedup(retention_days=7)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("channel dedup sweep failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+    return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
@@ -669,6 +685,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "sweep_coding_jobs": sweep_coding_jobs,
     "budget_alerts": budget_alerts,
     "github_rate_limits": github_rate_limits,
+    "sweep_channel_dedup": sweep_channel_dedup,
     "start_program": start_scheduled_program,
 }
 

@@ -147,6 +147,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Deletes inbound channel event ids older than 7 days (shared state backend only).
+    {
+        "name": "sweep-channel-dedup",
+        "kind": "system",
+        "handler": "sweep_channel_dedup",
+        "interval_seconds": 86400,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 print(f"wrote {len(jobs)} scheduler jobs to {out}")

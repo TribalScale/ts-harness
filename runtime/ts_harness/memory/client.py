@@ -17,6 +17,15 @@ DEFAULT_MEMORY_API_URL = os.environ.get("MEMORY_API_URL", "http://127.0.0.1:1879
 class ProgramNotFound(RuntimeError):
     """The memory API has no program for this path."""
 
+
+class MemoryApiConflict(RuntimeError):
+    """409 from the memory API: a stale generation, a version conflict or a catalog rule."""
+
+    def __init__(self, message: str, detail: dict[str, Any]):
+        super().__init__(message)
+        self.detail = detail
+        self.code = str(detail.get("code") or "")
+
 _DECISION_KEYS = ("actor_email", "actor_roles", "actor_permissions", "reason", "program_id", "tenant_id")
 
 
@@ -51,6 +60,12 @@ class MemoryClient:
             body = exc.read().decode() or str(exc)
             if exc.code == 404:
                 raise ProgramNotFound(body) from exc
+            if exc.code == 409:
+                try:
+                    detail = json.loads(body)
+                except json.JSONDecodeError:
+                    detail = {}
+                raise MemoryApiConflict(str(detail.get("error") or body), detail if isinstance(detail, dict) else {}) from exc
             raise RuntimeError(body) from exc
         return json.loads(raw) if raw else {}
 
@@ -1236,6 +1251,85 @@ class MemoryClient:
 
     def acquire_service_lease(self, name: str, *, holder: str, ttl_seconds: int = 30) -> dict[str, Any]:
         return self._request("POST", "/leases/acquire", {"name": name, "holder": holder, "ttl_seconds": ttl_seconds})
+
+    def shared_files_generation(self, namespace: str) -> int:
+        return int(self._request("GET", f"/shared-files/{namespace}/generation").get("generation") or 0)
+
+    def pull_shared_files(self, namespace: str, *, since: int = 0) -> dict[str, Any]:
+        return self._request("GET", f"/shared-files/{namespace}?since={int(since)}")
+
+    def commit_shared_files(
+        self,
+        namespace: str,
+        *,
+        base_generation: int | None,
+        puts: list[dict[str, str]],
+        deletes: list[str],
+        actor: str = "",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/shared-files/{namespace}/commit",
+            {"base_generation": base_generation, "puts": puts, "deletes": deletes, "actor": actor},
+        )
+
+    def acquire_shared_lock(self, namespace: str, name: str, *, holder: str, ttl_seconds: int = 60) -> bool:
+        from urllib.parse import quote
+
+        out = self._request(
+            "POST",
+            f"/shared-files/{namespace}/locks/{quote(name, safe='')}",
+            {"holder": holder, "ttl_seconds": ttl_seconds},
+        )
+        return bool(out.get("locked"))
+
+    def release_shared_lock(self, namespace: str, name: str, *, holder: str) -> bool:
+        from urllib.parse import quote
+
+        out = self._request("DELETE", f"/shared-files/{namespace}/locks/{quote(name, safe='')}", {"holder": holder})
+        return bool(out.get("released"))
+
+    def list_skill_index(self, *, statuses: tuple[str, ...] = ("active", "draft"), skill_id: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params = {"status": ",".join(statuses), **({"skill_id": skill_id} if skill_id else {})}
+        return self._request("GET", f"/skill-index?{urlencode(params)}")
+
+    def upsert_skill_draft(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/skill-index/drafts", body)
+
+    def approve_skill_draft(self, draft_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/skill-index/drafts/{draft_id}/approve", body)
+
+    def reject_skill_draft(self, draft_id: str, *, reviewer: str, reason: str = "") -> dict[str, Any]:
+        return self._request("POST", f"/skill-index/drafts/{draft_id}/reject", {"reviewer": reviewer, "reason": reason})
+
+    def kv_get(self, namespace: str, key: str) -> dict[str, Any]:
+        """``{"value": ..., "version": n}``; version 0 and value None when absent."""
+        return self._request("GET", f"/runtime-kv/{namespace}/{key}")
+
+    def kv_put(self, namespace: str, key: str, value: Any, *, expected_version: int | None = None) -> int:
+        """Store ``value``; raises ``MemoryApiConflict`` when ``expected_version`` is stale."""
+        body: dict[str, Any] = {"value": value}
+        if expected_version is not None:
+            body["expected_version"] = int(expected_version)
+        return int(self._request("PUT", f"/runtime-kv/{namespace}/{key}", body).get("version") or 0)
+
+    def append_audit_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._request("POST", "/audit-events", {"events": events})
+
+    def list_audit_events(self, *, tenant_id: str, since: str = "", until: str = "") -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        params = {k: v for k, v in {"tenant_id": tenant_id, "since": since, "until": until}.items() if v}
+        return list(self._request("GET", f"/audit-events?{urlencode(params)}").get("events") or [])
+
+    def mark_channel_event(self, key: str) -> bool:
+        """True the first time ``key`` is seen across all replicas."""
+        return bool(self._request("POST", "/channel-dedup", {"key": key}).get("new"))
+
+    def sweep_channel_dedup(self, *, retention_days: int = 7) -> dict[str, Any]:
+        return self._request("POST", "/channel-dedup/sweep", {"retention_days": retention_days})
 
     def directory_disable(
         self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None

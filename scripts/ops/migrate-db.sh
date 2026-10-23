@@ -57,6 +57,7 @@ ORDER=(
   040_llm_usage_budgets.sql
   041_team_budgets.sql
   042_scale_out_metrics.sql
+  043_shared_runtime_state.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

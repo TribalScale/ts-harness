@@ -2729,6 +2729,10 @@ def main() -> None:
     config_path = os.environ.get("TS_HARNESS_CONFIG", "config/ts-harness-runtime.yaml.tmpl")
     # Ensure token is available for config validation during boot.
     os.environ.setdefault("GATEWAY_TOKEN", token)
+    from ts_harness.storage.backend import validate_storage_config
+
+    for warning in validate_storage_config():
+        log_event("runtime_storage_warning", message=warning)
     runtime = get_runtime()
     if not runtime.config.gateway.token:
         runtime.config.gateway.token = token
