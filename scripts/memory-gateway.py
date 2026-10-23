@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
     apply_directory_snapshot,
@@ -4511,6 +4512,69 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, scim_routes.ScimError(str(exc), 500).to_scim())
 
+    _WORKER_ACTIONS = {("GET", "spec"), ("POST", "heartbeat"), ("POST", "complete")}
+
+    def _coding_job_worker_authorized(self, method: str) -> bool:
+        """A worker's job token opens only its own job's spec, heartbeat and complete."""
+        parts = [p for p in self.path.split("?")[0].split("/") if p]
+        if len(parts) != 3 or parts[0] != "coding-jobs" or (method, parts[2]) not in self._WORKER_ACTIONS:
+            return False
+        presented = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+        if not presented.startswith(f"{coding_job_routes.TOKEN_PREFIX}."):
+            return False
+        try:
+            return coding_job_routes.verify_job_token(presented, parts[1])
+        except RuntimeError:
+            return False
+
+    def _coding_jobs(self, method: str) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method == "POST" else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if method == "GET" and not parts:
+                    query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    self._send_json(200, coding_job_routes.list_coding_jobs(conn, query))
+                elif method == "POST" and parts == ["create"]:
+                    self._send_json(200, coding_job_routes.create_coding_job(conn, body))
+                elif method == "POST" and parts == ["claim"]:
+                    self._send_json(200, coding_job_routes.claim_coding_jobs(conn, body))
+                elif method == "POST" and parts == ["stale"]:
+                    self._send_json(200, coding_job_routes.sweep_stale_coding_jobs(conn, body))
+                elif method == "POST" and parts == ["cancel"]:
+                    self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, body))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "spec":
+                    self._send_json(200, coding_job_routes.get_job_spec(conn, parts[0]))
+                elif method == "POST" and len(parts) == 2:
+                    job_id, action = parts
+                    if action == "heartbeat":
+                        self._send_json(200, coding_job_routes.heartbeat_coding_job(conn, job_id, body))
+                    elif action == "complete":
+                        self._send_json(200, coding_job_routes.complete_coding_job(conn, job_id, body))
+                    elif action == "launched":
+                        self._send_json(200, coding_job_routes.record_launch(conn, job_id, body))
+                    elif action == "consume":
+                        self._send_json(200, coding_job_routes.consume_coding_job(conn, job_id))
+                    elif action == "cancel":
+                        self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, {**body, "job_ids": [job_id]}))
+                    else:
+                        self._send_json(404, {"error": "not found"})
+                else:
+                    self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()
         if not token:
@@ -4523,11 +4587,17 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True, "service": "memory-api"})
             return
+        if self._coding_job_worker_authorized("GET"):
+            self._coding_jobs("GET")
+            return
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
             return
         if self.path.startswith("/scim/"):
             self._scim("GET")
+            return
+        if self.path == "/coding-jobs" or self.path.startswith(("/coding-jobs?", "/coding-jobs/")):
+            self._coding_jobs("GET")
             return
         if self.path.startswith("/workflow/plan/"):
             plan_id = self.path.removeprefix("/workflow/plan/")
@@ -4869,11 +4939,17 @@ class MemoryHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self._coding_job_worker_authorized("POST"):
+            self._coding_jobs("POST")
+            return
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
             return
         if self.path.startswith("/scim/"):
             self._scim("POST")
+            return
+        if self.path.startswith("/coding-jobs/"):
+            self._coding_jobs("POST")
             return
         try:
             body = self._read_body()

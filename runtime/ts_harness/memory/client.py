@@ -979,6 +979,83 @@ class MemoryClient:
             body["max_disable_fraction"] = max_disable_fraction
         return self._request("POST", "/directory/snapshot", body)
 
+    def create_coding_job(
+        self,
+        *,
+        spec: dict[str, Any],
+        workflow_id: str | None = None,
+        task_id: str | None = None,
+        program_id: str | None = None,
+        tenant_id: str = "default",
+        team_slug: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/create",
+            {
+                "spec": spec,
+                "workflow_id": workflow_id,
+                "task_id": task_id,
+                "program_id": program_id,
+                "tenant_id": tenant_id,
+                "team_slug": team_slug,
+                "project_id": project_id,
+            },
+        )
+
+    def list_coding_jobs(
+        self,
+        *,
+        workflow_id: str | None = None,
+        task_id: str | None = None,
+        status: str | None = None,
+        unconsumed: bool = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        params: dict[str, Any] = {"limit": limit}
+        for key, value in (("workflow_id", workflow_id), ("task_id", task_id), ("status", status)):
+            if value:
+                params[key] = value
+        if unconsumed:
+            params["unconsumed"] = "true"
+        return list(self._request("GET", f"/coding-jobs?{urlencode(params)}").get("jobs") or [])
+
+    def claim_coding_jobs(self, *, launcher: str, max_running: int, limit: int | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"launcher": launcher, "max_running": max_running}
+        if limit is not None:
+            body["limit"] = limit
+        return self._request("POST", "/coding-jobs/claim", body)
+
+    def record_coding_job_launch(self, job_id: str, *, runner_ref: str = "", error: str = "") -> dict[str, Any]:
+        return self._request("POST", f"/coding-jobs/{job_id}/launched", {"runner_ref": runner_ref, "error": error})
+
+    def consume_coding_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
+
+    def cancel_coding_jobs(
+        self,
+        *,
+        job_ids: list[str] | None = None,
+        workflow_ids: list[str] | None = None,
+        reason: str = "cancelled",
+        actor: str = "orchestrator",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/cancel",
+            {"job_ids": job_ids or [], "workflow_ids": workflow_ids or [], "reason": reason, "actor": actor},
+        )
+
+    def sweep_stale_coding_jobs(self, *, heartbeat_seconds: int, max_runtime_seconds: int) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/stale",
+            {"heartbeat_seconds": heartbeat_seconds, "max_runtime_seconds": max_runtime_seconds},
+        )
+
     def directory_disable(
         self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None
     ) -> dict[str, Any]:
