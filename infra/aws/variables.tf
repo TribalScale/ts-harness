@@ -560,3 +560,25 @@ variable "github_rate_limit_alarm_percent" {
   type        = number
   default     = 10
 }
+
+variable "state_backend" {
+  description = "Where runtime state lives: local (files on the host) or postgres (definitions, cron, scheduler state, audit and dedup in the database). Empty follows deployment_profile: postgres for scale_out, local otherwise."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "local", "postgres"], var.state_backend)
+    error_message = "state_backend must be empty, local or postgres."
+  }
+}
+
+variable "object_backend" {
+  description = "Where skill files and agent workspaces live: local (host disk) or s3 (the skills and workspaces buckets). Empty follows deployment_profile: s3 for scale_out, local otherwise."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "local", "s3"], var.object_backend)
+    error_message = "object_backend must be empty, local or s3."
+  }
+}

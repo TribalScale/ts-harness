@@ -43,6 +43,16 @@ run "single_host_default_network_adds_nothing" {
   }
 
   assert {
+    condition     = length(aws_s3_bucket.skills) == 0 && length(aws_s3_bucket.workspaces) == 0 && length(aws_iam_role_policy.object_storage) == 0
+    error_message = "single_host keeps skills and workspaces on the host"
+  }
+
+  assert {
+    condition     = local.runtime_config_object.TS_HARNESS_STATE_BACKEND == "local" && local.runtime_config_object.TS_HARNESS_OBJECT_BACKEND == "local" && local.runtime_config_object.TS_HARNESS_SKILLS_BUCKET == ""
+    error_message = "single_host defaults both storage backends to local"
+  }
+
+  assert {
     condition     = length(aws_ecs_cluster.coding) == 0 && length(aws_lb.memory_api) == 0
     error_message = "single_host must not create ECS or the internal load balancer"
   }
@@ -63,6 +73,7 @@ run "scale_out_requires_vpc" {
 
   variables {
     deployment_profile = "scale_out"
+    memory_backend     = "rds"
   }
 
   expect_failures = [
@@ -148,6 +159,78 @@ run "scale_out_in_vpc" {
     condition     = length(jsondecode(aws_cloudwatch_dashboard.scale_out.dashboard_body).widgets) == 13
     error_message = "the scale-out dashboard covers lanes, coding jobs, gates, GitHub and LLM spend"
   }
+
+  assert {
+    condition     = aws_s3_bucket.skills[0].bucket == "ts-harness-skills" && aws_s3_bucket.workspaces[0].bucket == "ts-harness-workspaces"
+    error_message = "scale_out creates the skills and workspaces buckets"
+  }
+
+  assert {
+    condition     = local.runtime_config_object.TS_HARNESS_STATE_BACKEND == "postgres" && local.runtime_config_object.TS_HARNESS_OBJECT_BACKEND == "s3"
+    error_message = "scale_out defaults to postgres state and s3 objects"
+  }
+
+  assert {
+    condition     = alltrue([for b in aws_s3_bucket_public_access_block.objects : b.block_public_acls && b.block_public_policy && b.restrict_public_buckets]) && length(aws_s3_bucket_public_access_block.objects) == 2
+    error_message = "both buckets block public access"
+  }
+
+  assert {
+    condition     = alltrue([for v in aws_s3_bucket_versioning.objects : v.versioning_configuration[0].status == "Enabled"]) && length(aws_s3_bucket_versioning.objects) == 2
+    error_message = "both buckets keep object versions"
+  }
+
+  assert {
+    condition     = alltrue([for e in aws_s3_bucket_server_side_encryption_configuration.objects : [for r in e.rule : [for d in r.apply_server_side_encryption_by_default : d.sse_algorithm]][0][0] == "aws:kms"])
+    error_message = "both buckets encrypt with KMS"
+  }
+
+  assert {
+    condition     = [for r in aws_s3_bucket_lifecycle_configuration.skills[0].rule : r.id] == ["expire-noncurrent-versions", "expire-abandoned-drafts"] && aws_s3_bucket_lifecycle_configuration.skills[0].rule[1].expiration[0].days == 30 && aws_s3_bucket_lifecycle_configuration.skills[0].rule[0].noncurrent_version_expiration[0].noncurrent_days == 90
+    error_message = "skills keep old versions 90 days and abandoned drafts 30 days"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.workspaces[0].rule[0].noncurrent_version_expiration[0].noncurrent_days == 30
+    error_message = "workspaces keep old versions 30 days"
+  }
+
+  assert {
+    condition = flatten([
+      for s in local.object_storage_policy.Statement : s.Resource if contains(s.Action, "s3:DeleteObject")
+    ]) == ["arn:aws:s3:::ts-harness-skills/skills/drafts/*", "arn:aws:s3:::ts-harness-workspaces/*"]
+    error_message = "the runtime may delete skill drafts and workspace files, never approved skill versions"
+  }
+
+  assert {
+    condition     = [for s in local.object_storage_policy.Statement : s.Sid if contains(s.Action, "s3:GetObject")] == ["ReadWriteSkillsAndWorkspaces"]
+    error_message = "the runtime reads and writes both buckets"
+  }
+}
+
+run "object_storage_needs_postgres_state" {
+  command = plan
+
+  variables {
+    object_backend = "s3"
+    state_backend  = "local"
+  }
+
+  expect_failures = [
+    terraform_data.storage_backends,
+  ]
+}
+
+run "postgres_state_needs_rds" {
+  command = plan
+
+  variables {
+    state_backend = "postgres"
+  }
+
+  expect_failures = [
+    terraform_data.storage_backends,
+  ]
 }
 
 run "scale_out_with_llm_proxy" {

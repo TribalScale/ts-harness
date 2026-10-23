@@ -41,6 +41,10 @@ locals {
     OIDC_ALLOWED_DOMAINS                  = var.oidc_allowed_domains
     OIDC_GROUPS_SOURCE                    = var.oidc_groups_source
     IDENTITY_DIRECTORY                    = var.identity_directory
+    TS_HARNESS_STATE_BACKEND              = var.state_backend
+    TS_HARNESS_OBJECT_BACKEND             = var.object_backend
+    TS_HARNESS_SKILLS_BUCKET              = try(google_storage_bucket.skills[0].name, "")
+    TS_HARNESS_WORKSPACE_BUCKET           = try(google_storage_bucket.workspaces[0].name, "")
   }
 }
 

@@ -162,6 +162,28 @@ variable "memory_backend" {
   }
 }
 
+variable "state_backend" {
+  description = "Where runtime state lives: local (files on the VM) or postgres (definitions, cron, scheduler state, audit and dedup in Cloud SQL)."
+  type        = string
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "postgres"], var.state_backend)
+    error_message = "state_backend must be local or postgres."
+  }
+}
+
+variable "object_backend" {
+  description = "Where skill files and agent workspaces live: local (VM disk) or gcs (the skills and workspaces buckets)."
+  type        = string
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "gcs"], var.object_backend)
+    error_message = "object_backend must be local or gcs."
+  }
+}
+
 variable "enterprise_repo_url" {
   description = "Git URL for this ts-harness repo (cloned on the instance for scripts, workspace, skills, and docker overrides)"
   type        = string

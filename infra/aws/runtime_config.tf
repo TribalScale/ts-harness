@@ -52,6 +52,10 @@ locals {
     CODING_EGRESS_PROXY_URL               = local.egress_proxy_url
     CODING_WORKER_LLM_PROXY_URL           = local.llm_proxy_worker_url
     LLM_PROXY_HOST_PORT                   = local.ecs_enabled && var.llm_proxy_enabled ? tostring(local.llm_proxy_port) : ""
+    TS_HARNESS_STATE_BACKEND              = local.state_backend_effective
+    TS_HARNESS_OBJECT_BACKEND             = local.object_backend_effective
+    TS_HARNESS_SKILLS_BUCKET              = try(aws_s3_bucket.skills[0].id, "")
+    TS_HARNESS_WORKSPACE_BUCKET           = try(aws_s3_bucket.workspaces[0].id, "")
   }
 }
 

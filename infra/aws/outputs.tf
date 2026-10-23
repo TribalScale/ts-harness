@@ -159,3 +159,13 @@ output "memory_api_internal_url" {
   description = "Memory API URL that coding workers use through the internal load balancer (scale_out)"
   value       = local.memory_api_worker_url
 }
+
+output "skills_bucket" {
+  description = "S3 bucket for managed skill files (object_backend=s3)"
+  value       = try(aws_s3_bucket.skills[0].id, "")
+}
+
+output "workspaces_bucket" {
+  description = "S3 bucket for agent workspaces (object_backend=s3)"
+  value       = try(aws_s3_bucket.workspaces[0].id, "")
+}
