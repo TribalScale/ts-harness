@@ -61,6 +61,7 @@ class DirectoryPostgresTests(PgTestCase):
                     "subject": "auth0|alice",
                     "email": "Alice@Example.com",
                     "display_name": "Alice",
+                    "roles": ["Approver", "requester"],
                     "teams": [{"slug": "payments", "role": "member"}, {"slug": "payments", "role": "approver"}],
                 },
             )
@@ -68,6 +69,7 @@ class DirectoryPostgresTests(PgTestCase):
             found = directory.get_directory_user(conn, tenant_id="default", email="alice@example.com")
         self.assertTrue(found["found"])
         self.assertEqual(found["user"]["subject"], "auth0|alice")
+        self.assertEqual(found["user"]["roles"], ["approver", "requester"])
         self.assertEqual(
             found["user"]["teams"],
             [{"slug": "payments", "role": "approver"}, {"slug": "payments", "role": "member"}],
@@ -89,9 +91,11 @@ class DirectoryPostgresTests(PgTestCase):
             directory.upsert_directory_user(
                 conn, {"subject": "auth0|cara", "teams": [{"slug": "ops", "role": "manager"}]}
             )
+            directory.upsert_directory_user(conn, {"subject": "auth0|cara", "roles": ["admin"]})
             directory.upsert_directory_user(conn, {"subject": "auth0|cara", "display_name": "Cara"})
             user = directory.get_directory_user(conn, tenant_id="default", subject="auth0|cara")["user"]
         self.assertEqual(user["display_name"], "Cara")
+        self.assertEqual(user["roles"], ["admin"])
         self.assertEqual(user["teams"], [{"slug": "ops", "role": "manager"}])
 
     def test_search_finds_people_and_teams_and_skips_disabled(self):
@@ -140,6 +144,7 @@ class RecordSignInTests(unittest.TestCase):
             email="alice@example.com",
             display_name="Alice",
             teams=[{"slug": "payments", "role": "member"}],
+            roles=["requester"],
         )
         directory_links.record_sign_in(auth, memory=memory)
         memory.directory_upsert_user.assert_called_once_with(
@@ -148,6 +153,7 @@ class RecordSignInTests(unittest.TestCase):
             email="alice@example.com",
             display_name="Alice",
             teams=[{"slug": "payments", "role": "member"}],
+            roles=["requester"],
         )
 
     def test_static_sign_in_is_not_recorded(self):

@@ -36,6 +36,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 30 | `029_runner_leader_lease.sql` | Single-row workflow runner leader lease |
 | 31 | `030_program_department.sql` | Program department and department-memory promotion audit |
 | 32 | `031_teams_directory.sql` | Teams from identity groups, people directory, team memberships |
+| 33 | `032_program_access.sql` | Program owner, visibility and sharing grants; access audit actions |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

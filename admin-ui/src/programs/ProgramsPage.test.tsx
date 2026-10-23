@@ -718,3 +718,54 @@ it("builds portfolio URLs and formats wait ages", () => {
   expect(formatAge(90)).toBe("2m");
   expect(formatAge(3 * 86400)).toBe("3d");
 });
+
+it("shows the visibility pill and limits actions to the viewer's access level", async () => {
+  setPermissions(["view", "approve_gate"]);
+  mockFetch((url) => {
+    if (url === LIST_URL) {
+      const list = programList();
+      return jsonResponse({ programs: [{ ...list.programs[0], visibility: "private" }, list.programs[1]] });
+    }
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
+      return jsonResponse({ ...programStatus(), access_level: "read", visibility: "public" });
+    }
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
+
+  expect(await screen.findByText("Private")).toBeInTheDocument();
+  expect(await screen.findByText("Public")).toBeInTheDocument();
+  const actions = screen.getByRole("group", { name: "Program actions" });
+  expect(within(actions).queryByRole("button", { name: "Advance" })).not.toBeInTheDocument();
+  expect(within(actions).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  expect(within(actions).queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save project" })).not.toBeInTheDocument();
+  const activity = await screen.findByRole("region", { name: "implement activity" });
+  expect(await within(activity).findByText("Implement board")).toBeInTheDocument();
+  expect(within(activity).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+});
+
+it("opens the share dialog for program admins", async () => {
+  setPermissions(["view", "approve_gate"]);
+  mockFetch((url) => {
+    if (url === LIST_URL) return jsonResponse(programList());
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
+      return jsonResponse({ ...programStatus(), access_level: "admin", visibility: "private" });
+    }
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/access`) {
+      return jsonResponse({ program_id: programId, visibility: "private", owner: null, grants: [], access_level: "admin" });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
+
+  const actions = await screen.findByRole("group", { name: "Program actions" });
+  expect(within(actions).getByRole("button", { name: "Advance" })).toBeInTheDocument();
+  await userEvent.click(within(actions).getByRole("button", { name: "Share" }));
+  expect(await screen.findByRole("heading", { name: "Share program" })).toBeInTheDocument();
+  expect(await screen.findByRole("textbox", { name: "Search people and teams" })).toBeInTheDocument();
+});

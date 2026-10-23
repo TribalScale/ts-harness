@@ -646,6 +646,16 @@ def execute_workflow_gate_classification(
 
     actor = resolve_decision_actor(metadata, fallback_actor=agent_id)
     denied = refusal_for_permission(actor, "approve_gate")
+    if not denied:
+        from ts_harness.gateway.program_access import channel_program_refusal
+
+        denied = channel_program_refusal(
+            metadata,
+            tenant_id=tenant_id,
+            channel=str(metadata.get("channel") or "slack"),
+            task_id=str(gate.get("id") or ""),
+            route="channel_gate",
+        )
     if denied:
         return {"error": denied, "status": "denied", "task_id": str(gate.get("id"))}
 
@@ -1252,6 +1262,19 @@ def execute_stuck_step_command(
         actor_email=actor_email,
         config=config,
     )
+    if not denied:
+        from ts_harness.gateway.program_access import channel_program_refusal
+
+        denied = channel_program_refusal(
+            metadata,
+            tenant_id=session.tenant_id,
+            channel=channel,
+            auth=auth,
+            config=config,
+            memory=memory,
+            program_id=str(chosen.get("program_id") or "") or None,
+            route="stuck_command",
+        )
     if denied:
         return {**base, "status": "denied", "error": denied, "work_order": chosen["work_order"]}
     try:
@@ -1279,6 +1302,9 @@ def format_stuck_step_ack(result: dict[str, Any]) -> str:
         examples = " or ".join(f"`/{action} {item}`" for item in labels[:3])
         return f"Several work orders are waiting ({', '.join(labels)}). Say which one, e.g. {examples}."
     if status == "denied":
+        error = str(result.get("error") or "")
+        if error and not error.startswith("missing permission"):
+            return f"I can't do that: {error}"
         return "You need the approve_gate permission to decide this."
     if result.get("error"):
         return f"I couldn't {action} {label}: {result['error']}"

@@ -102,7 +102,7 @@ class CreateAsChildTests(unittest.TestCase):
         self.assertEqual(result["root_program_id"], self.parent_id)
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
         self.assertIn("parent_program_id, root_program_id", insert[0])
-        self.assertEqual(insert[1][-2:], (self.parent_id, self.parent_id))
+        self.assertEqual(insert[1][-4:-2], (self.parent_id, self.parent_id))
         audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
         self.assertIn("program_child_attached", audits)
 
@@ -125,7 +125,7 @@ class CreateAsChildTests(unittest.TestCase):
         result = self.gateway.create_delivery_program(conn, {"summary": "root", "entry_phase": "prd"})
         self.assertIsNone(result["parent_program_id"])
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
-        self.assertEqual(insert[1][-2:], (None, None))
+        self.assertEqual(insert[1][-4:-2], (None, None))
 
 
 class AdoptParentPatchTests(unittest.TestCase):

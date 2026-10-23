@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS directory_users (
     subject      TEXT NOT NULL,
     email        TEXT,
     display_name TEXT,
+    roles        JSONB NOT NULL DEFAULT '[]'::jsonb,
     source       TEXT NOT NULL DEFAULT 'seen_users',
     last_seen_at TIMESTAMPTZ,
     disabled_at  TIMESTAMPTZ,

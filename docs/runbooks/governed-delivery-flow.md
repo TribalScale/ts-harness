@@ -83,6 +83,23 @@ Program artifacts (contract):
 | `released_environments` | Release complete | Rollback targets |
 | `compensation` / `compensation_status` | Program cancelled | Cancel cleanup results and failures |
 
+## Who can see and act on a program
+
+Programs are private to their owner by default. The owner is the signed-in person who started the program (for chat, the directory person linked to the Slack user). The owner shares it from **Programs → Share** with people or teams at one of four levels:
+
+| Level | Allows |
+| --- | --- |
+| Can view (`read`) | Status, evidence, phase activity, the program's chat |
+| Can contribute (`write`) | Advance phases, department memory |
+| Can approve (`approve`) | Approve, reject and decide gates (also needs the `approve_gate` permission) |
+| Can manage (`admin`) | Cancel, edit project and links, sharing and visibility |
+
+A team approver on a team with `write` or higher gets `approve`. **Public** gives everyone in the tenant `read`. Sharing a program shares its child programs. Harness admins can open any program; each first visit per hour is audited as `program_admin_access`.
+
+`TS_HARNESS_PROGRAM_ACCESS` controls enforcement: `audit` (default) logs `program_access_would_deny` and blocks nothing, `enforce` returns 404 to people who cannot read and 403 to readers who need more, `off` checks only the tenant. Run in `audit` for a week and review the would-deny events before switching to `enforce`.
+
+Gate notifications still go to the thread that started the program. People the program is shared with see it in their Inbox and Programs list, and can approve from there or from a Slack thread once their Slack user is linked. With OIDC, an unlinked Slack user is asked to sign in to the console once with the same email.
+
 ## Governance Summary
 
 | Gate | Who Advances It | Agent Boundary |

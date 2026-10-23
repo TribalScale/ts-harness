@@ -137,10 +137,15 @@ def build_inbox(
             }
         )
 
+    from ts_harness.gateway.program_access import list_actor_params
+
     try:
-        listed = memory.list_programs(tenant_id=auth.tenant_id, status=None, limit=100, offset=0)
+        listed = memory.list_programs(
+            tenant_id=auth.tenant_id, status=None, limit=100, offset=0, actor_params=list_actor_params(auth)
+        )
     except Exception:
         listed = {"programs": []}
+    approvable = _approvable_program_filter(memory, auth)
     for program in list(listed.get("programs") or []):
         program_id = str(program.get("id") or "")
         if not program_id:
@@ -153,6 +158,8 @@ def build_inbox(
             continue
         waiting = status.get("waiting_on") or {}
         if waiting.get("kind") != "approval":
+            continue
+        if not approvable(program_id):
             continue
         match = waiting.get("match") or {}
         task_id = str(match.get("task_id") or "")
@@ -175,7 +182,7 @@ def build_inbox(
             }
         )
 
-    items.extend(_stuck_step_items(memory, auth))
+    items.extend(_stuck_step_items(memory, auth, approvable))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
 
@@ -183,7 +190,37 @@ def build_inbox(
 _STUCK_REASONS = {"revision_limit": "Revision limit reached"}
 
 
-def _stuck_step_items(memory: Any, auth: AuthContext) -> list[dict[str, Any]]:
+def _approvable_program_filter(memory: Any, auth: AuthContext, need: str = "approve") -> Any:
+    """Predicate: does this actor have *need* on the program? Always true unless enforcing."""
+    from ts_harness.gateway.program_access import (
+        ProgramAccessDenied,
+        access_mode,
+        actor_context,
+        check_program_access,
+    )
+
+    actor = actor_context(auth)
+    if actor is None or access_mode() != "enforce":
+        return lambda program_id: True
+    cache: dict[str, bool] = {}
+
+    def approvable(program_id: str | None) -> bool:
+        if not program_id:
+            return True
+        if program_id not in cache:
+            try:
+                check_program_access(
+                    memory, program_id, actor, need, tenant_id=str(auth.tenant_id or "default"), route="inbox"
+                )
+                cache[program_id] = True
+            except ProgramAccessDenied:
+                cache[program_id] = False
+        return cache[program_id]
+
+    return approvable
+
+
+def _stuck_step_items(memory: Any, auth: AuthContext, approvable: Any = None) -> list[dict[str, Any]]:
     """Steps parked for a human to revise again, accept or stop."""
     try:
         stuck = list(memory.list_stuck_tasks(tenant_id=auth.tenant_id) or [])
@@ -202,6 +239,8 @@ def _stuck_step_items(memory: Any, auth: AuthContext) -> list[dict[str, Any]]:
         try:
             summary = stuck_summary(engine, workflow_id, task_id)
         except Exception:
+            continue
+        if approvable is not None and not approvable(summary.get("program_id")):
             continue
         reason = _STUCK_REASONS.get(summary["reason"], "Blocked")
         items.append(
@@ -230,6 +269,8 @@ def build_portfolio(
     offset: int = 0,
 ) -> dict[str, Any]:
     """Root programs with their wait, escalation and recommended action for the portfolio board."""
+    from ts_harness.gateway.program_access import list_actor_params
+
     listed = memory.list_programs(
         tenant_id=auth.tenant_id,
         status=status,
@@ -238,6 +279,7 @@ def build_portfolio(
         roots_only=True,
         phase=phase,
         owner=owner,
+        actor_params=list_actor_params(auth),
     )
     rows: list[dict[str, Any]] = []
     for program in list(listed.get("programs") or []):
@@ -315,6 +357,12 @@ def delete_cron_job_admin(runtime: Any, name: str) -> dict[str, Any]:
     return {"deleted": name}
 
 
+def _memory_client() -> Any:
+    from ts_harness.memory.client import get_memory_client
+
+    return get_memory_client()
+
+
 def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None = "web") -> dict[str, Any]:
     from ts_harness.agent.sessions import get_session_store
 
@@ -326,6 +374,8 @@ def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None 
             for s in sessions
             if s.source == channel or (s.routing_key or "").startswith(f"{channel}:")
         ]
+    readable = _approvable_program_filter(_memory_client(), auth, "read")
+    sessions = [s for s in sessions if readable(str((s.metadata or {}).get("program_id") or "").strip() or None)]
     # Prefer actor-owned web sessions when available
     actor = auth.actor_id
     if actor:
@@ -373,9 +423,11 @@ def session_messages_admin(session_id: str, auth: AuthContext) -> dict[str, Any]
     # session existence in other tenants.
     if session is None or session.tenant_id != auth.tenant_id:
         raise KeyError("session not found")
-    messages = get_transcript_store().load_messages(session_id)
     metadata = session.metadata or {}
     program_id = str(metadata.get("program_id") or "").strip()
+    if program_id and not _approvable_program_filter(_memory_client(), auth, "read")(program_id):
+        raise KeyError("session not found")
+    messages = get_transcript_store().load_messages(session_id)
     payload: dict[str, Any] = {
         "session_id": session_id,
         "agent_id": session.agent_id,

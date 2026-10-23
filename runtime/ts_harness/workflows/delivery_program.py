@@ -246,6 +246,7 @@ class DeliveryProgramService:
         link_program_ids: list[str] | None = None,
         parent_program_id: str | None = None,
         department: str | None = None,
+        owner_id: str | None = None,
     ) -> ProgramStartResult:
         resolved_entry = str(entry_node or entry_phase or "").strip()
         if not resolved_entry:
@@ -301,6 +302,8 @@ class DeliveryProgramService:
         parent = str(parent_program_id or "").strip() or None
         if parent:
             create_kwargs["parent_program_id"] = parent
+        if owner_id:
+            create_kwargs["owner_id"] = owner_id
         created = self.client.create_program(
             program_id=program_id,
             tenant_id=tenant_id,

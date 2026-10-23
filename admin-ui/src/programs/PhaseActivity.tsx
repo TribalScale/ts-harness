@@ -136,17 +136,19 @@ export function PhaseActivityPanel({
   activity,
   error,
   programClosed,
+  canApproveProgram = true,
   onChanged,
 }: {
   phase: string;
   activity: PhaseActivity | null;
   error?: string | null;
   programClosed?: boolean;
+  canApproveProgram?: boolean;
   onChanged?: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const canApprove = hasPermission("approve_gate") && !programClosed;
+  const canApprove = hasPermission("approve_gate") && canApproveProgram && !programClosed;
   const workflow = activity?.workflow || null;
   const children = activity?.children || [];
   const childTitle = children.length && children.every((c) => /^WO-/i.test(c.label)) ? "Work orders" : "Started workflows";

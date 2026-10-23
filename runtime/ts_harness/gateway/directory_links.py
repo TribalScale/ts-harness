@@ -33,6 +33,7 @@ def record_sign_in(auth: Any, *, memory: Any | None = None) -> dict[str, Any] | 
             email=auth.email,
             display_name=getattr(auth, "display_name", None),
             teams=list(getattr(auth, "teams", None) or []),
+            roles=list(getattr(auth, "roles", None) or []),
         )
     except Exception as exc:  # noqa: BLE001 - the directory is best-effort at sign-in
         logger.warning("directory upsert failed for %s: %s", auth.actor_id, exc)
@@ -76,10 +77,12 @@ def link_channel_session(metadata: dict[str, Any], email: str | None, tenant_id:
     if user:
         updated["directory_subject"] = user["subject"]
         updated["directory_teams"] = list(user.get("teams") or [])
+        updated["directory_roles"] = list(user.get("roles") or [])
         updated["directory_linked"] = True
     else:
         updated.pop("directory_subject", None)
         updated.pop("directory_teams", None)
+        updated.pop("directory_roles", None)
         updated["directory_linked"] = False
     return updated
 

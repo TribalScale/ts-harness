@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 
 from ts_harness.config.deployment_profile import current_profile
+from ts_harness.gateway.program_access import ProgramAccessDenied
 from ts_harness.gateway.auth import AuthContext, AuthError, authenticate_request, check_allowed_origin
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.contracts import DispatchResult
@@ -980,6 +981,35 @@ def _program_for_tenant(memory: Any, program_id: str, auth: Any) -> dict[str, An
     return payload
 
 
+def _require_program_level(
+    program_id: str, auth: Any, need: str, *, route: str, memory: Any = None
+) -> Any:
+    """Raise ``ProgramAccessDenied`` unless the caller has *need* on the program."""
+    from ts_harness.gateway.program_access import actor_context, check_program_access
+
+    return check_program_access(
+        memory or get_memory_client(),
+        program_id,
+        actor_context(auth),
+        need,
+        tenant_id=str(auth.tenant_id or "default"),
+        route=route,
+    )
+
+
+def _effective_level(access: Any) -> str:
+    """What the console may offer: everything unless access is enforced."""
+    return access.level if access.enforced else "admin"
+
+
+def _with_access(payload: dict[str, Any], access: Any) -> dict[str, Any]:
+    return {
+        **payload,
+        "access_level": _effective_level(access),
+        "visibility": access.visibility or payload.get("visibility"),
+    }
+
+
 def _program_mutation_gate(
     program_id: str,
     auth: Any,
@@ -1054,6 +1084,8 @@ async def admin_programs_list(request: Request) -> Response:
             )
         except Exception as exc:
             return _json({"error": str(exc)}, 502)
+    from ts_harness.gateway.program_access import list_actor_params
+
     try:
         return _json(
             get_memory_client().list_programs(
@@ -1061,6 +1093,7 @@ async def admin_programs_list(request: Request) -> Response:
                 status=status,
                 limit=limit,
                 offset=offset,
+                actor_params=list_actor_params(auth),
             )
         )
     except Exception as exc:
@@ -1075,10 +1108,15 @@ async def admin_programs_get(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     program_id = request.path_params["id"]
+    memory = get_memory_client()
     try:
-        return _json(_program_for_tenant(get_memory_client(), program_id, auth))
+        payload = _program_for_tenant(memory, program_id, auth)
+        access = _require_program_level(program_id, auth, "read", route="get", memory=memory)
+        return _json(_with_access(payload, access))
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
 
 
 async def admin_programs_evidence(request: Request) -> Response:
@@ -1092,8 +1130,11 @@ async def admin_programs_evidence(request: Request) -> Response:
     memory = get_memory_client()
     try:
         _program_for_tenant(memory, program_id, auth)
+        _require_program_level(program_id, auth, "read", route="evidence", memory=memory)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     from ts_harness.gateway.program_evidence import build_evidence_document, canonical_json
 
     actor = str(auth.email or auth.actor_id or "admin")
@@ -1134,7 +1175,10 @@ async def admin_programs_status(request: Request) -> Response:
     memory = get_memory_client()
     try:
         _program_for_tenant(memory, program_id, auth)
-        return _json(memory.get_program_status(program_id))
+        access = _require_program_level(program_id, auth, "read", route="status", memory=memory)
+        return _json(_with_access(memory.get_program_status(program_id), access))
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     except Exception as exc:
         return _json({"error": str(exc)}, 404)
 
@@ -1151,6 +1195,9 @@ async def admin_programs_phase_activity(request: Request) -> Response:
     memory = get_memory_client()
     try:
         _program_for_tenant(memory, program_id, auth)
+        _require_program_level(program_id, auth, "read", route="phase_activity", memory=memory)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     except Exception as exc:
         return _json({"error": str(exc)}, 404)
     from ts_harness.workflows import phase_activity
@@ -1183,10 +1230,13 @@ async def admin_programs_advance(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
+        _require_program_level(program_id, auth, "write", route="advance")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         service = get_delivery_program_service()
         result = service.advance_program(
@@ -1224,10 +1274,13 @@ async def admin_programs_patch(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
+        _require_program_level(program_id, auth, "admin", route="patch")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().patch_program(
             program_id,
@@ -1273,8 +1326,11 @@ async def admin_programs_department_memory(request: Request) -> Response:
     program_id = request.path_params["id"]
     try:
         payload = _program_for_tenant(get_memory_client(), program_id, auth)
+        _require_program_level(program_id, auth, "write", route="department_memory")
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     program = payload.get("program") if isinstance(payload.get("program"), dict) else payload
     from ts_harness.policy.permissions import department_for_email
 
@@ -1319,11 +1375,15 @@ async def admin_programs_link(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
+        _require_program_level(program_id, auth, "admin", route="link")
         _program_for_tenant(get_memory_client(), to_program_id, auth)
+        _require_program_level(to_program_id, auth, "read", route="link")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().create_program_link(
             program_id,
@@ -1359,10 +1419,13 @@ async def admin_programs_unlink(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
+        _require_program_level(program_id, auth, "admin", route="unlink")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().delete_program_link(
             program_id,
@@ -1403,10 +1466,13 @@ async def admin_programs_cancel(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
+        _require_program_level(program_id, auth, "admin", route="cancel", memory=memory)
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         result = memory.cancel_program(program_id, actor=actor, reason=reason)
     except Exception as exc:
@@ -1428,6 +1494,139 @@ async def admin_programs_cancel(request: Request) -> Response:
     return _json(result)
 
 
+async def admin_programs_access_get(request: Request) -> Response:
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    program_id = request.path_params["id"]
+    memory = get_memory_client()
+    try:
+        _program_for_tenant(memory, program_id, auth)
+        access = _require_program_level(program_id, auth, "read", route="access_get", memory=memory)
+        return _json({**memory.list_program_access(program_id), "access_level": _effective_level(access)})
+    except _NotInTenant as exc:
+        return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 502)
+
+
+def _shared_access_json(result: dict[str, Any]) -> Response:
+    return _json({**result, "access_level": "admin"})
+
+
+async def _share_gate(request: Request, body: dict[str, Any], route: str) -> tuple[Any, str] | Response:
+    try:
+        _check_origin(request)
+        auth = _auth(request, body)
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    program_id = request.path_params["id"]
+    try:
+        _program_for_tenant(get_memory_client(), program_id, auth)
+        _require_program_level(program_id, auth, "admin", route=route)
+    except _NotInTenant as exc:
+        return _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    return auth, program_id
+
+
+async def admin_programs_access_grant(request: Request) -> Response:
+    try:
+        body = await _json_object_body(request)
+    except _BadJsonBody as exc:
+        return _json({"error": str(exc)}, 400)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    gate = await _share_gate(request, body, "access_grant")
+    if isinstance(gate, Response):
+        return gate
+    auth, program_id = gate
+    try:
+        return _shared_access_json(
+            get_memory_client().grant_program_access(
+                program_id,
+                principal_type=str(body.get("principal_type") or ""),
+                principal_id=str(body.get("principal_id") or ""),
+                level=str(body.get("level") or ""),
+                actor=str(auth.actor_id or "admin"),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 400)
+
+
+async def admin_programs_access_revoke(request: Request) -> Response:
+    gate = await _share_gate(request, {}, "access_revoke")
+    if isinstance(gate, Response):
+        return gate
+    auth, program_id = gate
+    try:
+        return _shared_access_json(
+            get_memory_client().revoke_program_access(
+                program_id,
+                principal_type=request.path_params["principal_type"],
+                principal_id=request.path_params["principal_id"],
+                actor=str(auth.actor_id or "admin"),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 400)
+
+
+async def admin_programs_visibility(request: Request) -> Response:
+    try:
+        body = await _json_object_body(request)
+    except _BadJsonBody as exc:
+        return _json({"error": str(exc)}, 400)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    gate = await _share_gate(request, body, "visibility")
+    if isinstance(gate, Response):
+        return gate
+    auth, program_id = gate
+    try:
+        return _shared_access_json(
+            get_memory_client().set_program_visibility(
+                program_id,
+                visibility=str(body.get("visibility") or ""),
+                actor=str(auth.actor_id or "admin"),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 400)
+
+
+async def admin_directory_search(request: Request) -> Response:
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    try:
+        limit = int(request.query_params.get("limit") or "20")
+    except ValueError:
+        return _json({"error": "invalid limit"}, 400)
+    try:
+        return _json(
+            await asyncio.to_thread(
+                get_memory_client().directory_search,
+                tenant_id=str(auth.tenant_id or "default"),
+                q=request.query_params.get("q") or "",
+                limit=limit,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 502)
+
+
 async def admin_workflows_get(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -1444,6 +1643,24 @@ async def admin_workflows_get(request: Request) -> Response:
     if any(str(task.get("tenant_id") or "default") != tenant for task in (payload or {}).get("tasks") or []):
         return _json({"error": "workflow not found"}, 404)
     return _json(payload)
+
+
+def _require_task_program_level(task_id: str, auth: Any, need: str, *, route: str) -> None:
+    """Gate actions need *need* on the task's program; tasks outside programs only need the permission."""
+    from ts_harness.gateway.program_access import access_mode, actor_context
+
+    actor = actor_context(auth)
+    if actor is None or access_mode() == "off":
+        return
+    memory = get_memory_client()
+    try:
+        program_id = (memory.task_program(task_id) or {}).get("program_id")
+    except Exception as exc:  # noqa: BLE001
+        if access_mode() == "enforce":
+            raise ProgramAccessDenied("task not found", 404) from exc
+        return
+    if program_id:
+        _require_program_level(str(program_id), auth, need, route=route, memory=memory)
 
 
 def _auth_decision_fields(auth: Any, body: Any) -> dict[str, Any]:
@@ -1487,6 +1704,10 @@ async def admin_workflows_approve(request: Request) -> Response:
     if not task_id:
         return _json({"error": "id is required"}, 400)
     try:
+        _require_task_program_level(task_id, auth, "approve", route="approve")
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    try:
         return _json(
             get_memory_client().approve_task(
                 task_id,
@@ -1512,6 +1733,10 @@ async def admin_workflows_reject(request: Request) -> Response:
     task_id = str((body or {}).get("id") or (body or {}).get("task_id") or "")
     if not task_id:
         return _json({"error": "id is required"}, 400)
+    try:
+        _require_task_program_level(task_id, auth, "approve", route="reject")
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         return _json(
             get_memory_client().reject_task(
@@ -1549,6 +1774,10 @@ async def admin_workflows_decide(request: Request) -> Response:
         workflow = {}
     if not workflow or str(workflow.get("tenant_id") or "default") != tenant_id:
         return _json({"error": "workflow not found"}, 404)
+    try:
+        _require_task_program_level(task_id, auth, "approve", route="decide")
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_workflow_engine().decide_blocked_step(
             workflow_id,
@@ -3624,6 +3853,15 @@ routes = [
         methods=["POST"],
     ),
     Route("/admin/programs/{id}/cancel", endpoint=admin_programs_cancel, methods=["POST"]),
+    Route("/admin/programs/{id}/access", endpoint=admin_programs_access_get, methods=["GET"]),
+    Route("/admin/programs/{id}/access", endpoint=admin_programs_access_grant, methods=["POST"]),
+    Route(
+        "/admin/programs/{id}/access/{principal_type}/{principal_id:path}",
+        endpoint=admin_programs_access_revoke,
+        methods=["DELETE"],
+    ),
+    Route("/admin/programs/{id}/visibility", endpoint=admin_programs_visibility, methods=["PATCH"]),
+    Route("/admin/directory/search", endpoint=admin_directory_search, methods=["GET"]),
     Route("/admin/programs/{id}/links/{to_id}", endpoint=admin_programs_unlink, methods=["DELETE"]),
     Route("/admin/programs/{id}/links", endpoint=admin_programs_link, methods=["POST"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_get, methods=["GET"]),

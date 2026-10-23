@@ -522,6 +522,7 @@ class MemoryClient:
         metadata: dict[str, Any] | None = None,
         actor_email: str | None = None,
         department: str | None = None,
+        owner_id: str | None = None,
         actor: str = "orchestrator",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -562,6 +563,8 @@ class MemoryClient:
             body["actor_email"] = actor_email
         if department:
             body["department"] = department
+        if owner_id:
+            body["owner_id"] = owner_id
         return self._request("POST", "/programs/create", body)
 
     def list_program_children(self, program_id: str) -> dict[str, Any]:
@@ -673,6 +676,7 @@ class MemoryClient:
         roots_only: bool = False,
         phase: str | None = None,
         owner: str | None = None,
+        actor_params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         from urllib.parse import urlencode
 
@@ -680,6 +684,7 @@ class MemoryClient:
             "tenant_id": tenant_id,
             "limit": limit,
             "offset": offset,
+            **(actor_params or {}),
         }
         if status:
             params["status"] = status
@@ -880,6 +885,7 @@ class MemoryClient:
         email: str | None = None,
         display_name: str | None = None,
         teams: list[dict[str, str]] | None = None,
+        roles: list[str] | None = None,
         source: str = "seen_users",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -891,7 +897,55 @@ class MemoryClient:
         }
         if teams is not None:
             body["teams"] = teams
+        if roles is not None:
+            body["roles"] = roles
         return self._request("POST", "/directory/upsert-user", body)
+
+    def program_access_level(self, program_id: str, actor: dict[str, Any] | None) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params: dict[str, str] = {}
+        if actor is not None:
+            params = {
+                "actor_subject": str(actor.get("subject") or ""),
+                "actor_teams": ",".join(
+                    f"{t['slug']}:{t.get('role') or 'member'}" for t in actor.get("teams") or [] if t.get("slug")
+                ),
+                "actor_admin": "1" if actor.get("is_admin") else "0",
+            }
+        suffix = f"?{urlencode(params)}" if params else ""
+        return self._request("GET", self._program_path(program_id, "access-level") + suffix)
+
+    def list_program_access(self, program_id: str) -> dict[str, Any]:
+        return self._request("GET", self._program_path(program_id, "access"))
+
+    def grant_program_access(
+        self, program_id: str, *, principal_type: str, principal_id: str, level: str, actor: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            self._program_path(program_id, "access"),
+            {"principal_type": principal_type, "principal_id": principal_id, "level": level, "actor": actor},
+        )
+
+    def revoke_program_access(self, program_id: str, *, principal_type: str, principal_id: str, actor: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        path = self._program_path(program_id, f"access/{quote(principal_type, safe='')}/{quote(principal_id, safe='')}")
+        return self._request("DELETE", path, {"actor": actor})
+
+    def set_program_visibility(self, program_id: str, *, visibility: str, actor: str) -> dict[str, Any]:
+        return self._request("PATCH", self._program_path(program_id, "visibility"), {"visibility": visibility, "actor": actor})
+
+    def record_program_admin_access(self, program_id: str, *, actor: str, route: str = "", need: str = "") -> dict[str, Any]:
+        return self._request(
+            "POST", self._program_path(program_id, "admin-access"), {"actor": actor, "route": route, "need": need}
+        )
+
+    def task_program(self, task_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/workflow/tasks/{quote(str(task_id), safe='')}/program")
 
     def directory_search(self, *, tenant_id: str, q: str = "", limit: int = 20) -> dict[str, Any]:
         from urllib.parse import urlencode

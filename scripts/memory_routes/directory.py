@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -80,20 +81,27 @@ def upsert_directory_user(conn, body: dict[str, Any]) -> dict[str, Any]:
     display_name = str(body.get("display_name") or "").strip() or None
     source = str(body.get("source") or "seen_users").strip() or "seen_users"
     teams = _clean_teams(body.get("teams"))
+    roles = body.get("roles")
+    roles_json = (
+        json.dumps(sorted({str(r).strip().lower() for r in roles if str(r).strip()}))
+        if isinstance(roles, list)
+        else None
+    )
     seen = bool(body.get("seen", True))
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO directory_users (tenant_id, subject, email, display_name, source, last_seen_at)
-            VALUES (%s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)
+            INSERT INTO directory_users (tenant_id, subject, email, display_name, roles, source, last_seen_at)
+            VALUES (%s, %s, %s, %s, COALESCE(%s::jsonb, '[]'::jsonb), %s, CASE WHEN %s THEN now() END)
             ON CONFLICT (tenant_id, subject) DO UPDATE SET
               email = COALESCE(EXCLUDED.email, directory_users.email),
               display_name = COALESCE(EXCLUDED.display_name, directory_users.display_name),
+              roles = CASE WHEN %s::jsonb IS NULL THEN directory_users.roles ELSE EXCLUDED.roles END,
               last_seen_at = COALESCE(EXCLUDED.last_seen_at, directory_users.last_seen_at),
               updated_at = now()
             RETURNING disabled_at
             """,
-            (tenant_id, subject, email, display_name, source, seen),
+            (tenant_id, subject, email, display_name, roles_json, source, seen, roles_json),
         )
         row = cur.fetchone()
         if body.get("teams") is not None:
@@ -126,6 +134,7 @@ def _user_payload(cur, row: dict[str, Any]) -> dict[str, Any]:
         "subject": str(row["subject"]),
         "email": row.get("email"),
         "display_name": row.get("display_name"),
+        "roles": list(row.get("roles") or []),
         "disabled": bool(row.get("disabled_at")),
         "last_seen_at": row.get("last_seen_at"),
         "teams": _user_teams(cur, tenant_id, str(row["subject"])),

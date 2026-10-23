@@ -18,6 +18,7 @@ import { Tabs, tabButtonId, tabPanelId } from "../components/Tabs";
 import { SplitView } from "../layout/SplitView";
 import { PhaseStrip } from "./PhaseStrip";
 import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
+import { ShareDialog } from "./ShareDialog";
 
 type ProgramTab = "overview" | "artifacts";
 type ProgramAction = "advance" | "cancel";
@@ -102,6 +103,18 @@ function linkLabel(key: string): string {
   return humanize(key);
 }
 
+const ACCESS_RANK: Record<string, number> = { none: 0, read: 1, write: 2, approve: 3, admin: 4 };
+
+function VisibilityPill({ visibility }: { visibility: string }) {
+  const isPublic = visibility === "public";
+  return (
+    <StatusPill
+      status={isPublic ? "neutral" : "muted"}
+      label={isPublic ? "Public" : "Private"}
+    />
+  );
+}
+
 export function ProgramsPage({
   programId,
   onSelect,
@@ -122,8 +135,13 @@ export function ProgramsPage({
   const [filters, setFilters] = useState<PortfolioFilters>(EMPTY_FILTERS);
   const [evidence, setEvidence] = useState<ProgramEvidenceExport | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const canExportEvidence = hasPermission("edit_config");
   const programClosed = ["succeeded", "cancelled", "failed"].includes(String(status?.status || "").toLowerCase());
+  const accessRank = ACCESS_RANK[status?.access_level || "admin"] ?? 0;
+  const canWrite = accessRank >= ACCESS_RANK.write;
+  const canApproveProgram = accessRank >= ACCESS_RANK.approve;
+  const canManage = accessRank >= ACCESS_RANK.admin;
   const activityPhase = selectedPhase || status?.current_phase;
   const phaseActivity = usePhaseActivity(
     programId,
@@ -305,6 +323,7 @@ export function ProgramsPage({
             </span>
             <span className="row-meta">
               <StatusPill status={programStatus(p.status)} label={humanize(p.status)} />
+              {p.visibility && <VisibilityPill visibility={p.visibility} />}
               <span>{humanize(p.current_phase)}</span>
               {p.owner && <span>Owner {p.owner}</span>}
               {Boolean(p.child_count) && <span>{p.child_count} child programs</span>}
@@ -409,6 +428,7 @@ export function ProgramsPage({
                 status={programStatus(status.status)}
                 label={humanize(status.status)}
               />
+              {status.visibility && <VisibilityPill visibility={status.visibility} />}
               {(status.program_type ||
                 status.program_definition_version ||
                 topology?.program_type) && (
@@ -445,12 +465,21 @@ export function ProgramsPage({
             </div>
           </div>
           <div className="program-actions" role="group" aria-label="Program actions">
-            <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
-              Advance
-            </Button>
-            <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
-              Cancel
-            </Button>
+            {canWrite && (
+              <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
+                Advance
+              </Button>
+            )}
+            {canManage && (
+              <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
+                Cancel
+              </Button>
+            )}
+            {canManage && (
+              <Button variant="ghost" onClick={() => setSharing(true)}>
+                Share
+              </Button>
+            )}
             {canExportEvidence && (
               <Button variant="ghost" busy={exporting} onClick={() => void downloadEvidence()}>
                 Download evidence
@@ -500,6 +529,7 @@ export function ProgramsPage({
                     activity={phaseActivity.activity}
                     error={phaseActivity.error}
                     programClosed={programClosed}
+                    canApproveProgram={canApproveProgram}
                     onChanged={() => void phaseActivity.reload()}
                   />
                 )}
@@ -528,6 +558,7 @@ export function ProgramsPage({
                   {" · "}
                   Links out {status.outbound_link_count || 0} / in {status.inbound_link_count || 0}
                 </div>
+                {canManage && (
                 <div className="program-actions" style={{ marginTop: 8 }}>
                   <label>
                     Project
@@ -586,6 +617,8 @@ export function ProgramsPage({
                     {status.excluded_from_autoshare ? "Include in auto-share" : "Exclude from auto-share"}
                   </Button>
                 </div>
+                )}
+                {canManage && (
                 <div className="program-actions" style={{ marginTop: 8 }}>
                   <label>
                     Link to program
@@ -620,9 +653,11 @@ export function ProgramsPage({
                     Add link
                   </Button>
                 </div>
+                )}
                 {(status.links?.outbound || []).map((link) => (
                   <div key={link.to_program_id} className="program-actions">
                     <span>Reads {link.to_program_id}</span>
+                    {canManage && (
                     <Button
                       variant="ghost"
                       busy={busy}
@@ -646,6 +681,7 @@ export function ProgramsPage({
                     >
                       Unlink
                     </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -711,6 +747,16 @@ export function ProgramsPage({
           onConfirm={() => pendingAction && mutateProgram(pendingAction)}
           onCancel={() => setPendingAction(null)}
         />
+        {programId && (
+          <ShareDialog
+            open={sharing}
+            programId={programId}
+            onClose={() => setSharing(false)}
+            onChanged={(access) =>
+              setStatus((current) => (current ? { ...current, visibility: access.visibility } : current))
+            }
+          />
+        )}
       </div>
     );
   }

@@ -130,6 +130,35 @@ export interface ProgramSummary {
   escalated?: boolean;
   recommended_action?: string;
   compensation_status?: string;
+  visibility?: ProgramVisibility;
+}
+
+export type ProgramVisibility = "private" | "public";
+export type ProgramGrantLevel = "read" | "write" | "approve" | "admin";
+export type ProgramAccessLevel = "none" | ProgramGrantLevel;
+
+export interface ProgramGrant {
+  principal_type: "user" | "team";
+  principal_id: string;
+  level: ProgramGrantLevel;
+  email?: string | null;
+  display_name?: string | null;
+  granted_by?: string | null;
+}
+
+export interface ProgramAccessList {
+  program_id: string;
+  access_root_id?: string;
+  inherited?: boolean;
+  visibility?: ProgramVisibility;
+  owner?: { subject: string; email?: string | null; display_name?: string | null } | null;
+  grants: ProgramGrant[];
+  access_level?: ProgramAccessLevel;
+}
+
+export interface DirectorySearch {
+  users: Array<{ subject: string; email?: string | null; display_name?: string | null }>;
+  teams: Array<{ slug: string; display_name?: string; member_count?: number }>;
 }
 
 export interface PortfolioFilters {
@@ -217,6 +246,8 @@ export interface ProgramStatus {
   excluded_from_autoshare?: boolean;
   outbound_link_count?: number;
   inbound_link_count?: number;
+  access_level?: ProgramAccessLevel;
+  visibility?: ProgramVisibility;
   links?: {
     outbound?: Array<{ to_program_id?: string; from_program_id?: string }>;
     inbound?: Array<{ to_program_id?: string; from_program_id?: string }>;

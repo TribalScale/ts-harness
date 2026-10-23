@@ -23,6 +23,17 @@ from memory_routes.directory import (  # noqa: E402
     search_directory,
     upsert_directory_user,
 )
+from memory_routes.program_access import (  # noqa: E402
+    grant_program_access,
+    list_filter_clause,
+    list_program_access,
+    parse_actor,
+    program_access_level,
+    record_program_admin_access,
+    revoke_program_access,
+    set_program_visibility,
+    task_program,
+)
 
 
 VALID_MEMORY_TYPES = {
@@ -2430,6 +2441,10 @@ def create_delivery_program(
         tenant_id=tenant_id,
         program_id=program_id,
     )
+    owner_id = str(body.get("owner_id") or body.get("requester_actor_id") or "").strip() or None
+    visibility = str(body.get("visibility") or "private").strip().lower()
+    if visibility not in {"private", "public"}:
+        raise ValueError("visibility must be private or public")
 
     with conn.cursor() as cur:
         cur.execute(
@@ -2441,12 +2456,14 @@ def create_delivery_program(
                program_definition_snapshot, resolved_workflow_versions,
                project_id, project_id_source, excluded_from_autoshare,
                department,
-               parent_program_id, root_program_id)
+               parent_program_id, root_program_id,
+               owner_id, visibility)
             VALUES
               (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
                %s, %s, %s, %s::jsonb, %s::jsonb,
                %s, %s, %s,
                %s,
+               %s, %s,
                %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
@@ -2473,6 +2490,8 @@ def create_delivery_program(
                 stored_department,
                 parent_program_id,
                 root_program_id,
+                owner_id,
+                visibility,
             ),
         )
         audit_workflow_event(
@@ -2593,6 +2612,8 @@ def list_program_children(conn, program_id: str) -> dict[str, Any]:
                 "parent_program_id": str(row.get("parent_program_id") or "") or None,
                 "root_program_id": str(row.get("root_program_id") or "") or None,
                 "child_count": int(row.get("child_count") or 0),
+                "owner_id": row.get("owner_id"),
+                "visibility": row.get("visibility"),
                 "artifacts": _program_metadata_artifacts(metadata),
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
@@ -3097,8 +3118,12 @@ def list_delivery_programs(
     roots_only: bool = False,
     phase: str | None = None,
     owner: str | None = None,
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """List delivery programs for a tenant, newest updated first."""
+    """List delivery programs for a tenant, newest updated first.
+
+    With *actor*, only programs that actor can read are listed.
+    """
     tenant = str(tenant_id or "default").strip() or "default"
     try:
         limit_n = max(1, min(int(limit), 200))
@@ -3132,6 +3157,10 @@ def list_delivery_programs(
     if owner_filter:
         clauses.append("requester_actor_id = %s")
         params.append(owner_filter)
+    access_clause, access_params = list_filter_clause(actor)
+    if access_clause:
+        clauses.append(access_clause)
+        params.extend(access_params)
     where = " AND ".join(clauses)
     with conn.cursor() as cur:
         cur.execute(
@@ -3146,7 +3175,7 @@ def list_delivery_programs(
                    requester_actor_id, entry_phase, current_phase, status, metadata,
                    program_type, program_definition_version, program_definition_revision,
                    project_id, project_id_source, excluded_from_autoshare,
-                   parent_program_id, root_program_id,
+                   parent_program_id, root_program_id, owner_id, visibility,
                    (SELECT COUNT(*) FROM delivery_programs child
                      WHERE child.parent_program_id = delivery_programs.id) AS child_count,
                    created_at, updated_at
@@ -4376,6 +4405,10 @@ def acquire_runner_lease(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {"leader": False, "runner_id": holder}
 
 
+def urlparse_path(path: str) -> str:
+    return path.split("?", 1)[0]
+
+
 class MemoryHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # suppress default access logs
         pass
@@ -4486,6 +4519,39 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001
                 self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/programs/") and urlparse_path(self.path).endswith("/access-level"):
+            from urllib.parse import parse_qs, urlparse
+
+            parsed_url = urlparse(self.path)
+            program_id = parsed_url.path.removeprefix("/programs/").removesuffix("/access-level")
+            query = {k: v[0] for k, v in parse_qs(parsed_url.query).items()}
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, program_access_level(conn, program_id, parse_actor(query)))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/programs/") and self.path.endswith("/access"):
+            program_id = self.path.removeprefix("/programs/").removesuffix("/access")
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, list_program_access(conn, program_id))
+            except LookupError as exc:
+                self._send_json(404, {"error": str(exc)})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/workflow/tasks/") and self.path.endswith("/program"):
+            task_id = self.path.removeprefix("/workflow/tasks/").removesuffix("/program")
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, task_program(conn, task_id))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
         elif self.path.startswith("/programs/by-ref?"):
             from urllib.parse import parse_qs, urlparse
 
@@ -4522,6 +4588,7 @@ class MemoryHandler(BaseHTTPRequestHandler):
                             roots_only=(query.get("roots_only") or [""])[0].lower() in {"1", "true", "yes"},
                             phase=(query.get("phase") or [""])[0] or None,
                             owner=(query.get("owner") or [""])[0] or None,
+                            actor=parse_actor({k: v[0] for k, v in query.items()}),
                         ),
                     )
             except ValueError as exc:
@@ -4765,6 +4832,12 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, create_workflow_decision(conn, body))
                 elif self.path == "/directory/upsert-user":
                     self._send_json(200, upsert_directory_user(conn, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/access"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/access")
+                    self._send_json(200, grant_program_access(conn, program_id, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/admin-access"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/admin-access")
+                    self._send_json(200, record_program_admin_access(conn, program_id, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/advance"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/advance")
                     self._send_json(200, advance_delivery_program(conn, program_id, body))
@@ -4873,6 +4946,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, update_workflow_compensation_status(conn, workflow_id, body))
                 else:
                     self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
@@ -4893,11 +4968,16 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 if self.path.startswith("/workflow/task/") and self.path.endswith("/input"):
                     task_id = self.path.removeprefix("/workflow/task/").removesuffix("/input")
                     self._send_json(200, patch_workflow_task_input(conn, task_id, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/visibility"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/visibility")
+                    self._send_json(200, set_program_visibility(conn, program_id, body))
                 elif self.path.startswith("/programs/"):
                     program_id = self.path.removeprefix("/programs/")
                     self._send_json(200, patch_delivery_program(conn, program_id, body))
                 else:
                     self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
@@ -4906,6 +4986,27 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/programs/") and "/access/" in self.path:
+            from urllib.parse import unquote
+
+            program_id, _, principal = self.path.removeprefix("/programs/").partition("/access/")
+            principal_type, _, principal_id = principal.partition("/")
+            try:
+                body = self._read_body()
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        revoke_program_access(conn, program_id, principal_type, unquote(principal_id), body),
+                    )
+            except json.JSONDecodeError as exc:
+                self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            except LookupError as exc:
+                self._send_json(404, {"error": str(exc)})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
             return
         if "/links/" not in self.path or not self.path.startswith("/programs/"):
             self._send_json(404, {"error": "not found"})
