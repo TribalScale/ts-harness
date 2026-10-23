@@ -131,6 +131,67 @@ short-lived Fargate tasks, one per run. Postgres is the single source of truth
 for queues, leases, locks and heartbeats, so any control-plane copy can be
 replaced at any time.
 
+## Deployment profiles
+
+Not every install needs the scale-out topology. A team of two or three people
+is well served by one EC2 host, as today. One install setting chooses the
+topology:
+
+```yaml
+deployment_profile: single_host   # or scale_out
+```
+
+`single_host` is the default. It keeps today's footprint:
+
+- one EC2 host running one copy of each service
+- coding jobs run as local Docker containers on that host, at most 3 at once
+- no VPC, ECR, ECS, egress proxy or internal load balancer
+- GitHub polling reconciles every 60 seconds
+
+`scale_out` turns on the architecture above:
+
+- a VPC with private subnets, ECR, an ECS cluster and the egress proxy
+- coding jobs run as Fargate tasks, up to 20 at once to start
+- two runtime and memory API copies, PgBouncer, and batch claims with lanes
+- webhook-first GitHub with reconciliation every 15 minutes
+- the CloudWatch dashboard
+
+The profile only changes infrastructure and topology. Product features work
+the same in both:
+
+- OIDC sign-in, teams, private programs and sharing
+- asynchronous coding jobs (on one host they still make runtime restarts safe)
+- the GitHub App, multi-repository projects and ordered release tracks
+- team budgets and the LLM proxy (one more container on a single host)
+
+Keeping one code path for features avoids maintaining two products, and a
+small team benefits from private programs and restart-safe coding runs too.
+
+How it is applied:
+
+- The install contract validates `deployment_profile` and passes it to
+  Terraform, which creates the scale-out resources only for `scale_out`.
+- Terraform writes the profile into the runtime config:
+
+  ```yaml
+  deployment:
+    profile: single_host
+    overrides: {}            # for example {coding_max_running: 5}
+  ```
+
+- Each topology setting (coding launcher, coding concurrency, lane caps,
+  GitHub reconciliation interval) resolves in this order: environment
+  variable, `deployment.overrides`, then the profile default. A small team can
+  raise its coding limit without switching profiles.
+- Replica counts and PgBouncer live in a separate compose overlay that the
+  bootstrap adds only for `scale_out`.
+- `scale_out` is rejected for GCP installs until a Cloud Run Jobs launcher
+  exists.
+
+Moving from `single_host` to `scale_out` is a Terraform apply and a restart.
+The database stays the same, and coding jobs already queued are picked up by
+the new launcher. Moving back reverses the apply after running jobs finish.
+
 ## 1. Identity and access
 
 ### Sign-in: Auth0 first, any OIDC provider supported
@@ -750,6 +811,11 @@ limit.
 
 Each phase ships on its own and keeps the delivery flow working.
 
+**Phase 0: deployment profiles.** Add `deployment_profile` to the install
+contract and Terraform, the `deployment:` runtime config section, and the
+setting resolver, so every later phase reads its topology settings from the
+profile. Existing installs default to `single_host` and do not change.
+
 **Phase 1: identity and program access.** Add provider presets, OIDC
 discovery and the `groups_claim` setting. Configure the Auth0 application, API
 and post-login Action, enable OIDC in the admin console, link Slack
@@ -787,8 +853,10 @@ The **Package registries** settings page ships with phase 3, because Fargate
 workers are what consume it. Projects then add registries in the admin console
 whenever they need one.
 
+Phase 0 comes first because it is small and every later phase depends on it.
 Phases 2–3 give the largest capacity and reliability gain and should start
-first after phase 1. Phases 4 and 5 can run in parallel with them.
+first after phase 1. Phases 4 and 5 can run in parallel with them. Phase 3 is
+only deployed on `scale_out` installs.
 
 ## Decisions
 
@@ -802,6 +870,7 @@ first after phase 1. Phases 4 and 5 can run in parallel with them.
 | LLM budgets | 5,000 USD per team per month by default; team managers raise it in the admin console up to 10,000 USD; admins set any amount. |
 | Private package registries | None today. Added per project in the admin console by admins or the owning team's managers; credentials in Secrets Manager. |
 | Admin access to private programs | Yes, for support and audit. Admin access without a grant is recorded in the audit log. |
+| Small installs | `deployment_profile: single_host` (default) keeps one EC2 host; `scale_out` enables the distributed topology. Features are the same in both. |
 
 ## Open questions
 
