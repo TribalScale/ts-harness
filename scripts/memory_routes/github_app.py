@@ -94,7 +94,46 @@ def _installation_json(row: dict[str, Any]) -> dict[str, Any]:
         "suspended_at": row.get("suspended_at"),
         "repositories": list(row.get("repositories") or []),
         "synced_at": row.get("synced_at"),
+        "rate_limit": {
+            "remaining": row.get("rate_limit_remaining"),
+            "limit": row.get("rate_limit_limit"),
+            "reset_at": row.get("rate_limit_reset_at"),
+            "observed_at": row.get("rate_limit_observed_at"),
+        },
     }
+
+
+def record_rate_limits(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Store the core rate limit last seen for each installation: ``{"limits": [{host, installation_id, remaining, limit, reset}]}``."""
+    rows = []
+    for item in body.get("limits") or []:
+        try:
+            rows.append((
+                int(item["remaining"]),
+                int(item["limit"]),
+                int(item.get("reset") or 0),
+                _host(item.get("host")),
+                int(item["installation_id"]),
+            ))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("each limit needs host, installation_id, remaining and limit") from exc
+    updated = 0
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                UPDATE github_installations
+                   SET rate_limit_remaining = %s,
+                       rate_limit_limit = %s,
+                       rate_limit_reset_at = CASE WHEN %s > 0 THEN to_timestamp(%s) END,
+                       rate_limit_observed_at = now()
+                 WHERE host = %s AND installation_id = %s
+                """,
+                (row[0], row[1], row[2], row[2], row[3], row[4]),
+            )
+            updated += cur.rowcount
+    conn.commit()
+    return {"updated": updated}
 
 
 def list_installations(conn, query: dict[str, Any]) -> dict[str, Any]:

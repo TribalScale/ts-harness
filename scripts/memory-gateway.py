@@ -25,6 +25,7 @@ from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import task_claims as task_claim_routes  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
+from memory_routes import scale_metrics as scale_metric_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
     apply_directory_snapshot,
     disable_directory_users,
@@ -4698,6 +4699,19 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def _is_budgets_path(path: str) -> bool:
         return path == "/budgets" or path.startswith(("/budgets?", "/budgets/"))
 
+    def _scale_metrics(self) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+        try:
+            with connect_db() as conn:
+                result = scale_metric_routes.snapshot(conn, query)
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     def _github(self, method: str) -> None:
         from urllib.parse import parse_qs, unquote, urlparse
 
@@ -4730,6 +4744,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     result = github_routes.delivery_seen(conn, parts[1])
                 elif parts == ["webhook-status"] and method == "GET":
                     result = github_routes.webhook_status(conn)
+                elif parts == ["rate-limits"] and method == "POST":
+                    result = github_routes.record_rate_limits(conn, body)
                 else:
                     self._send_json(404, {"error": "not found"})
                     return
@@ -4771,6 +4787,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_budgets_path(self.path):
             self._budgets("GET")
+            return
+        if self.path == "/metrics/scale-out" or self.path.startswith("/metrics/scale-out?"):
+            self._scale_metrics()
             return
         if self.path.startswith("/github/"):
             self._github("GET")

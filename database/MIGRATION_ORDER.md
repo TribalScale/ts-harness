@@ -46,6 +46,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 40 | `039_shared_runtime_state.sql` | Tool approvals, admin rate-limit windows and service leases shared by runtime replicas |
 | 41 | `040_llm_usage_budgets.sql` | Metered LLM usage with a monthly rollup, team budget overrides and model rate buckets |
 | 42 | `041_team_budgets.sql` | Team budget settings, effective budget and spend functions, budget alerts, and claims that hold tasks of teams over budget |
+| 43 | `042_scale_out_metrics.sql` | Last-seen GitHub rate limit per App installation, and indexes for coding job and gate wait metrics |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

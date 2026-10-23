@@ -285,6 +285,9 @@ async def metrics(request: Request) -> Response:
         )
 
         if PROMETHEUS_AVAILABLE:
+            from ts_harness.observability.scale_metrics import refresh_prometheus
+
+            await asyncio.to_thread(refresh_prometheus)
             return PlainTextResponse(generate_latest(), media_type=content_type())
     except ImportError:
         pass

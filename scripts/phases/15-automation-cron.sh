@@ -137,6 +137,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Records each GitHub App installation's remaining REST quota for the dashboard and alarm.
+    {
+        "name": "github-rate-limits",
+        "kind": "system",
+        "handler": "github_rate_limits",
+        "interval_seconds": 300,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 print(f"wrote {len(jobs)} scheduler jobs to {out}")

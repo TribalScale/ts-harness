@@ -1173,6 +1173,12 @@ class MemoryClient:
     def upsert_github_installation(self, **body: Any) -> dict[str, Any]:
         return self._request("POST", "/github/installations", body)
 
+    def record_github_rate_limits(self, limits: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._request("POST", "/github/rate-limits", {"limits": limits})
+
+    def get_scale_metrics(self, *, window_seconds: int = 120) -> dict[str, Any]:
+        return self._request("GET", f"/metrics/scale-out?window_seconds={int(window_seconds)}")
+
     def change_github_installation_repositories(
         self, host: str, installation_id: int, *, added: list[str], removed: list[str]
     ) -> dict[str, Any]:

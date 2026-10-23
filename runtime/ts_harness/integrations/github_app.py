@@ -146,6 +146,25 @@ class GitHubApp:
             raise GitHubAppError(status, str(payload))
         return str(payload["token"])
 
+    def installation_rate_limit(self, installation_id: int) -> dict[str, int]:
+        """Core REST rate limit of one installation. ``GET /rate_limit`` does not count against it."""
+        key = ("#installation", str(installation_id))
+        with self._lock:
+            cached = self._tokens.get(key)
+            if not cached or cached[1] - TOKEN_REFRESH_MARGIN <= self.clock():
+                status, payload = self._call(
+                    "POST", f"/app/installations/{installation_id}/access_tokens", bearer=self.jwt()
+                )
+                if status >= 400:
+                    raise GitHubAppError(status, str(payload))
+                cached = (str(payload["token"]), _expires_at(payload["expires_at"]))
+                self._tokens[key] = cached
+        status, payload = self._call("GET", "/rate_limit", bearer=cached[0])
+        if status >= 400:
+            raise GitHubAppError(status, str(payload))
+        core = (payload.get("resources") or {}).get("core") or payload.get("rate") or {}
+        return {"remaining": int(core["remaining"]), "limit": int(core["limit"]), "reset": int(core.get("reset") or 0)}
+
     def list_installations(self) -> list[dict[str, Any]]:
         status, payload = self._call("GET", "/app/installations?per_page=100", bearer=self.jwt())
         if status >= 400:

@@ -655,12 +655,20 @@ def budget_alerts() -> dict[str, Any]:
     return run_alerts()
 
 
+def github_rate_limits() -> dict[str, Any]:
+    """Record each GitHub App installation's remaining REST quota for the dashboard and alarm."""
+    from ts_harness.observability.scale_metrics import refresh_github_rate_limits
+
+    return refresh_github_rate_limits()
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
     "sync_directory": sync_directory,
     "sweep_coding_jobs": sweep_coding_jobs,
     "budget_alerts": budget_alerts,
+    "github_rate_limits": github_rate_limits,
     "start_program": start_scheduled_program,
 }
 

@@ -133,6 +133,21 @@ run "scale_out_in_vpc" {
     condition     = length(aws_lb_listener_rule.llm_proxy_route) == 0 && contains(keys(local.coding_worker_secret_env), "CODING_BACKEND_API_KEY")
     error_message = "without the LLM proxy, workers keep the provider key and /llm/* is not routed"
   }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.coding_job_queue_age.threshold == 900 && aws_cloudwatch_metric_alarm.coding_job_queue_age.metric_name == "CodingJobOldestQueuedSeconds"
+    error_message = "the oldest queued coding job alarms after 15 minutes"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.github_rate_limit_low.threshold == 10 && aws_cloudwatch_metric_alarm.coding_job_lost_rate.threshold == 0.2
+    error_message = "GitHub quota alarms below 10% and the lost-job rate alarm defaults to 20%"
+  }
+
+  assert {
+    condition     = length(jsondecode(aws_cloudwatch_dashboard.scale_out.dashboard_body).widgets) == 13
+    error_message = "the scale-out dashboard covers lanes, coding jobs, gates, GitHub and LLM spend"
+  }
 }
 
 run "scale_out_with_llm_proxy" {

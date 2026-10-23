@@ -537,3 +537,26 @@ variable "memory_api_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "coding_job_queue_alarm_seconds" {
+  description = "Alarm when the oldest queued coding job has waited longer than this many seconds."
+  type        = number
+  default     = 900
+}
+
+variable "coding_job_lost_rate_threshold" {
+  description = "Alarm when this fraction of coding jobs finished in 15 minutes were lost (at least 3 jobs finished)."
+  type        = number
+  default     = 0.2
+
+  validation {
+    condition     = var.coding_job_lost_rate_threshold > 0 && var.coding_job_lost_rate_threshold <= 1
+    error_message = "coding_job_lost_rate_threshold must be above 0 and at most 1."
+  }
+}
+
+variable "github_rate_limit_alarm_percent" {
+  description = "Alarm when any GitHub App installation has less than this percent of its REST rate limit left."
+  type        = number
+  default     = 10
+}

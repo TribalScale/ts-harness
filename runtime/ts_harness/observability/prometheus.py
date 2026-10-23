@@ -61,6 +61,46 @@ try:
         ["host"],
     )
 
+    github_installation_rate_limit_remaining = Gauge(
+        "ts_harness_github_installation_rate_limit_remaining",
+        "GitHub API requests left for an App installation",
+        ["host", "installation"],
+    )
+
+    lane_ready_tasks = Gauge(
+        "ts_harness_lane_ready_tasks", "Workflow tasks ready to claim, by lane", ["lane"]
+    )
+    lane_held_tasks = Gauge(
+        "ts_harness_lane_held_tasks", "Ready workflow tasks held because their team reached its budget", ["lane"]
+    )
+    lane_oldest_ready_seconds = Gauge(
+        "ts_harness_lane_oldest_ready_seconds", "Age of the oldest ready workflow task, by lane", ["lane"]
+    )
+    coding_jobs_queued = Gauge("ts_harness_coding_jobs_queued", "Coding jobs waiting for a worker")
+    coding_job_oldest_queued_seconds = Gauge(
+        "ts_harness_coding_job_oldest_queued_seconds", "Age of the oldest queued coding job"
+    )
+    coding_jobs_running = Gauge(
+        "ts_harness_coding_jobs_running", "Coding jobs starting or running, by team", ["team"]
+    )
+    coding_jobs_finished = Gauge(
+        "ts_harness_coding_jobs_finished", "Coding jobs finished in the last window, by outcome", ["outcome"]
+    )
+    coding_job_avg_seconds = Gauge(
+        "ts_harness_coding_job_avg_seconds", "Average duration of coding jobs finished in the last window"
+    )
+    gate_waiting = Gauge("ts_harness_gate_waiting", "Approval gates waiting for a person, by gate", ["gate"])
+    gate_oldest_wait_seconds = Gauge(
+        "ts_harness_gate_oldest_wait_seconds", "Longest current wait at an approval gate", ["gate"]
+    )
+    gate_avg_wait_seconds = Gauge(
+        "ts_harness_gate_avg_wait_seconds", "Average wait of gates decided in the last window", ["gate"]
+    )
+    llm_tokens = Gauge(
+        "ts_harness_llm_tokens", "LLM tokens in the last window, by team and direction", ["team", "direction"]
+    )
+    llm_month_cost_usd = Gauge("ts_harness_llm_month_cost_usd", "LLM cost this month, by team", ["team"])
+
     PROMETHEUS_AVAILABLE = True
 
     def generate_latest() -> str:

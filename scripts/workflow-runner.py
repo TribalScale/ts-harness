@@ -98,6 +98,22 @@ class RunnerMetrics:
 
 
 _runner_metrics = RunnerMetrics()
+
+
+def _job_duration_seconds(job: dict[str, Any]) -> float | None:
+    from datetime import datetime
+
+    def parse(value: Any) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+        except ValueError:
+            return None
+
+    finished = parse(job.get("finished_at"))
+    started = parse(job.get("started_at")) or parse(job.get("claimed_at")) or parse(job.get("created_at"))
+    if finished is None or started is None:
+        return None
+    return max((finished - started).total_seconds(), 0.0)
 _loaded_versioned_skeletons: dict[
     tuple[str, str],
     workflow_definitions.WorkflowSkeleton,
@@ -1310,6 +1326,10 @@ class WorkflowRunner:
             result = coding_job_stage.dispatch_result(finished, contract, task_input)
             job_id = result.pop("coding_job_id", "")
             log_event("coding_job_result", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job_id, status=result["status"])
+            _runner_metrics.inc(f"runner_coding_jobs_{finished.get('status')}")
+            duration = _job_duration_seconds(finished)
+            if duration is not None:
+                _runner_metrics.observe("runner_coding_job_seconds", duration)
             try:
                 self._apply_dispatch_result(task, stage, result, dispatch_started)
             finally:
