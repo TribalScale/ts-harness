@@ -127,6 +127,16 @@ if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     fi
 fi
 
+if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
+    SCALE_OUT_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.scale-out.yml"
+    if [[ -f "$SCALE_OUT_COMPOSE" ]]; then
+        COMPOSE_FILES+=(-f "$SCALE_OUT_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Deployment profile scale_out: including replicated services"
+    else
+        echo "[phase:${PHASE_NAME}] WARNING: scale-out compose file not found at $SCALE_OUT_COMPOSE"
+    fi
+fi
+
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."

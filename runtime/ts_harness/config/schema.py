@@ -245,6 +245,12 @@ class ProgramBuilderConfig:
 
 
 @dataclass
+class DeploymentConfig:
+    profile: str = "single_host"
+    overrides: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class RuntimeConfig:
     tenants: list[TenantConfig]
     agents: list[AgentConfig]
@@ -261,6 +267,7 @@ class RuntimeConfig:
     implementation: ImplementationConfig = field(default_factory=ImplementationConfig)
     program_defaults: dict[str, Any] = field(default_factory=dict)
     program_builder: ProgramBuilderConfig = field(default_factory=ProgramBuilderConfig)
+    deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
 
     @property
     def connectors_dict(self) -> dict[str, GoogleWorkspaceConnectorConfig]:
@@ -643,6 +650,7 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
         program_builder=ProgramBuilderConfig(
             agent_id=str((data.get("program_builder") or {}).get("agent_id") or "builder-agent"),
         ),
+        deployment=_parse_deployment(data.get("deployment")),
     )
     config.validate()
     config._last_known_good = copy.deepcopy(data)
@@ -652,6 +660,17 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
     fill_agent_souls(config.agents)
     _publish_sandbox_limits(config)
     return config
+
+
+def _parse_deployment(raw: Any) -> DeploymentConfig:
+    from ts_harness.config.deployment_profile import normalize_profile
+
+    raw = raw if isinstance(raw, dict) else {}
+    overrides = raw.get("overrides")
+    return DeploymentConfig(
+        profile=normalize_profile(raw.get("profile")),
+        overrides=dict(overrides) if isinstance(overrides, dict) else {},
+    )
 
 
 def _substitute_templates(text: str) -> str:

@@ -28,6 +28,7 @@ locals {
     OIDC_CLIENT_ID                        = var.oidc_client_id
     OIDC_AUTHORIZATION_ENDPOINT           = var.oidc_authorization_endpoint
     OIDC_TOKEN_ENDPOINT                   = var.oidc_token_endpoint
+    DEPLOYMENT_PROFILE                    = var.deployment_profile
   }
 }
 

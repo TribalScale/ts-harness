@@ -163,6 +163,7 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "embeddings_dimensions": runtime.get("embeddings_dimensions"),
             "embeddings_fallback": runtime.get("embeddings_fallback", "none"),
             "agent_timezone": runtime.get("agent_timezone", "UTC"),
+            "deployment_profile": config.get("deployment_profile", "single_host"),
         }
         if db.get("backup_window"):
             tfvars["rds_backup_window"] = db["backup_window"]

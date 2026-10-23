@@ -2,6 +2,9 @@
 # Select exactly one provider per installation (aws OR gcp, never both).
 cloud_provider: aws
 environment: prod
+# single_host: one VM (small teams). scale_out: Fargate coding workers and
+# replicated services (aws only).
+deployment_profile: single_host
 project_name: ts-harness
 cloud_region: us-east-1
 cloud_zone: us-east-1a

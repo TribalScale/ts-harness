@@ -97,6 +97,12 @@ class InstallerCliTests(unittest.TestCase):
         self.assertEqual(tfvars["budget_alert_email"], "ops@example.com")
         self.assertNotIn("gcp_project_id", tfvars)
 
+    def test_generate_tfvars_passes_deployment_profile(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        self.assertEqual(install_mod.generate_tfvars(cfg, cloud="aws")["deployment_profile"], "single_host")
+        cfg["deployment_profile"] = "scale_out"
+        self.assertEqual(install_mod.generate_tfvars(cfg, cloud="aws")["deployment_profile"], "scale_out")
+
     def test_generate_tfvars_maps_oidc_runtime_fields(self):
         cfg = load_install_config(AWS_EXAMPLE)
         tfvars = install_mod.generate_tfvars(cfg, cloud="aws")

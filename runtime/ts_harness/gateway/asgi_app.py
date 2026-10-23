@@ -17,6 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 
+from ts_harness.config.deployment_profile import current_profile
 from ts_harness.gateway.auth import AuthContext, AuthError, authenticate_request, check_allowed_origin
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.contracts import DispatchResult
@@ -264,6 +265,10 @@ async def healthz(request: Request) -> Response:
     report = runtime._build_health_report()
     payload = report.to_dict()
     payload["metrics"] = runtime.metrics.snapshot()
+    try:
+        payload["deployment_profile"] = current_profile(getattr(runtime, "config", None))
+    except ValueError:
+        payload["deployment_profile"] = "unknown"
     return _json(payload)
 
 

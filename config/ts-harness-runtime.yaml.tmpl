@@ -19,6 +19,13 @@ identity:
   scim_enabled: false
   jira_account_ids: {}
 
+# single_host: one EC2 host (default). scale_out: Fargate coding workers and
+# replicated services. overrides set individual topology settings, e.g.
+# {coding_max_running: 5}.
+deployment:
+  profile: "{{DEPLOYMENT_PROFILE}}"
+  overrides: {}
+
 tenants:
   - id: default
     display_name: Default Tenant

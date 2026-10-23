@@ -114,6 +114,11 @@ def validate_install_config(
         if not has_gcp_project:
             raise InstallContractError("gcp_project_id is required when cloud_provider=gcp")
 
+    if provider == "gcp" and config.get("deployment_profile", "single_host") == "scale_out":
+        raise InstallContractError(
+            "deployment_profile=scale_out is only supported on aws; use single_host on gcp"
+        )
+
     managed_db = config.get("managed_db")
     if not isinstance(managed_db, Mapping) or not managed_db:
         raise InstallContractError("managed_db configuration is required for install")

@@ -363,3 +363,14 @@ variable "redis_multi_az" {
   type        = bool
   default     = true
 }
+
+variable "deployment_profile" {
+  description = "single_host keeps one EC2 host; scale_out adds Fargate coding workers and replicated services."
+  type        = string
+  default     = "single_host"
+
+  validation {
+    condition     = contains(["single_host", "scale_out"], var.deployment_profile)
+    error_message = "deployment_profile must be single_host or scale_out."
+  }
+}
