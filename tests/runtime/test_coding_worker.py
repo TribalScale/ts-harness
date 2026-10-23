@@ -90,6 +90,14 @@ class RunJobTests(unittest.TestCase):
     def test_main_requires_its_environment(self):
         self.assertEqual(worker.main({"JOB_ID": "j"}), 2)
 
+    def test_default_run_leaves_ref_recording_to_the_memory_api(self):
+        api = FakeApi(spec=self.spec)
+        with mock.patch(
+            "ts_harness.implementation.coding_job.run_coding_request", return_value={"ok": True}
+        ) as run:
+            self.assertEqual(worker.run_job(api, heartbeat_seconds=60), 0)
+        run.assert_called_once_with(self.spec, record_refs=False)
+
 
 class LastLogLineTests(unittest.TestCase):
     def test_missing_file(self):

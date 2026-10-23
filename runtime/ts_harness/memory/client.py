@@ -1035,8 +1035,13 @@ class MemoryClient:
             body["limit"] = limit
         return self._request("POST", "/coding-jobs/claim", body)
 
-    def record_coding_job_launch(self, job_id: str, *, runner_ref: str = "", error: str = "") -> dict[str, Any]:
-        return self._request("POST", f"/coding-jobs/{job_id}/launched", {"runner_ref": runner_ref, "error": error})
+    def record_coding_job_launch(
+        self, job_id: str, *, runner_ref: str = "", error: str = "", retryable: bool = False
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"runner_ref": runner_ref, "error": error}
+        if retryable:
+            body["retryable"] = True
+        return self._request("POST", f"/coding-jobs/{job_id}/launched", body)
 
     def consume_coding_job(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/coding-jobs/{job_id}/consume", {})

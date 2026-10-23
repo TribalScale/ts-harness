@@ -87,8 +87,8 @@ class FakeMemory:
         jobs, self.jobs = self.jobs, []
         return {"jobs": jobs}
 
-    def record_coding_job_launch(self, job_id, *, runner_ref="", error=""):
-        self.launches.append((job_id, runner_ref, error))
+    def record_coding_job_launch(self, job_id, *, runner_ref="", error="", retryable=False):
+        self.launches.append((job_id, runner_ref, error) + (("retry",) if retryable else ()))
 
     def list_coding_jobs(self, **kwargs):
         self.list_kwargs = kwargs

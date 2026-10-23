@@ -136,6 +136,17 @@ class CodingJobsComposeTests(unittest.TestCase):
         self.assertIn("ts-harness-runtime.yaml", compose)
         self.assertIn("dockerfile: docker/Dockerfile.coding-worker", compose)
 
+    def test_launcher_follows_the_profile_and_gets_ecs_settings(self):
+        compose = CODING_JOBS_COMPOSE.read_text()
+        self.assertIn("CODING_LAUNCHER: ${CODING_LAUNCHER:-}", compose)
+        self.assertIn("DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}", compose)
+        common = COMPOSE_COMMON.read_text()
+        phase = COMPOSE_PHASE.read_text()
+        for key in ("CODING_ECS_CLUSTER", "CODING_ECS_TASK_DEFINITION", "CODING_ECS_SUBNETS", "CODING_ECS_SECURITY_GROUPS"):
+            self.assertIn(f"{key}: ${{{key}:-}}", compose)
+            self.assertIn(f'{key}="${{{key}:-}}"', common)
+            self.assertIn(f"export {key}=", phase)
+
     def test_worker_image_bundles_opencode_and_runs_the_worker(self):
         dockerfile = CODING_WORKER_DOCKERFILE.read_text()
         self.assertIn("FROM ${AGENT_RUNTIME_IMAGE}", dockerfile)

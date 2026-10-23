@@ -214,6 +214,51 @@ class CodingJobsPostgresTests(PgTestCase):
                 self.assertEqual(row["status"], expected)
             self.assertEqual(self.task(conn, task_id)["status"], "pending")
 
+    def test_capacity_waits_do_not_spend_launch_attempts(self):
+        with self.db.connect() as conn:
+            job = self.create(conn)
+            for _ in range(coding_jobs.MAX_LAUNCH_ATTEMPTS + 2):
+                coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+                row = coding_jobs.record_launch(conn, job["id"], {"error": "vCPU limit", "retryable": True})
+                self.assertEqual((row["status"], row["attempt"]), ("queued", 0))
+            self.assertIn("waiting for capacity", row["error"])
+
+    def test_completion_records_branch_and_pr_refs_for_the_program(self):
+        with self.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO delivery_programs (summary, entry_phase, current_phase)
+                    VALUES ('refs', 'deliver', 'deliver') RETURNING id
+                    """
+                )
+                program_id = str(cur.fetchone()["id"])
+            conn.commit()
+            workflow_id, task_id = self.parked_task(conn)
+            job = coding_jobs.create_coding_job(
+                conn,
+                {"spec": {**SPEC, "record_workflow_id": workflow_id}, "workflow_id": workflow_id,
+                 "task_id": task_id, "program_id": program_id},
+            )
+            coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+            done = coding_jobs.complete_coding_job(
+                conn,
+                job["id"],
+                {"result": {"ok": True, "branch": "ts/wo-1", "pr_url": "https://github.com/acme/app/pull/7",
+                            "repo_url": "https://github.com/Acme/App.git", "work_order_id": "WO-1"}},
+            )
+            self.assertEqual(done["refs_recorded"], ["acme/app#ts/wo-1", "https://github.com/acme/app/pull/7"])
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT kind, ref, workflow_id, metadata FROM program_external_refs WHERE program_id = %s ORDER BY kind",
+                    (program_id,),
+                )
+                rows = cur.fetchall()
+            self.assertEqual([(r["kind"], r["ref"]) for r in rows],
+                             [("branch", "acme/app#ts/wo-1"), ("pull_request", "https://github.com/acme/app/pull/7")])
+            self.assertEqual(str(rows[0]["workflow_id"]), workflow_id)
+            self.assertEqual(rows[0]["metadata"]["coding_job_id"], job["id"])
+
     def test_stale_jobs_are_lost_and_resume_the_task(self):
         with self.db.connect() as conn:
             workflow_id, task_id = self.parked_task(conn)

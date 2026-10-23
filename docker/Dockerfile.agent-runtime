@@ -126,7 +126,7 @@ COPY evals ./evals
 COPY scripts/mcporter /usr/local/bin/mcporter
 RUN chmod +x /usr/local/bin/mcporter
 
-RUN pip install --no-cache-dir -c /tmp/constraints.txt ".[google]" "psycopg[binary]" \
+RUN pip install --no-cache-dir -c /tmp/constraints.txt ".[google,aws]" "psycopg[binary]" \
     && pip uninstall -y setuptools wheel \
     && rm /tmp/constraints.txt
 

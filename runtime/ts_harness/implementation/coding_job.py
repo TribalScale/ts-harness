@@ -9,6 +9,7 @@ worker in another process.
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -205,11 +206,47 @@ def build_coding_request(
         ]
         or None,
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
+        # Workers on Fargate have no runtime config file; carry what the run needs.
+        "backend": {
+            "binary": backend_cfg.binary,
+            "run_args": list(backend_cfg.run_args),
+            "verification_fix_passes": int(backend_cfg.verification_fix_passes),
+            "security": asdict(SecurityConfig.from_program_defaults(getattr(live, "program_defaults", None))),
+        },
     }
 
 
+_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend"}
+
+
+def _backend_from_spec(backend: dict[str, Any]) -> OpenCodeBackend:
+    security = backend.get("security") if isinstance(backend.get("security"), dict) else {}
+    known = SecurityConfig.__dataclass_fields__
+    return OpenCodeBackend(
+        tools_root=os.environ.get("TS_HARNESS_TOOLS_ROOT", ""),
+        binary_name=str(backend.get("binary") or "opencode"),
+        run_args=[str(arg) for arg in backend.get("run_args") or []],
+        verification_fix_passes=int(backend.get("verification_fix_passes") or 0),
+        security=SecurityConfig(**{k: v for k, v in security.items() if k in known}),
+    )
+
+
+def _backend_from_config() -> OpenCodeBackend:
+    runtime = load_active_runtime_config()
+    impl = implementation_config(runtime)
+    backend_cfg = opencode_backend_config(runtime=runtime)
+    live = _live_runtime_config() or runtime
+    return OpenCodeBackend(
+        tools_root=impl.tools_root or os.environ.get("TS_HARNESS_TOOLS_ROOT", ""),
+        binary_name=backend_cfg.binary,
+        run_args=list(backend_cfg.run_args),
+        verification_fix_passes=int(backend_cfg.verification_fix_passes),
+        security=SecurityConfig.from_program_defaults(getattr(live, "program_defaults", None)),
+    )
+
+
 def coding_request_from_spec(spec: dict[str, Any]) -> CodingRequest:
-    fields = {k: v for k, v in spec.items() if k not in {"spec_version", "record_workflow_id"}}
+    fields = {k: v for k, v in spec.items() if k not in _SPEC_ONLY_KEYS}
     fields["workspace_dir"] = Path(str(fields["workspace_dir"]))
     return CodingRequest(**fields)
 
@@ -259,22 +296,16 @@ def record_coding_refs(
     return warnings
 
 
-def run_coding_request(spec: dict[str, Any]) -> dict[str, Any]:
-    """Run OpenCode for a spec and return the ``run_coding_backend`` result dict."""
-    runtime = load_active_runtime_config()
-    impl = implementation_config(runtime)
-    backend_cfg = opencode_backend_config(runtime=runtime)
-    live = _live_runtime_config() or runtime
-    tools_root = impl.tools_root or os.environ.get("TS_HARNESS_TOOLS_ROOT", "")
-    backend = OpenCodeBackend(
-        tools_root=tools_root,
-        binary_name=backend_cfg.binary,
-        run_args=list(backend_cfg.run_args),
-        verification_fix_passes=int(backend_cfg.verification_fix_passes),
-        security=SecurityConfig.from_program_defaults(getattr(live, "program_defaults", None)),
-    )
+def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dict[str, Any]:
+    """Run OpenCode for a spec and return the ``run_coding_backend`` result dict.
+
+    Workers pass ``record_refs=False``: the memory API records branch and PR
+    refs when the job completes, since a worker holds only its job token.
+    """
+    backend_spec = spec.get("backend")
+    backend = _backend_from_spec(backend_spec) if isinstance(backend_spec, dict) else _backend_from_config()
     result = backend.implement(coding_request_from_spec(spec))
-    if spec.get("program_id"):
+    if record_refs and spec.get("program_id"):
         record_coding_refs(
             spec["program_id"],
             workflow_id=spec.get("record_workflow_id"),

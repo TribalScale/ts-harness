@@ -665,6 +665,13 @@ run_docker_compose_as_admin() {
             WORKFLOW_RUNNER_ADAPTER="${WORKFLOW_RUNNER_ADAPTER:-gateway-http}" \
             CODING_JOBS_ENABLED="${CODING_JOBS_ENABLED:-false}" \
             CODING_MAX_RUNNING="${CODING_MAX_RUNNING:-3}" \
+            CODING_LAUNCHER="${CODING_LAUNCHER:-}" \
+            DEPLOYMENT_PROFILE="${DEPLOYMENT_PROFILE:-single_host}" \
+            CODING_ECS_CLUSTER="${CODING_ECS_CLUSTER:-}" \
+            CODING_ECS_TASK_DEFINITION="${CODING_ECS_TASK_DEFINITION:-}" \
+            CODING_ECS_CONTAINER="${CODING_ECS_CONTAINER:-coding-worker}" \
+            CODING_ECS_SUBNETS="${CODING_ECS_SUBNETS:-}" \
+            CODING_ECS_SECURITY_GROUPS="${CODING_ECS_SECURITY_GROUPS:-}" \
             AGENT_RUNTIME_URL="${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}" \
             RUNTIME_FAKE_PROVIDER="${RUNTIME_FAKE_PROVIDER:-false}" \
         docker compose "${COMPOSE_FILES[@]}" "$@"

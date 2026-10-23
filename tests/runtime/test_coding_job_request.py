@@ -142,6 +142,41 @@ class RunCodingRequestTests(unittest.TestCase):
         self.assertEqual(refs.call_count, 2)
         self.assertEqual(via_job["pr_url"], PR)
 
+    def test_spec_carries_backend_settings_so_workers_need_no_config(self):
+        with ExitStack() as stack:
+            configured(stack)
+            spec = build_coding_request({"work_order_id": "WO-1", "work_order_body": "b"}, delivery_workflow_id=None, program_id="p")
+        self.assertEqual(
+            spec["backend"],
+            {
+                "binary": "opencode",
+                "run_args": ["run"],
+                "verification_fix_passes": 1,
+                "security": {"secret_scan": True, "dependency_audit": True, "audit_severity": "high", "static_analysis": True},
+            },
+        )
+        built: list[dict] = []
+
+        class FakeBackend:
+            def __init__(self, **kwargs):
+                built.append(kwargs)
+
+            def implement(self, request):
+                return CodingResult(ok=True, branch="wo/wo-1", summary="done", pr_url=PR)
+
+        spec["backend"]["security"]["audit_severity"] = "critical"
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(coding_job, "load_active_runtime_config", side_effect=AssertionError("no config")))
+            stack.enter_context(patch.object(coding_job, "OpenCodeBackend", FakeBackend))
+            refs = stack.enter_context(patch.object(coding_job, "record_coding_refs", return_value=[]))
+            stack.enter_context(patch.dict("os.environ", {"TS_HARNESS_TOOLS_ROOT": "/opt/tools"}))
+            result = run_coding_request(spec, record_refs=False)
+        self.assertTrue(result["ok"])
+        refs.assert_not_called()
+        self.assertEqual((built[0]["tools_root"], built[0]["binary_name"], built[0]["run_args"]), ("/opt/tools", "opencode", ["run"]))
+        self.assertEqual(built[0]["security"].audit_severity, "critical")
+        self.assertNotIn("backend", coding_request_from_spec(spec).__dict__)
+
     def test_tool_reports_request_errors(self):
         with ExitStack() as stack:
             configured(stack)

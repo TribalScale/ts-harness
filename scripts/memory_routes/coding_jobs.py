@@ -248,6 +248,17 @@ def record_launch(conn, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
                 (str(body.get("runner_ref") or ""), jid),
             )
             row = cur.fetchone()
+        elif body.get("retryable") is True:
+            # Capacity or quota limits: wait for room without spending a launch attempt.
+            cur.execute(
+                """
+                UPDATE coding_jobs SET status = 'queued', error = %s, claimed_at = NULL,
+                       attempt = GREATEST(attempt - 1, 0)
+                WHERE id = %s RETURNING *
+                """,
+                (f"waiting for capacity: {error}", jid),
+            )
+            row = cur.fetchone()
         elif int(row["attempt"]) < MAX_LAUNCH_ATTEMPTS:
             cur.execute(
                 "UPDATE coding_jobs SET status = 'queued', error = %s, claimed_at = NULL WHERE id = %s RETURNING *",
@@ -317,6 +328,67 @@ def heartbeat_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, A
     return {"id": jid, "status": row["status"]}
 
 
+def _github_slug(repo_url: str) -> str:
+    raw = str(repo_url or "").strip()
+    if raw.startswith("git@"):
+        path = raw.partition(":")[2]
+    elif "://" in raw:
+        host, _, path = raw.split("://", 1)[1].partition("/")
+        if host.lower() not in {"github.com", "www.github.com"}:
+            return raw
+    else:
+        path = raw
+    parts = [p for p in path.strip("/").split("/") if p]
+    if len(parts) < 2:
+        return raw
+    repo = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
+    return f"{parts[0]}/{repo}".lower()
+
+
+def _record_refs(cur, row: dict[str, Any], result: dict[str, Any]) -> list[str]:
+    """Record the branch and PR a finished job produced against its program."""
+    program_id = row.get("program_id")
+    if not program_id:
+        return []
+    spec = row.get("spec") if isinstance(row.get("spec"), dict) else {}
+    slug = _github_slug(str(result.get("repo_url") or row.get("repo_url") or ""))
+    workflow_id = spec.get("record_workflow_id") or row.get("workflow_id")
+    refs: list[tuple[str, str]] = []
+    if result.get("branch"):
+        refs.append(("branch", f"{slug}#{result['branch']}"))
+    if result.get("pr_url"):
+        refs.append(("pull_request", str(result["pr_url"])))
+    metadata = json.dumps(
+        {
+            "repo": slug,
+            "branch": result.get("branch"),
+            "work_order_id": result.get("work_order_id") or row.get("work_order_id") or "",
+            "created_by_harness": True,
+            "coding_job_id": str(row["id"]),
+        }
+    )
+    for kind, ref in refs:
+        cur.execute(
+            """
+            INSERT INTO program_external_refs (id, tenant_id, program_id, workflow_id, kind, ref, state, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s, 'open', %s::jsonb)
+            ON CONFLICT (program_id, kind, ref) DO UPDATE
+              SET workflow_id = COALESCE(EXCLUDED.workflow_id, program_external_refs.workflow_id),
+                  metadata = program_external_refs.metadata || EXCLUDED.metadata,
+                  updated_at = now()
+            """,
+            (str(uuid.uuid4()), row.get("tenant_id") or "default", program_id, workflow_id, kind, ref, metadata),
+        )
+        _audit(
+            cur,
+            "program_external_ref_recorded",
+            f"Program external {kind} recorded",
+            {"program_id": str(program_id), "workflow_id": str(workflow_id or ""), "kind": kind, "ref": ref, "state": "open"},
+            "coding-worker",
+        )
+    return [ref for _, ref in refs]
+
+
 def complete_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
     jid = _uuid(job_id)
     result = body.get("result") if isinstance(body.get("result"), dict) else None
@@ -349,9 +421,10 @@ def complete_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, An
             {"job_id": jid, "workflow_id": str(row.get("workflow_id") or ""), "status": status, "pr_url": result.get("pr_url")},
             "coding-worker",
         )
+        refs = _record_refs(cur, row, result)
         resumed = _resume_task(cur, row.get("task_id"), jid, "coding-worker")
     conn.commit()
-    return {**_public(row), "task_resumed": resumed}
+    return {**_public(row), "task_resumed": resumed, "refs_recorded": refs}
 
 
 def _mark_lost(cur, row: dict[str, Any], reason: str, actor: str) -> dict[str, Any]:

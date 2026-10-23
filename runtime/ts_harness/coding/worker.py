@@ -95,7 +95,10 @@ def run_job(
         return 0
     spec = dict(job.get("spec") or {})
     if run is None:
-        from ts_harness.implementation.coding_job import run_coding_request as run
+        from ts_harness.implementation.coding_job import run_coding_request
+
+        def run(spec: dict[str, Any]) -> dict[str, Any]:
+            return run_coding_request(spec, record_refs=False)
     from ts_harness.implementation.backends.opencode import opencode_progress_log_path
 
     log_path = opencode_progress_log_path(Path(str(spec.get("workspace_dir") or "/workspace")), str(spec.get("work_order_id") or ""))
