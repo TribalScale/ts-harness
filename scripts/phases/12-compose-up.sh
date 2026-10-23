@@ -144,6 +144,20 @@ if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
     else
         echo "[phase:${PHASE_NAME}] WARNING: scale-out compose file not found at $SCALE_OUT_COMPOSE"
     fi
+    if (( ${AGENT_RUNTIME_REPLICAS:-2} >= 2 )); then
+        REPLICAS_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.replicas.yml"
+        COMPOSE_VERSION="$(docker compose version --short 2>/dev/null || echo 0)"
+        if ! printf '2.24.4\n%s\n' "${COMPOSE_VERSION#v}" | sort -V -C; then
+            echo "[phase:${PHASE_NAME}] ERROR: runtime replicas need Docker Compose 2.24.4+, found ${COMPOSE_VERSION}" >&2
+            exit 1
+        fi
+        if is_blank_or_placeholder "$(session_db_url)"; then
+            echo "[phase:${PHASE_NAME}] ERROR: runtime replicas need a session database (TS_HARNESS_SESSION_DB_URL)" >&2
+            exit 1
+        fi
+        COMPOSE_FILES+=(-f "$REPLICAS_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Including a second agent-runtime and memory-api behind PgBouncer"
+    fi
 fi
 
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh")"

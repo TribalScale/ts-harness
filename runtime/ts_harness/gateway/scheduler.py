@@ -80,8 +80,15 @@ class Scheduler:
         cron_jobs: list[dict[str, Any]] | None = None,
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         state_path: Path | None = None,
+        leader: Callable[[], bool] | None = None,
+        cron_path: Path | None = None,
     ):
         self.config = config
+        # With several runtime replicas only the lease holder runs jobs, and an
+        # edit made through another replica reaches it through the cron file.
+        self.leader = leader
+        self.cron_path = cron_path
+        self._cron_mtime = self._cron_file_mtime()
         self.dispatch = dispatch
         self.workspace_root = workspace_root or Path("/workspace")
         self.audit_sink = audit_sink
@@ -261,9 +268,28 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            now = datetime.now(UTC)
-            self.run_due_once(now=now)
+            if self.leader is None or self.leader():
+                self.reload_cron_file_if_changed()
+                self.run_due_once(now=datetime.now(UTC))
             self._stop.wait(5)
+
+    def _cron_file_mtime(self) -> float | None:
+        try:
+            return self.cron_path.stat().st_mtime if self.cron_path else None
+        except OSError:
+            return None
+
+    def reload_cron_file_if_changed(self) -> bool:
+        mtime = self._cron_file_mtime()
+        if mtime is None or mtime == self._cron_mtime:
+            return False
+        try:
+            data = json.loads(self.cron_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        self._cron_mtime = mtime
+        self.replace_cron_jobs(list(data.get("jobs") or []))
+        return True
 
     def health(self) -> bool:
         return self._thread is not None and self._thread.is_alive()

@@ -89,6 +89,38 @@ Build the worker image with the **Build coding worker (AWS)** workflow, then
 run **Deploy (AWS)** with `coding_worker_image_tag` set to the commit SHA it
 printed.
 
+## Runtime replicas on one host
+
+With `scale_out` and `runtime_replicas` of 2 or more (the profile default),
+phase 12 adds `docker/docker-compose.replicas.yml`:
+
+- `agent-runtime-2` with its own `memory-api-2` (memory-api shares its
+  runtime's network namespace, so each runtime needs one). Only two replicas
+  per host are supported.
+- The admin console nginx balances across `agent-runtime` and
+  `agent-runtime-2` and re-resolves both through Docker DNS.
+- PgBouncer (`edoburu/pgbouncer`) in transaction mode in front of Postgres. Both
+  memory APIs connect through it with `MEMORY_API_DB_POOLER=transaction`, which
+  turns off server-side prepared statements.
+
+Phase 12 stops if Docker Compose is older than 2.24.4 or the runtime has no
+session database. Replicas keep shared state in that database (migration 039):
+
+- One turn per session at a time, through an advisory lock held for the turn
+  (`SESSION_LOCK_WAIT_SECONDS`, default 600).
+- Tool approvals in `tool_approvals`, so the inbox and decisions work on
+  either replica. The first decision wins.
+- Admin rate limits in `rate_limit_windows`. If the database is unreachable,
+  each replica counts on its own.
+- The scheduler (cron jobs, GitHub polling, coding job sweeps) runs only on the
+  holder of the `runtime-scheduler` lease in `service_leases`. The holder
+  reloads the cron file when another replica edits it.
+
+`recreate_ts_harness_services` and `restart_agent_runtime` include the second
+pair automatically. Running several hosts behind the ALB is not supported yet:
+workflow definitions, managed skills and the cron file live on per-host
+volumes.
+
 ## Switching from single_host to scale_out
 
 Moving an existing install into the dedicated VPC replaces the host, its

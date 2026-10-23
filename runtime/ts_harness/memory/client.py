@@ -718,7 +718,9 @@ class MemoryClient:
         return self._request("GET", self._program_path(program_id))
 
     def get_program_status(self, program_id: str) -> dict[str, Any]:
-        return self._request("GET", self._program_path(program_id, "status"))
+        from ts_harness.workflows.operability import with_operability
+
+        return with_operability(self._request("GET", self._program_path(program_id, "status")))
 
     def find_program_by_binding(self, binding_key: str, *, tenant_id: str = "default") -> dict[str, Any]:
         from urllib.parse import quote

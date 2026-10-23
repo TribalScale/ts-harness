@@ -50,7 +50,7 @@ class AdminBffTests(unittest.TestCase):
             status="pending",
             requested_at="2026-08-01T00:00:00Z",
         )
-        queue = SimpleNamespace(_requests={"appr-1": approval})
+        queue = SimpleNamespace(list_pending=lambda: [approval])
         memory = mock.Mock()
         memory.list_programs.return_value = {
             "programs": [
@@ -88,6 +88,49 @@ class AdminBffTests(unittest.TestCase):
         self.assertIn("tool_approval", types)
         self.assertIn("workflow_gate", types)
 
+    def test_build_inbox_finds_gates_from_the_raw_memory_api_status(self):
+        from ts_harness.memory.client import MemoryClient
+
+        raw_status = {
+            "program_id": "prog-1",
+            "status": "running",
+            "active_workflow_id": "wf-1",
+            "artifacts": {},
+            "active_workflow": {"id": "wf-1", "definition_version": "2.0.0"},
+            "active_tasks": [
+                {"id": "draft", "step_name": "draft_prd", "status": "succeeded"},
+                {
+                    "id": "task-1",
+                    "step_name": "approve_prd",
+                    "status": "pending",
+                    "approval_required": True,
+                    "approval_status": "pending",
+                    "created_at": "2026-08-01T01:00:00Z",
+                },
+            ],
+        }
+        programs = {"programs": [{"id": "prog-1", "status": "running", "display_name": "Delivery"}]}
+        client = MemoryClient("http://memory.test")
+
+        def request(method, path, body=None, **_):
+            return raw_status if path.endswith("/status") else programs
+
+        auth = AuthContext(actor_id="admin", tenant_id="default", roles=["admin"])
+        runtime = SimpleNamespace(
+            policy=SimpleNamespace(evaluate_identity=mock.Mock(return_value=SimpleNamespace(decision="allow")))
+        )
+        with (
+            mock.patch.object(client, "_request", side_effect=request),
+            mock.patch.object(client, "list_stuck_tasks", return_value=[], create=True),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
+        ):
+            result = build_inbox(runtime, auth, memory=client, skills_root="skills")
+
+        [gate] = [item for item in result["items"] if item["type"] == "workflow_gate"]
+        self.assertEqual((gate["id"], gate["title"]), ("task-1", "approve_prd"))
+        self.assertEqual(gate["meta"]["waiting_on"]["kind"], "approval")
+
     def test_build_inbox_lists_steps_waiting_for_a_human_decision(self):
         from ts_harness.workflows.engine import WorkflowEngine
         from ts_harness.workflows.hooks import build_default_registry
@@ -122,7 +165,7 @@ class AdminBffTests(unittest.TestCase):
         auth = AuthContext(actor_id="ops", tenant_id="acme", roles=None)
         runtime = SimpleNamespace(policy=SimpleNamespace())
         with (
-            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(_requests={})),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
             mock.patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine),
             mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
         ):

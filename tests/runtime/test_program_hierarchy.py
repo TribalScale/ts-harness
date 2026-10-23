@@ -238,8 +238,9 @@ class RollupTests(unittest.TestCase):
             {"id": "c1", "status": "running", "artifacts": {"pr_urls": ["https://x/pull/1"]}},
             {"id": "c2", "status": "succeeded", "artifacts": {"pr_url": "https://x/pull/2"}},
         ]
+        waiting = {"id": "t1", "step_name": "await_merge", "status": "blocked", "error": "awaiting_external:github.merge"}
         statuses = {
-            "c1": {"status": "blocked", "waiting_on": {"kind": "external"}},
+            "c1": {"status": "blocked", "active_workflow_id": "wf-c1", "active_workflow": {"id": "wf-c1"}, "active_tasks": [waiting]},
             "c2": {"status": "succeeded"},
         }
         with mock.patch.object(
@@ -250,8 +251,14 @@ class RollupTests(unittest.TestCase):
             rollup = self.gateway._child_rollup(None, children)
         self.assertEqual(rollup["active_child_count"], 1)
         self.assertEqual(rollup["children"][0]["status"], "blocked")
-        self.assertEqual(rollup["children"][0]["waiting_on"], {"kind": "external"})
+        self.assertEqual(rollup["children"][0]["active_tasks"], [waiting])
         self.assertEqual(rollup["children"][1]["pr_urls"], ["https://x/pull/2"])
+
+        from ts_harness.workflows.operability import with_operability
+
+        child = with_operability({"children": rollup["children"]})["children"][0]
+        self.assertEqual(child["waiting_on"]["event_type"], "github.merge")
+        self.assertEqual(child["active_step"], "await_merge")
 
 
 class PointerAdoptionTests(unittest.TestCase):

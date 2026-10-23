@@ -189,6 +189,10 @@ def _db_connect_kwargs() -> dict[str, Any]:
     # RDS and other managed Postgres endpoints require TLS; local docker-db does not.
     if DB_HOST not in {"ts-harness-db", "localhost", "127.0.0.1"}:
         kwargs["sslmode"] = os.environ.get("PGSSLMODE", "require")
+    # PgBouncer in transaction mode hands each transaction to any server
+    # connection, so server-side prepared statements cannot be reused.
+    if os.environ.get("MEMORY_API_DB_POOLER", "").strip().lower() == "transaction":
+        kwargs["prepare_threshold"] = None
     return kwargs
 
 
@@ -3098,9 +3102,11 @@ def _child_rollup(conn, children: list[dict[str, Any]]) -> dict[str, Any]:
             child_status = {}
         if child_status:
             item["status"] = child_status.get("status") or status
-            for key in ("waiting_on", "last_error", "active_step", "active_workflow_id"):
+            for key in ("active_workflow_id", "active_workflow", "active_tasks"):
                 if child_status.get(key):
                     item[key] = child_status.get(key)
+            if isinstance(child_status.get("artifacts"), dict):
+                item["artifacts"] = child_status["artifacts"]
         artifacts = child.get("artifacts") if isinstance(child.get("artifacts"), dict) else {}
         pr_urls = artifacts.get("pr_urls") if isinstance(artifacts.get("pr_urls"), list) else []
         if artifacts.get("pr_url") and artifacts.get("pr_url") not in pr_urls:
@@ -3825,9 +3831,12 @@ def get_delivery_program_status(
         program_status = stored_status
 
     artifacts = _program_metadata_artifacts(metadata)
-    operability: dict[str, Any] = {}
+    # The runtime derives waiting_on, active_step and the rest from these.
+    active_workflow: dict[str, Any] | None = None
+    active_tasks: list[dict[str, Any]] = []
     if active_workflow_id:
         member = next((wf for wf in workflows if str(wf.get("id")) == active_workflow_id), None)
+        active_workflow = dict(member or {})
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -3839,16 +3848,6 @@ def get_delivery_program_status(
                 (active_workflow_id,),
             )
             active_tasks = list(cur.fetchall())
-        try:
-            from ts_harness.workflows.operability import build_operability_status
-
-            operability = build_operability_status(
-                workflow=dict(member or {}),
-                tasks=active_tasks,
-                artifacts=artifacts if isinstance(artifacts, dict) else {},
-            )
-        except Exception:
-            operability = {}
     resolved_workflow_versions = _parse_json_object(program.get("resolved_workflow_versions")) or {}
     for phase_id, phase_info in phases.items():
         pin = resolved_workflow_versions.get(phase_id)
@@ -3913,7 +3912,8 @@ def get_delivery_program_status(
         "resolved_workflow_versions": resolved_workflow_versions,
         "active_workflow_id": active_workflow_id,
         "artifacts": artifacts,
-        **operability,
+        "active_workflow": active_workflow,
+        "active_tasks": active_tasks,
     }
 
 

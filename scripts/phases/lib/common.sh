@@ -693,8 +693,23 @@ run_docker_compose_as_admin() {
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
+# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use.
+with_runtime_replicas() {
+    local service
+    for service in "$@"; do
+        printf '%s\n' "$service"
+        if [[ "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.replicas.yml* ]]; then
+            case "$service" in
+                agent-runtime|memory-api) printf '%s\n' "${service}-2" ;;
+            esac
+        fi
+    done
+}
+
 restart_agent_runtime() {
-    run_docker_compose_as_admin restart agent-runtime
+    local services=() service
+    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas agent-runtime)
+    run_docker_compose_as_admin restart "${services[@]}"
 }
 
 persist_env_key() {
@@ -717,7 +732,8 @@ restart_ts_harness_services() {
 }
 
 recreate_ts_harness_services() {
-    local services=("$@")
+    local services=() service
+    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas "$@")
     run_docker_compose_as_admin up -d --force-recreate "${services[@]}"
 }
 

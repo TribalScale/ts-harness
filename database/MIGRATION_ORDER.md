@@ -43,6 +43,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 37 | `036_project_repositories.sql` | Repositories per project (host, owner, name, App installation, default branch, role) |
 | 38 | `037_task_lanes.sql` | Task lanes, team and requester per task, batch claims with fair ordering, lease renewal |
 | 39 | `038_workflow_locks.sql` | Per-workflow write lock with expiry for runners and webhooks |
+| 40 | `039_shared_runtime_state.sql` | Tool approvals, admin rate-limit windows and service leases shared by runtime replicas |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

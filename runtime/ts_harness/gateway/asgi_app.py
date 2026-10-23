@@ -871,7 +871,7 @@ async def admin_approvals_list(request: Request) -> Response:
         return _json({"error": str(exc)}, exc.status)
 
     queue = get_approval_queue()
-    items = [v.__dict__ for v in queue._requests.values()]
+    items = [v.__dict__ for v in queue.all()]
     return _json({"approvals": items, "total": len(items)})
 
 

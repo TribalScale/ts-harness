@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Iterator
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 from ts_harness.agent.loop import EnterpriseAgent
 from ts_harness.agent.provider import FakeProvider
 from ts_harness.agent.sessions import get_session_store
+from ts_harness.gateway.service_lease import scheduler_lease
 from ts_harness.audit.writer import AuditWriter
 from ts_harness.config.reload import default_lkg_path, reload_runtime_config
 from ts_harness.secrets.resolver import SecretResolver
@@ -234,18 +236,23 @@ class RuntimeState:
                 actor_id="scheduler",
                 payload=event,
             ),
+            leader=scheduler_lease().held,
+            cron_path=Path(os.environ.get("TS_HARNESS_CRON_CONFIG", "config/runtime-cron-jobs.json")),
         )
         self.scheduler.start()
         self.slack_socket = SlackSocketListener(self)
         self.slack_socket.start()
 
-    def _session_lock(self, session_id: str) -> threading.Lock:
+    @contextmanager
+    def _session_lock(self, session_id: str) -> Iterator[None]:
+        """One turn per session at a time: in this process, then across replicas."""
         with self._session_locks_guard:
             lock = self._session_locks.get(session_id)
             if lock is None:
                 lock = threading.Lock()
                 self._session_locks[session_id] = lock
-            return lock
+        with lock, get_session_store().turn_lock(session_id):
+            yield
 
     def _slack_socket_health(self) -> tuple[str | None, str | None]:
         health = self.slack_socket.health()

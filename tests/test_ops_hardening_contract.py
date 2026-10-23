@@ -261,5 +261,65 @@ class OpsHardeningContractTests(unittest.TestCase):
         self.assertRegex(requirements, r"(?m)^behave==\S+$")
 
 
+
+def _compose(name: str) -> dict:
+    import yaml
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    for tag in ("!reset", "!override"):
+        Loader.add_constructor(tag, lambda loader, node: {"tag": node.tag, "value": loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else None})
+    return yaml.load((REPO_ROOT / "docker" / name).read_text(), Loader=Loader)
+
+
+class RuntimeReplicasContractTests(unittest.TestCase):
+    def test_second_runtime_has_its_own_memory_api_and_no_published_port(self):
+        services = _compose("docker-compose.replicas.yml")["services"]
+        runtime = services["agent-runtime-2"]
+        self.assertEqual(runtime["extends"], {"file": "docker-compose.agent-runtime.yml", "service": "agent-runtime"})
+        self.assertEqual(runtime["ports"]["tag"], "!reset")
+        memory = services["memory-api-2"]
+        self.assertEqual(memory["extends"]["service"], "memory-api")
+        self.assertEqual(memory["network_mode"], "service:agent-runtime-2")
+        self.assertEqual(memory["depends_on"]["value"], ["agent-runtime-2", "pgbouncer"])
+
+    def test_memory_apis_reach_postgres_through_pgbouncer_in_transaction_mode(self):
+        services = _compose("docker-compose.replicas.yml")["services"]
+        bouncer = services["pgbouncer"]
+        self.assertEqual(bouncer["environment"]["POOL_MODE"], "transaction")
+        self.assertRegex(bouncer["image"], r"pgbouncer:v\d")
+        for name in ("memory-api", "memory-api-2"):
+            env = services[name]["environment"]
+            self.assertEqual((env["TS_HARNESS_DB_HOST"], env["TS_HARNESS_DB_PORT"]), ("pgbouncer", "6432"))
+            self.assertEqual(env["MEMORY_API_DB_POOLER"], "transaction")
+        gateway = (REPO_ROOT / "scripts" / "memory-gateway.py").read_text()
+        self.assertIn('kwargs["prepare_threshold"] = None', gateway)
+
+    def test_compose_phase_adds_replicas_for_scale_out_only(self):
+        phase = (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text()
+        scale_out = phase.index('"${DEPLOYMENT_PROFILE:-single_host}" == "scale_out"')
+        replicas = phase.index("docker-compose.replicas.yml")
+        self.assertLess(scale_out, replicas)
+        self.assertLess(replicas, phase.index("PHASE_FINGERPRINT="))
+        self.assertIn("AGENT_RUNTIME_REPLICAS:-2", phase)
+        self.assertIn("2.24.4", phase)
+        self.assertIn("runtime replicas need a session database", phase)
+
+    def test_ops_recreate_and_restart_cover_both_runtimes(self):
+        common = COMMON.read_text()
+        self.assertIn("with_runtime_replicas", common)
+        for function in ("recreate_ts_harness_services()", "restart_agent_runtime()"):
+            body = common[common.index(function):]
+            body = body[: body.index("\n}\n")]
+            self.assertIn("with_runtime_replicas", body)
+        self.assertNotIn("mapfile", common)
+
+    def test_admin_console_balances_across_runtimes(self):
+        conf = (REPO_ROOT / "docker" / "nginx-admin-ui.conf").read_text()
+        self.assertIn("server agent-runtime:18789 resolve;", conf)
+        self.assertIn("server agent-runtime-2:18789 resolve;", conf)
+
+
 if __name__ == "__main__":
     unittest.main()

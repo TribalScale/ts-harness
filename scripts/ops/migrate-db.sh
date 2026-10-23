@@ -53,6 +53,7 @@ ORDER=(
   036_project_repositories.sql
   037_task_lanes.sql
   038_workflow_locks.sql
+  039_shared_runtime_state.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

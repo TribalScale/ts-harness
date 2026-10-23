@@ -70,10 +70,10 @@ services:
     volumes:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
-      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
+      # rw: admin console cron CRUD writes this file; the scheduler lease holder reloads it
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
-      # rw: admin-created skill drafts and approvals (single-replica only)
+      # rw: admin-created skill drafts and approvals, shared by replicas on this host
       - ts-harness-skills-managed:/skills-managed:rw
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
@@ -153,10 +153,10 @@ services:
     volumes:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
-      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
+      # rw: admin console cron CRUD writes this file; the scheduler lease holder reloads it
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
-      # rw: admin-created skill drafts and approvals (single-replica only)
+      # rw: admin-created skill drafts and approvals, shared by replicas on this host
       - ts-harness-skills-managed:/skills-managed:rw
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
