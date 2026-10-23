@@ -37,6 +37,9 @@ services:
       CODING_WORKER_CONFIG_HOST_PATH: ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml
       MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
       MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      # With the LLM proxy on, each worker gets a job-scoped proxy token instead of provider keys.
+      LLM_PROXY_URL: ${LLM_PROXY_RUNTIME_URL:-}
+      CODING_WORKER_LLM_PROXY_URL: ${CODING_WORKER_LLM_PROXY_URL:-}
     # Worker secrets (GITHUB_TOKEN, provider keys, CODING_BACKEND_*) pass through by name only.
     env_file:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env

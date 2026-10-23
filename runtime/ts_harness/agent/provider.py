@@ -262,12 +262,27 @@ class FakeProvider(ModelProvider):
         return self.responses.pop(0)
 
 
-def resolve_provider(model: str) -> ProviderEndpoint:
-    """Hermes-style resolver mapping provider/model to endpoint config."""
+def resolve_provider(model: str, *, scope: dict[str, Any] | None = None) -> ProviderEndpoint:
+    """Hermes-style resolver mapping provider/model to endpoint config.
+
+    With ``LLM_PROXY_URL`` and ``LLM_PROXY_SECRET`` set, every provider goes
+    through the metering proxy with a token minted for ``scope``.
+    """
     if "/" in model:
         provider, model_name = model.split("/", 1)
     else:
         provider, model_name = "openai", model
+    from ts_harness.llm_proxy.tokens import mint_proxy_token, proxy_enabled, proxy_url
+
+    if proxy_enabled():
+        api_mode = {"openai": "openai", "anthropic": "anthropic"}.get(provider, os.environ.get("MODEL_API_MODE", "openai"))
+        return ProviderEndpoint(
+            provider=provider,
+            model=model_name,
+            base_url=f"{proxy_url()}/{provider}/v1",
+            api_key=mint_proxy_token(scope or {}),
+            api_mode=api_mode,
+        )
     if provider == "openai":
         return ProviderEndpoint(
             provider=provider,
@@ -293,10 +308,16 @@ def resolve_provider(model: str) -> ProviderEndpoint:
     )
 
 
-def build_provider(model: str, *, fake_responses: list[dict[str, Any]] | None = None) -> ModelProvider:
+def build_provider(
+    model: str,
+    *,
+    fake_responses: list[dict[str, Any]] | None = None,
+    scope: dict[str, Any] | None = None,
+) -> ModelProvider:
+    """``scope`` (tenant, team, program, workflow, task, user, agent) labels the proxy's usage records."""
     if fake_responses is not None:
         return FakeProvider(fake_responses)
-    endpoint = resolve_provider(model)
+    endpoint = resolve_provider(model, scope=scope)
     if endpoint.api_mode == "anthropic":
         return AnthropicProvider(endpoint)
     return OpenAICompatibleProvider(endpoint)

@@ -128,4 +128,45 @@ run "scale_out_in_vpc" {
     condition     = length(aws_vpc_endpoint.interface) == 5 && length(aws_vpc_endpoint.s3) == 1
     error_message = "workers reach ECR, Secrets Manager, Logs and SSM through VPC endpoints"
   }
+
+  assert {
+    condition     = length(aws_lb_listener_rule.llm_proxy_route) == 0 && contains(keys(local.coding_worker_secret_env), "CODING_BACKEND_API_KEY")
+    error_message = "without the LLM proxy, workers keep the provider key and /llm/* is not routed"
+  }
+}
+
+run "scale_out_with_llm_proxy" {
+  command = plan
+
+  variables {
+    deployment_profile = "scale_out"
+    network_mode       = "vpc"
+    memory_backend     = "rds"
+    llm_proxy_enabled  = true
+  }
+
+  assert {
+    condition     = flatten([for c in aws_lb_listener_rule.llm_proxy_route[0].condition : [for p in c.path_pattern : p.values]]) == ["/llm/*"]
+    error_message = "the internal load balancer forwards /llm/* to the proxy"
+  }
+
+  assert {
+    condition     = aws_lb_target_group.llm_proxy[0].port == 18795
+    error_message = "the proxy listens on host port 18795"
+  }
+
+  assert {
+    condition     = !contains(keys(local.coding_worker_secret_env), "CODING_BACKEND_API_KEY")
+    error_message = "workers behind the proxy must not receive the provider key"
+  }
+
+  assert {
+    condition     = local.runtime_config_object.LLM_PROXY_ENABLED == "true" && local.runtime_config_object.LLM_PROXY_HOST_PORT == "18795"
+    error_message = "runtime config turns the proxy on and publishes its host port"
+  }
+
+  assert {
+    condition     = contains(keys(local.all_secrets), "llm-proxy-secret")
+    error_message = "the proxy token signing secret is provisioned"
+  }
 }

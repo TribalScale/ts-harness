@@ -69,6 +69,9 @@ reconstruct_enterprise_compose_files() {
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml")
     [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && "${CODING_JOBS_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml" ]] && \
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml")
+    [[ "${LLM_PROXY_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml" ]] && \
+        COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml")
+    return 0
 }
 
 refresh_compose_env() {
@@ -101,6 +104,10 @@ recreate_secret_consumers() {
     echo "memory-api recreated."
     docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate sandbox-worker
     echo "sandbox-worker recreated."
+    if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
+        docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate llm-proxy
+        echo "llm-proxy recreated."
+    fi
     if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
         docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate workflow-runner
         echo "workflow-runner recreated."

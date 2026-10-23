@@ -91,6 +91,8 @@ else
     GITHUB_APP_PRIVATE_KEY="$(printf '%s' "$GITHUB_APP_PRIVATE_KEY" | awk 'BEGIN{ORS="\\n"} {print}')"
 fi
 if is_blank_or_placeholder "$CODING_JOB_SECRET"; then CODING_JOB_SECRET=""; fi
+LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
+if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
 
 # Terraform seeds secrets as a single space; treat that as unset.
 if is_blank_or_placeholder "$CODING_BACKEND_API_KEY"; then CODING_BACKEND_API_KEY=""; fi
@@ -166,6 +168,7 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var MEMORY_API_TOKEN "$MEMORY_API_TOKEN"
     write_env_var SANDBOX_WORKER_TOKEN "$SANDBOX_WORKER_TOKEN"
     write_env_var CODING_JOB_SECRET "$CODING_JOB_SECRET"
+    write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"
     write_env_var GITHUB_APP_WEBHOOK_SECRET "$GITHUB_APP_WEBHOOK_SECRET"
     write_env_var GITHUB_APP_PRIVATE_KEY "$GITHUB_APP_PRIVATE_KEY"
     write_env_var TS_HARNESS_DB_PASSWORD "$TS_HARNESS_DB_PASSWORD"

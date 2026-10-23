@@ -10,12 +10,15 @@ locals {
     aws_ecr_repository.coding_worker[0].repository_url,
     var.coding_worker_image_tag,
   ) : ""
-  coding_worker_secret_env = {
-    CODING_BACKEND_API_KEY  = "coding-backend-api-key"
-    CODING_BACKEND_PROVIDER = "coding-backend-provider"
-    CODING_BACKEND_MODEL    = "coding-backend-model"
-    GITHUB_TOKEN            = "github-token"
-  }
+  # Behind the LLM proxy, workers get a job-scoped proxy token from the launcher instead of the provider key.
+  coding_worker_secret_env = merge(
+    {
+      CODING_BACKEND_PROVIDER = "coding-backend-provider"
+      CODING_BACKEND_MODEL    = "coding-backend-model"
+      GITHUB_TOKEN            = "github-token"
+    },
+    var.llm_proxy_enabled ? {} : { CODING_BACKEND_API_KEY = "coding-backend-api-key" },
+  )
   coding_worker_secret_arns = [
     for name in values(local.coding_worker_secret_env) : aws_secretsmanager_secret.harness[name].arn
   ]
@@ -216,7 +219,7 @@ resource "aws_ecs_task_definition" "coding_worker" {
       image       = local.coding_worker_image
       essential   = true
       stopTimeout = 30
-      environment = [
+      environment = concat([
         { name = "MEMORY_API_URL", value = local.memory_api_worker_url },
         { name = "HARNESS_RUNTIME_URL", value = local.memory_api_worker_url },
         { name = "HTTPS_PROXY", value = local.egress_proxy_url },
@@ -225,7 +228,9 @@ resource "aws_ecs_task_definition" "coding_worker" {
         { name = "http_proxy", value = local.egress_proxy_url },
         { name = "NO_PROXY", value = "${aws_lb.memory_api[0].dns_name},.amazonaws.com,169.254.170.2,localhost,127.0.0.1" },
         { name = "no_proxy", value = "${aws_lb.memory_api[0].dns_name},.amazonaws.com,169.254.170.2,localhost,127.0.0.1" },
-      ]
+        ], var.llm_proxy_enabled ? [
+        { name = "LLM_PROXY_URL", value = local.llm_proxy_worker_url },
+      ] : [])
       secrets = [
         for env_name, secret_name in local.coding_worker_secret_env : {
           name      = env_name

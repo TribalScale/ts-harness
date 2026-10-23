@@ -54,6 +54,7 @@ ORDER=(
   037_task_lanes.sql
   038_workflow_locks.sql
   039_shared_runtime_state.sql
+  040_llm_usage_budgets.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

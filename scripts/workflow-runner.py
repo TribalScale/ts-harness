@@ -1278,6 +1278,7 @@ class WorkflowRunner:
             or ([] if stage is None else stage.skill_hints),
             "contract": contract or {},
             "definition_version": task.get("definition_version"),
+            "usage_scope": {"team_id": task.get("team_id"), "requested_by": task.get("requested_by")},
         }
         if stage is not None and stage.tool_allow is not None:
             payload["tool_allow"] = list(stage.tool_allow)

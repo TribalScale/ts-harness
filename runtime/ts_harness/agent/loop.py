@@ -161,7 +161,18 @@ class EnterpriseAgent:
             )
 
         payload = self._normalize_work_orders_dispatch_payload(payload)
-        provider = self._provider_override or build_provider(agent.model)
+        usage_scope = payload.get("usage_scope") if isinstance(payload.get("usage_scope"), dict) else {}
+        provider = self._provider_override or build_provider(
+            agent.model,
+            scope={
+                "tenant": tenant_id,
+                "team": usage_scope.get("team_id"),
+                "user": usage_scope.get("requested_by"),
+                "workflow": payload.get("workflow_id"),
+                "task": payload.get("task_id"),
+                "agent": agent_id,
+            },
+        )
         system_prompt = self._build_workflow_system_prompt(agent, payload)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -326,7 +337,9 @@ class EnterpriseAgent:
         except KeyError as exc:
             return AgentRunResult(status="blocked", error=str(exc), runtime_task_id=runtime_task_id)
 
-        provider = self._provider_override or build_provider(agent.model)
+        provider = self._provider_override or build_provider(
+            agent.model, scope={"tenant": tenant_id, "user": actor_email, "agent": agent_id}
+        )
         phase = workflow_phase or prd_phase
         system_prompt = self._build_channel_system_prompt(
             agent,

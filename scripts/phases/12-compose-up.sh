@@ -160,6 +160,23 @@ if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
     fi
 fi
 
+if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
+    if is_blank_or_placeholder "${LLM_PROXY_SECRET:-}"; then
+        echo "[phase:${PHASE_NAME}] ERROR: LLM_PROXY_ENABLED=true needs LLM_PROXY_SECRET (secret llm-proxy-secret)" >&2
+        exit 1
+    fi
+    if is_blank_or_placeholder "$(session_db_url)"; then
+        echo "[phase:${PHASE_NAME}] ERROR: the LLM proxy records usage in Postgres and needs TS_HARNESS_SESSION_DB_URL" >&2
+        exit 1
+    fi
+    COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml")
+    export LLM_PROXY_RUNTIME_URL="http://127.0.0.1:18795/llm"
+    if [[ "${COMPOSE_FILES[*]}" == *docker-compose.replicas.yml* ]]; then
+        export LLM_PROXY_REPLICA_URL="http://agent-runtime:18795/llm"
+    fi
+    echo "[phase:${PHASE_NAME}] LLM proxy enabled: model calls are metered through llm-proxy"
+fi
+
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
@@ -229,6 +246,11 @@ fi
     echo "export WORKFLOW_RUNNER_STALE_POLICY=$(printf '%q' "${WORKFLOW_RUNNER_STALE_POLICY:-block}")"
     echo "export WORKFLOW_RUNNER_ADAPTER=$(printf '%q' "${WORKFLOW_RUNNER_ADAPTER:-gateway-http}")"
     echo "export CODING_JOBS_ENABLED=$(printf '%q' "${CODING_JOBS_ENABLED:-false}")"
+    echo "export LLM_PROXY_ENABLED=$(printf '%q' "${LLM_PROXY_ENABLED:-false}")"
+    echo "export LLM_PROXY_RUNTIME_URL=$(printf '%q' "${LLM_PROXY_RUNTIME_URL:-}")"
+    echo "export LLM_PROXY_REPLICA_URL=$(printf '%q' "${LLM_PROXY_REPLICA_URL:-}")"
+    echo "export LLM_PROXY_HOST_PORT=$(printf '%q' "${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}")"
+    echo "export CODING_WORKER_LLM_PROXY_URL=$(printf '%q' "${CODING_WORKER_LLM_PROXY_URL:-}")"
     echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
     echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER:-}")"
     echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"

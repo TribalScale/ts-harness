@@ -222,7 +222,7 @@ class TerraformPlanTests(unittest.TestCase):
                 ["terraform", "test"], cwd=workdir, env=env, capture_output=True, text=True, timeout=600,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("3 passed, 0 failed", result.stdout)
+            self.assertIn("4 passed, 0 failed", result.stdout)
 
 
 if __name__ == "__main__":

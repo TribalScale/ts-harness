@@ -258,6 +258,8 @@ write_runtime_env_file() {
         GITHUB_APP_HOST \
         GITHUB_APP_PRIVATE_KEY \
         GITHUB_APP_WEBHOOK_SECRET \
+        LLM_PROXY_SECRET \
+        OPENROUTER_API_KEY \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -436,6 +438,9 @@ INSTANCE_ENV_KEYS=(
     CODING_EGRESS_PROXY_SERVICE
     CODING_EGRESS_DOMAINS_PARAMETER
     CODING_EGRESS_PROXY_URL
+    LLM_PROXY_ENABLED
+    CODING_WORKER_LLM_PROXY_URL
+    LLM_PROXY_HOST_PORT
 )
 
 instance_env_path() {
@@ -690,10 +695,15 @@ run_docker_compose_as_admin() {
             CODING_ECS_SECURITY_GROUPS="${CODING_ECS_SECURITY_GROUPS:-}" \
             AGENT_RUNTIME_URL="${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}" \
             RUNTIME_FAKE_PROVIDER="${RUNTIME_FAKE_PROVIDER:-false}" \
+            LLM_PROXY_RUNTIME_URL="${LLM_PROXY_RUNTIME_URL:-}" \
+            LLM_PROXY_REPLICA_URL="${LLM_PROXY_REPLICA_URL:-}" \
+            LLM_PROXY_HOST_PORT="${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}" \
+            CODING_WORKER_LLM_PROXY_URL="${CODING_WORKER_LLM_PROXY_URL:-}" \
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
-# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use.
+# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use, and
+# llm-proxy (which lives in agent-runtime's network namespace) when it runs.
 with_runtime_replicas() {
     local service
     for service in "$@"; do
@@ -702,6 +712,9 @@ with_runtime_replicas() {
             case "$service" in
                 agent-runtime|memory-api) printf '%s\n' "${service}-2" ;;
             esac
+        fi
+        if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.llm-proxy.yml* ]]; then
+            printf '%s\n' llm-proxy
         fi
     done
 }

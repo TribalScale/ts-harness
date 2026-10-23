@@ -44,6 +44,9 @@ services:
       service: agent-runtime
     # Reached through the admin console nginx only.
     ports: !reset []
+    environment:
+      # Set by phase 12 when the LLM proxy runs (in agent-runtime's network namespace).
+      LLM_PROXY_URL: ${LLM_PROXY_REPLICA_URL:-}
 
   memory-api-2:
     extends:

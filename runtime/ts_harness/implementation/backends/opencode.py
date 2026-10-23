@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from ts_harness.implementation.auth import (
-    provider_child_env,
+    coding_child_env,
+    coding_usage_scope,
     resolve_coding_backend_credentials,
 )
 from ts_harness.implementation.backends.base import (
@@ -725,7 +726,9 @@ class OpenCodeBackend:
     def implement(self, request: CodingRequest) -> CodingResult:
         if request.mode == "refresh":
             return self.refresh(request)
-        provider, api_key = resolve_coding_backend_credentials(provider=request.provider)
+        provider, api_key = resolve_coding_backend_credentials(
+            provider=request.provider, scope=coding_usage_scope(request)
+        )
         if not provider:
             return CodingResult(
                 ok=False,
@@ -836,7 +839,7 @@ class OpenCodeBackend:
             )
             env = os.environ.copy()
             env.update(test_env.env)
-            env.update(provider_child_env(provider, api_key))
+            env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             completed = self._run_opencode(
                 cmd,
                 cwd=str(repo_dir),
@@ -1113,12 +1116,14 @@ class OpenCodeBackend:
             merged = self._git(repo_dir, "merge", f"origin/{base_ref}", "--no-edit")
             resolved: list[str] = []
             method = "local_merge"
-            provider, api_key = resolve_coding_backend_credentials(provider=request.provider)
+            provider, api_key = resolve_coding_backend_credentials(
+                provider=request.provider, scope=coding_usage_scope(request)
+            )
             test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir)
             env = os.environ.copy()
             env.update(test_env.env)
             if provider and api_key:
-                env.update(provider_child_env(provider, api_key))
+                env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             binary = ""
             if merged.returncode != 0:
                 conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")

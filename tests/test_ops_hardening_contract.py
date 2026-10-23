@@ -321,5 +321,39 @@ class RuntimeReplicasContractTests(unittest.TestCase):
         self.assertIn("server agent-runtime-2:18789 resolve;", conf)
 
 
+class LlmProxyContractTests(unittest.TestCase):
+    def test_proxy_shares_the_runtime_namespace_and_holds_the_provider_keys(self):
+        services = _compose("docker-compose.llm-proxy.yml")["services"]
+        proxy = services["llm-proxy"]
+        self.assertEqual(proxy["network_mode"], "service:agent-runtime")
+        self.assertEqual(proxy["command"], ["python3", "-m", "ts_harness.llm_proxy"])
+        self.assertEqual(proxy["environment"]["LLM_PROXY_PORT"], "18795")
+        self.assertIn("TS_HARNESS_SESSION_DB_URL", proxy["environment"]["LLM_PROXY_DB_URL"])
+        runtime = services["agent-runtime"]
+        self.assertEqual(runtime["environment"]["LLM_PROXY_URL"], "http://127.0.0.1:18795/llm")
+        self.assertEqual(runtime["ports"], ["${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}:18795"])
+
+    def test_replica_and_launcher_take_the_proxy_url_from_phase_12(self):
+        replica = _compose("docker-compose.replicas.yml")["services"]["agent-runtime-2"]
+        self.assertEqual(replica["environment"]["LLM_PROXY_URL"], "${LLM_PROXY_REPLICA_URL:-}")
+        launcher = _compose("docker-compose.coding-jobs.yml")["services"]["coding-launcher"]["environment"]
+        self.assertEqual(launcher["LLM_PROXY_URL"], "${LLM_PROXY_RUNTIME_URL:-}")
+        self.assertEqual(launcher["CODING_WORKER_LLM_PROXY_URL"], "${CODING_WORKER_LLM_PROXY_URL:-}")
+
+    def test_compose_phase_includes_the_proxy_when_enabled(self):
+        phase = (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text()
+        enabled = phase.index('"${LLM_PROXY_ENABLED:-false}" == "true"')
+        self.assertLess(enabled, phase.index("docker-compose.llm-proxy.yml"))
+        self.assertLess(phase.index("docker-compose.llm-proxy.yml"), phase.index("PHASE_FINGERPRINT="))
+        self.assertIn("needs LLM_PROXY_SECRET", phase)
+        self.assertIn('LLM_PROXY_REPLICA_URL="http://agent-runtime:18795/llm"', phase)
+        common = COMMON.read_text()
+        for name in ("LLM_PROXY_SECRET \\", "LLM_PROXY_ENABLED", "CODING_WORKER_LLM_PROXY_URL"):
+            self.assertIn(name, common)
+        self.assertIn("printf '%s\\n' llm-proxy", common)
+        fetch = (REPO_ROOT / "scripts" / "phases" / "10-fetch-secrets.sh").read_text()
+        self.assertIn('write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"', fetch)
+
+
 if __name__ == "__main__":
     unittest.main()

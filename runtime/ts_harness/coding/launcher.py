@@ -25,6 +25,8 @@ WORKER_ENV_NAMES = (
     "ANTHROPIC_BASE_URL",
 )
 WORKER_ENV_PREFIXES = ("CODING_BACKEND_", "OPENCODE_")
+PROVIDER_KEY_NAMES = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "MODEL_API_KEY", "CODING_BACKEND_API_KEY")
+JOB_PROXY_TOKEN_TTL_SECONDS = 8 * 3600
 STOP_LOOKBACK_SECONDS = 3600
 QUOTA_ENV = {"per_user": "CODING_QUOTA_PER_USER", "per_program": "CODING_QUOTA_PER_PROGRAM", "per_team": "CODING_QUOTA_PER_TEAM"}
 
@@ -47,12 +49,46 @@ class Launcher(Protocol):
     def describe(self, runner_ref: str) -> str: ...
 
 
+def worker_proxy_url(environ: Mapping[str, str]) -> str:
+    """Where workers reach the LLM proxy; empty when the proxy is off."""
+    if not str(environ.get("LLM_PROXY_SECRET") or "").strip():
+        return ""
+    return str(environ.get("CODING_WORKER_LLM_PROXY_URL") or environ.get("LLM_PROXY_URL") or "").strip().rstrip("/")
+
+
 def worker_env_names(environ: Mapping[str, str]) -> list[str]:
-    """Secrets a worker needs, by name only, so values never reach the docker command line."""
+    """Secrets a worker needs, by name only, so values never reach the docker command line.
+    With the LLM proxy on, workers get a proxy token instead of provider keys."""
     extra = [n.strip() for n in str(environ.get("CODING_WORKER_ENV") or "").split(",") if n.strip()]
     names = {n for n in (*WORKER_ENV_NAMES, *extra) if environ.get(n)}
     names.update(n for n in environ if n.startswith(WORKER_ENV_PREFIXES) and environ.get(n))
+    if worker_proxy_url(environ):
+        names.difference_update(PROVIDER_KEY_NAMES)
     return sorted(names)
+
+
+def job_proxy_env(job: Mapping[str, Any], environ: Mapping[str, str]) -> dict[str, str]:
+    """``LLM_PROXY_URL`` and a token scoped to this job. The proxy takes the team from the job's task."""
+    url = worker_proxy_url(environ)
+    if not url:
+        return {}
+    from ts_harness.llm_proxy.tokens import mint_proxy_token
+
+    token = mint_proxy_token(
+        {
+            "tenant": job.get("tenant_id"),
+            "project": job.get("project_id"),
+            "program": job.get("program_id"),
+            "workflow": job.get("workflow_id"),
+            "task": job.get("task_id"),
+            "user": job.get("requester") or job.get("requested_by"),
+            "agent": "coding-backend",
+            "job": job.get("id"),
+        },
+        secret=str(environ["LLM_PROXY_SECRET"]).strip(),
+        ttl_seconds=int(environ.get("LLM_PROXY_JOB_TTL_SECONDS") or JOB_PROXY_TOKEN_TTL_SECONDS),
+    )
+    return {"LLM_PROXY_URL": url, "LLM_PROXY_TOKEN": token}
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -122,6 +158,8 @@ class LocalDockerLauncher:
             "-e", f"HARNESS_RUNTIME_URL={cfg.runtime_url}",
             "-e", "JOB_TOKEN",
         ]
+        if worker_proxy_url(self._environ):
+            cmd += ["-e", f"LLM_PROXY_URL={worker_proxy_url(self._environ)}", "-e", "LLM_PROXY_TOKEN"]
         for name in worker_env_names(self._environ):
             cmd += ["-e", name]
         for name, value in sorted(cfg.extra_env.items()):
@@ -142,7 +180,7 @@ class LocalDockerLauncher:
             capture_output=True,
             text=True,
             timeout=120,
-            env={**self._environ, "JOB_TOKEN": token},
+            env={**self._environ, "JOB_TOKEN": token, **job_proxy_env(job, self._environ)},
         )
         if proc.returncode != 0:
             raise LaunchError((proc.stderr or proc.stdout or "docker run failed").strip()[-500:])
@@ -304,8 +342,10 @@ class EcsLauncher:
         client: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         max_attempts: int = 4,
+        environ: Mapping[str, str] | None = None,
     ):
         self.config = config
+        self._environ = dict(environ if environ is not None else os.environ)
         self._client = client
         self._sleep = sleep
         self._max_attempts = max(1, max_attempts)
@@ -373,6 +413,10 @@ class EcsLauncher:
                         "environment": [
                             {"name": "JOB_ID", "value": job_id},
                             {"name": "JOB_TOKEN", "value": token},
+                            *(
+                                {"name": name, "value": value}
+                                for name, value in sorted(job_proxy_env(job, self._environ).items())
+                            ),
                         ],
                     }
                 ]
@@ -422,5 +466,5 @@ def build_launcher(environ: Mapping[str, str] | None = None) -> Launcher:
     if kind == "local":
         return LocalDockerLauncher(LocalDockerConfig.from_env(env), environ=env)
     if kind == "ecs":
-        return EcsLauncher(EcsConfig.from_env(env))
+        return EcsLauncher(EcsConfig.from_env(env), environ=env)
     raise ValueError(f"unknown CODING_LAUNCHER: {kind}")

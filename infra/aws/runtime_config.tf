@@ -15,6 +15,7 @@ locals {
     WORKFLOW_RUNNER_STALE_POLICY          = var.workflow_runner_stale_policy
     CODING_JOBS_ENABLED                   = tostring(var.coding_jobs_enabled)
     CODING_MAX_RUNNING                    = tostring(var.coding_max_running)
+    LLM_PROXY_ENABLED                     = tostring(var.llm_proxy_enabled)
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider
     EMBEDDINGS_MODEL                      = var.embeddings_model
@@ -49,6 +50,8 @@ locals {
     CODING_EGRESS_PROXY_SERVICE           = try(aws_ecs_service.egress_proxy[0].name, "")
     CODING_EGRESS_DOMAINS_PARAMETER       = try(aws_ssm_parameter.egress_extra_domains[0].name, "")
     CODING_EGRESS_PROXY_URL               = local.egress_proxy_url
+    CODING_WORKER_LLM_PROXY_URL           = local.llm_proxy_worker_url
+    LLM_PROXY_HOST_PORT                   = local.ecs_enabled && var.llm_proxy_enabled ? tostring(local.llm_proxy_port) : ""
   }
 }
 

@@ -326,6 +326,12 @@ variable "coding_jobs_enabled" {
   default     = false
 }
 
+variable "llm_proxy_enabled" {
+  description = "Route agent and coding-worker model calls through the metering LLM proxy (usage, cost, rate limits, team budgets). Needs a session database."
+  type        = bool
+  default     = false
+}
+
 variable "coding_max_running" {
   description = "Coding jobs that may run at once."
   type        = number
