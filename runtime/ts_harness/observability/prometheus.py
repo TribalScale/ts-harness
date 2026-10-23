@@ -6,6 +6,7 @@ try:
     from prometheus_client import (
         CONTENT_TYPE_LATEST,
         Counter,
+        Gauge,
         Histogram,
         generate_latest as _generate_latest,
     )
@@ -52,6 +53,12 @@ try:
     secret_reload_total = Counter(
         "ts_harness_secret_reload_total",
         "Total secret reload operations",
+    )
+
+    github_rate_limit_remaining = Gauge(
+        "ts_harness_github_rate_limit_remaining",
+        "GitHub API requests left in the current rate-limit window, by host",
+        ["host"],
     )
 
     PROMETHEUS_AVAILABLE = True

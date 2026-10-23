@@ -13,6 +13,8 @@ locals {
     "coding-job-secret"                   = { consumers = ["gateway"] }
     "tailscale-authkey"                   = { consumers = ["gateway"] }
     "github-token"                        = { consumers = ["dev-agent"] }
+    "github-app-private-key"              = { consumers = ["gateway"] }
+    "github-app-webhook-secret"           = { consumers = ["gateway"] }
     "coding-backend-api-key"              = { consumers = ["dev-agent"] }
     "coding-backend-provider"             = { consumers = ["dev-agent"] }
     "coding-backend-model"                = { consumers = ["dev-agent"] }

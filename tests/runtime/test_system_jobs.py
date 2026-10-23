@@ -164,7 +164,7 @@ class PollGithubMergesTests(unittest.TestCase):
         engine = MagicMock()
         engine.resume_external.return_value = {"status": "resumed"}
 
-        def fetch(owner, repo, number, *, token):
+        def fetch(owner, repo, number, *, github):
             if number == 1:
                 raise RuntimeError("api down")
             return {"merged": True, "merge_commit_sha": "deadbeef"}

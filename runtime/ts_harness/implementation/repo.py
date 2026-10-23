@@ -447,13 +447,23 @@ def push_branch(
     branch: str,
     runner=subprocess.run,
     env: dict[str, str] | None = None,
+    remote_url: str = "",
 ) -> None:
     """Push ``branch`` to origin; retry with ``--force-with-lease`` on NFF rejects.
 
     Work-order branches are rewritten across deliver retries (new Implement commit
     from the same base). A plain push fails when an older tip already exists on
     origin; force-with-lease updates the remote without a blind ``--force``.
+    ``remote_url`` replaces origin first, because installation tokens embedded
+    at clone time expire after an hour.
     """
+    if remote_url:
+        runner(
+            ["git", "-C", str(repo_dir), "remote", "set-url", "origin", remote_url],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     completed = runner(
         ["git", "-C", str(repo_dir), "push", "-u", "origin", branch],
         capture_output=True,

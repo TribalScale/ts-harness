@@ -84,6 +84,8 @@ def sync_directory(config: Any = None, *, memory: Any = None, source: DirectoryS
             "display_name": person.display_name,
             "disabled": person.disabled,
         }
+        if person.github_login:
+            entry["github_login"] = person.github_login
         if person.groups is not None:
             entry["teams"] = resolve_team_memberships(person.groups, config)
         if person.roles is not None or person.groups is not None:

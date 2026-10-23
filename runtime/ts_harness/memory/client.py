@@ -1082,6 +1082,68 @@ class MemoryClient:
     def registry_hosts(self) -> list[str]:
         return list(self._request("GET", "/registry-hosts").get("hosts") or [])
 
+    def get_coding_job(self, job_id: str) -> dict[str, Any] | None:
+        from urllib.parse import urlencode
+
+        jobs = self._request("GET", f"/coding-jobs?{urlencode({'id': job_id, 'limit': 1})}").get("jobs") or []
+        return jobs[0] if jobs else None
+
+    def get_github_registration(self, host: str) -> dict[str, Any] | None:
+        from urllib.parse import quote
+
+        try:
+            return self._request("GET", f"/github/registrations/{quote(host, safe='')}")
+        except ProgramNotFound:
+            return None
+
+    def list_github_registrations(self) -> list[dict[str, Any]]:
+        return list(self._request("GET", "/github/registrations").get("registrations") or [])
+
+    def put_github_registration(self, host: str, **body: Any) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("PUT", f"/github/registrations/{quote(host, safe='')}", body)
+
+    def list_github_installations(self, *, host: str = "") -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        query = f"?{urlencode({'host': host})}" if host else ""
+        return list(self._request("GET", f"/github/installations{query}").get("installations") or [])
+
+    def upsert_github_installation(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/github/installations", body)
+
+    def change_github_installation_repositories(
+        self, host: str, installation_id: int, *, added: list[str], removed: list[str]
+    ) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request(
+            "POST",
+            f"/github/installations/{quote(host, safe='')}/{int(installation_id)}/repositories",
+            {"added": added, "removed": removed},
+        )
+
+    def delete_github_installation(self, host: str, installation_id: int) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("DELETE", f"/github/installations/{quote(host, safe='')}/{int(installation_id)}", {})
+
+    def record_github_delivery(self, delivery_id: str, *, host: str, event: str) -> bool:
+        """True when this delivery was already processed."""
+        out = self._request(
+            "POST", "/github/webhook-deliveries", {"delivery_id": delivery_id, "host": host, "event": event}
+        )
+        return bool(out.get("duplicate"))
+
+    def github_delivery_seen(self, delivery_id: str) -> bool:
+        from urllib.parse import quote
+
+        return bool(self._request("GET", f"/github/webhook-deliveries/{quote(delivery_id, safe='')}").get("seen"))
+
+    def github_webhook_status(self) -> list[dict[str, Any]]:
+        return list(self._request("GET", "/github/webhook-status").get("hosts") or [])
+
     def consume_coding_job(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
 

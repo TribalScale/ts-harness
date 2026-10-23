@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 import json
+import os
 import threading
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -247,6 +248,8 @@ class Scheduler:
         return {"status": "ok", "name": target, "dispatched": True}
 
     def start(self) -> None:
+        if os.environ.get("TS_HARNESS_SCHEDULER_DISABLED", "").strip().lower() in {"1", "true", "yes"}:
+            return
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()

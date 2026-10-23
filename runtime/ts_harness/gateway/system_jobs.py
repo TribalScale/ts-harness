@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any, Callable
 
-from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url
+from ts_harness.integrations.github_client import GitHubClient, GitHubError, github_for, parse_github_pr_url
 from ts_harness.memory.client import get_memory_client
 from ts_harness.workflows.engine import get_workflow_engine
 from ts_harness.workflows.pr_rejection import REJECTION_REASONS, detect_rejection
@@ -22,14 +23,21 @@ __all__ = [
 ]
 
 
+def _github_or_none() -> GitHubClient | None:
+    try:
+        return github_for(None)
+    except GitHubError:
+        return None
+
+
 def fetch_pull_request(
     owner: str,
     repo: str,
     number: int,
     *,
-    token: str,
+    github: GitHubClient,
 ) -> dict[str, Any]:
-    return GitHubClient(token=token).get_pull(owner, repo, number)
+    return github.get_pull(owner, repo, number)
 
 
 def _resume_merged_pr(
@@ -67,10 +75,72 @@ def _resume_merged_pr(
     )
 
 
-def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        return {"status": "error", "error": "GITHUB_TOKEN is required", "checked": 0, "resumed": 0}
+def block_if_rejected(wait: dict[str, Any], pr: dict[str, Any], *, github: GitHubClient, engine: Any, actor: str) -> bool:
+    """Block a merge wait whose PR a human closed or sent back; True when it was blocked."""
+    pr_url = str(wait.get("match_pr_url") or "").strip()
+    workflow_id = str(wait.get("workflow_id") or "").strip()
+    task_id = str(wait.get("task_id") or "").strip()
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None or not workflow_id or not task_id or pr.get("merged"):
+        return False
+    handled = engine.block_case_prefixes(workflow_id, task_id)
+    if not any(prefix in handled for prefix in REJECTION_REASONS):
+        return False
+    rejection = detect_rejection(github, *parsed, pr)
+    if rejection is None or not any(rejection["reason"].startswith(prefix) for prefix in handled):
+        return False
+    engine.block_wait(
+        workflow_id,
+        task_id,
+        rejection["reason"],
+        output={"pr_url": pr_url, "rejected_by": rejection["actor"], "review_feedback": rejection["feedback"]},
+        actor=actor,
+    )
+    logger.info("%s rejection workflow_id=%s pr_url=%s reason=%s", actor, workflow_id, pr_url, rejection["reason"])
+    return True
+
+
+WEBHOOK_HEALTHY_WINDOW_SECONDS = 3600
+_last_reconcile = {"at": 0.0}
+
+
+def webhooks_healthy(*, now: float | None = None, memory: Any = None) -> bool:
+    """A signed GitHub delivery arrived within the last hour, on any host."""
+    from datetime import datetime
+
+    now = time.time() if now is None else now
+    try:
+        hosts = (memory or get_memory_client()).github_webhook_status()
+    except Exception:  # noqa: BLE001
+        return False
+    for host in hosts:
+        received = host.get("last_received_at")
+        if not received:
+            continue
+        stamp = received if isinstance(received, datetime) else datetime.fromisoformat(str(received).replace("Z", "+00:00"))
+        if now - stamp.timestamp() <= WEBHOOK_HEALTHY_WINDOW_SECONDS:
+            return True
+    return False
+
+
+def reconcile_due(*, now: float | None = None, memory: Any = None) -> bool:
+    """Polling backs off to ``github_reconcile_interval_seconds`` while webhooks are arriving."""
+    from ts_harness.config.deployment_profile import resolve_setting
+
+    now = time.time() if now is None else now
+    interval = int(resolve_setting("github_reconcile_interval_seconds"))
+    if now - _last_reconcile["at"] >= interval or not webhooks_healthy(now=now, memory=memory):
+        _last_reconcile["at"] = now
+        return True
+    return False
+
+
+def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> dict[str, Any]:
+    if not force and not reconcile_due():
+        return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0}
+    github = _github_or_none()
+    if github is None:
+        return {"status": "error", "error": "GITHUB_TOKEN or a GitHub App is required", "checked": 0, "resumed": 0}
 
     memory = get_memory_client()
     engine = get_workflow_engine()
@@ -99,25 +169,12 @@ def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
         owner, repo, number = parsed
         checked += 1
         try:
-            pr = fetch_pull_request(owner, repo, number, token=token)
+            pr = fetch_pull_request(owner, repo, number, github=github)
             if not pr.get("merged"):
-                task_id = str(wait.get("task_id") or "").strip()
-                handled = engine.block_case_prefixes(workflow_id, task_id) if task_id else []
-                rejection = None
-                if any(prefix in handled for prefix in REJECTION_REASONS):
-                    rejection = detect_rejection(GitHubClient(token=token), owner, repo, number, pr)
-                if rejection is None or not any(rejection["reason"].startswith(prefix) for prefix in handled):
+                if block_if_rejected(wait, pr, github=github, engine=engine, actor="github-merge-poller"):
+                    rejected += 1
+                else:
                     skipped += 1
-                    continue
-                engine.block_wait(
-                    workflow_id,
-                    task_id,
-                    rejection["reason"],
-                    output={"pr_url": pr_url, "rejected_by": rejection["actor"], "review_feedback": rejection["feedback"]},
-                    actor="github-merge-poller",
-                )
-                rejected += 1
-                logger.info("github_merge_poller rejection workflow_id=%s pr_url=%s reason=%s", workflow_id, pr_url, rejection["reason"])
                 continue
             merge_sha = str(pr.get("merge_commit_sha") or "").strip()
             _resume_merged_pr(
@@ -161,13 +218,13 @@ def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
         "rejected": rejected,
         "skipped": skipped,
         "errors": errors,
-        "checks": poll_github_checks(tenant_id=tenant_id, token=token),
-        "deployments": poll_github_deployments(tenant_id=tenant_id, token=token),
+        "checks": poll_github_checks(tenant_id=tenant_id, github=github),
+        "deployments": poll_github_deployments(tenant_id=tenant_id, github=github),
         "joins": poll_wave_joins(tenant_id=tenant_id),
     }
 
 
-def poll_github_checks(*, tenant_id: str = "default", token: str | None = None) -> dict[str, Any]:
+def poll_github_checks(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:
     """Fallback for missed check webhooks: resume SHA-pinned checks waits that are terminal."""
     from ts_harness.workflows.merge_readiness import (
         CHECKS_EVENT,
@@ -177,12 +234,11 @@ def poll_github_checks(*, tenant_id: str = "default", token: str | None = None) 
         pinned_heads,
     )
 
-    token = token or os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
+    github = github or _github_or_none()
+    if github is None:
         return {"checked": 0, "resumed": 0, "errors": 0}
     memory = get_memory_client()
     engine = get_workflow_engine()
-    github = GitHubClient(token=token)
     waits = list((memory.find_external_waits(event_type=CHECKS_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
     checked = resumed = errors = 0
     for wait in waits:
@@ -211,7 +267,7 @@ def poll_github_checks(*, tenant_id: str = "default", token: str | None = None) 
     return {"checked": checked, "resumed": resumed, "errors": errors}
 
 
-def poll_github_deployments(*, tenant_id: str = "default", token: str | None = None) -> dict[str, Any]:
+def poll_github_deployments(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:
     """Fallback for missed deployment_status webhooks: resume terminal deployment waits."""
     from ts_harness.workflows.release import (
         DEPLOYMENT_EVENT,
@@ -220,12 +276,11 @@ def poll_github_deployments(*, tenant_id: str = "default", token: str | None = N
         deployment_state,
     )
 
-    token = token or os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
+    github = github or _github_or_none()
+    if github is None:
         return {"checked": 0, "resumed": 0, "errors": 0}
     memory = get_memory_client()
     engine = get_workflow_engine()
-    github = GitHubClient(token=token)
     waits = list((memory.find_external_waits(event_type=DEPLOYMENT_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
     checked = resumed = errors = 0
     for wait in waits:

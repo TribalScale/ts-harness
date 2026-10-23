@@ -13,6 +13,11 @@ secret_prefix: ts-harness
 notification_email: ops@example.com
 monthly_budget_limit: 500
 
+# GitHub App used for clone, push and PRs (see docs/runbooks/github-app.md).
+# github_app:
+#   app_id: "123456"
+#   slug: ts-harness-acme
+
 vm:
   instance_type: e2-medium
   root_volume_size_gb: 40

@@ -1,7 +1,9 @@
 """Run one coding job: fetch its spec, run OpenCode, heartbeat, report the result.
 
 The worker holds only its job token, which the memory API accepts on this
-job's spec, heartbeat and complete endpoints.
+job's spec, heartbeat and complete endpoints, and the runtime accepts for a
+GitHub token limited to the job's repository (when a GitHub App is
+registered; otherwise the worker uses the ``GITHUB_TOKEN`` it was given).
 """
 
 from __future__ import annotations
@@ -17,20 +19,33 @@ from typing import Any, Callable
 
 HEARTBEAT_SECONDS = 30
 _LAST_LINE_BYTES = 4096
+TOKEN_REFRESH_MARGIN = 600
 
 
 class JobApi:
-    def __init__(self, base_url: str, job_id: str, token: str, *, timeout: float = 30, attempts: int = 3):
+    def __init__(
+        self,
+        base_url: str,
+        job_id: str,
+        token: str,
+        *,
+        runtime_url: str = "",
+        timeout: float = 30,
+        attempts: int = 3,
+    ):
         self.base_url = base_url.rstrip("/")
+        self.runtime_url = runtime_url.rstrip("/")
         self.job_id = job_id
         self.token = token
         self.timeout = timeout
         self.attempts = max(1, attempts)
 
-    def _request(self, method: str, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(
+        self, method: str, action: str, body: dict[str, Any] | None = None, *, url: str = ""
+    ) -> dict[str, Any]:
         data = None if body is None else json.dumps(body, default=str).encode()
         request = urllib.request.Request(
-            f"{self.base_url}/coding-jobs/{self.job_id}/{action}",
+            url or f"{self.base_url}/coding-jobs/{self.job_id}/{action}",
             data=data,
             method=method,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
@@ -61,6 +76,43 @@ class JobApi:
 
     def complete(self, *, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
         return self._request("POST", "complete", {"result": result, "error": error})
+
+    def github_token(self) -> dict[str, Any] | None:
+        """``{token, expires_at}`` from the runtime, or None when no GitHub App covers the repo."""
+        if not self.runtime_url:
+            return None
+        try:
+            return self._request(
+                "POST", "github-token", {}, url=f"{self.runtime_url}/internal/coding-jobs/{self.job_id}/github-token"
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+
+
+class GitHubTokens:
+    """Keeps ``GITHUB_TOKEN``/``GH_TOKEN`` fresh when the runtime mints installation tokens."""
+
+    def __init__(self, api: Any, environ: Any = None, clock: Callable[[], float] = time.time):
+        self.api = api
+        self.environ = os.environ if environ is None else environ
+        self.clock = clock
+        self.expires_at = 0.0
+        self.managed = False
+
+    def refresh(self, *, force: bool = False) -> bool:
+        if not force and (not self.managed or self.expires_at - TOKEN_REFRESH_MARGIN > self.clock()):
+            return False
+        out = self.api.github_token()
+        if not out or not out.get("token"):
+            return False
+        from datetime import datetime
+
+        self.environ["GITHUB_TOKEN"] = self.environ["GH_TOKEN"] = str(out["token"])
+        self.expires_at = datetime.fromisoformat(str(out["expires_at"]).replace("Z", "+00:00")).timestamp()
+        self.managed = True
+        return True
 
 
 def last_log_line(path: Path) -> str | None:
@@ -118,6 +170,16 @@ def run_job(
         return 1
     if configured:
         _log("coding_job_registries_configured", job_id=api.job_id, types=configured)
+    tokens = GitHubTokens(api)
+    try:
+        if tokens.refresh(force=True):
+            _log("coding_job_github_token", job_id=api.job_id, source="app")
+    except Exception as exc:  # noqa: BLE001
+        if not os.environ.get("GITHUB_TOKEN"):
+            api.complete(error=f"GitHub token unavailable: {exc}")
+            _log("coding_job_github_token_failed", job_id=api.job_id, error=str(exc)[:300])
+            return 1
+        _log("coding_job_github_token_failed", job_id=api.job_id, error=str(exc)[:300], fallback="GITHUB_TOKEN")
     if run is None:
         from ts_harness.implementation.coding_job import run_coding_request
 
@@ -131,6 +193,10 @@ def run_job(
 
     def beat() -> None:
         while not stop.wait(heartbeat_seconds):
+            try:
+                tokens.refresh()
+            except Exception as exc:  # noqa: BLE001
+                _log("coding_job_github_token_failed", job_id=api.job_id, error=str(exc)[:300])
             try:
                 status = api.heartbeat(last_log_line(log_path))
             except Exception as exc:  # noqa: BLE001
@@ -166,4 +232,5 @@ def main(environ: dict[str, str] | None = None) -> int:
     if missing:
         _log("coding_worker_misconfigured", missing=missing)
         return 2
-    return run_job(JobApi(env["MEMORY_API_URL"], env["JOB_ID"], env["JOB_TOKEN"]))
+    runtime_url = env.get("HARNESS_RUNTIME_URL", "")
+    return run_job(JobApi(env["MEMORY_API_URL"], env["JOB_ID"], env["JOB_TOKEN"], runtime_url=runtime_url))

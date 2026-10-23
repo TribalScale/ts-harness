@@ -25,6 +25,7 @@ class DirectoryPerson:
     roles: list[str] | None = None
     groups: list[str] | None = None
     disabled: bool = False
+    github_login: str | None = None
 
 
 @dataclass

@@ -374,9 +374,8 @@ class MissingGraceTests(unittest.TestCase):
         with (
             patch.object(system_jobs, "get_memory_client", return_value=memory),
             patch.object(system_jobs, "get_workflow_engine", return_value=engine),
-            patch.object(system_jobs, "GitHubClient", return_value=github),
         ):
-            result = system_jobs.poll_github_checks(tenant_id="acme", token="t")
+            result = system_jobs.poll_github_checks(tenant_id="acme", github=github)
         self.assertEqual(result["resumed"], 1)
         payload = engine.resume_external.call_args.kwargs["payload"]
         self.assertEqual(payload["checks_state"], "failure")

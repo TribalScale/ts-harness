@@ -49,6 +49,7 @@ ORDER=(
   032_program_access.sql
   033_coding_jobs.sql
   034_projects_registries.sql
+  035_github_app.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

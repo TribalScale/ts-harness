@@ -28,6 +28,13 @@ PER_PAGE = 100
 SEARCH_CEILING = 1000
 
 
+def _github_login(user: dict[str, Any]) -> str | None:
+    """The GitHub username when the person signs in through Auth0's GitHub connection."""
+    if any(str(i.get("provider")) == "github" for i in user.get("identities") or []):
+        return str(user.get("nickname") or "").strip() or None
+    return None
+
+
 class Auth0ManagementSource:
     name = "auth0_management"
 
@@ -98,7 +105,7 @@ class Auth0ManagementSource:
     def fetch(self) -> DirectorySnapshot:
         users = self._pages(
             "/api/v2/users",
-            {"fields": "user_id,email,name,blocked,app_metadata", "include_fields": "true", "include_totals": "true"},
+            {"fields": "user_id,email,name,nickname,blocked,app_metadata,identities", "include_fields": "true", "include_totals": "true"},
             "users",
         )
         roles_by_user: dict[str, list[str]] = {}
@@ -123,6 +130,7 @@ class Auth0ManagementSource:
                     roles=sorted(roles_by_user.get(subject, [])),
                     groups=sorted({*groups_by_user.get(subject, []), *[str(g) for g in meta_groups]}),
                     disabled=bool(user.get("blocked")),
+                    github_login=_github_login(user),
                 )
             )
         return DirectorySnapshot(

@@ -106,6 +106,24 @@ variable "implement_work_orders_repo_url" {
   default     = ""
 }
 
+variable "github_app_id" {
+  description = "GitHub App id for github.com (or github_app_host). Empty keeps the github-token PAT."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_slug" {
+  description = "GitHub App slug, used for the install link on the admin GitHub page."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_host" {
+  description = "Host the GitHub App is registered on."
+  type        = string
+  default     = "github.com"
+}
+
 variable "implement_work_orders_base_branch" {
   description = "Base branch for implement_work_orders clones and PRs."
   type        = string

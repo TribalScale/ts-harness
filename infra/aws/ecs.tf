@@ -218,6 +218,7 @@ resource "aws_ecs_task_definition" "coding_worker" {
       stopTimeout = 30
       environment = [
         { name = "MEMORY_API_URL", value = local.memory_api_worker_url },
+        { name = "HARNESS_RUNTIME_URL", value = local.memory_api_worker_url },
         { name = "HTTPS_PROXY", value = local.egress_proxy_url },
         { name = "HTTP_PROXY", value = local.egress_proxy_url },
         { name = "https_proxy", value = local.egress_proxy_url },

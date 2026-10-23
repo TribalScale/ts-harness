@@ -303,6 +303,18 @@ def record_launch(conn, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
     return _public(row)
 
 
+def job_identity(conn, job_id: str) -> dict[str, Any]:
+    """Who a running job acts for and on which repository; used to mint its GitHub token."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM coding_jobs WHERE id = %s", (_uuid(job_id),))
+        row = cur.fetchone()
+    if not row:
+        raise LookupError("coding job not found")
+    if row["status"] not in ("starting", "running"):
+        raise ValueError("coding job is not running")
+    return {key: _public(row)[key] for key in ("id", "tenant_id", "status", "repo_url", "requested_by", "project_id")}
+
+
 def get_job_spec(conn, job_id: str) -> dict[str, Any]:
     """The worker's first call: returns the spec and marks the job running."""
     jid = _uuid(job_id)
@@ -548,7 +560,7 @@ def consume_coding_job(conn, job_id: str) -> dict[str, Any]:
 def list_coding_jobs(conn, query: dict[str, Any]) -> dict[str, Any]:
     clauses: list[str] = []
     params: list[Any] = []
-    for key in ("workflow_id", "task_id"):
+    for key in ("id", "workflow_id", "task_id"):
         if query.get(key):
             clauses.append(f"{key} = %s")
             params.append(_uuid(query[key], key))

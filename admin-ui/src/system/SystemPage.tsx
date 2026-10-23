@@ -10,6 +10,7 @@ import { CronEditor } from "./CronEditor";
 import { AgentsPage } from "./AgentsPage";
 import { McpPage } from "./McpPage";
 import { ProjectSettingsPage } from "../projects/ProjectSettingsPage";
+import { GitHubPage } from "./GitHubPage";
 import { SettingsPage } from "./SettingsPage";
 import { SkillsCatalogPage } from "./SkillsCatalogPage";
 import type { SettingsSection } from "./settings/types";
@@ -75,7 +76,9 @@ export function SystemPage({
               ? "agents"
               : section === "projects"
                 ? "projects"
-                : "health";
+                : section === "github"
+                  ? "github"
+                  : "health";
 
   const load = useCallback(
     async ({ background = false }: { background?: boolean } = {}) => {
@@ -102,7 +105,7 @@ export function SystemPage({
   );
 
   useEffect(() => {
-    if (activeSection === "cron" || activeSection === "settings" || activeSection === "skills" || activeSection === "mcp" || activeSection === "agents" || activeSection === "projects") return;
+    if (activeSection === "cron" || activeSection === "settings" || activeSection === "skills" || activeSection === "mcp" || activeSection === "agents" || activeSection === "projects" || activeSection === "github") return;
     void load();
     const id = window.setInterval(() => void load({ background: true }), 30_000);
     return () => window.clearInterval(id);
@@ -183,7 +186,7 @@ export function SystemPage({
       <div className="system-header">
         <div>
           <h2>System</h2>
-          <p className="muted">Runtime health, scheduled operations, skills, MCP, projects, and tenant settings.</p>
+          <p className="muted">Runtime health, scheduled operations, skills, MCP, projects, GitHub, and tenant settings.</p>
         </div>
         {activeSection === "health" && (
           <Button variant="ghost" busy={loading && Boolean(health)} onClick={() => void load()}>
@@ -202,6 +205,7 @@ export function SystemPage({
           { id: "mcp", label: "MCP" },
           { id: "agents", label: "Agents" },
           { id: "projects", label: "Projects" },
+          { id: "github", label: "GitHub" },
           { id: "settings", label: "Settings" },
         ]}
         onChange={(id) => {
@@ -218,7 +222,9 @@ export function SystemPage({
                       ? "#/system/agents"
                       : id === "projects"
                         ? "#/system/projects"
-                        : "#/system";
+                        : id === "github"
+                          ? "#/system/github"
+                          : "#/system";
         }}
       />
       <div
@@ -237,6 +243,8 @@ export function SystemPage({
           <AgentsPage selectedId={agentId} onDirtyChange={onAgentsDirtyChange} />
         ) : activeSection === "projects" ? (
           <ProjectSettingsPage selectedId={projectId} />
+        ) : activeSection === "github" ? (
+          <GitHubPage />
         ) : activeSection === "settings" ? (
           <SettingsPage section={settingsSection} onDirtyChange={onSettingsDirtyChange} />
         ) : (

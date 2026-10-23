@@ -23,6 +23,9 @@ locals {
     IMPLEMENT_WORK_ORDERS_REPO_URL        = var.implement_work_orders_repo_url
     IMPLEMENT_WORK_ORDERS_BASE_BRANCH     = var.implement_work_orders_base_branch
     OPENCODE_VERSION                      = var.implement_work_orders_opencode_version
+    GITHUB_APP_ID                         = var.github_app_id
+    GITHUB_APP_SLUG                       = var.github_app_slug
+    GITHUB_APP_HOST                       = var.github_app_host
     IDENTITY_PROVIDER                     = var.identity_provider
     OIDC_ISSUER                           = var.oidc_issuer
     OIDC_AUDIENCE                         = var.oidc_audience

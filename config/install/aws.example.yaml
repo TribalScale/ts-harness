@@ -22,6 +22,13 @@ monthly_budget_limit: 500
 #   memory_api_certificate_arn: ""    # ACM cert for the internal memory API load balancer
 #   egress_allowed_domains: []        # added to the GitHub, npm, PyPI and LLM defaults
 
+# GitHub App used for clone, push and PRs. Put the private key and webhook
+# secret in <secret_prefix>/github-app-private-key and github-app-webhook-secret.
+# Without it, the github-token PAT is used. See docs/runbooks/github-app.md.
+# github_app:
+#   app_id: "123456"
+#   slug: ts-harness-acme
+
 vm:
   instance_type: t3.medium
   root_volume_size_gb: 40

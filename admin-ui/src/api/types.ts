@@ -409,3 +409,29 @@ export interface ProjectRegistry {
   last_test_ok: boolean | null;
   last_test_error: string | null;
 }
+
+export interface GitHubOverview {
+  apps: {
+    host: string;
+    configured: boolean;
+    app_id: string;
+    app_slug: string;
+    source: "environment" | "stored" | "";
+    webhook_secret: boolean;
+    install_url: string;
+  }[];
+  installations: {
+    host: string;
+    installation_id: number;
+    account_login: string;
+    account_type: string;
+    repository_selection: string;
+    suspended: boolean;
+    repositories: string[];
+    synced_at: string | null;
+  }[];
+  webhooks: { host: string; last_received_at: string | null; last_day: number }[];
+  rate_limits: { host: string; remaining: number; limit: number; reset: number; observed_at: number }[];
+  pat_fallback: boolean;
+  can_sync: boolean;
+}

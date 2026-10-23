@@ -28,3 +28,9 @@ def _reset_admin_rate_limiter():
         return
     rate_limit._admin_limiter._hits.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_background_scheduler(monkeypatch):
+    """Runtimes built by tests must not poll GitHub or sweep jobs on a background thread."""
+    monkeypatch.setenv("TS_HARNESS_SCHEDULER_DISABLED", "true")

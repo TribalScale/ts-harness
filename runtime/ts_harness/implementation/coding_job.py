@@ -78,6 +78,19 @@ def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
     return binding
 
 
+def _directory_github_login(email: str | None, tenant_id: str) -> str | None:
+    """GitHub login the identity source recorded for this person, when there is one."""
+    if not email or "@" not in email:
+        return None
+    try:
+        from ts_harness.memory.client import get_memory_client
+
+        person = get_memory_client().directory_user(tenant_id=tenant_id or "default", email=email)
+    except Exception:  # noqa: BLE001
+        return None
+    return str(((person or {}).get("user") or {}).get("github_login") or "").strip() or None
+
+
 def build_coding_request(
     task_input: dict[str, Any],
     *,
@@ -194,7 +207,8 @@ def build_coding_request(
         "qa_feedback": clean_text(feedback_source.get("qa_feedback")),
         "pr_url": pr_url,
         "requested_by": requester,
-        "requested_by_github_login": github_logins.get(requester or "") or None,
+        "requested_by_github_login": github_logins.get(requester or "")
+        or _directory_github_login(requester, getattr(getattr(live, "gateway", None), "default_tenant_id", "default")),
         "program_id": str(program_id or "").strip() or None,
         "delivery_workflow_id": delivery_workflow_id,
         "decision_id": str(args.get("decision_id") or "").strip() or None,

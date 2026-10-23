@@ -9,6 +9,15 @@ Each delivery is normalized into one event with a ``kind``:
   ``environment`` once the deployment is terminal.
 * ``github.pr_opened`` and ``github.pr_review`` go to subscribers (the
   independent-review publisher) instead of waits.
+* ``github.pr_closed``, a changes-requested ``github.pr_review`` and a
+  ``/revise`` ``github.pr_comment`` check the PR's merge wait for a human
+  rejection right away instead of on the next poll.
+* ``github.installation`` and ``github.installation_repositories`` keep the
+  GitHub App installations table current.
+
+Signatures are checked with the webhook secret of the App registered for the
+delivering host (``X-GitHub-Enterprise-Host``, else github.com) or the legacy
+repository webhook secret.
 """
 
 from __future__ import annotations
@@ -28,8 +37,8 @@ from ts_harness.workflows.engine import get_workflow_engine
 
 logger = logging.getLogger(__name__)
 
-# Signed payloads carry no timestamp, so replays are refused by delivery id.
-# Process-local: a restart forgets ids, which is acceptable for a single gateway.
+# Signed payloads carry no timestamp, so replays are refused by delivery id:
+# a process-local cache first, then the shared deliveries table.
 DELIVERY_TTL_SECONDS = 24 * 3600
 MAX_TRACKED_DELIVERIES = 10_000
 _handled_deliveries: OrderedDict[str, float] = OrderedDict()
@@ -44,18 +53,30 @@ def _prune_deliveries(now: float) -> None:
         _handled_deliveries.pop(oldest_id, None)
 
 
-def delivery_already_handled(delivery_id: str, *, now: float | None = None) -> bool:
+def delivery_already_handled(delivery_id: str, *, now: float | None = None, memory: Any = None) -> bool:
     with _deliveries_lock:
         _prune_deliveries(time.time() if now is None else now)
-        return delivery_id in _handled_deliveries
+        if delivery_id in _handled_deliveries:
+            return True
+    try:
+        return (memory or get_memory_client()).github_delivery_seen(delivery_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("github delivery lookup failed: %s", exc)
+        return False
 
 
-def remember_delivery(delivery_id: str, *, now: float | None = None) -> None:
+def remember_delivery(
+    delivery_id: str, *, now: float | None = None, host: str = "github.com", event: str = "", memory: Any = None
+) -> None:
     """Record a delivery once it was handled, so a failed one can still be redelivered."""
     with _deliveries_lock:
         _handled_deliveries[delivery_id] = time.time() if now is None else now
         _handled_deliveries.move_to_end(delivery_id)
         _prune_deliveries(time.time() if now is None else now)
+    try:
+        (memory or get_memory_client()).record_github_delivery(delivery_id, host=host, event=event)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("github delivery record failed: %s", exc)
 
 TERMINAL_DEPLOYMENT_STATES = frozenset({"success", "failure", "error", "inactive"})
 TERMINAL_CHECK_STATES = frozenset({"success", "failure"})
@@ -66,6 +87,7 @@ EVENT_SUBSCRIBERS: dict[str, list[str]] = {
     "github.pr_review": ["ts_harness.workflows.independent_review:on_github_event"],
     "github.merge": ["ts_harness.workflows.merge_readiness:on_merge"],
 }
+INSTALLATION_ACTIONS = frozenset({"created", "deleted", "suspend", "unsuspend", "new_permissions_accepted"})
 
 
 def verify_github_signature(raw_body: bytes, signature_header: str, secret: str) -> bool:
@@ -107,6 +129,10 @@ def parse_github_merge_event(body: dict[str, Any]) -> dict[str, str] | None:
 
 
 def _infer_event_name(body: dict[str, Any]) -> str:
+    if "repositories_added" in body or "repositories_removed" in body:
+        return "installation_repositories"
+    if "comment" in body and "issue" in body:
+        return "issue_comment"
     if "deployment_status" in body:
         return "deployment_status"
     if "review" in body and "pull_request" in body:
@@ -119,7 +145,21 @@ def _infer_event_name(body: dict[str, Any]) -> str:
         return "pull_request"
     if "state" in body and "sha" in body and "context" in body:
         return "status"
+    if "installation" in body and "repository" not in body and str(body.get("action") or "") in INSTALLATION_ACTIONS:
+        return "installation"
     return ""
+
+
+def _installation_fields(body: dict[str, Any]) -> dict[str, Any]:
+    installation = body.get("installation") or {}
+    account = installation.get("account") or {}
+    return {
+        "installation_id": installation.get("id"),
+        "account_login": str(account.get("login") or ""),
+        "account_type": str(account.get("type") or "Organization"),
+        "repository_selection": str(installation.get("repository_selection") or "selected"),
+        "suspended": bool(installation.get("suspended_at")),
+    }
 
 
 def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> dict[str, Any] | None:
@@ -132,6 +172,9 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
         merge = parse_github_merge_event(body)
         if merge:
             return {"kind": "github.merge", "repo": repo, **merge}
+        if action == "closed":
+            pr = body.get("pull_request") or {}
+            return {"kind": "github.pr_closed", "repo": repo, "pr_url": str(pr.get("html_url") or ""), "number": pr.get("number")}
         if action in {"opened", "reopened", "synchronize", "ready_for_review"}:
             pr = body.get("pull_request") or {}
             return {
@@ -161,6 +204,39 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
             "reviewer": _login(review.get("user")),
             "review_state": str(review.get("state") or "").lower(),
             "commit_id": str(review.get("commit_id") or ""),
+        }
+
+    if name == "issue_comment":
+        issue = body.get("issue") or {}
+        comment = body.get("comment") or {}
+        text = str(comment.get("body") or "").strip()
+        if action != "created" or issue.get("pull_request") is None or not text.startswith("/revise"):
+            return None
+        return {
+            "kind": "github.pr_comment",
+            "repo": repo,
+            "pr_url": str(issue.get("html_url") or ""),
+            "number": issue.get("number"),
+            "author": _login(comment.get("user")),
+        }
+
+    if name == "installation":
+        if action not in INSTALLATION_ACTIONS:
+            return None
+        return {
+            "kind": "github.installation",
+            "action": action,
+            **_installation_fields(body),
+            "repositories": [str(r.get("full_name")) for r in body.get("repositories") or [] if r.get("full_name")],
+        }
+
+    if name == "installation_repositories":
+        return {
+            "kind": "github.installation_repositories",
+            "action": action,
+            **_installation_fields(body),
+            "added": [str(r.get("full_name")) for r in body.get("repositories_added") or [] if r.get("full_name")],
+            "removed": [str(r.get("full_name")) for r in body.get("repositories_removed") or [] if r.get("full_name")],
         }
 
     if name in {"check_suite", "check_run"}:
@@ -275,13 +351,13 @@ def _handle_merge(event: dict[str, Any], *, tenant_id: str, actor: str) -> dict[
 
 def default_check_resolver(event: dict[str, Any], wait: dict[str, Any]) -> dict[str, Any]:
     """Recompute the aggregate check state over every PR head the wait pinned."""
-    from ts_harness.integrations.github_client import GitHubClient
+    from ts_harness.integrations.github_client import github_for
     from ts_harness.workflows.merge_readiness import aggregate_checks, pinned_heads
 
     heads = pinned_heads(wait)
     if not heads:
         raise ValueError("checks wait has no pinned PR heads")
-    return aggregate_checks(GitHubClient.from_env(), heads)
+    return aggregate_checks(github_for(str(heads[0].get("pr_url") or "") or None), heads)
 
 
 def _handle_sha_wait(
@@ -341,12 +417,90 @@ def _deployment_ready(event: dict[str, Any], wait: dict[str, Any]) -> dict[str, 
     }
 
 
+def _handle_installation(event: dict[str, Any], *, host: str, actor: str) -> dict[str, Any]:
+    memory = get_memory_client()
+    installation_id = event.get("installation_id")
+    if not installation_id:
+        return {"status": "ignored", "reason": "installation event without an id"}
+    if event["kind"] == "github.installation" and event["action"] == "deleted":
+        try:
+            memory.delete_github_installation(host, int(installation_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.info("github installation %s already gone: %s", installation_id, exc)
+        return {"status": "installation_deleted", "kind": event["kind"], "installation_id": installation_id}
+    if event["kind"] == "github.installation_repositories":
+        try:
+            memory.change_github_installation_repositories(
+                host, int(installation_id), added=event["added"], removed=event["removed"]
+            )
+            return {"status": "installation_updated", "kind": event["kind"], "installation_id": installation_id}
+        except Exception:  # noqa: BLE001 - unknown installation: fall through to a full upsert
+            pass
+    repositories = event.get("repositories") or event.get("added") or []
+    if event.get("repository_selection") == "all" or event["kind"] == "github.installation_repositories":
+        repositories = _installation_repositories(host, int(installation_id)) or repositories
+    memory.upsert_github_installation(
+        host=host,
+        installation_id=int(installation_id),
+        account_login=event["account_login"],
+        account_type=event["account_type"],
+        repository_selection=event["repository_selection"],
+        suspended=event["action"] == "suspend" or (event["suspended"] and event["action"] != "unsuspend"),
+        repositories=repositories,
+        actor=actor,
+    )
+    from ts_harness.integrations import github_app
+
+    github_app.reset_cache()
+    return {"status": "installation_synced", "kind": event["kind"], "installation_id": installation_id}
+
+
+def _installation_repositories(host: str, installation_id: int) -> list[str]:
+    from ts_harness.integrations.github_app import app_for
+
+    app = app_for(host)
+    if app is None:
+        return []
+    try:
+        return app.installation_repositories(installation_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("github installation %s repository listing failed: %s", installation_id, exc)
+        return []
+
+
+def _handle_pr_feedback(event: dict[str, Any], *, tenant_id: str, actor: str) -> dict[str, Any]:
+    from ts_harness.gateway.system_jobs import block_if_rejected
+    from ts_harness.integrations.github_client import github_for, parse_github_pr_url
+
+    pr_url = str(event.get("pr_url") or "")
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None:
+        return {"status": "ignored", "reason": "not a GitHub pull request url"}
+    memory = get_memory_client()
+    waits = list(
+        (memory.find_external_waits(event_type="github.merge", pr_url=pr_url, tenant_id=tenant_id) or {}).get("waits")
+        or []
+    )
+    if not waits:
+        return {"status": "no_match", "kind": event["kind"], "pr_url": pr_url}
+    github = github_for(pr_url)
+    pull = github.get_pull(*parsed)
+    engine = get_workflow_engine()
+    blocked = [
+        str(w.get("workflow_id"))
+        for w in waits
+        if block_if_rejected({**w, "match_pr_url": w.get("match_pr_url") or pr_url}, pull, github=github, engine=engine, actor=actor)
+    ]
+    return {"status": "rejected" if blocked else "no_rejection", "kind": event["kind"], "pr_url": pr_url, "blocked": blocked}
+
+
 def handle_github_webhook(
     body: dict[str, Any],
     *,
     tenant_id: str = "default",
     actor: str = "github-webhook",
     event_name: str | None = None,
+    host: str = "github.com",
     check_resolver: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Route one delivery to its wait and subscribers."""
@@ -355,8 +509,15 @@ def handle_github_webhook(
         return {"status": "ignored", "reason": "event not handled"}
 
     kind = event["kind"]
+    if kind in {"github.installation", "github.installation_repositories"}:
+        return _handle_installation(event, host=host, actor=actor)
     subscribers = notify_subscribers(event, tenant_id=tenant_id)
-    if kind == "github.merge":
+    feedback = kind in {"github.pr_closed", "github.pr_comment"} or (
+        kind == "github.pr_review" and event.get("review_state") == "changes_requested"
+    )
+    if feedback:
+        result = _handle_pr_feedback(event, tenant_id=tenant_id, actor=actor)
+    elif kind == "github.merge":
         result = _handle_merge(event, tenant_id=tenant_id, actor=actor)
     elif kind == "github.pr_checks":
         if not event.get("head_sha"):
@@ -375,3 +536,30 @@ def handle_github_webhook(
 
 def github_webhook_secret() -> str:
     return os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
+
+
+def delivery_host(headers: dict[str, str]) -> str:
+    lowered = {str(k).lower(): str(v) for k, v in headers.items()}
+    return (lowered.get("x-github-enterprise-host") or "github.com").strip().lower() or "github.com"
+
+
+def webhook_secrets(host: str) -> list[str]:
+    """Secrets a delivery from ``host`` may be signed with: the App's, then the repository webhook's."""
+    from ts_harness.integrations.github_app import registration_for
+
+    secrets: list[str] = []
+    try:
+        registration = registration_for(host)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("github registration lookup for %s failed: %s", host, exc)
+        registration = None
+    if registration and registration.webhook_secret:
+        secrets.append(registration.webhook_secret)
+    legacy = github_webhook_secret()
+    if legacy and legacy not in secrets:
+        secrets.append(legacy)
+    return secrets
+
+
+def verify_delivery(raw_body: bytes, signature_header: str, secrets: list[str]) -> bool:
+    return any(verify_github_signature(raw_body, signature_header, secret) for secret in secrets)

@@ -183,6 +183,10 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         ):
             if key in scale_out:
                 tfvars[key] = scale_out[key]
+        github_app = config.get("github_app") or {}
+        for key in ("app_id", "slug", "host"):
+            if github_app.get(key):
+                tfvars[f"github_app_{key}"] = str(github_app[key])
         image_tag = os.environ.get("TS_HARNESS_CODING_WORKER_IMAGE_TAG", "").strip()
         if image_tag:
             tfvars["coding_worker_image_tag"] = image_tag

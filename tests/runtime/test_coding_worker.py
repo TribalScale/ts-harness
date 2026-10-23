@@ -29,6 +29,9 @@ class FakeApi:
     def registries(self):
         return list(self.registry_list)
 
+    def github_token(self):
+        return None
+
     def heartbeat(self, last_output):
         self.heartbeats.append(last_output)
         self.beat.set()

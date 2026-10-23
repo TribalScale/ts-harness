@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
+from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
@@ -4522,7 +4523,13 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, scim_routes.ScimError(str(exc), 500).to_scim())
 
-    _WORKER_ACTIONS = {("GET", "spec"), ("GET", "registries"), ("POST", "heartbeat"), ("POST", "complete")}
+    _WORKER_ACTIONS = {
+        ("GET", "spec"),
+        ("GET", "registries"),
+        ("GET", "identity"),
+        ("POST", "heartbeat"),
+        ("POST", "complete"),
+    }
 
     def _coding_job_worker_authorized(self, method: str) -> bool:
         """A worker's job token opens only its own job's spec, heartbeat and complete."""
@@ -4562,6 +4569,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, body))
                 elif method == "GET" and len(parts) == 2 and parts[1] == "spec":
                     self._send_json(200, coding_job_routes.get_job_spec(conn, parts[0]))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "identity":
+                    self._send_json(200, coding_job_routes.job_identity(conn, parts[0]))
                 elif method == "GET" and len(parts) == 2 and parts[1] == "registries":
                     self._send_json(200, project_routes.job_registries(conn, parts[0]))
                 elif method == "POST" and len(parts) == 2:
@@ -4630,6 +4639,49 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def _github(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["registrations"] and method == "GET":
+                    result = github_routes.list_registrations(conn)
+                elif len(parts) == 2 and parts[0] == "registrations" and method == "GET":
+                    result = github_routes.get_registration(conn, parts[1])
+                elif len(parts) == 2 and parts[0] == "registrations" and method == "PUT":
+                    result = github_routes.put_registration(conn, parts[1], body)
+                elif parts == ["installations"] and method == "GET":
+                    result = github_routes.list_installations(conn, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                elif parts == ["installations"] and method == "POST":
+                    result = github_routes.upsert_installation(conn, body)
+                elif len(parts) == 3 and parts[0] == "installations" and method == "DELETE":
+                    result = github_routes.delete_installation(conn, parts[1], parts[2], body)
+                elif len(parts) == 4 and parts[0] == "installations" and parts[3] == "repositories" and method == "POST":
+                    result = github_routes.change_installation_repositories(conn, parts[1], parts[2], body)
+                elif parts == ["webhook-deliveries"] and method == "POST":
+                    result = github_routes.record_delivery(conn, body)
+                elif len(parts) == 2 and parts[0] == "webhook-deliveries" and method == "GET":
+                    result = github_routes.delivery_seen(conn, parts[1])
+                elif parts == ["webhook-status"] and method == "GET":
+                    result = github_routes.webhook_status(conn)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     @staticmethod
     def _is_projects_path(path: str) -> bool:
         return path == "/registry-hosts" or path == "/projects" or path.startswith(("/projects?", "/projects/"))
@@ -4657,6 +4709,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_projects_path(self.path):
             self._projects("GET")
+            return
+        if self.path.startswith("/github/"):
+            self._github("GET")
             return
         if self.path == "/coding-jobs" or self.path.startswith(("/coding-jobs?", "/coding-jobs/")):
             self._coding_jobs("GET")
@@ -5016,6 +5071,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_projects_path(self.path):
             self._projects("POST")
             return
+        if self.path.startswith("/github/"):
+            self._github("POST")
+            return
         try:
             body = self._read_body()
         except json.JSONDecodeError as exc:
@@ -5182,6 +5240,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_projects_path(self.path):
             self._projects("PUT")
             return
+        if self.path.startswith("/github/"):
+            self._github("PUT")
+            return
         self._send_json(404, {"error": "not found"})
 
     def do_PATCH(self):
@@ -5226,6 +5287,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_projects_path(self.path):
             self._projects("DELETE")
+            return
+        if self.path.startswith("/github/"):
+            self._github("DELETE")
             return
         if self.path.startswith("/programs/") and "/access/" in self.path:
             from urllib.parse import unquote

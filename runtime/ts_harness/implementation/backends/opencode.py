@@ -39,6 +39,7 @@ from ts_harness.implementation.repo import (
     create_pull_request,
     create_work_branch,
     ensure_repo_clone,
+    github_authenticated_url,
     list_changed_files,
     push_branch,
     work_order_branch_name,
@@ -57,7 +58,9 @@ from ts_harness.implementation.verification import (
 from ts_harness.integrations.github_client import (
     GitHubClient,
     GitHubError,
+    github_for,
     parse_github_pr_url,
+    repo_token,
 )
 from ts_harness.observability.logging import log_event
 
@@ -392,12 +395,17 @@ def _has_planning_packs(request: CodingRequest) -> bool:
     )
 
 
-def _git_env() -> dict[str, str]:
+def _git_env(repo_url: str = "") -> dict[str, str]:
     env = os.environ.copy()
-    token = env.get("GITHUB_TOKEN", "").strip()
+    token = repo_token(repo_url) if repo_url else env.get("GITHUB_TOKEN", "").strip()
     if token:
-        env.setdefault("GH_TOKEN", token)
+        env["GH_TOKEN"] = token
     return env
+
+
+_NO_GITHUB_CREDENTIALS = (
+    "GitHub credentials are required for clone/push/PR: install the GitHub App on the repository or set GITHUB_TOKEN"
+)
 
 
 class OpenCodeBackend:
@@ -746,14 +754,9 @@ class OpenCodeBackend:
                 summary="",
                 error="work_order_body is required (governed markdown missing)",
             )
-        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        github_token = repo_token(request.repo_url)
         if not github_token:
-            return CodingResult(
-                ok=False,
-                branch="",
-                summary="",
-                error="GITHUB_TOKEN is required for clone/push/PR",
-            )
+            return CodingResult(ok=False, branch="", summary="", error=_NO_GITHUB_CREDENTIALS)
 
         branch = work_order_branch_name(request.work_order_id, request.delivery_workflow_id)
         log_path = opencode_progress_log_path(
@@ -927,8 +930,14 @@ class OpenCodeBackend:
                     pr_url=request.pr_url,
                     error=gone,
                 )
-            git_env = _git_env()
-            push_branch(repo_dir, branch=branch, runner=self.runner, env=git_env)
+            git_env = _git_env(request.repo_url)
+            push_branch(
+                repo_dir,
+                branch=branch,
+                runner=self.runner,
+                env=git_env,
+                remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
+            )
             pr_body = (
                 f"## Work order\n\n`{request.work_order_id}`\n\n"
                 "Opened by ts-harness `run_coding_backend` (OpenCode).\n"
@@ -1008,7 +1017,7 @@ class OpenCodeBackend:
         if parsed is None:
             return "", ""
         if self.github is None:
-            self.github = GitHubClient.from_env()
+            self.github = github_for(pr_url)
         pull = self.github.get_pull(*parsed)
         if pull.get("merged"):
             return f"pr_merged: {pr_url} is already merged; not revising it", ""
@@ -1024,7 +1033,7 @@ class OpenCodeBackend:
         owner, repo, number = parsed
         try:
             if self.github is None:
-                self.github = GitHubClient.from_env()
+                self.github = github_for(pr_url)
             pull = self.github.get_pull(owner, repo, number)
         except GitHubError as exc:
             return CodingResult(ok=False, branch="", summary="", pr_url=pr_url, error=str(exc))
@@ -1074,14 +1083,15 @@ class OpenCodeBackend:
         head_ref: str,
         base_ref: str,
     ) -> CodingResult:
-        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        repo_url = request.repo_url or f"https://github.com/{owner}/{repo}.git"
+        github_token = repo_token(repo_url)
         if not github_token:
-            return CodingResult(ok=False, branch=head_ref, summary="", pr_url=pr_url, error="GITHUB_TOKEN is required for refresh")
+            return CodingResult(ok=False, branch=head_ref, summary="", pr_url=pr_url, error=_NO_GITHUB_CREDENTIALS)
         log_path = opencode_progress_log_path(request.workspace_dir, request.work_order_id)
         log = ""
         try:
             repo_dir = ensure_repo_clone(
-                repo_url=request.repo_url or f"https://github.com/{owner}/{repo}.git",
+                repo_url=repo_url,
                 workspace_dir=request.workspace_dir,
                 base_branch=base_ref,
                 clone_depth=request.clone_depth,
@@ -1180,7 +1190,13 @@ class OpenCodeBackend:
                 runner=self.runner,
             )
             security = self._with_scanned_sha(repo_dir, security)
-            push_branch(repo_dir, branch=head_ref, runner=self.runner, env=_git_env())
+            push_branch(
+                repo_dir,
+                branch=head_ref,
+                runner=self.runner,
+                env=_git_env(repo_url),
+                remote_url=github_authenticated_url(repo_url, repo_token(repo_url)),
+            )
             head_sha = (self._git(repo_dir, "rev-parse", "HEAD").stdout or "").strip() or None
             return CodingResult(
                 ok=True,

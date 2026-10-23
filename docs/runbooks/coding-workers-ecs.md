@@ -49,7 +49,9 @@ The task definition pins that tag; a new image needs a new deploy.
 **Secrets.** Workers read `coding-backend-api-key`, `coding-backend-provider`,
 `coding-backend-model` and `github-token` from Secrets Manager through the
 task execution role. They never receive `memory-api-token` or
-`gateway-token`.
+`gateway-token`. With a [GitHub App](github-app.md), workers swap
+`github-token` for an installation token for their repository, fetched from
+the runtime through the internal load balancer with their job token.
 
 ## Turn it on
 

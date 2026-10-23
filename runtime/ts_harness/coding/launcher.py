@@ -61,6 +61,7 @@ def _log(event: str, **fields: Any) -> None:
 class LocalDockerConfig:
     image: str = "ts-harness-coding-worker:latest"
     memory_api_url: str = "http://127.0.0.1:18792"
+    runtime_url: str = "http://127.0.0.1:18789"
     network: str = ""
     cpus: str = "2"
     memory: str = "4g"
@@ -78,6 +79,7 @@ class LocalDockerConfig:
         return cls(
             image=str(env.get("CODING_WORKER_IMAGE") or cls.image),
             memory_api_url=str(env.get("CODING_WORKER_MEMORY_API_URL") or env.get("MEMORY_API_URL") or cls.memory_api_url),
+            runtime_url=str(env.get("CODING_WORKER_RUNTIME_URL") or cls.runtime_url),
             network=network,
             cpus=str(env.get("CODING_WORKER_CPUS") or cls.cpus),
             memory=str(env.get("CODING_WORKER_MEMORY") or cls.memory),
@@ -115,6 +117,7 @@ class LocalDockerLauncher:
             "--mount", "type=volume,dst=/workspace",
             "-e", f"JOB_ID={job_id}",
             "-e", f"MEMORY_API_URL={cfg.memory_api_url}",
+            "-e", f"HARNESS_RUNTIME_URL={cfg.runtime_url}",
             "-e", "JOB_TOKEN",
         ]
         for name in worker_env_names(self._environ):

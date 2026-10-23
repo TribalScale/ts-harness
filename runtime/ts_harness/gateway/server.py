@@ -2647,18 +2647,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.path == "/webhooks/github":
                 from ts_harness.gateway.github_webhook import (
                     delivery_already_handled,
-                    github_webhook_secret,
+                    delivery_host,
                     handle_github_webhook,
                     remember_delivery,
-                    verify_github_signature,
+                    verify_delivery,
+                    webhook_secrets,
                 )
 
-                secret = github_webhook_secret()
+                host = delivery_host(dict(self.headers.items()))
+                secrets = webhook_secrets(host)
                 delivery_id = str(self.headers.get("X-GitHub-Delivery", "") or "").strip()
-                if secret:
+                event_name = str(self.headers.get("X-GitHub-Event", "") or "")
+                if secrets:
                     signature = self.headers.get("X-Hub-Signature-256", "")
                     raw = getattr(self, "_last_raw_body", b"")
-                    if not verify_github_signature(raw, signature, secret):
+                    if not verify_delivery(raw, signature, secrets):
                         self._send(401, {"error": "invalid github signature"})
                         return
                     if not delivery_id:
@@ -2670,6 +2673,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 result = handle_github_webhook(
                     body,
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
+                    event_name=event_name,
+                    host=host,
                 )
                 runtime.audit.append(
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
@@ -2679,7 +2684,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 )
                 runtime.metrics.inc("github_webhook")
                 if delivery_id:
-                    remember_delivery(delivery_id)
+                    remember_delivery(delivery_id, host=host, event=event_name)
                 self._send(200, result)
                 return
             if self.path.startswith("/channels/"):

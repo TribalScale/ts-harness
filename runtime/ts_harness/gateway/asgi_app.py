@@ -2623,6 +2623,24 @@ async def admin_mcp_settings_get(request: Request) -> Response:
     return _json(get_mcp_settings_admin(runtime))
 
 
+async def internal_coding_job_github_token(request: Request) -> Response:
+    from ts_harness.coding.github_tokens import JobTokenRejected, NoAppForRepository, mint_job_github_token
+    from ts_harness.gateway.auth import extract_bearer_token
+
+    job_id = request.path_params["job_id"]
+    token = extract_bearer_token(dict(request.headers)) or ""
+    try:
+        payload = await asyncio.to_thread(mint_job_github_token, job_id, token)
+    except JobTokenRejected as exc:
+        return _json({"error": str(exc)}, 403)
+    except NoAppForRepository as exc:
+        return _json({"error": str(exc)}, 404)
+    except Exception as exc:  # noqa: BLE001
+        log_event("coding_job_github_token_failed", job_id=job_id, error=str(exc)[:200])
+        return _json({"error": "token minting failed"}, 502)
+    return _json(payload)
+
+
 async def _admin_projects_call(request: Request, call) -> Response:
     from ts_harness.gateway.projects_bff import ProjectAccessDenied
     from ts_harness.memory.client import ProgramNotFound
@@ -2656,6 +2674,18 @@ async def _admin_projects_call(request: Request, call) -> Response:
             message = str(exc)
         return _json({"error": message[:300]}, 400)
     return _json(payload)
+
+
+async def admin_github(request: Request) -> Response:
+    from ts_harness.gateway import github_bff as bff
+
+    return await _admin_projects_call(request, bff.github_overview)
+
+
+async def admin_github_sync(request: Request) -> Response:
+    from ts_harness.gateway import github_bff as bff
+
+    return await _admin_projects_call(request, bff.sync_installations)
 
 
 async def admin_projects(request: Request) -> Response:
@@ -3715,21 +3745,24 @@ async def github_webhook(request: Request) -> Response:
 
     from ts_harness.gateway.github_webhook import (
         delivery_already_handled,
-        github_webhook_secret,
+        delivery_host,
         handle_github_webhook,
         remember_delivery,
-        verify_github_signature,
+        verify_delivery,
+        webhook_secrets,
     )
 
-    secret = github_webhook_secret()
+    host = delivery_host(dict(request.headers))
+    secrets = await asyncio.to_thread(webhook_secrets, host)
     delivery_id = request.headers.get("x-github-delivery", "").strip()
-    if secret:
+    event_name = request.headers.get("x-github-event", "")
+    if secrets:
         signature = request.headers.get("x-hub-signature-256", "")
-        if not verify_github_signature(raw, signature, secret):
+        if not verify_delivery(raw, signature, secrets):
             return _json({"error": "invalid github signature"}, 401)
         if not delivery_id:
             return _json({"error": "missing X-GitHub-Delivery"}, 400)
-        if delivery_already_handled(delivery_id):
+        if await asyncio.to_thread(delivery_already_handled, delivery_id):
             return _json({"status": "duplicate", "delivery_id": delivery_id})
     else:
         # Fall back to gateway token auth when webhook secret is unset (dev/smoke).
@@ -3741,11 +3774,12 @@ async def github_webhook(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        event_name = request.headers.get("x-github-event", "")
-        result = handle_github_webhook(
+        result = await asyncio.to_thread(
+            handle_github_webhook,
             body,
             tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
             event_name=event_name,
+            host=host,
         )
         audit_payload = {
             "event": event_name,
@@ -3763,7 +3797,7 @@ async def github_webhook(request: Request) -> Response:
             payload=audit_payload,
         )
         if delivery_id:
-            remember_delivery(delivery_id)
+            await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
         return _json(result)
     except Exception as exc:
         log_event("github_webhook_error", error=str(exc))
@@ -4077,6 +4111,13 @@ routes = [
         endpoint=admin_mcp_settings_drafts_update,
         methods=["PUT"],
     ),
+    Route(
+        "/internal/coding-jobs/{job_id}/github-token",
+        endpoint=internal_coding_job_github_token,
+        methods=["POST"],
+    ),
+    Route("/admin/github", endpoint=admin_github, methods=["GET"]),
+    Route("/admin/github/sync", endpoint=admin_github_sync, methods=["POST"]),
     Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
     Route(
