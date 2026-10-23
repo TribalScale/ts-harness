@@ -137,6 +137,7 @@ export function LoginPage({ onAuthed }: { onAuthed: () => void }) {
       {showStatic && (
         <form className="login-form" onSubmit={submitStatic}>
           <TextInput
+            type="password"
             label={
               config?.mode === "oidc"
                 ? "Dev fallback: gateway bearer token"

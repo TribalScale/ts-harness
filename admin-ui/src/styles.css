@@ -34,6 +34,7 @@ html,
 body,
 #root {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
@@ -80,9 +81,11 @@ a {
 }
 
 .app-shell {
+  height: 100vh;
   min-height: 100vh;
   display: flex;
   flex-direction: row;
+  overflow: hidden;
   background: var(--bg);
 }
 
@@ -191,7 +194,7 @@ a {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .split {
@@ -246,7 +249,8 @@ a {
 .definition-studio {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .definition-studio-tabs {
@@ -258,13 +262,76 @@ a {
 }
 
 .definition-studio-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.definition-studio-panel > .split,
+.definition-studio-panel > .program-builder-agent,
+.definition-studio-panel > .definition-studio-workflows {
+  flex: 1 1 auto;
   min-height: 0;
 }
 
 .definition-studio-workflows {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.definition-studio-workflows > .split {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* The library stays a fixed rail so the detail column takes the rest of a wide window. */
+@media (min-width: 1024px) {
+  .definition-studio .split-list,
+  .programs-split .split-list {
+    flex: 0 0 400px;
+    max-width: 400px;
+  }
+
+  .definition-studio .split-detail {
+    flex: 1 1 0;
+  }
+
+  .definition-studio .split-detail > .empty {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+  }
+
+  .definition-studio .split-detail .workflow-builder {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .definition-studio .split-detail .workflow-builder-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  .definition-studio .workflow-canvas-shell,
+  .definition-studio .program-canvas-shell {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .definition-studio .workflow-flow {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
 }
 
 .program-breadcrumb {
@@ -312,11 +379,6 @@ a {
   color: var(--muted);
 }
 
-.workflow-library {
-  display: grid;
-  gap: 16px;
-}
-
 .workflow-library-header,
 .workflow-builder-header,
 .row-between {
@@ -345,7 +407,7 @@ a {
 }
 
 .workflow-library-actions {
-  display: flex;
+  display: grid;
   gap: 8px;
   flex: 0 0 auto;
 }
@@ -583,11 +645,6 @@ a {
   background: var(--surface-subtle);
 }
 
-@media (min-width: 1024px) {
-  .split-detail .workflow-builder-grid {
-    min-height: 720px;
-  }
-}
 
 .workflow-node {
   display: grid;
@@ -961,6 +1018,15 @@ a {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.badge-stuck {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.stuck-guidance {
+  display: grid;
+  gap: 6px;
+}
 
 .muted {
   color: var(--muted);
@@ -1113,46 +1179,10 @@ a {
   margin-top: 6px;
 }
 
-.kanban {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
 
-.kanban-col {
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  min-height: 180px;
-  padding: 8px;
-}
 
-.kanban-col h4 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
 
-.kanban-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px;
-  margin-bottom: 8px;
-  box-shadow: var(--shadow-sm);
-}
 
-.kanban-empty {
-  display: grid;
-  place-items: center;
-  min-height: 72px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  color: var(--muted);
-  font-size: 13px;
-}
 
 .program-panel,
 .program-actions,
@@ -1251,14 +1281,65 @@ a {
 
 .chat-thread {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
-  min-height: 240px;
+  min-height: 0;
   margin-bottom: 0;
   overflow: auto;
   color: var(--text);
   background: var(--bg);
+}
+
+.chat-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 4px 2px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chat-working-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chat-working-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: chat-working 1s infinite ease-in-out;
+}
+
+.chat-working-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-working-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-working {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-working-dots span {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 .react-flow {
@@ -1307,12 +1388,21 @@ a {
   align-items: center;
   gap: 8px;
   min-height: 36px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-layout {
+  height: 100%;
+  min-height: 0;
 }
 
 .chat-layout .split-detail {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   padding: 12px 16px 16px;
 }
 
@@ -1323,6 +1413,14 @@ a {
 
 .chat-stage {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-stage > * {
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2119,9 +2217,6 @@ form {
   .split-detail.desktop-only {
     display: none;
   }
-  .kanban {
-    grid-template-columns: 1fr;
-  }
 
   .row-meta {
     align-items: flex-start;
@@ -2157,4 +2252,119 @@ form {
 .portfolio-filters select {
   min-width: 0;
   width: 120px;
+}
+
+.phase-activity {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.phase-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.phase-activity-head h3 {
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.phase-activity h4 {
+  margin: 6px 0 0;
+}
+
+.workflow-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  padding: 10px 12px;
+}
+
+.workflow-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.workflow-updated {
+  margin-left: auto;
+}
+
+.workflow-steps {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-left: 22px;
+}
+
+.workflow-steps li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.workflow-step-label {
+  min-width: 120px;
+  font-weight: 600;
+}
+
+.workflow-step-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.workflow-step-status.step-running {
+  color: var(--accent);
+}
+
+.workflow-step-status.step-blocked {
+  color: var(--warn);
+}
+
+.workflow-step-status.step-succeeded {
+  color: var(--ok);
+}
+
+.workflow-step-status.step-failed {
+  color: var(--bad);
+}
+
+.workflow-step-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.workflow-step-error {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
 }

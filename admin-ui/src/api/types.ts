@@ -1,4 +1,40 @@
-export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate";
+export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate" | "stuck_step";
+
+export type StuckDecision = "revise" | "accept" | "stop";
+
+export interface WorkflowStep {
+  task_id: string;
+  step_name: string;
+  label: string;
+  agent_id: string;
+  status: string;
+  approval_pending: boolean;
+  error: string;
+  updated_at: string;
+}
+
+export interface WorkflowProgress {
+  workflow_id: string;
+  workflow_type: string;
+  label: string;
+  workflow_status: string;
+  pr_url: string;
+  current_step: string;
+  state: string;
+  kind: "running" | "waiting" | "stuck" | "blocked" | "done" | "failed";
+  revisions: number;
+  stuck_task_id: string;
+  updated_at: string;
+  steps: WorkflowStep[];
+}
+
+export interface PhaseActivity {
+  phase: string;
+  state: string;
+  workflow_id: string;
+  workflow: WorkflowProgress | null;
+  children: WorkflowProgress[];
+}
 
 export interface InboxItem {
   type: InboxType;
@@ -240,6 +276,7 @@ export interface SessionSummary {
   session_id: string;
   agent_id?: string;
   source?: string;
+  binding_key?: string;
   started_at?: string;
 }
 

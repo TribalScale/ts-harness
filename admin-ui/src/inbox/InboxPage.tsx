@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiFetch } from "../api/client";
-import type { InboxItem, InboxType, SkillDraftDetail } from "../api/types";
+import type { InboxItem, InboxType, SkillDraftDetail, StuckDecision } from "../api/types";
 import { canManageSkills } from "../auth/session";
 import { SkillDraftFiles, SkillDraftProvenance, SkillDraftRevisionDiffs } from "./SkillDraftFiles";
 import { Button } from "../components/Button";
@@ -14,17 +14,33 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "skill_draft", label: "Skills" },
   { key: "tool_approval", label: "Approvals" },
   { key: "workflow_gate", label: "Gates" },
+  { key: "stuck_step", label: "Stuck" },
 ];
+
+const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "revise"];
+const STUCK_DECISION_LABEL: Record<StuckDecision, string> = {
+  revise: "Revise again",
+  accept: "Accept as is",
+  stop: "Stop work order",
+};
+const STUCK_DECISION_VARIANT = { revise: "primary", accept: "secondary", stop: "danger" } as const;
+
+function stuckDecisions(meta: Record<string, unknown> | null | undefined): StuckDecision[] {
+  const raw = Array.isArray(meta?.decisions) ? (meta?.decisions as unknown[]) : [];
+  return STUCK_DECISION_ORDER.filter((decision) => raw.includes(decision));
+}
 
 function badgeClass(type: InboxType): string {
   if (type === "skill_draft") return "badge badge-skill";
   if (type === "tool_approval") return "badge badge-tool";
+  if (type === "stuck_step") return "badge badge-stuck";
   return "badge badge-gate";
 }
 
 function typeLabel(type: InboxType): string {
   if (type === "skill_draft") return "Skill draft";
   if (type === "tool_approval") return "Tool approval";
+  if (type === "stuck_step") return "Stuck step";
   return "Workflow gate";
 }
 
@@ -105,6 +121,7 @@ export function InboxPage({
   const [listLoading, setListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [guidance, setGuidance] = useState("");
   const skillsOk = canManageSkills();
   const desktop = useMediaQuery("(min-width: 1024px)");
   const autoSelected = useRef(false);
@@ -137,6 +154,7 @@ export function InboxPage({
       skill_draft: visibleItems.filter((item) => item.type === "skill_draft").length,
       tool_approval: visibleItems.filter((item) => item.type === "tool_approval").length,
       workflow_gate: visibleItems.filter((item) => item.type === "workflow_gate").length,
+      stuck_step: visibleItems.filter((item) => item.type === "stuck_step").length,
     }),
     [visibleItems]
   );
@@ -156,7 +174,7 @@ export function InboxPage({
   async function loadDetail(item = selectedItem) {
     if (!item) return;
     setDetailError(null);
-    setDetailLoading(item.type !== "workflow_gate");
+    setDetailLoading(item.type === "skill_draft" || item.type === "tool_approval");
     try {
       if (item.type === "skill_draft") {
         const data = await apiFetch<Record<string, unknown>>(
@@ -178,6 +196,10 @@ export function InboxPage({
       setDetailLoading(false);
     }
   }
+
+  useEffect(() => {
+    setGuidance("");
+  }, [selectedType, selectedId]);
 
   useEffect(() => {
     if (!selectedType || !selectedId) {
@@ -275,10 +297,100 @@ export function InboxPage({
     }
   }
 
+  async function actStuck(action: StuckDecision) {
+    const meta = detail || selectedItem?.meta || {};
+    const workflowId = String(meta.workflow_id || "");
+    const taskId = String(meta.task_id || selectedId || "");
+    if (!workflowId || !taskId) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiFetch("/admin/workflows/decide", {
+        method: "POST",
+        body: JSON.stringify({
+          workflow_id: workflowId,
+          task_id: taskId,
+          action,
+          ...(action === "revise" ? { guidance: guidance.trim() } : {}),
+        }),
+      });
+      await load();
+      setDetail(null);
+    } catch (e: any) {
+      if (e instanceof ApiError && e.status === 409) {
+        setNotice({ title: "Already decided", detail: String(e.message || e) });
+        await load();
+        setDetail(null);
+      } else {
+        setDetailError(String(e.message || e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderStuckSections(meta: Record<string, unknown>) {
+    const workOrder = String(meta.work_order || "This work order");
+    const step = String(meta.step_name || "a step");
+    const prUrl = typeof meta.pr_url === "string" ? meta.pr_url : "";
+    const programId = typeof meta.program_id === "string" ? meta.program_id : "";
+    const feedback = String(meta.feedback || meta.error || "No feedback recorded.");
+    const decisions = stuckDecisions(meta);
+    return (
+      <div className="detail-sections">
+        <section className="detail-card">
+          <h3>Summary</h3>
+          <p>
+            {workOrder} stopped at <span className="mono">{step}</span> after using all automatic
+            revisions. Revise again gives OpenCode a fresh set of revisions, accept continues the
+            delivery as it is, and stop ends the work order.
+          </p>
+        </section>
+        {prUrl && (
+          <section className="detail-card">
+            <h3>Pull request</h3>
+            <p>
+              <a href={prUrl} target="_blank" rel="noreferrer">
+                {prUrl}
+              </a>
+            </p>
+          </section>
+        )}
+        <section className="detail-card">
+          <h3>Why it is stuck</h3>
+          <p>{feedback}</p>
+        </section>
+        {decisions.includes("revise") && (
+          <section className="detail-card">
+            <label className="stuck-guidance">
+              <h3>Guidance for OpenCode (optional)</h3>
+              <textarea
+                rows={4}
+                value={guidance}
+                onChange={(event) => setGuidance(event.target.value)}
+                placeholder="What should the next attempt do differently?"
+              />
+            </label>
+          </section>
+        )}
+        {programId && (
+          <p>
+            <a href={`#/programs/${programId}`}>Open program</a>
+          </p>
+        )}
+        <details className="detail-raw">
+          <summary>Raw metadata</summary>
+          <pre className="mono">{JSON.stringify(meta, null, 2)}</pre>
+        </details>
+      </div>
+    );
+  }
+
   const detailTitle = selectedType ? typeLabel(selectedType) : "Inbox item";
   const detailStatus = statusFromMeta(detail) || statusFromMeta(selectedItem?.meta);
 
   function renderDetailSections(type: InboxType) {
+    if (type === "stuck_step") return renderStuckSections(detail || selectedItem?.meta || {});
     const fallbackDetail = selectedItem ? itemRecord(selectedItem) : null;
     const raw = detail || selectedItem?.meta || fallbackDetail || {};
     const timestampDetail = detail || selectedItem?.meta || fallbackDetail;
@@ -340,7 +452,7 @@ export function InboxPage({
 
   function renderActions(type: InboxType) {
     if (type === "skill_draft" && !skillsOk) return null;
-    if (!detail && type !== "workflow_gate") return null;
+    if (!detail && type !== "workflow_gate" && type !== "stuck_step") return null;
     return (
       <footer className="detail-actions" aria-label="Item actions">
         {type === "skill_draft" && (
@@ -363,6 +475,17 @@ export function InboxPage({
             </Button>
           </>
         )}
+        {type === "stuck_step" &&
+          stuckDecisions(detail || selectedItem?.meta).map((decision) => (
+            <Button
+              key={decision}
+              variant={STUCK_DECISION_VARIANT[decision]}
+              busy={busy}
+              onClick={() => void actStuck(decision)}
+            >
+              {STUCK_DECISION_LABEL[decision]}
+            </Button>
+          ))}
         {type === "workflow_gate" && (
           <>
             <Button variant="danger" busy={busy} onClick={() => void actGate(false)}>

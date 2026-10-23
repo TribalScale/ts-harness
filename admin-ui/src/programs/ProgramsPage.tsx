@@ -8,7 +8,6 @@ import type {
   ProgramStatus,
   ProgramSummary,
   ProgramTopology,
-  WorkflowTask,
 } from "../api/types";
 import { hasPermission } from "../auth/session";
 import { Button } from "../components/Button";
@@ -18,9 +17,9 @@ import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { Tabs, tabButtonId, tabPanelId } from "../components/Tabs";
 import { SplitView } from "../layout/SplitView";
 import { PhaseStrip } from "./PhaseStrip";
-import { TaskKanban } from "./TaskKanban";
+import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
 
-type ProgramTab = "overview" | "tasks" | "artifacts";
+type ProgramTab = "overview" | "artifacts";
 type ProgramAction = "advance" | "cancel";
 
 const TABS_ID = "program-detail";
@@ -112,7 +111,6 @@ export function ProgramsPage({
 }) {
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [status, setStatus] = useState<ProgramStatus | null>(null);
-  const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
   const [pendingAction, setPendingAction] = useState<ProgramAction | null>(null);
@@ -125,6 +123,13 @@ export function ProgramsPage({
   const [evidence, setEvidence] = useState<ProgramEvidenceExport | null>(null);
   const [exporting, setExporting] = useState(false);
   const canExportEvidence = hasPermission("edit_config");
+  const programClosed = ["succeeded", "cancelled", "failed"].includes(String(status?.status || "").toLowerCase());
+  const activityPhase = selectedPhase || status?.current_phase;
+  const phaseActivity = usePhaseActivity(
+    programId,
+    status ? activityPhase : undefined,
+    tab === "overview" && !programClosed
+  );
 
   async function loadList() {
     setListLoading(true);
@@ -165,7 +170,6 @@ export function ProgramsPage({
   useEffect(() => {
     if (!programId) {
       setStatus(null);
-      setTasks([]);
       setError(null);
       return;
     }
@@ -173,20 +177,6 @@ export function ProgramsPage({
     setEvidence(null);
     void refreshStatus(programId);
   }, [programId, refreshStatus]);
-
-  useEffect(() => {
-    if (!status) return;
-    const phase = status.current_phase;
-    const phaseInfo = (status.phases || {})[phase || ""] || {};
-    const wfId = phaseInfo.workflow_id || status.active_workflow_id;
-    if (!wfId) {
-      setTasks([]);
-      return;
-    }
-    apiFetch<{ tasks?: WorkflowTask[] }>(`/admin/workflows/${encodeURIComponent(wfId)}`)
-      .then((data) => setTasks(data.tasks || (data as any).workflow_tasks || []))
-      .catch(() => setTasks([]));
-  }, [status]);
 
   async function mutateProgram(action: ProgramAction) {
     if (!programId) return;
@@ -489,7 +479,6 @@ export function ProgramsPage({
           onChange={(id) => setTab(id as ProgramTab)}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "tasks", label: "Tasks", count: tasks.length },
             { id: "artifacts", label: "Artifacts", count: rows.length },
           ]}
         />
@@ -504,7 +493,17 @@ export function ProgramsPage({
                 currentPhase={status.current_phase}
                 selectedPhase={selectedPhase}
                 onSelect={setSelectedPhase}
-              />
+              >
+                {activityPhase && (
+                  <PhaseActivityPanel
+                    phase={activityPhase}
+                    activity={phaseActivity.activity}
+                    error={phaseActivity.error}
+                    programClosed={programClosed}
+                    onChanged={() => void phaseActivity.reload()}
+                  />
+                )}
+              </PhaseStrip>
               {pinnedWorkflowLinks.length > 0 && (
                 <div className="key-links" aria-label="Pinned workflow definitions">
                   {pinnedWorkflowLinks.map((item) => (
@@ -677,8 +676,6 @@ export function ProgramsPage({
               )}
             </section>
           )}
-        {tab === "tasks" &&
-          tabPanel(<TaskKanban tasks={tasks} programStatus={status?.status} />)}
         {tab === "artifacts" &&
           tabPanel(
             <dl className="artifact-list">
@@ -720,6 +717,7 @@ export function ProgramsPage({
 
   return (
     <SplitView
+      className="programs-split"
       list={list}
       detail={detail}
       detailOpen={Boolean(programId)}

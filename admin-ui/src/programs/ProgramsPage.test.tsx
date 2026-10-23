@@ -119,18 +119,37 @@ function programStatus(status = "running") {
   };
 }
 
-function workflowTasks() {
+function activityUrl(phase: string) {
+  return `/admin/programs/${encodeURIComponent(programId)}/phases/${phase}/activity`;
+}
+
+function stepOf(task_id: string, label: string, status: string, approval_pending = false) {
+  return { task_id, step_name: label.toLowerCase().replace(/ /g, "_"), label, agent_id: "dev-agent", status, approval_pending, error: "", updated_at: "" };
+}
+
+function phaseActivity() {
   return {
-    tasks: [
-      { id: "task-1", step_name: "Implement board", status: "running" },
-      {
-        id: "task-2",
-        step_name: "Review implementation",
-        status: "blocked",
-        approval_required: true,
-        approval_status: "pending",
-      },
-    ],
+    phase: "implement",
+    state: "running",
+    workflow_id: "workflow-implement",
+    workflow: {
+      workflow_id: "workflow-implement",
+      workflow_type: "implement_delivery",
+      label: "implement delivery",
+      workflow_status: "running",
+      pr_url: "",
+      current_step: "Review implementation",
+      state: "Waiting for approval: Review implementation",
+      kind: "waiting",
+      revisions: 0,
+      stuck_task_id: "",
+      updated_at: "",
+      steps: [
+        stepOf("task-1", "Implement board", "running"),
+        stepOf("task-2", "Review implementation", "blocked", true),
+      ],
+    },
+    children: [],
   };
 }
 
@@ -139,13 +158,14 @@ beforeEach(() => {
   installDialogMethods();
 });
 
-it("renders compact distinguishable program rows and overview/tasks/artifacts tabs", async () => {
+it("renders compact distinguishable program rows, the current stage's activity and the tabs", async () => {
+  setPermissions(["view", "approve_gate"]);
   mockFetch((url) => {
     if (url === LIST_URL) return jsonResponse(programList());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -155,11 +175,12 @@ it("renders compact distinguishable program rows and overview/tasks/artifacts ta
   expect(screen.getAllByText(/implement/i).length).toBeGreaterThan(0);
   expect(screen.getAllByText(/57249723/)).toHaveLength(2);
   expect(screen.getByRole("tab", { name: /overview/i })).toBeInTheDocument();
-  expect(await screen.findByRole("tab", { name: /tasks \(2\)/i })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: /artifacts \(2\)/i })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /tasks/i })).not.toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole("tab", { name: /tasks/i }));
-  expect(await screen.findByText("Implement board")).toBeInTheDocument();
+  const activity = await screen.findByRole("region", { name: "implement activity" });
+  expect(await within(activity).findByText("Implement board")).toBeInTheDocument();
+  expect(within(activity).getByRole("button", { name: "Approve" })).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("tab", { name: /artifacts/i }));
   expect(screen.getByRole("link", { name: /pull request/i })).toHaveAttribute(
@@ -177,7 +198,7 @@ it("shows project memory controls on overview", async () => {
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -199,7 +220,7 @@ it("saves project, exclude, link, and unlink through admin APIs", async () => {
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     if (url === `/admin/programs/${encodeURIComponent(programId)}` && init?.method === "PATCH") {
       return jsonResponse({ ok: true });
     }
@@ -263,7 +284,7 @@ it("opens a confirmation dialog before canceling and refreshes selected state af
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/cancel`) {
       return jsonResponse({ ok: true });
     }
@@ -295,34 +316,43 @@ it("opens a confirmation dialog before canceling and refreshes selected state af
   expect(screen.getAllByText("checkers").length).toBeGreaterThan(0);
 });
 
-it("keeps Tasks on the current phase workflow after inspecting another phase", async () => {
-  const workflowUrls: string[] = [];
+it("shows the activity of whichever stage is clicked", async () => {
+  const requested: string[] = [];
   mockFetch((url) => {
     if (url === LIST_URL) return jsonResponse(programList());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") {
-      workflowUrls.push(url);
-      return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) {
+      requested.push("implement");
+      return jsonResponse(phaseActivity());
     }
-    if (url === "/admin/workflows/workflow-prd") {
-      workflowUrls.push(url);
-      return jsonResponse({ tasks: [{ id: "prd-task", step_name: "Review PRD", status: "succeeded" }] });
+    if (url === activityUrl("prd")) {
+      requested.push("prd");
+      return jsonResponse({
+        ...phaseActivity(),
+        phase: "prd",
+        workflow: {
+          ...phaseActivity().workflow,
+          state: "Done",
+          kind: "done",
+          steps: [stepOf("prd-task", "Review PRD", "succeeded")],
+        },
+      });
     }
     throw new Error(`Unexpected URL ${url}`);
   });
 
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
-  expect(await screen.findByRole("tab", { name: /tasks \(2\)/i })).toBeInTheDocument();
+  expect(await screen.findByText("Implement board")).toBeInTheDocument();
 
   const phases = screen.getByRole("list", { name: /program phases/i });
   await userEvent.click(within(phases).getByRole("button", { name: /^1\s*prd/i }));
-  await userEvent.click(screen.getByRole("tab", { name: /tasks/i }));
 
-  expect(await screen.findByText("Implement board")).toBeInTheDocument();
-  expect(screen.queryByText("Review PRD")).not.toBeInTheDocument();
-  expect(workflowUrls).not.toContain("/admin/workflows/workflow-prd");
+  const activity = await screen.findByRole("region", { name: "prd activity" });
+  expect(await within(activity).findByText("Review PRD")).toBeInTheDocument();
+  expect(screen.queryByText("Implement board")).not.toBeInTheDocument();
+  expect(requested).toEqual(["implement", "prd"]);
 });
 
 it("keeps the program selected and surfaces the error when cancel fails", async () => {
@@ -332,7 +362,7 @@ it("keeps the program selected and surfaces the error when cancel fails", async 
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/cancel`) {
       return jsonResponse({ error: "program already cancelled" }, 409);
     }
@@ -383,7 +413,7 @@ it("refetches program status when retrying after a status error", async () => {
         ? jsonResponse({ error: "status unavailable" }, 400)
         : jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -405,7 +435,7 @@ it("keeps program status and actions visible above every tab", async () => {
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -417,7 +447,7 @@ it("keeps program status and actions visible above every tab", async () => {
   expect(header.querySelector(".status-pill")).toHaveTextContent(/running/i);
   expect(within(header).getByRole("group", { name: "Program actions" })).toBeInTheDocument();
 
-  for (const tabName of [/tasks/i, /artifacts/i, /overview/i]) {
+  for (const tabName of [/artifacts/i, /overview/i]) {
     await userEvent.click(screen.getByRole("tab", { name: tabName }));
     const actions = screen.getByRole("group", { name: "Program actions" });
     expect(within(actions).getByRole("button", { name: "Advance" })).toBeInTheDocument();
@@ -434,7 +464,7 @@ it("connects each program tab to its rendered panel", async () => {
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -457,7 +487,7 @@ it("shows pinned program/workflow definition links from the status payload", asy
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -519,7 +549,7 @@ it("opens a confirmation dialog before advancing and refreshes selected state af
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/advance`) {
       return jsonResponse({ ok: true });
     }
@@ -618,7 +648,7 @@ it("shows cancel cleanup failures on the program detail", async () => {
         },
       });
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 
@@ -637,7 +667,7 @@ function mockProgramDetail(extra?: (url: string) => Response | undefined) {
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
-    if (url === "/admin/workflows/workflow-implement") return jsonResponse(workflowTasks());
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
   });
 }
