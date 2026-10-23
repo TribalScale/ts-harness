@@ -5207,7 +5207,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     port = int(os.environ.get("MEMORY_API_PORT", "18792"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), MemoryHandler)
+    bind = os.environ.get("MEMORY_API_BIND", "").strip() or "127.0.0.1"
+    server = ThreadingHTTPServer((bind, port), MemoryHandler)
     server.daemon_threads = True
     print(f"memory-api listening on 127.0.0.1:{port}", flush=True)
     try:

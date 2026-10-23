@@ -63,6 +63,20 @@ ssh_allowed_cidrs = ["203.0.113.0/24"]
 # coding_max_running = 3
 
 # ──────────────────────────────────────────────────────────────
+# Scale-out (deployment_profile = "scale_out" requires network_mode = "vpc")
+# ──────────────────────────────────────────────────────────────
+
+# deployment_profile                  = "single_host"
+# network_mode                        = "default"
+# vpc_cidr                            = "10.40.0.0/16"
+# coding_worker_image_tag             = "latest"
+# coding_worker_cpu                   = 2048
+# coding_worker_memory                = 4096
+# coding_worker_ephemeral_storage_gib = 50
+# memory_api_certificate_arn          = ""
+# egress_allowed_domains              = []
+
+# ──────────────────────────────────────────────────────────────
 # Redis / ElastiCache (optional, requires vpc_id and redis_subnet_ids)
 # ──────────────────────────────────────────────────────────────
 

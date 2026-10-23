@@ -118,6 +118,14 @@ def validate_install_config(
         raise InstallContractError(
             "deployment_profile=scale_out is only supported on aws; use single_host on gcp"
         )
+    scale_out = config.get("scale_out") or {}
+    if provider == "gcp" and scale_out:
+        raise InstallContractError("scale_out settings are only supported on aws")
+    if (
+        config.get("deployment_profile", "single_host") == "scale_out"
+        and scale_out.get("network_mode", "vpc") != "vpc"
+    ):
+        raise InstallContractError("deployment_profile=scale_out requires scale_out.network_mode=vpc")
 
     managed_db = config.get("managed_db")
     if not isinstance(managed_db, Mapping) or not managed_db:

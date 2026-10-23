@@ -207,6 +207,7 @@ fi
     echo "export GATEWAY_TOKEN=$(printf '%q' "${GATEWAY_TOKEN:-}")"
     echo "export MEMORY_API_TOKEN=$(printf '%q' "${MEMORY_API_TOKEN:-}")"
     echo "export SANDBOX_WORKER_TOKEN=$(printf '%q' "${SANDBOX_WORKER_TOKEN:-}")"
+    echo "export CODING_JOB_SECRET=$(printf '%q' "${CODING_JOB_SECRET:-}")"
     echo "export WORKFLOW_RUNNER_ENABLED=$(printf '%q' "${WORKFLOW_RUNNER_ENABLED:-false}")"
     echo "export WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS=$(printf '%q' "${WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS:-10}")"
     echo "export WORKFLOW_RUNNER_BATCH_SIZE=$(printf '%q' "${WORKFLOW_RUNNER_BATCH_SIZE:-5}")"

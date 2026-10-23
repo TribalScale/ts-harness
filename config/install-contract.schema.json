@@ -35,6 +35,21 @@
       "default": "single_host",
       "description": "single_host keeps one VM for small teams; scale_out adds Fargate coding workers and replicated services (AWS only)."
     },
+    "scale_out": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AWS network and coding worker settings. network_mode defaults to vpc when deployment_profile is scale_out.",
+      "properties": {
+        "network_mode": { "type": "string", "enum": ["default", "vpc"] },
+        "vpc_cidr": { "type": "string", "minLength": 9 },
+        "coding_worker_image_tag": { "type": "string", "minLength": 1 },
+        "coding_worker_cpu": { "type": "integer", "enum": [1024, 2048, 4096, 8192] },
+        "coding_worker_memory": { "type": "integer", "minimum": 2048 },
+        "coding_worker_ephemeral_storage_gib": { "type": "integer", "minimum": 21, "maximum": 200 },
+        "memory_api_certificate_arn": { "type": "string" },
+        "egress_allowed_domains": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "project_name": {
       "type": "string",
       "minLength": 1,

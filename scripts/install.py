@@ -167,6 +167,25 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "agent_timezone": runtime.get("agent_timezone", "UTC"),
             "deployment_profile": config.get("deployment_profile", "single_host"),
         }
+        scale_out = config.get("scale_out") or {}
+        profile = tfvars["deployment_profile"]
+        tfvars["network_mode"] = scale_out.get(
+            "network_mode", "vpc" if profile == "scale_out" else "default"
+        )
+        for key in (
+            "vpc_cidr",
+            "coding_worker_image_tag",
+            "coding_worker_cpu",
+            "coding_worker_memory",
+            "coding_worker_ephemeral_storage_gib",
+            "memory_api_certificate_arn",
+            "egress_allowed_domains",
+        ):
+            if key in scale_out:
+                tfvars[key] = scale_out[key]
+        image_tag = os.environ.get("TS_HARNESS_CODING_WORKER_IMAGE_TAG", "").strip()
+        if image_tag:
+            tfvars["coding_worker_image_tag"] = image_tag
         if db.get("backup_window"):
             tfvars["rds_backup_window"] = db["backup_window"]
         if vm.get("tailscale_authkey_secret_ref"):

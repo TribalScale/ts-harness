@@ -115,6 +115,8 @@ resource "aws_instance" "harness" {
     version = "$Latest"
   }
 
+  subnet_id = local.host_subnet_id
+
   tags = {
     Name                = var.project_name
     AgentRuntimeVersion = var.agent_runtime_version

@@ -135,3 +135,27 @@ output "notification_channel_id" {
   description = "SNS topic ARN for operational alerts"
   value       = aws_sns_topic.alerts.arn
 }
+
+# ---------------------------------------------------------------------------
+# Scale-out (deployment_profile = scale_out)
+# ---------------------------------------------------------------------------
+
+output "coding_worker_repository_url" {
+  description = "ECR repository for the coding-worker image (scale_out)"
+  value       = try(aws_ecr_repository.coding_worker[0].repository_url, "")
+}
+
+output "coding_ecs_cluster" {
+  description = "ECS cluster that runs coding workers (scale_out)"
+  value       = try(aws_ecs_cluster.coding[0].name, "")
+}
+
+output "coding_worker_task_family" {
+  description = "Task definition family for coding workers (scale_out)"
+  value       = local.ecs_enabled ? local.coding_worker_family : ""
+}
+
+output "memory_api_internal_url" {
+  description = "Memory API URL that coding workers use through the internal load balancer (scale_out)"
+  value       = local.memory_api_worker_url
+}

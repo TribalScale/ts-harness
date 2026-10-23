@@ -110,3 +110,58 @@ resource "aws_iam_role_policy" "bedrock_invoke_model" {
   role   = aws_iam_role.harness.id
   policy = data.aws_iam_policy_document.bedrock_invoke_model[0].json
 }
+
+# Coding launcher (scale_out): start, inspect and stop Fargate coding workers,
+# and restart the egress proxy after a registry allowlist change.
+data "aws_iam_policy_document" "coding_launcher" {
+  count = local.ecs_enabled ? 1 : 0
+
+  statement {
+    sid       = "RunCodingWorkerTasks"
+    actions   = ["ecs:RunTask"]
+    resources = ["arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.runtime_config.account_id}:task-definition/${local.coding_worker_family}:*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [aws_ecs_cluster.coding[0].arn]
+    }
+  }
+
+  statement {
+    sid       = "ManageCodingWorkerTasks"
+    actions   = ["ecs:StopTask", "ecs:DescribeTasks", "ecs:TagResource"]
+    resources = ["arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.runtime_config.account_id}:task/${aws_ecs_cluster.coding[0].name}/*"]
+  }
+
+  statement {
+    sid       = "PassCodingWorkerRoles"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.coding_worker_execution[0].arn, aws_iam_role.coding_worker_task[0].arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "RestartEgressProxy"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = [aws_ecs_service.egress_proxy[0].id]
+  }
+
+  statement {
+    sid       = "EditEgressAllowlist"
+    actions   = ["ssm:GetParameter", "ssm:PutParameter"]
+    resources = [aws_ssm_parameter.egress_extra_domains[0].arn]
+  }
+}
+
+resource "aws_iam_role_policy" "coding_launcher" {
+  count  = local.ecs_enabled ? 1 : 0
+  name   = "${var.project_name}-coding-launcher"
+  role   = aws_iam_role.harness.id
+  policy = data.aws_iam_policy_document.coding_launcher[0].json
+}

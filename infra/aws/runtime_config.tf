@@ -38,6 +38,13 @@ locals {
     OIDC_GROUPS_SOURCE                    = var.oidc_groups_source
     IDENTITY_DIRECTORY                    = var.identity_directory
     DEPLOYMENT_PROFILE                    = var.deployment_profile
+    CODING_ECS_CLUSTER                    = try(aws_ecs_cluster.coding[0].name, "")
+    CODING_ECS_TASK_DEFINITION            = local.ecs_enabled ? local.coding_worker_family : ""
+    CODING_ECS_CONTAINER                  = local.coding_worker_container
+    CODING_ECS_SUBNETS                    = join(",", local.ecs_enabled ? local.private_subnet_ids : [])
+    CODING_ECS_SECURITY_GROUPS            = join(",", aws_security_group.coding_worker[*].id)
+    CODING_EGRESS_PROXY_SERVICE           = try(aws_ecs_service.egress_proxy[0].name, "")
+    CODING_EGRESS_DOMAINS_PARAMETER       = try(aws_ssm_parameter.egress_extra_domains[0].name, "")
   }
 }
 

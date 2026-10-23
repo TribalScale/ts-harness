@@ -46,7 +46,7 @@ source_refreshed_secrets() {
     fi
     # shellcheck disable=SC1090
     source "$SECRETS_ENV"
-    export GATEWAY_TOKEN MEMORY_API_TOKEN SANDBOX_WORKER_TOKEN
+    export GATEWAY_TOKEN MEMORY_API_TOKEN SANDBOX_WORKER_TOKEN CODING_JOB_SECRET
     export SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_SIGNING_SECRET
     export OPENAI_API_KEY VOYAGE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY ANTHROPIC_API_KEY
     export TS_HARNESS_DB_PASSWORD
@@ -85,6 +85,7 @@ refresh_compose_env() {
             echo "export GATEWAY_TOKEN=$(printf '%q' "${GATEWAY_TOKEN:-}")"
             echo "export MEMORY_API_TOKEN=$(printf '%q' "${MEMORY_API_TOKEN:-}")"
             echo "export SANDBOX_WORKER_TOKEN=$(printf '%q' "${SANDBOX_WORKER_TOKEN:-}")"
+            echo "export CODING_JOB_SECRET=$(printf '%q' "${CODING_JOB_SECRET:-}")"
             echo "export AGENT_RUNTIME_URL=$(printf '%q' "${AGENT_RUNTIME_URL:-http://127.0.0.1:18789}")"
             echo "COMPOSE_FILES_SERIALIZED=$(printf '%q' "$(printf '%s\n' "${COMPOSE_FILES[@]}")")"
         } > "$COMPOSE_ENV"

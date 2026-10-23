@@ -54,7 +54,42 @@ Example: a small team that wants five parallel coding jobs on one host keeps
 
 Code reads these with `ts_harness.config.deployment_profile.resolve_setting(name)`.
 
+## What scale_out builds on AWS
+
+`scale_out` needs `network_mode = vpc` (the installer sets it unless the
+`scale_out:` block says otherwise; `default` is rejected). Terraform then adds:
+
+- A dedicated VPC with three public and three private subnets and one NAT
+  gateway. The host moves to a public subnet and RDS to the private subnets.
+- ECR repository `<project>-coding-worker` (scan on push, keeps 30 images).
+- ECS cluster `<project>-coding` with Container Insights, and task family
+  `<project>-coding-worker` (2 vCPU, 4 GB, 50 GiB ephemeral storage, logs in
+  `/<project>/coding-jobs`).
+- Worker networking with no public IP and no ingress. Egress reaches only the
+  VPC endpoints (ECR, Secrets Manager, Logs, SSM, S3), the Squid egress proxy
+  at `egress-proxy.<project>.internal:3128`, and the internal memory API load
+  balancer.
+- An internal load balancer in front of the host's memory API that forwards
+  `/health` and `/coding-jobs/*` only. It serves HTTPS when
+  `memory_api_certificate_arn` is set. `docker-compose.scale-out.yml`
+  publishes port 18792 on the host, and the host security group admits it
+  from the load balancer alone.
+- Secret `coding-job-secret`, which signs worker job tokens. Rotating it
+  invalidates tokens of running jobs; those jobs are swept as lost and retried.
+
+The egress allowlist is GitHub, npm, PyPI, the LLM provider APIs and
+`models.dev`/`opencode.ai`, plus `egress_allowed_domains`. Project registries
+add domains at runtime through the `egress-extra-domains` SSM parameter.
+
+Build the worker image with the **Build coding worker (AWS)** workflow, then
+run **Deploy (AWS)** with `coding_worker_image_tag` set to the commit SHA it
+printed.
+
 ## Switching from single_host to scale_out
+
+Moving an existing install into the dedicated VPC replaces the host, its
+security group and the RDS subnet group. Snapshot RDS and the data volume
+first and plan a maintenance window.
 
 1. Set `deployment_profile: scale_out` in the install config.
 2. Run the installer plan and review the new VPC, ECR and ECS resources.

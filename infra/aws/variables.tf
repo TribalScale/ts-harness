@@ -443,3 +443,73 @@ variable "deployment_profile" {
     error_message = "deployment_profile must be single_host or scale_out."
   }
 }
+
+variable "network_mode" {
+  description = "default keeps the host and RDS in the default VPC; vpc builds a dedicated VPC with private subnets and one NAT gateway. scale_out requires vpc."
+  type        = string
+  default     = "default"
+
+  validation {
+    condition     = contains(["default", "vpc"], var.network_mode)
+    error_message = "network_mode must be default or vpc."
+  }
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the dedicated VPC when network_mode = vpc."
+  type        = string
+  default     = "10.40.0.0/16"
+}
+
+variable "coding_worker_image_tag" {
+  description = "Tag of the coding-worker image in ECR (scale_out). CI publishes the git SHA."
+  type        = string
+  default     = "latest"
+}
+
+variable "coding_worker_cpu" {
+  description = "Fargate CPU units per coding worker task."
+  type        = number
+  default     = 2048
+}
+
+variable "coding_worker_memory" {
+  description = "Fargate memory (MiB) per coding worker task."
+  type        = number
+  default     = 4096
+}
+
+variable "coding_worker_ephemeral_storage_gib" {
+  description = "Ephemeral storage (GiB) per coding worker task, used for the clone and dependency installs."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.coding_worker_ephemeral_storage_gib >= 21 && var.coding_worker_ephemeral_storage_gib <= 200
+    error_message = "coding_worker_ephemeral_storage_gib must be between 21 and 200."
+  }
+}
+
+variable "coding_worker_log_retention_days" {
+  description = "CloudWatch retention for coding worker logs."
+  type        = number
+  default     = 30
+}
+
+variable "egress_proxy_image" {
+  description = "Squid image for the coding worker egress proxy."
+  type        = string
+  default     = "public.ecr.aws/ubuntu/squid:6.6-24.04_edge"
+}
+
+variable "egress_allowed_domains" {
+  description = "Domains coding workers may reach through the egress proxy, in addition to the built-in GitHub, npm, PyPI and LLM provider defaults. Prefix with a dot to include subdomains."
+  type        = list(string)
+  default     = []
+}
+
+variable "memory_api_certificate_arn" {
+  description = "ACM certificate for the internal memory API load balancer. Empty serves plain HTTP inside the VPC."
+  type        = string
+  default     = ""
+}
