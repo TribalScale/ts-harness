@@ -45,6 +45,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 39 | `038_workflow_locks.sql` | Per-workflow write lock with expiry for runners and webhooks |
 | 40 | `039_shared_runtime_state.sql` | Tool approvals, admin rate-limit windows and service leases shared by runtime replicas |
 | 41 | `040_llm_usage_budgets.sql` | Metered LLM usage with a monthly rollup, team budget overrides and model rate buckets |
+| 42 | `041_team_budgets.sql` | Team budget settings, effective budget and spend functions, budget alerts, and claims that hold tasks of teams over budget |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

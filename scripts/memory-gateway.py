@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
@@ -4657,6 +4658,46 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def _budgets(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PUT"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == [] and method == "GET":
+                    result = budget_routes.list_team_budgets(conn, query)
+                elif parts == ["settings"] and method == "PUT":
+                    result = budget_routes.put_budget_settings(conn, body)
+                elif parts == ["alerts"] and method == "POST":
+                    result = budget_routes.claim_budget_alerts(conn, body)
+                elif len(parts) == 2 and parts[0] == "programs" and method == "GET":
+                    result = budget_routes.program_team_budget(conn, parts[1], query)
+                elif len(parts) == 1 and method == "GET":
+                    result = budget_routes.team_budget(conn, parts[0], query)
+                elif len(parts) == 2 and parts[1] == "raise" and method == "POST":
+                    result = budget_routes.raise_team_budget(conn, parts[0], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _is_budgets_path(path: str) -> bool:
+        return path == "/budgets" or path.startswith(("/budgets?", "/budgets/"))
+
     def _github(self, method: str) -> None:
         from urllib.parse import parse_qs, unquote, urlparse
 
@@ -4727,6 +4768,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_projects_path(self.path):
             self._projects("GET")
+            return
+        if self._is_budgets_path(self.path):
+            self._budgets("GET")
             return
         if self.path.startswith("/github/"):
             self._github("GET")
@@ -5089,6 +5133,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_projects_path(self.path):
             self._projects("POST")
             return
+        if self._is_budgets_path(self.path):
+            self._budgets("POST")
+            return
         if self.path.startswith("/github/"):
             self._github("POST")
             return
@@ -5268,6 +5315,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_projects_path(self.path):
             self._projects("PUT")
+            return
+        if self._is_budgets_path(self.path):
+            self._budgets("PUT")
             return
         if self.path.startswith("/github/"):
             self._github("PUT")

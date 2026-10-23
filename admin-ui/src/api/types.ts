@@ -448,3 +448,45 @@ export interface ProjectRepository {
   default_branch: string | null;
   role: string | null;
 }
+
+export type BudgetStatus = "ok" | "warning" | "reached";
+
+export interface TeamBudgetOverride {
+  id: string;
+  team_id: string;
+  month: string | null;
+  scope: "month" | "permanent";
+  amount_usd: number;
+  raised_by: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface TeamBudget {
+  id: string;
+  slug: string;
+  display_name: string;
+  budget_usd: number;
+  spent_usd: number;
+  percent: number;
+  status: BudgetStatus;
+  held_tasks: number;
+  overrides: TeamBudgetOverride[];
+  can_raise: boolean;
+}
+
+export interface BudgetsOverview {
+  month: string;
+  currency: string;
+  default_team_monthly: number;
+  warn_at_percent: number;
+  manager_max_monthly: number;
+  teams: TeamBudget[];
+  unassigned_spent_usd?: number;
+  is_admin: boolean;
+  raise_limit: number | null;
+}
+
+export interface ProgramBudget {
+  team: Pick<TeamBudget, "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"> | null;
+}

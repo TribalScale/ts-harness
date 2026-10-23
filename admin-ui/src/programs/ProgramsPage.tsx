@@ -4,6 +4,7 @@ import { artifactRows } from "../api/normalizers";
 import type {
   PinnedWorkflowVersion,
   PortfolioFilters,
+  ProgramBudget,
   ProgramEvidenceExport,
   ProgramStatus,
   ProgramSummary,
@@ -124,6 +125,7 @@ export function ProgramsPage({
 }) {
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [status, setStatus] = useState<ProgramStatus | null>(null);
+  const [budget, setBudget] = useState<ProgramBudget["team"]>(null);
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
   const [pendingAction, setPendingAction] = useState<ProgramAction | null>(null);
@@ -194,6 +196,10 @@ export function ProgramsPage({
     setTab("overview");
     setEvidence(null);
     void refreshStatus(programId);
+    setBudget(null);
+    apiFetch<ProgramBudget>(`/admin/budgets/programs/${encodeURIComponent(programId)}`)
+      .then((data) => setBudget(data.team))
+      .catch(() => setBudget(null));
   }, [programId, refreshStatus]);
 
   async function mutateProgram(action: ProgramAction) {
@@ -499,6 +505,21 @@ export function ProgramsPage({
         {error && (
           <div className="error" role="alert">
             {error}
+          </div>
+        )}
+        {budget && budget.status !== "ok" && (
+          <div className="callout budget-banner" role="status">
+            <strong>
+              {budget.status === "reached"
+                ? `${budget.display_name || budget.slug} reached its monthly LLM budget`
+                : `${budget.display_name || budget.slug} has used ${budget.percent}% of its monthly LLM budget`}
+            </strong>
+            {budget.status === "reached"
+              ? `Agent and coding steps wait until a manager or admin raises the budget${
+                  budget.held_tasks ? ` (${budget.held_tasks} waiting)` : ""
+                }. `
+              : "Work continues; at 100% agent and coding steps wait. "}
+            <a href="#/system/budgets">Open budgets</a>
           </div>
         )}
         <Tabs

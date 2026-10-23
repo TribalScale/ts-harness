@@ -284,6 +284,29 @@ class SchedulingConfig:
 
 
 @dataclass
+class BudgetsConfig:
+    """Monthly LLM budgets per team, in ``currency``. Managers may raise their team up to ``manager_max_monthly``."""
+
+    currency: str = "USD"
+    default_team_monthly: float = 5000.0
+    warn_at_percent: int = 80
+    manager_max_monthly: float = 10000.0
+    # team slug (or id) -> monthly amount
+    teams: dict[str, float] = field(default_factory=dict)
+    # Slack channel for warnings; blank uses SLACK_OPS_CHANNEL.
+    notify_channel: str = ""
+
+    def settings_payload(self) -> dict[str, Any]:
+        return {
+            "currency": self.currency,
+            "default_team_monthly": self.default_team_monthly,
+            "warn_at_percent": self.warn_at_percent,
+            "manager_max_monthly": self.manager_max_monthly,
+            "teams": dict(self.teams),
+        }
+
+
+@dataclass
 class RuntimeConfig:
     tenants: list[TenantConfig]
     agents: list[AgentConfig]
@@ -302,6 +325,7 @@ class RuntimeConfig:
     program_builder: ProgramBuilderConfig = field(default_factory=ProgramBuilderConfig)
     deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
+    budgets: BudgetsConfig = field(default_factory=BudgetsConfig)
 
     @property
     def connectors_dict(self) -> dict[str, GoogleWorkspaceConnectorConfig]:
@@ -737,6 +761,7 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
         ),
         deployment=_parse_deployment(data.get("deployment")),
         scheduling=parse_scheduling(data.get("scheduling")),
+        budgets=parse_budgets(data.get("budgets")),
     )
     config.validate()
     config._last_known_good = copy.deepcopy(data)
@@ -766,6 +791,31 @@ def parse_scheduling(raw: Any) -> SchedulingConfig:
         coding_per_program=count("per_program", defaults.coding_per_program) or 0,
         coding_per_team=count("per_team", defaults.coding_per_team) or 0,
         coding_global=count("global", None),
+    )
+
+
+def parse_budgets(raw: Any) -> BudgetsConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = BudgetsConfig()
+
+    def amount(value: Any, key: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"budgets.{key} must be a non-negative number")
+        return float(value)
+
+    warn = raw.get("warn_at_percent", defaults.warn_at_percent)
+    if isinstance(warn, bool) or not isinstance(warn, int) or not 1 <= warn <= 100:
+        raise ValueError("budgets.warn_at_percent must be an integer from 1 to 100")
+    teams = raw.get("teams") or {}
+    if not isinstance(teams, dict):
+        raise ValueError("budgets.teams must map team slugs to monthly amounts")
+    return BudgetsConfig(
+        currency=str(raw.get("currency") or defaults.currency).upper(),
+        default_team_monthly=amount(raw.get("default_team_monthly", defaults.default_team_monthly), "default_team_monthly"),
+        warn_at_percent=warn,
+        manager_max_monthly=amount(raw.get("manager_max_monthly", defaults.manager_max_monthly), "manager_max_monthly"),
+        teams={str(k): amount(v, f"teams.{k}") for k, v in teams.items()},
+        notify_channel=str(raw.get("notify_channel") or ""),
     )
 
 

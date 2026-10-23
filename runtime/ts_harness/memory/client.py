@@ -1070,6 +1070,27 @@ class MemoryClient:
             body["retryable"] = True
         return self._request("POST", f"/coding-jobs/{job_id}/launched", body)
 
+    def list_team_budgets(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/budgets?tenant_id={quote(tenant_id)}")
+
+    def put_budget_settings(self, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", "/budgets/settings", body)
+
+    def raise_team_budget(self, team_id: str, **body: Any) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("POST", f"/budgets/{quote(team_id, safe='')}/raise", body)
+
+    def get_program_budget(self, program_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/budgets/programs/{quote(program_id, safe='')}")
+
+    def claim_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        return self._request("POST", "/budgets/alerts", {"tenant_id": tenant_id})
+
     def list_projects(self, *, tenant_id: str = "default", key: str = "", team: str = "") -> dict[str, Any]:
         from urllib.parse import urlencode
 

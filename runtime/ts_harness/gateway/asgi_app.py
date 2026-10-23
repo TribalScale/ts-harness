@@ -2642,7 +2642,6 @@ async def internal_coding_job_github_token(request: Request) -> Response:
 
 
 async def _admin_projects_call(request: Request, call) -> Response:
-    from ts_harness.gateway.projects_bff import ProjectAccessDenied
     from ts_harness.memory.client import ProgramNotFound
 
     body: dict[str, Any] = {}
@@ -2661,7 +2660,7 @@ async def _admin_projects_call(request: Request, call) -> Response:
         return _json({"error": "invalid json"}, 400)
     try:
         payload = await asyncio.to_thread(call, get_memory_client(), auth, getattr(runtime, "config", None), body)
-    except ProjectAccessDenied as exc:
+    except PermissionError as exc:
         return _json({"error": str(exc)}, 403)
     except (LookupError, ProgramNotFound):
         return _json({"error": "not found"}, 404)
@@ -2686,6 +2685,26 @@ async def admin_github_sync(request: Request) -> Response:
     from ts_harness.gateway import github_bff as bff
 
     return await _admin_projects_call(request, bff.sync_installations)
+
+
+async def admin_budgets(request: Request) -> Response:
+    from ts_harness.gateway import budgets_bff as bff
+
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_budgets_admin(m, a, c))
+
+
+async def admin_program_budget(request: Request) -> Response:
+    from ts_harness.gateway import budgets_bff as bff
+
+    program_id = request.path_params["program_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.program_budget_admin(m, a, c, program_id))
+
+
+async def admin_budget_raise(request: Request) -> Response:
+    from ts_harness.gateway import budgets_bff as bff
+
+    team_id = request.path_params["team_id"]
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.raise_budget_admin(m, a, c, team_id, b))
 
 
 async def admin_projects(request: Request) -> Response:
@@ -4137,6 +4156,9 @@ routes = [
     ),
     Route("/admin/github", endpoint=admin_github, methods=["GET"]),
     Route("/admin/github/sync", endpoint=admin_github_sync, methods=["POST"]),
+    Route("/admin/budgets", endpoint=admin_budgets, methods=["GET"]),
+    Route("/admin/budgets/{team_id}/raise", endpoint=admin_budget_raise, methods=["POST"]),
+    Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET"]),
     Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
     Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),

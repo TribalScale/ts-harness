@@ -245,6 +245,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     quotas = _quotas(body.get("quotas"))
     ttl = int(body.get("token_ttl_seconds") or DEFAULT_TOKEN_TTL)
     deferred = 0
+    held_by_budget = 0
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('coding_jobs_claim'))")
         cur.execute(
@@ -262,6 +263,8 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             (list(RUNNING) + ["queued"],),
         )
         rows = list(cur.fetchall())
+        cur.execute("SELECT id::text AS id FROM teams WHERE team_budget_reached(tenant_id, id::text)")
+        over_budget = {r["id"] for r in cur.fetchall()}
         active = [r for r in rows if r["status"] in RUNNING]
         running = len(active)
         room = min(limit, max_running - running)
@@ -275,6 +278,9 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             if len(ids) >= room:
                 break
             if row["status"] != "queued":
+                continue
+            if row["team"] in over_budget:
+                held_by_budget += 1
                 continue
             owners = {key: owner for key, owner in _owner_keys(row).items() if owner and key in quotas}
             if any(counts.get((key, owner), 0) >= quotas[key] for key, owner in owners.items()):
@@ -302,6 +308,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {
         "running": running,
         "deferred_by_quota": deferred,
+        "held_by_budget": held_by_budget,
         "jobs": [{**_public(r), "token": issue_job_token(str(r["id"]), ttl_seconds=ttl)} for r in claimed],
     }
 

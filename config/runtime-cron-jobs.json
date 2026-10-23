@@ -35,6 +35,15 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
+    },
+    {
+      "name": "budget-alerts",
+      "kind": "system",
+      "handler": "budget_alerts",
+      "interval_seconds": 300,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
     }
   ]
 }

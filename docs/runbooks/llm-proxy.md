@@ -17,7 +17,8 @@ short-lived proxy tokens.
 
 Clients call `/llm/<provider>/v1/<path>`: `openai`, `anthropic`, `openrouter`,
 or any other name, which falls through to `MODEL_BASE_URL`. The proxy checks the
-token, refuses with 402 if the team is over budget, refuses with 429 (and
+token, refuses with 402 if the team is over budget (see
+[team budgets](team-budgets.md)), refuses with 429 (and
 `Retry-After`) if the model's bucket is empty, swaps in the real key, relays the
 response (streamed or not) and writes one `llm_usage` row. For streamed Chat
 Completions it adds `stream_options.include_usage` so the final event carries

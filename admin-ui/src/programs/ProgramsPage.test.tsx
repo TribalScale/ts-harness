@@ -769,3 +769,24 @@ it("opens the share dialog for program admins", async () => {
   expect(await screen.findByRole("heading", { name: "Share program" })).toBeInTheDocument();
   expect(await screen.findByRole("textbox", { name: "Search people and teams" })).toBeInTheDocument();
 });
+
+it("warns when the program's team reached its LLM budget", async () => {
+  mockFetch((url) => {
+    if (url === LIST_URL) return jsonResponse(programList());
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) return jsonResponse(programStatus());
+    if (url === `/admin/budgets/programs/${encodeURIComponent(programId)}`) {
+      return jsonResponse({
+        team: { id: "t-web", slug: "web", display_name: "Web", status: "reached", percent: 101, held_tasks: 2 },
+      });
+    }
+    if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
+
+  const banner = (await screen.findByText("Web reached its monthly LLM budget")).closest(".budget-banner") as HTMLElement;
+  expect(banner).toHaveAttribute("role", "status");
+  expect(banner).toHaveTextContent("(2 waiting)");
+  expect(within(banner).getByRole("link", { name: "Open budgets" })).toHaveAttribute("href", "#/system/budgets");
+});

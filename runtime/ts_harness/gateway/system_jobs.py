@@ -648,11 +648,19 @@ def sweep_coding_jobs() -> dict[str, Any]:
     }
 
 
+def budget_alerts() -> dict[str, Any]:
+    """Warn at budgets.warn_at_percent and when a team reaches its monthly LLM budget."""
+    from ts_harness.budgets import budget_alerts as run_alerts
+
+    return run_alerts()
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
     "sync_directory": sync_directory,
     "sweep_coding_jobs": sweep_coding_jobs,
+    "budget_alerts": budget_alerts,
     "start_program": start_scheduled_program,
 }
 

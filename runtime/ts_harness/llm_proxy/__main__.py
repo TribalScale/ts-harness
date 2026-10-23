@@ -7,6 +7,7 @@ import sys
 
 
 def build_from_env():
+    from ts_harness.budgets import proxy_admission
     from ts_harness.llm_proxy.app import build_app, upstreams_from_env
     from ts_harness.llm_proxy.metering import load_proxy_settings
     from ts_harness.llm_proxy.store import ModelRateLimiter, UsageStore
@@ -18,9 +19,16 @@ def build_from_env():
     db_url = str(os.environ.get("LLM_PROXY_DB_URL") or os.environ.get("TS_HARNESS_SESSION_DB_URL") or "").strip()
     if not db_url:
         sys.exit("LLM_PROXY_DB_URL (or TS_HARNESS_SESSION_DB_URL) is required to meter usage")
+    from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
 
-    pool = ConnectionPool(db_url, min_size=1, max_size=int(os.environ.get("LLM_PROXY_DB_POOL_MAX", "8")), open=True)
+    pool = ConnectionPool(
+        db_url,
+        min_size=1,
+        max_size=int(os.environ.get("LLM_PROXY_DB_POOL_MAX", "8")),
+        kwargs={"row_factory": dict_row},
+        open=True,
+    )
     settings = load_proxy_settings(os.environ.get("TS_HARNESS_CONFIG"))
     return build_app(
         secret=secret,
@@ -28,6 +36,7 @@ def build_from_env():
         pricing=settings["pricing"],
         record=UsageStore(pool.connection).record,
         allow=ModelRateLimiter(pool.connection, settings["rate_limits"]).allow,
+        admit=proxy_admission(pool.connection),
     )
 
 
