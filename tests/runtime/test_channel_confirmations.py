@@ -321,7 +321,25 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
             }
         )
         self.assertIn("prd request", message.lower())
+        self.assertIn("online multiplayer checker game", message)
         self.assertIn("yes", message.lower())
+
+    def test_format_workflow_proposal_message_shortens_long_summary(self):
+        long_summary = (
+            "Build a crypto portfolio dashboard that tracks wallets, taxes, and alerts. "
+            + ("Include holdings, performance, and export. " * 30)
+        )
+        message = format_workflow_proposal_message(
+            {
+                "workflow_type": "prd_request",
+                "summary": long_summary,
+            }
+        )
+        self.assertIn("I've prepared a prd request workflow for:", message)
+        self.assertIn("Build a crypto portfolio dashboard", message)
+        self.assertNotIn(long_summary, message)
+        self.assertLess(len(message), len(long_summary))
+        self.assertIn("Reply yes to start, or no to cancel.", message)
 
     def test_is_workflow_status_query_matches_common_phrases(self):
         self.assertTrue(is_workflow_status_query("okay, whats the status?"))

@@ -56,18 +56,27 @@ Point a repo or org webhook at `POST /webhooks/github` with the secret in
 - `deployment_status` (release deploy waits)
 
 Without a public webhook, the `poll-github-merges` system job polls merges,
-checks, deployments, and wave joins every minute.
+checks, deployments, and wave joins every minute. Once a delivery has arrived
+in the last hour, polling drops to a reconciliation pass every
+`github_reconcile_interval_seconds` (15 minutes on `scale_out`).
 
 With `GITHUB_WEBHOOK_SECRET` set, deliveries without a valid
 `X-Hub-Signature-256` get 401 and deliveries without `X-GitHub-Delivery` get
 400. A delivery id that was already handled in the last 24 hours returns
 `{"status": "duplicate"}` without being processed again. Ids are recorded only
 after a delivery succeeds, so **Redeliver** in GitHub still works after a
-failure. The id cache is in memory, so a gateway restart forgets it. Without the
-secret, the endpoint requires the gateway token instead; set the secret for any
-public webhook.
+failure. Ids are kept in the database for 30 days, so restarts and other
+runtime replicas also refuse replays. Without a secret, the endpoint requires
+the gateway token instead; set a secret for any public webhook.
 
-`GITHUB_TOKEN` needs, on each target repo:
+With a [GitHub App](github-app.md), the App's webhook secret is accepted as
+well, per host (`X-GitHub-Enterprise-Host` selects an Enterprise Server
+registration).
+
+The GitHub App is the recommended credential: it mints a token per repository
+and needs no shared PAT. `GITHUB_TOKEN` (a PAT) is the legacy setup and the
+fallback for repositories the App is not installed on. The App or the token
+needs, on each target repo:
 
 | Permission | Used for |
 |---|---|

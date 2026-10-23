@@ -158,12 +158,38 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "enterprise_repo_url": runtime.get("enterprise_repo_url"),
             "multi_agent_enabled": bool(runtime.get("multi_agent_enabled", False)),
             "workflow_runner_enabled": bool(runtime.get("workflow_runner_enabled", False)),
+            "coding_jobs_enabled": bool(runtime.get("coding_jobs_enabled", False)),
+            "coding_max_running": int(runtime.get("coding_max_running", 3)),
             "embeddings_provider": runtime.get("embeddings_provider"),
             "embeddings_model": runtime.get("embeddings_model"),
             "embeddings_dimensions": runtime.get("embeddings_dimensions"),
             "embeddings_fallback": runtime.get("embeddings_fallback", "none"),
             "agent_timezone": runtime.get("agent_timezone", "UTC"),
+            "deployment_profile": config.get("deployment_profile", "single_host"),
         }
+        scale_out = config.get("scale_out") or {}
+        profile = tfvars["deployment_profile"]
+        tfvars["network_mode"] = scale_out.get(
+            "network_mode", "vpc" if profile == "scale_out" else "default"
+        )
+        for key in (
+            "vpc_cidr",
+            "coding_worker_image_tag",
+            "coding_worker_cpu",
+            "coding_worker_memory",
+            "coding_worker_ephemeral_storage_gib",
+            "memory_api_certificate_arn",
+            "egress_allowed_domains",
+        ):
+            if key in scale_out:
+                tfvars[key] = scale_out[key]
+        github_app = config.get("github_app") or {}
+        for key in ("app_id", "slug", "host"):
+            if github_app.get(key):
+                tfvars[f"github_app_{key}"] = str(github_app[key])
+        image_tag = os.environ.get("TS_HARNESS_CODING_WORKER_IMAGE_TAG", "").strip()
+        if image_tag:
+            tfvars["coding_worker_image_tag"] = image_tag
         if db.get("backup_window"):
             tfvars["rds_backup_window"] = db["backup_window"]
         if vm.get("tailscale_authkey_secret_ref"):
@@ -189,9 +215,17 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "oidc_client_id",
             "oidc_authorization_endpoint",
             "oidc_token_endpoint",
+            "oidc_preset",
+            "oidc_token_type",
+            "oidc_groups_claim",
+            "oidc_roles_claim",
+            "oidc_allowed_domains",
+            "oidc_groups_source",
+            "identity_directory",
         ):
             if key in runtime and runtime[key] is not None:
                 tfvars[key] = runtime[key]
+        _storage_backend_tfvars(tfvars, runtime)
         return {k: v for k, v in tfvars.items() if v is not None}
 
     # GCP root uses install-contract variable names.
@@ -222,6 +256,8 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         "enterprise_repo_url": runtime.get("enterprise_repo_url"),
         "multi_agent_enabled": bool(runtime.get("multi_agent_enabled", False)),
         "workflow_runner_enabled": bool(runtime.get("workflow_runner_enabled", False)),
+        "coding_jobs_enabled": bool(runtime.get("coding_jobs_enabled", False)),
+        "coding_max_running": int(runtime.get("coding_max_running", 3)),
         "embeddings_provider": runtime.get("embeddings_provider"),
         "embeddings_model": runtime.get("embeddings_model"),
         "embeddings_dimensions": runtime.get("embeddings_dimensions"),
@@ -249,10 +285,26 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         "oidc_client_id",
         "oidc_authorization_endpoint",
         "oidc_token_endpoint",
+        "oidc_preset",
+        "oidc_token_type",
+        "oidc_groups_claim",
+        "oidc_roles_claim",
+        "oidc_allowed_domains",
+        "oidc_groups_source",
+        "identity_directory",
     ):
         if key in runtime and runtime[key] is not None:
             tfvars[key] = runtime[key]
+    _storage_backend_tfvars(tfvars, runtime)
     return {k: v for k, v in tfvars.items() if v is not None}
+
+
+def _storage_backend_tfvars(tfvars: dict[str, Any], runtime: Mapping[str, Any]) -> None:
+    """Pass state_backend and object_backend only when set; blank keeps the provider root's default."""
+    for key in ("state_backend", "object_backend"):
+        value = str(runtime.get(key) or "").strip()
+        if value:
+            tfvars[key] = value
 
 
 def write_tfvars(path: Path, tfvars: Mapping[str, Any]) -> Path:

@@ -236,6 +236,30 @@ write_runtime_env_file() {
         TS_HARNESS_DB_USER \
         TS_HARNESS_DB_NAME \
         TS_HARNESS_DB_PASSWORD \
+        TS_HARNESS_PROGRAM_ACCESS \
+        TS_HARNESS_SCIM_TOKEN \
+        AUTH0_MGMT_DOMAIN \
+        AUTH0_MGMT_CLIENT_ID \
+        AUTH0_MGMT_CLIENT_SECRET \
+        MS_GRAPH_TENANT_ID \
+        MS_GRAPH_CLIENT_ID \
+        MS_GRAPH_CLIENT_SECRET \
+        GOOGLE_DIRECTORY_ADMIN_SUBJECT \
+        GOOGLE_DIRECTORY_CUSTOMER \
+        CLOUD_PROVIDER \
+        CLOUD_REGION \
+        SECRETS_PREFIX \
+        CODING_ECS_CLUSTER \
+        CODING_EGRESS_PROXY_SERVICE \
+        CODING_EGRESS_DOMAINS_PARAMETER \
+        CODING_EGRESS_PROXY_URL \
+        GITHUB_APP_ID \
+        GITHUB_APP_SLUG \
+        GITHUB_APP_HOST \
+        GITHUB_APP_PRIVATE_KEY \
+        GITHUB_APP_WEBHOOK_SECRET \
+        LLM_PROXY_SECRET \
+        OPENROUTER_API_KEY \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -357,6 +381,8 @@ INSTANCE_ENV_KEYS=(
     WORKFLOW_RUNNER_BATCH_SIZE
     WORKFLOW_RUNNER_LEASE_SECONDS
     WORKFLOW_RUNNER_STALE_POLICY
+    CODING_JOBS_ENABLED
+    CODING_MAX_RUNNING
     MEMORY_BACKEND
     CLOUD_PROVIDER
     CLOUD_REGION
@@ -381,6 +407,9 @@ INSTANCE_ENV_KEYS=(
     EMBEDDINGS_DIMENSIONS
     EMBEDDINGS_FALLBACK
     IMPLEMENT_WORK_ORDERS_REPO_URL
+    GITHUB_APP_ID
+    GITHUB_APP_SLUG
+    GITHUB_APP_HOST
     IMPLEMENT_WORK_ORDERS_BASE_BRANCH
     IMPLEMENT_JIRA_TICKET_REPO_URL
     IMPLEMENT_JIRA_TICKET_BASE_BRANCH
@@ -393,7 +422,63 @@ INSTANCE_ENV_KEYS=(
     OIDC_CLIENT_ID
     OIDC_AUTHORIZATION_ENDPOINT
     OIDC_TOKEN_ENDPOINT
+    OIDC_PRESET
+    OIDC_TOKEN_TYPE
+    OIDC_GROUPS_CLAIM
+    OIDC_ROLES_CLAIM
+    OIDC_ALLOWED_DOMAINS
+    OIDC_GROUPS_SOURCE
+    IDENTITY_DIRECTORY
+    DEPLOYMENT_PROFILE
+    CODING_ECS_CLUSTER
+    CODING_ECS_TASK_DEFINITION
+    CODING_ECS_CONTAINER
+    CODING_ECS_SUBNETS
+    CODING_ECS_SECURITY_GROUPS
+    CODING_EGRESS_PROXY_SERVICE
+    CODING_EGRESS_DOMAINS_PARAMETER
+    CODING_EGRESS_PROXY_URL
+    LLM_PROXY_ENABLED
+    CODING_WORKER_LLM_PROXY_URL
+    LLM_PROXY_HOST_PORT
+    TS_HARNESS_STATE_BACKEND
+    TS_HARNESS_OBJECT_BACKEND
+    TS_HARNESS_SKILLS_BUCKET
+    TS_HARNESS_WORKSPACE_BUCKET
 )
+
+# Storage flags (docs/runbooks/shared-state.md). Unset flags follow the profile:
+# scale_out uses Postgres for state and the cloud's object store when both
+# buckets are known; everything else keeps files on the host. Once a backend is
+# on, the old volumes it replaces are mounted read-only.
+resolve_storage_backends() {
+    local profile="${DEPLOYMENT_PROFILE:-single_host}"
+    local cloud_object=s3
+    [[ "${CLOUD_PROVIDER:-aws}" == "gcp" ]] && cloud_object=gcs
+    if is_blank_or_placeholder "${TS_HARNESS_STATE_BACKEND:-}"; then
+        if [[ "$profile" == "scale_out" ]]; then
+            TS_HARNESS_STATE_BACKEND=postgres
+        else
+            TS_HARNESS_STATE_BACKEND=local
+        fi
+    fi
+    if is_blank_or_placeholder "${TS_HARNESS_OBJECT_BACKEND:-}"; then
+        TS_HARNESS_OBJECT_BACKEND=local
+        if [[ "$profile" == "scale_out" ]]; then
+            if ! is_blank_or_placeholder "${TS_HARNESS_SKILLS_BUCKET:-}" && ! is_blank_or_placeholder "${TS_HARNESS_WORKSPACE_BUCKET:-}"; then
+                TS_HARNESS_OBJECT_BACKEND="$cloud_object"
+            else
+                echo "WARNING: scale_out without TS_HARNESS_SKILLS_BUCKET and TS_HARNESS_WORKSPACE_BUCKET; skills and workspaces stay on the host" >&2
+            fi
+        fi
+    fi
+    TS_HARNESS_STATE_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_STATE_BACKEND" == "postgres" ]] && TS_HARNESS_STATE_VOLUME_MODE=ro
+    TS_HARNESS_OBJECT_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_OBJECT_BACKEND" != "local" ]] && TS_HARNESS_OBJECT_VOLUME_MODE=ro
+    export TS_HARNESS_STATE_BACKEND TS_HARNESS_OBJECT_BACKEND TS_HARNESS_STATE_VOLUME_MODE TS_HARNESS_OBJECT_VOLUME_MODE
+    export TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}"
+}
 
 instance_env_path() {
     echo "${DATA_DIR:?DATA_DIR must be set}/.setup/instance-env.sh"
@@ -625,6 +710,7 @@ run_docker_compose_as_admin() {
             GATEWAY_TOKEN="${GATEWAY_TOKEN:-}" \
             MEMORY_API_TOKEN="${MEMORY_API_TOKEN:-}" \
             SANDBOX_WORKER_TOKEN="${SANDBOX_WORKER_TOKEN:-}" \
+            CODING_JOB_SECRET="${CODING_JOB_SECRET:-}" \
             SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}" \
             SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
             SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-}" \
@@ -635,13 +721,51 @@ run_docker_compose_as_admin() {
             WORKFLOW_RUNNER_LEASE_SECONDS="${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}" \
             WORKFLOW_RUNNER_STALE_POLICY="${WORKFLOW_RUNNER_STALE_POLICY:-block}" \
             WORKFLOW_RUNNER_ADAPTER="${WORKFLOW_RUNNER_ADAPTER:-gateway-http}" \
+            CODING_JOBS_ENABLED="${CODING_JOBS_ENABLED:-false}" \
+            CODING_MAX_RUNNING="${CODING_MAX_RUNNING:-3}" \
+            CODING_LAUNCHER="${CODING_LAUNCHER:-}" \
+            DEPLOYMENT_PROFILE="${DEPLOYMENT_PROFILE:-single_host}" \
+            CODING_ECS_CLUSTER="${CODING_ECS_CLUSTER:-}" \
+            CODING_ECS_TASK_DEFINITION="${CODING_ECS_TASK_DEFINITION:-}" \
+            CODING_ECS_CONTAINER="${CODING_ECS_CONTAINER:-coding-worker}" \
+            CODING_ECS_SUBNETS="${CODING_ECS_SUBNETS:-}" \
+            CODING_ECS_SECURITY_GROUPS="${CODING_ECS_SECURITY_GROUPS:-}" \
             AGENT_RUNTIME_URL="${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}" \
             RUNTIME_FAKE_PROVIDER="${RUNTIME_FAKE_PROVIDER:-false}" \
+            LLM_PROXY_RUNTIME_URL="${LLM_PROXY_RUNTIME_URL:-}" \
+            LLM_PROXY_REPLICA_URL="${LLM_PROXY_REPLICA_URL:-}" \
+            LLM_PROXY_HOST_PORT="${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}" \
+            CODING_WORKER_LLM_PROXY_URL="${CODING_WORKER_LLM_PROXY_URL:-}" \
+            TS_HARNESS_STATE_BACKEND="${TS_HARNESS_STATE_BACKEND:-local}" \
+            TS_HARNESS_OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}" \
+            TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" \
+            TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}" \
+            TS_HARNESS_STATE_VOLUME_MODE="${TS_HARNESS_STATE_VOLUME_MODE:-rw}" \
+            TS_HARNESS_OBJECT_VOLUME_MODE="${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}" \
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
+# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use, and
+# llm-proxy (which lives in agent-runtime's network namespace) when it runs.
+with_runtime_replicas() {
+    local service
+    for service in "$@"; do
+        printf '%s\n' "$service"
+        if [[ "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.replicas.yml* ]]; then
+            case "$service" in
+                agent-runtime|memory-api) printf '%s\n' "${service}-2" ;;
+            esac
+        fi
+        if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.llm-proxy.yml* ]]; then
+            printf '%s\n' llm-proxy
+        fi
+    done
+}
+
 restart_agent_runtime() {
-    run_docker_compose_as_admin restart agent-runtime
+    local services=() service
+    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas agent-runtime)
+    run_docker_compose_as_admin restart "${services[@]}"
 }
 
 persist_env_key() {
@@ -664,7 +788,8 @@ restart_ts_harness_services() {
 }
 
 recreate_ts_harness_services() {
-    local services=("$@")
+    local services=() service
+    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas "$@")
     run_docker_compose_as_admin up -d --force-recreate "${services[@]}"
 }
 

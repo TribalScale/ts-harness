@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -7,14 +8,30 @@ from typing import Any
 
 from ts_harness.gateway.channels.base import BaseChannelAdapter, JsonHttpTransport, MessageEvent
 
+logger = logging.getLogger(__name__)
+
 
 class SlackAdapter(BaseChannelAdapter):
     name = "slack"
 
-    def __init__(self, token: str | None = None, transport: JsonHttpTransport | None = None, dedup_path: str | Path | None = None):
+    def __init__(
+        self,
+        token: str | None = None,
+        transport: JsonHttpTransport | None = None,
+        dedup_path: str | Path | None = None,
+        *,
+        dedup_client: Any = None,
+    ):
+        from ts_harness.storage.backend import shared_state_enabled
+
         self.token = token if token is not None else os.environ.get("SLACK_BOT_TOKEN", "")
         self.transport = transport or JsonHttpTransport()
-        self.dedup_path = Path(dedup_path or os.environ.get("TS_HARNESS_CHANNEL_DEDUP", "")) if (dedup_path or os.environ.get("TS_HARNESS_CHANNEL_DEDUP")) else None
+        # In Postgres mode every replica checks the same table, so an event is handled once.
+        self.shared_dedup = dedup_client is not None or shared_state_enabled()
+        self._dedup_client = dedup_client
+        self.dedup_path = None
+        if not self.shared_dedup and (dedup_path or os.environ.get("TS_HARNESS_CHANNEL_DEDUP")):
+            self.dedup_path = Path(dedup_path or os.environ.get("TS_HARNESS_CHANNEL_DEDUP", ""))
         self._seen: set[str] = self._load_seen()
         self._dedup_lock = threading.Lock()
 
@@ -67,6 +84,9 @@ class SlackAdapter(BaseChannelAdapter):
             if dedup_key and dedup_key in self._seen:
                 raise ValueError("duplicate slack event")
             if dedup_key:
+                if self.shared_dedup and not self._first_sighting(dedup_key):
+                    self._seen.add(dedup_key)
+                    raise ValueError("duplicate slack event")
                 self._seen.add(dedup_key)
                 self._persist_seen(dedup_key)
         return MessageEvent(
@@ -77,6 +97,19 @@ class SlackAdapter(BaseChannelAdapter):
             thread_id=payload.get("thread_ts") or payload.get("ts"),
             metadata={**payload, "channel_id": channel_id},
         )
+
+    def _first_sighting(self, dedup_key: str) -> bool:
+        """Check and mark in one call; if the memory API is down, fall back to this process's own memory."""
+        client = self._dedup_client
+        try:
+            if client is None:
+                from ts_harness.memory.client import get_memory_client
+
+                client = self._dedup_client = get_memory_client()
+            return bool(client.mark_channel_event(f"slack:{dedup_key}"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("slack dedup check failed, using local memory only: %s", exc)
+            return True
 
     def _load_seen(self) -> set[str]:
         if not self.dedup_path or not self.dedup_path.exists():

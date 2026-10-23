@@ -2,6 +2,9 @@
 # Select exactly one provider per installation (aws OR gcp, never both).
 cloud_provider: aws
 environment: prod
+# single_host: one VM (small teams). scale_out: Fargate coding workers and
+# replicated services (aws only).
+deployment_profile: single_host
 project_name: ts-harness
 cloud_region: us-east-1
 cloud_zone: us-east-1a
@@ -9,6 +12,22 @@ aws_account_id: "123456789012"
 secret_prefix: ts-harness
 notification_email: ops@example.com
 monthly_budget_limit: 500
+
+# Only read when deployment_profile is scale_out (network_mode then defaults to vpc).
+# Moving an existing single_host install to vpc replaces the host and RDS subnet group.
+# scale_out:
+#   network_mode: vpc
+#   vpc_cidr: 10.40.0.0/16
+#   coding_worker_image_tag: latest   # CI sets TS_HARNESS_CODING_WORKER_IMAGE_TAG
+#   memory_api_certificate_arn: ""    # ACM cert for the internal memory API load balancer
+#   egress_allowed_domains: []        # added to the GitHub, npm, PyPI and LLM defaults
+
+# GitHub App used for clone, push and PRs. Put the private key and webhook
+# secret in <secret_prefix>/github-app-private-key and github-app-webhook-secret.
+# Without it, the github-token PAT is used. See docs/runbooks/github-app.md.
+# github_app:
+#   app_id: "123456"
+#   slug: ts-harness-acme
 
 vm:
   instance_type: t3.medium
@@ -49,6 +68,13 @@ runtime:
   workflow_runner_batch_size: 5
   workflow_runner_lease_seconds: 1800
   workflow_runner_stale_policy: block
+  # Blank follows deployment_profile (scale_out: postgres and s3). To switch an
+  # existing install, follow docs/runbooks/shared-state.md (import first).
+  state_backend: ""
+  object_backend: ""
+  # OpenCode runs as queued jobs in worker containers; turn on after one supervised run.
+  coding_jobs_enabled: false
+  coding_max_running: 3
   embeddings_provider: openai
   embeddings_model: text-embedding-3-small
   embeddings_dimensions: 1536
@@ -63,7 +89,8 @@ runtime:
   slack_marketing_channel: ""
   slack_sales_channel: ""
   approved_slack_channels: []
-  # Admin identity (Auth0/OIDC). Leave static unless you set all oidc_* fields.
+  # Admin identity (Auth0/OIDC). oidc needs issuer, audience and client id; the
+  # JWKS URL and endpoints come from discovery when empty (docs/runbooks/auth0-setup.md).
   identity_provider: static
   oidc_issuer: ""
   oidc_audience: ""

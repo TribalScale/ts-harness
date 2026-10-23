@@ -52,6 +52,10 @@ __pycache__/
 # Organization context (copy config/organization.example.yaml)
 config/organization.yaml
 
+# Filled-in install config (copy config/install/aws.example.yaml)
+config/install/aws-dev.yaml
+config/install/aws-prod.yaml
+
 # Agent session working notes
 .superpowers/
 

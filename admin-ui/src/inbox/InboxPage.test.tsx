@@ -117,6 +117,74 @@ it("renders counted filters and compact rows for every inbox type", async () => 
   );
 });
 
+const stuckItem: InboxItem = {
+  type: "stuck_step",
+  id: "finalize-4",
+  title: "WO-003 · finalize_code_review",
+  subtitle: "Revision limit reached · waiting for your decision",
+  created_at: "2026-10-22T17:34:10Z",
+  meta: {
+    workflow_id: "wf-d",
+    task_id: "finalize-4",
+    step_name: "finalize_code_review",
+    work_order: "WO-003",
+    decisions: ["revise", "accept", "stop"],
+    feedback: "Blocking findings (fix every one):\n- clearing the portfolio keeps the old balance",
+    pr_url: "https://github.com/org/app/pull/18",
+    program_id: "program-1",
+    status: "blocked",
+  },
+};
+
+it("decides a stuck step: revise again with guidance", async () => {
+  const posts: { url: string; body: Record<string, unknown> }[] = [];
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: posts.length ? [] : [stuckItem] });
+    if (url === "/admin/workflows/decide") {
+      posts.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ status: "revising", revision_number: 1, max_revisions: 3 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="stuck_step" initialId="finalize-4" />);
+
+  expect(await screen.findByRole("button", { name: /Stuck 1/ })).toBeInTheDocument();
+  const detail = await screen.findByRole("region", { name: /Stuck step detail/i });
+  expect(within(detail).getByText(/clearing the portfolio keeps the old balance/, { selector: "p" })).toBeInTheDocument();
+  expect(within(detail).getByRole("link", { name: /pull\/18/ })).toHaveAttribute(
+    "href",
+    "https://github.com/org/app/pull/18"
+  );
+  expect(within(detail).getByRole("button", { name: "Accept as is" })).toBeInTheDocument();
+  expect(within(detail).getByRole("button", { name: "Stop work order" })).toBeInTheDocument();
+
+  await userEvent.type(within(detail).getByLabelText(/Guidance for OpenCode/), "Persist the empty state");
+  await userEvent.click(within(detail).getByRole("button", { name: "Revise again" }));
+
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({
+    workflow_id: "wf-d",
+    task_id: "finalize-4",
+    action: "revise",
+    guidance: "Persist the empty state",
+  });
+});
+
+it("only offers the decisions the step allows", async () => {
+  const waitItem = { ...stuckItem, meta: { ...stuckItem.meta, decisions: ["revise", "stop"] } };
+  mockFetch((url) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: [waitItem] });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="stuck_step" initialId="finalize-4" />);
+
+  const detail = await screen.findByRole("region", { name: /Stuck step detail/i });
+  expect(within(detail).getByRole("button", { name: "Revise again" })).toBeInTheDocument();
+  expect(within(detail).queryByRole("button", { name: "Accept as is" })).not.toBeInTheDocument();
+});
+
 it("never presents a pending skill draft as a success status", async () => {
   mockFetch((url) => {
     if (url === "/admin/inbox") return jsonResponse({ items: inboxItems });

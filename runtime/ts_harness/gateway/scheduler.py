@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 import json
+import os
 import threading
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -14,6 +15,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 
 from ts_harness.config.schema import RuntimeConfig
+
+SCHEDULER_STATE_NAMESPACE = "scheduler"
+SCHEDULER_STATE_KEY = "state"
 
 
 @dataclass
@@ -79,13 +83,21 @@ class Scheduler:
         cron_jobs: list[dict[str, Any]] | None = None,
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         state_path: Path | None = None,
+        leader: Callable[[], bool] | None = None,
+        cron_path: Path | None = None,
     ):
         self.config = config
+        # With several runtime replicas only the lease holder runs jobs, and an
+        # edit made through another replica reaches it through the cron file.
+        self.leader = leader
+        self.cron_path = cron_path
+        self._cron_mtime = self._cron_file_mtime()
         self.dispatch = dispatch
         self.workspace_root = workspace_root or Path("/workspace")
         self.audit_sink = audit_sink
         self.state_path = state_path
         self._state = self._load_state()
+        self._was_leading = False
         self.jobs: list[ScheduledJob] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -247,6 +259,8 @@ class Scheduler:
         return {"status": "ok", "name": target, "dispatched": True}
 
     def start(self) -> None:
+        if os.environ.get("TS_HARNESS_SCHEDULER_DISABLED", "").strip().lower() in {"1", "true", "yes"}:
+            return
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
@@ -258,9 +272,41 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            now = datetime.now(UTC)
-            self.run_due_once(now=now)
+            self.tick()
             self._stop.wait(5)
+
+    def tick(self) -> bool:
+        """One pass of the loop; returns whether this replica led it."""
+        leading = self.leader is None or self.leader()
+        if leading:
+            if not self._was_leading:
+                # Another replica may have run jobs while it held the lease.
+                self._state = self._merge_state(self._load_state(), self._state)
+            from ts_harness.storage.shared_tree import sync_cron
+
+            sync_cron()
+            self.reload_cron_file_if_changed()
+            self.run_due_once(now=datetime.now(UTC))
+        self._was_leading = leading
+        return leading
+
+    def _cron_file_mtime(self) -> float | None:
+        try:
+            return self.cron_path.stat().st_mtime if self.cron_path else None
+        except OSError:
+            return None
+
+    def reload_cron_file_if_changed(self) -> bool:
+        mtime = self._cron_file_mtime()
+        if mtime is None or mtime == self._cron_mtime:
+            return False
+        try:
+            data = json.loads(self.cron_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        self._cron_mtime = mtime
+        self.replace_cron_jobs(list(data.get("jobs") or []))
+        return True
 
     def health(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -366,8 +412,14 @@ class Scheduler:
                 self._audit({"event": "scheduler_dispatch_backgrounded", "agent_id": job.agent_id})
 
     def _heartbeat_file_empty(self, agent_id: str) -> bool:
-        path = self.workspace_root / agent_id / "HEARTBEAT.md"
-        return path.exists() and not path.read_text(encoding="utf-8").strip()
+        from ts_harness.storage.workspace import workspace_store
+
+        try:
+            text = workspace_store(agent_id, root=self.workspace_root).read_text_or_none("HEARTBEAT.md")
+        except Exception as exc:  # noqa: BLE001
+            self._audit({"event": "heartbeat_file_read_failed", "agent_id": agent_id, "error": str(exc)[:300]})
+            return False
+        return text is not None and not text.strip()
 
     def _audit(self, event: dict[str, Any]) -> None:
         if self.audit_sink:
@@ -410,11 +462,45 @@ class Scheduler:
         return candidate.astimezone(UTC)
 
     def _load_state(self) -> dict[str, dict[str, float]]:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        if shared_state_enabled():
+            from ts_harness.storage.kv import kv_read
+
+            try:
+                return dict(kv_read(SCHEDULER_STATE_NAMESPACE, SCHEDULER_STATE_KEY, default={}))
+            except Exception as exc:  # noqa: BLE001
+                self._audit({"event": "scheduler_state_load_failed", "error": str(exc)[:300]})
+                return dict(getattr(self, "_state", {}) or {})
         if not self.state_path or not self.state_path.exists():
             return {}
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _merge_state(stored: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+        """Per job, keep whichever record ran last."""
+        merged = dict(stored or {})
+        for name, entry in local.items():
+            if float((merged.get(name) or {}).get("last_run") or 0) <= float((entry or {}).get("last_run") or 0):
+                merged[name] = entry
+        return merged
+
     def _save_state(self) -> None:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        if shared_state_enabled():
+            from ts_harness.storage.kv import kv_update
+
+            try:
+                self._state = kv_update(
+                    SCHEDULER_STATE_NAMESPACE,
+                    SCHEDULER_STATE_KEY,
+                    lambda stored: self._merge_state(stored, self._state),
+                    default={},
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._audit({"event": "scheduler_state_save_failed", "error": str(exc)[:300]})
+            return
         if not self.state_path:
             return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)

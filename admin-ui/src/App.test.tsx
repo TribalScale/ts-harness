@@ -227,6 +227,39 @@ it("returns to the login page when an API call is unauthorized", async () => {
   expect(await screen.findByRole("heading", { name: "TS Harness" })).toBeInTheDocument();
 });
 
+it("keeps the session and offers a retry when the API does not respond at boot", async () => {
+  window.location.hash = "#/inbox";
+  let reachable = false;
+  mockFetch((url) => {
+    if (String(url).includes("/admin/auth/config")) {
+      if (!reachable) throw new TypeError("Failed to fetch");
+      return jsonResponse({ mode: "static", authenticated: true, permissions: ["view"] });
+    }
+    return jsonResponse({});
+  });
+  render(<App />);
+  expect(
+    await screen.findByText(/console API is not responding/i, undefined, { timeout: 3000 })
+  ).toBeInTheDocument();
+  expect(screen.queryByPlaceholderText("GATEWAY_TOKEN")).not.toBeInTheDocument();
+
+  reachable = true;
+  await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+  expect(await screen.findByText("Inbox page")).toBeInTheDocument();
+});
+
+it("shows the login page when the boot auth check is unauthorized", async () => {
+  window.location.hash = "#/inbox";
+  mockFetch((url) => {
+    if (String(url).includes("/admin/auth/config")) {
+      return jsonResponse({ error: "unauthorized" }, 401);
+    }
+    return jsonResponse({});
+  });
+  render(<App />);
+  expect(await screen.findByText(/Sign in to the operator console/)).toBeInTheDocument();
+});
+
 it("opens Program definitions by default from Workflows navigation", async () => {
   window.location.hash = "#/inbox";
   renderPage(<App />);
@@ -367,8 +400,10 @@ it("opens the inbox after static sign-in from the login hash", async () => {
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "TS Harness" })).toBeInTheDocument();
-  await userEvent.type(await screen.findByPlaceholderText("GATEWAY_TOKEN"), "dev-token");
+  expect(await screen.findByText(/Sign in to the operator console/)).toBeInTheDocument();
+  const tokenField = await screen.findByPlaceholderText("GATEWAY_TOKEN");
+  expect(tokenField).toHaveAttribute("type", "password");
+  await userEvent.type(tokenField, "dev-token");
   await userEvent.click(screen.getByRole("button", { name: "Enter console" }));
 
   await waitFor(() => expect(window.location.hash).toBe("#/inbox"));

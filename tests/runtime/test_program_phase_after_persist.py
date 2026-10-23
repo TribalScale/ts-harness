@@ -38,6 +38,31 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             )
         complete.assert_not_called()
 
+    def test_terminal_block_asks_the_parent_join_to_finish(self):
+        client = MagicMock()
+        registry = build_default_registry()
+        engine = WorkflowEngine(client=client, registry=registry)
+        with patch.object(
+            engine,
+            "_maybe_complete_program_phase",
+            return_value={"status": "child_finished"},
+        ) as complete:
+            with patch.object(engine, "_maybe_notify", return_value={"status": "skipped"}):
+                engine.on_task_transition(
+                    {
+                        "id": "t-deliver",
+                        "workflow_id": "wf-child",
+                        "workflow_type": "deliver_work_order",
+                        "tenant_id": "default",
+                        "step_name": "deliver_work_order",
+                        "status": "blocked",
+                        "agent_id": "dev-agent",
+                    },
+                    "blocked",
+                    error="git clone failed: repository not found",
+                )
+        complete.assert_called_once()
+
     def test_after_task_succeeded_invokes_phase_complete(self):
         client = MagicMock()
         registry = build_default_registry()

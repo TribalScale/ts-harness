@@ -1,8 +1,8 @@
 {
   "fragment_id": "verified_merge",
-  "definition_version": "1.5.0",
+  "definition_version": "1.6.0",
   "display_name": "PR checks, code review, QA gate, freshness, human merge",
-  "description": "Publish the host security scan, wait for PR checks, run an independent automated code review and the QA gate, each with a revise loop back to the implement stage, confirm each PR contains its base branch head (refreshing it when the base moved), then wait for the human merge.",
+  "description": "Publish the host security scan, wait for PR checks, run an independent automated code review and the QA gate, each with a revise loop back to the implement stage, confirm each PR contains its base branch head (refreshing it when the base moved), then wait for the human merge. A \"Request changes\" review or /revise comment sends the PR back to the implement stage; closing it stops the work order.",
   "params": {
     "implement_stage": {
       "kind": "stage_ref",
@@ -293,7 +293,8 @@
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",
         "scope_findings": "$prior.review_precheck.output.scope_findings",
-        "refresh": "$prior.review_precheck.output.refresh"
+        "refresh": "$prior.review_precheck.output.refresh",
+        "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
       },
       "retry": {
         "max_retries": 1,
@@ -326,7 +327,8 @@
             "review_feedback": "$reject.comments",
             "revision_files": "$prior.finalize_code_review.output.revision_files",
             "pr_url": "$prior.{{param.implement_stage}}.output.pr_url",
-            "revision_number": "$runtime.revision_count:{{param.implement_stage}}"
+            "revision_number": "$runtime.revision_count:{{param.implement_stage}}",
+            "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
           }
         },
         "re_gate": {
@@ -416,7 +418,8 @@
         "checks_state": "$prior.await_pr_checks.output.checks_state",
         "checks": "$prior.await_pr_checks.output.checks",
         "failed_checks": "$prior.await_pr_checks.output.failed_checks",
-        "host_security": "$prior.{{param.implement_stage}}.output.security"
+        "host_security": "$prior.{{param.implement_stage}}.output.security",
+        "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
       },
       "on_block": {
         "hook": "revise_on_reject",
@@ -430,7 +433,8 @@
           "input_map": {
             "qa_feedback": "$reject.comments",
             "pr_url": "$prior.{{param.implement_stage}}.output.pr_url",
-            "revision_number": "$runtime.revision_count:{{param.implement_stage}}"
+            "revision_number": "$runtime.revision_count:{{param.implement_stage}}",
+            "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
           }
         },
         "re_gate": {
@@ -662,6 +666,29 @@
             "depends_on": [
               "$previous.id"
             ]
+          }
+        ],
+        "cases": [
+          {
+            "error_prefix": "external_blocked:github.pr_changes_requested",
+            "max_revisions": 3,
+            "revise": {
+              "step_name": "{{param.implement_stage}}",
+              "agent_id": "dev-agent",
+              "budget": "human",
+              "source_steps": [
+                "{{param.implement_stage}}"
+              ],
+              "input_map": {
+                "review_feedback": "$reject.comments",
+                "pr_url": "$prior.{{param.implement_stage}}.output.pr_url",
+                "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
+              }
+            }
+          },
+          {
+            "error_prefix": "external_blocked:github.pr_closed",
+            "action": "stop"
           }
         ]
       },

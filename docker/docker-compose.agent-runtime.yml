@@ -11,6 +11,8 @@ services:
     restart: unless-stopped
 
   agent-runtime:
+    # Tagged so the coding worker image can build on it.
+    image: ts-harness-agent-runtime:latest
     build:
       context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
       dockerfile: docker/Dockerfile.agent-runtime
@@ -52,6 +54,14 @@ services:
       TS_HARNESS_SCHEDULER_STATE: /state/scheduler.json
       TS_HARNESS_CHANNEL_DEDUP: /state/channel-dedup.txt
       TS_HARNESS_DELEGATION_STATE: /state/delegation.json
+      # Storage flags (docs/runbooks/shared-state.md). The mirror and scratch dirs are
+      # container-local: rebuilt from Postgres and object storage on start.
+      TS_HARNESS_STATE_BACKEND: ${TS_HARNESS_STATE_BACKEND:-local}
+      TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
+      TS_HARNESS_SKILLS_BUCKET: ${TS_HARNESS_SKILLS_BUCKET:-}
+      TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
+      TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
+      TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
       SANDBOX_STRICT: ${SANDBOX_STRICT:-true}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
@@ -68,15 +78,17 @@ services:
     volumes:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
-      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
-      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
+      # rw with local state: admin console cron CRUD writes this file. With state in Postgres
+      # it is read-only (kept for one release as a safety net; the cron file lives in the mirror).
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
-      # rw: admin-created skill drafts and approvals (single-replica only)
-      - ts-harness-skills-managed:/skills-managed:rw
+      # rw with local objects: admin-created skill drafts and approvals. Read-only once skills
+      # live in object storage.
+      - ts-harness-skills-managed:/skills-managed:${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
       - ts-harness-state:/state
-      - ts-harness-workflow-definitions:/workflow-definitions:rw
+      - ts-harness-workflow-definitions:/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
     depends_on:
       - sandbox-worker
     restart: unless-stopped
@@ -137,6 +149,14 @@ services:
       TS_HARNESS_SCHEDULER_STATE: /state/scheduler.json
       TS_HARNESS_CHANNEL_DEDUP: /state/channel-dedup.txt
       TS_HARNESS_DELEGATION_STATE: /state/delegation.json
+      # Storage flags (docs/runbooks/shared-state.md). The mirror and scratch dirs are
+      # container-local: rebuilt from Postgres and object storage on start.
+      TS_HARNESS_STATE_BACKEND: ${TS_HARNESS_STATE_BACKEND:-local}
+      TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
+      TS_HARNESS_SKILLS_BUCKET: ${TS_HARNESS_SKILLS_BUCKET:-}
+      TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
+      TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
+      TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       SANDBOX_STRICT: "true"
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
@@ -151,15 +171,17 @@ services:
     volumes:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
-      # rw: admin console cron CRUD hot-reloads this file (single-replica only)
-      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:rw
+      # rw with local state: admin console cron CRUD writes this file. With state in Postgres
+      # it is read-only (kept for one release as a safety net; the cron file lives in the mirror).
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/runtime-cron-jobs.json:/config/runtime-cron-jobs.json:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/skills:/skills:ro
-      # rw: admin-created skill drafts and approvals (single-replica only)
-      - ts-harness-skills-managed:/skills-managed:rw
+      # rw with local objects: admin-created skill drafts and approvals. Read-only once skills
+      # live in object storage.
+      - ts-harness-skills-managed:/skills-managed:${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
       - ts-harness-state:/state
-      - ts-harness-workflow-definitions:/workflow-definitions:rw
+      - ts-harness-workflow-definitions:/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
     depends_on:
       - sandbox-worker
     restart: always

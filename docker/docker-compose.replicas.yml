@@ -1,0 +1,63 @@
+# A second agent-runtime and memory-api pair on the same host, with PgBouncer in
+# front of Postgres. Included by phase 12 for the scale_out profile when
+# AGENT_RUNTIME_REPLICAS is 2 or more. Needs Docker Compose 2.24.4+ (!reset, !override).
+#
+# memory-api shares its runtime's network namespace, so each runtime replica
+# gets its own memory-api. The admin console nginx balances across
+# agent-runtime and agent-runtime-2. Replicas need TS_HARNESS_SESSION_DB_URL:
+# sessions, tool approvals, rate limits and the scheduler lease live in Postgres.
+services:
+  pgbouncer:
+    image: ${PGBOUNCER_IMAGE:-edoburu/pgbouncer:v1.26.1-p0}
+    environment:
+      DB_HOST: ${TS_HARNESS_DB_HOST:-ts-harness-db}
+      DB_PORT: ${TS_HARNESS_DB_PORT:-5432}
+      DB_USER: ${TS_HARNESS_DB_USER:-ts_harness}
+      DB_PASSWORD: ${TS_HARNESS_DB_PASSWORD}
+      DB_NAME: ${TS_HARNESS_DB_NAME:-ts_harness_memory}
+      LISTEN_PORT: 6432
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-400}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_POOL_SIZE:-20}
+      SERVER_TLS_SSLMODE: ${PGSSLMODE:-require}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "6432"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  memory-api:
+    environment:
+      TS_HARNESS_DB_HOST: pgbouncer
+      TS_HARNESS_DB_PORT: "6432"
+      PGSSLMODE: disable
+      MEMORY_API_DB_POOLER: transaction
+    depends_on:
+      - agent-runtime
+      - pgbouncer
+
+  agent-runtime-2:
+    extends:
+      file: docker-compose.agent-runtime.yml
+      service: agent-runtime
+    # Reached through the admin console nginx only.
+    ports: !reset []
+    environment:
+      # Set by phase 12 when the LLM proxy runs (in agent-runtime's network namespace).
+      LLM_PROXY_URL: ${LLM_PROXY_REPLICA_URL:-}
+
+  memory-api-2:
+    extends:
+      file: docker-compose.memory-api.yml
+      service: memory-api
+    network_mode: "service:agent-runtime-2"
+    environment:
+      TS_HARNESS_DB_HOST: pgbouncer
+      TS_HARNESS_DB_PORT: "6432"
+      PGSSLMODE: disable
+      MEMORY_API_DB_POOLER: transaction
+    depends_on: !override
+      - agent-runtime-2
+      - pgbouncer

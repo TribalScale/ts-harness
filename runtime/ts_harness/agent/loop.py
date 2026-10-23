@@ -161,7 +161,18 @@ class EnterpriseAgent:
             )
 
         payload = self._normalize_work_orders_dispatch_payload(payload)
-        provider = self._provider_override or build_provider(agent.model)
+        usage_scope = payload.get("usage_scope") if isinstance(payload.get("usage_scope"), dict) else {}
+        provider = self._provider_override or build_provider(
+            agent.model,
+            scope={
+                "tenant": tenant_id,
+                "team": usage_scope.get("team_id"),
+                "user": usage_scope.get("requested_by"),
+                "workflow": payload.get("workflow_id"),
+                "task": payload.get("task_id"),
+                "agent": agent_id,
+            },
+        )
         system_prompt = self._build_workflow_system_prompt(agent, payload)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -326,7 +337,9 @@ class EnterpriseAgent:
         except KeyError as exc:
             return AgentRunResult(status="blocked", error=str(exc), runtime_task_id=runtime_task_id)
 
-        provider = self._provider_override or build_provider(agent.model)
+        provider = self._provider_override or build_provider(
+            agent.model, scope={"tenant": tenant_id, "user": actor_email, "agent": agent_id}
+        )
         phase = workflow_phase or prd_phase
         system_prompt = self._build_channel_system_prompt(
             agent,
@@ -837,6 +850,9 @@ class EnterpriseAgent:
                 "\nGoverned work-orders stage mode:\n"
                 f"- Execute exactly one stage: {stage or 'from input.stage'}.\n"
                 "- Use input.approved_prd and optional prior-stage artifacts as source truth.\n"
+                "- Carry every technical constraint the PRD states (frameworks, "
+                "storage, named entities, intervals, limits) into this stage's "
+                "artifacts word for word; never drop or generalize one.\n"
                 "- Do not call recall_memory / remember_memory; the payload is complete.\n"
                 "- Do not summarize or restate the PRD; produce new stage artifacts.\n"
                 f"- artifacts must include distinct bodies for: {expected_keys}.\n"
@@ -863,6 +879,18 @@ class EnterpriseAgent:
                 "\nDraft / Revise PRD mode:\n"
                 "- Use input.clarified_requirements and input.intake_output "
                 "as the source of truth.\n"
+                "- input.clarified_requirements.initial_request is the requester's "
+                "own request and clarified_requirements.answers are their answers. "
+                "Every requirement, named item, number, and technology in them "
+                "must appear in the PRD; answers refine the request and win on "
+                "conflict.\n"
+                "- Keep stated specifics exact (frameworks, named assets or "
+                "entities, intervals, limits, storage, validation rules). Never "
+                "replace them with generic wording.\n"
+                "- Add a 'Requirements' section listing each stated requirement as "
+                "a checklist item, and a 'Technical Constraints' section listing "
+                "every technology, platform, storage, and data choice the "
+                "requester stated.\n"
                 "- Do not ask for more intake information unless a critical "
                 "blocker is explicitly marked unknown.\n"
                 "- Produce a complete draft PRD in Markdown.\n"

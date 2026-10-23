@@ -87,6 +87,7 @@ jobs:
           terraform init -backend=false
           terraform validate
           terraform fmt -check -recursive
+          terraform test
 
       - name: Terraform fmt/validate (GCP)
         working-directory: infra/gcp

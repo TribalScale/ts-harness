@@ -8,6 +8,8 @@ COMPOSE = REPO_ROOT / "docker" / "docker-compose.workflow-runner.yml"
 DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.workflow-runner"
 COMPOSE_PHASE = REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh"
 COMPOSE_COMMON = REPO_ROOT / "scripts" / "phases" / "lib" / "common.sh"
+CODING_JOBS_COMPOSE = REPO_ROOT / "docker" / "docker-compose.coding-jobs.yml"
+CODING_WORKER_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.coding-worker"
 
 
 class WorkflowRunnerComposeTests(unittest.TestCase):
@@ -39,6 +41,7 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
             "MEMORY_API_URL",
             "WORKFLOW_RUNNER_ADAPTER",
             "GATEWAY_TOKEN",
+            "TS_HARNESS_SESSION_DB_URL",
             "TS_HARNESS_WORKFLOW_DEFINITION_STORE",
             "TS_HARNESS_MANAGED_WORKFLOWS_DIR",
             "TS_HARNESS_PROGRAM_DEFINITION_STORE",
@@ -120,6 +123,42 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
             phase,
         )
 
+
+class CodingJobsComposeTests(unittest.TestCase):
+    def test_launcher_and_worker_image_are_wired(self):
+        compose = CODING_JOBS_COMPOSE.read_text()
+        self.assertIn("coding-launcher:", compose)
+        self.assertIn('command: ["python3", "/app/scripts/coding-launcher.py"]', compose)
+        self.assertIn("/var/run/docker.sock:/var/run/docker.sock", compose)
+        self.assertIn('network_mode: "service:agent-runtime"', compose)
+        self.assertIn("CODING_WORKER_NETWORK: auto", compose)
+        self.assertIn("CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}", compose)
+        self.assertIn("ts-harness-runtime.yaml", compose)
+        self.assertIn("dockerfile: docker/Dockerfile.coding-worker", compose)
+
+    def test_launcher_follows_the_profile_and_gets_ecs_settings(self):
+        compose = CODING_JOBS_COMPOSE.read_text()
+        self.assertIn("CODING_LAUNCHER: ${CODING_LAUNCHER:-}", compose)
+        self.assertIn("DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}", compose)
+        common = COMPOSE_COMMON.read_text()
+        phase = COMPOSE_PHASE.read_text()
+        for key in ("CODING_ECS_CLUSTER", "CODING_ECS_TASK_DEFINITION", "CODING_ECS_SUBNETS", "CODING_ECS_SECURITY_GROUPS"):
+            self.assertIn(f"{key}: ${{{key}:-}}", compose)
+            self.assertIn(f'{key}="${{{key}:-}}"', common)
+            self.assertIn(f"export {key}=", phase)
+
+    def test_worker_image_bundles_opencode_and_runs_the_worker(self):
+        dockerfile = CODING_WORKER_DOCKERFILE.read_text()
+        self.assertIn("FROM ${AGENT_RUNTIME_IMAGE}", dockerfile)
+        self.assertIn("opencode-ai@${OPENCODE_VERSION}", dockerfile)
+        self.assertIn("/opt/tools/opencode/current", dockerfile)
+        self.assertIn('CMD ["python3", "/app/scripts/coding-worker.py"]', dockerfile)
+
+    def test_flag_reaches_the_runner_and_compose_phase(self):
+        self.assertIn("CODING_JOBS_ENABLED: ${CODING_JOBS_ENABLED:-false}", COMPOSE.read_text())
+        phase = COMPOSE_PHASE.read_text()
+        self.assertLess(phase.index("docker-compose.coding-jobs.yml"), phase.index("PHASE_FINGERPRINT="))
+        self.assertIn('CODING_JOBS_ENABLED="${CODING_JOBS_ENABLED:-false}"', COMPOSE_COMMON.read_text())
 
 if __name__ == "__main__":
     unittest.main()

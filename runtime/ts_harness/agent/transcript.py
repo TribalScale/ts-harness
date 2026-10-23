@@ -250,11 +250,26 @@ class TranscriptStore:
         return messages
 
     def _append_postgres(self, session_id: str, messages: list[dict[str, Any]]) -> None:
-        start = self._next_seq(session_id, len(messages))
+        # The runtime and the workflow runner both append. A process-local counter
+        # hands both of them the same seq. Lock the session and read MAX(seq) here.
         with self._connect() as conn:
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)",
+                    (session_id,),
+                )
+                cur.execute(
+                    """
+                    SELECT COALESCE(MAX(seq), 0)
+                    FROM runtime_transcript_messages
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                )
+                start = int(cur.fetchone()[0])
                 for offset, msg in enumerate(messages):
                     row = self._message_to_row(msg)
+                    seq = start + offset + 1
                     cur.execute(
                         """
                         INSERT INTO runtime_transcript_messages (
@@ -263,7 +278,7 @@ class TranscriptStore:
                         """,
                         (
                             session_id,
-                            start + offset + 1,
+                            seq,
                             row["role"],
                             row.get("content"),
                             row.get("tool_calls"),
@@ -271,6 +286,7 @@ class TranscriptStore:
                         ),
                     )
             conn.commit()
+        self._seq[session_id] = start + len(messages)
 
     def _clear_postgres(self, session_id: str) -> None:
         with self._connect() as conn:

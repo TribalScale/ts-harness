@@ -67,7 +67,9 @@ In OIDC mode the gateway still accepts `GATEWAY_TOKEN` from internal services (w
 
 ### Cron CRUD note
 
-`runtime-cron-jobs.json` is mounted **read-write** so the console can persist jobs. Run **one** agent-runtime replica for cron file consistency (no multi-replica file sync).
+With local state, `runtime-cron-jobs.json` is mounted **read-write** so the console can persist jobs, and all replicas on the host share the file.
+
+With `TS_HARNESS_STATE_BACKEND=postgres` the cron file lives in Postgres (shared files, namespace `cron`) and each replica keeps a mirror of it ([shared-state.md](shared-state.md)). Edits take a lock in Postgres, so any replica can save; two saves at once give the second admin a conflict to reload. The scheduler lease holder picks up the change on its next tick. Phase 15 merges system jobs through the memory API, so admin-added jobs are kept.
 
 ## Local development
 

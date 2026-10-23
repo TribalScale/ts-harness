@@ -45,8 +45,16 @@ class NginxAdminUiTests(unittest.TestCase):
     def test_agent_runtime_is_re_resolved_after_container_recreate(self):
         text = CONF.read_text(encoding="utf-8")
         self.assertIn("resolver 127.0.0.11", text)
-        self.assertIn("set $agent_runtime agent-runtime:18789;", text)
+        self.assertIn("server agent-runtime:18789 resolve;", text)
         self.assertNotIn("proxy_pass http://agent-runtime", text)
+        self.assertNotIn("proxy_pass http://$", text)
+
+    def test_runtime_replicas_share_the_upstream(self):
+        text = CONF.read_text(encoding="utf-8")
+        upstream = re.search(r"upstream agent_runtime \{(.*?)\}", text, re.S).group(1)
+        self.assertIn("zone agent_runtime", upstream)
+        self.assertIn("server agent-runtime-2:18789 resolve;", upstream)
+        self.assertEqual(text.count("proxy_pass http://agent_runtime;"), text.count("proxy_pass"))
 
 
 class BootstrapAdminConsoleTests(unittest.TestCase):

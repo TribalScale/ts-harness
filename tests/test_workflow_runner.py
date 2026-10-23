@@ -651,7 +651,7 @@ class WorkflowRunnerTests(unittest.TestCase):
         task = {
             "id": "task-1",
             "workflow_id": "workflow-1",
-            "workflow_type": "deploy_release",
+            "workflow_type": "release_track",
             "step_name": step_name,
             "agent_id": "orchestrator",
             "tenant_id": "acme",
@@ -663,7 +663,7 @@ class WorkflowRunnerTests(unittest.TestCase):
             memory,
             adapter,
             runner_id="runner-1",
-            skeletons={"deploy_release": skeletons["deploy_release"]},
+            skeletons={"release_track": skeletons["release_track"]},
         )
         return runner_module, workflow_runner, memory, adapter
 
@@ -702,6 +702,82 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(args[1], "blocked")
         self.assertEqual(kwargs["error"], "barrier_blocked: stale_base: x")
         self.assertEqual(kwargs["dispatch_result"], {"output": {"stale": [1]}})
+
+    def _accepted_runner(self, step_name, agent_id):
+        runner_module = load_runner()
+        skeletons = runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+        task = {
+            "id": "task-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": step_name,
+            "agent_id": agent_id,
+            "input": {"_human_accept": {"actor": "alice", "at": "t", "output": {"verdict": "block", "prs": []}}},
+        }
+        memory = FakeMemoryClient(ready=[task])
+        adapter = FakeAdapter({"status": "succeeded", "output": {}})
+        workflow_runner = runner_module.WorkflowRunner(
+            memory,
+            adapter,
+            runner_id="runner-1",
+            skeletons={"deliver_work_order": skeletons["deliver_work_order"]},
+        )
+        return runner_module, workflow_runner, memory, adapter
+
+    def test_accepted_step_completes_with_its_output_without_running(self):
+        for step_name, agent_id in (("finalize_code_review", "orchestrator"), ("qa_gate", "qa-agent")):
+            with self.subTest(step=step_name):
+                runner_module, workflow_runner, memory, adapter = self._accepted_runner(step_name, agent_id)
+                with (
+                    patch("ts_harness.workflows.system_steps.run_system_step") as step,
+                    patch("ts_harness.workflows.code_review.publish_override_status", return_value=[]),
+                ):
+                    workflow_runner.tick()
+
+                step.assert_not_called()
+                self.assertEqual(adapter.payloads, [])
+                [(task_id, output)] = memory.completed
+                self.assertEqual(task_id, "task-1")
+                self.assertEqual(output["human_override"]["actor"], "alice")
+                self.assertEqual(output["human_override"]["step"], step_name)
+
+    def test_qa_gate_publishes_pending_before_dispatch_and_the_verdict_after(self):
+        runner_module = load_runner()
+        skeletons = runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+        prs = [{"pr_url": "https://github.com/o/r/pull/19", "head_sha": "62bb0d4"}]
+        task = {
+            "id": "task-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "input": {"files": [{"filename": "a.js"}], "prs": prs},
+        }
+        result = {"status": "succeeded", "output": {"status": "success", "result": {"prs": []}}}
+        calls = []
+
+        class RecordingAdapter(FakeAdapter):
+            def dispatch(self, payload):
+                calls.append("dispatch")
+                return super().dispatch(payload)
+
+        memory = FakeMemoryClient(ready=[task])
+        workflow_runner = runner_module.WorkflowRunner(
+            memory,
+            RecordingAdapter(result),
+            runner_id="runner-1",
+            skeletons={"deliver_work_order": skeletons["deliver_work_order"]},
+        )
+        with (
+            patch("ts_harness.workflows.qa_status.qa_started", side_effect=lambda i: calls.append(("started", i["prs"])) or []),
+            patch(
+                "ts_harness.workflows.qa_status.qa_finished",
+                side_effect=lambda i, r: calls.append(("finished", r["status"])) or [],
+            ),
+        ):
+            workflow_runner.tick()
+
+        self.assertEqual(calls, [("started", prs), "dispatch", ("finished", "succeeded")])
 
     def test_runner_prepares_deployment_wait(self):
         runner_module, workflow_runner, memory, _ = self._release_runner("await_deployment_staging")
@@ -980,6 +1056,33 @@ class WorkflowRunnerTests(unittest.TestCase):
             memory.blocked,
             [("task-1", "draft_prd output must include result.prd_markdown")],
         )
+
+    def test_terminal_block_hands_the_blocked_output_to_the_engine(self):
+        runner_module = load_runner()
+        task = {
+            "id": "qa-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "input": {},
+        }
+        qa_output = {"status": "failed", "result": {"summary": "QA blocked", "prs": [{"defects": [{"id": "QA-001"}]}]}}
+        memory = FakeMemoryClient(ready=[task])
+        adapter = FakeAdapter(
+            {"status": "blocked", "error": "stage contract outcome: blocked", "runtime_task_id": "rt-1", "output": qa_output}
+        )
+        workflow_runner = runner_module.WorkflowRunner(memory, adapter, runner_id="runner-1")
+
+        with patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "true"}), patch.object(
+            runner_module, "_workflow_engine"
+        ) as engine, patch.object(workflow_runner, "_publish_qa_status"), redirect_stdout(io.StringIO()):
+            workflow_runner.tick()
+
+        args, kwargs = engine.return_value.on_task_transition.call_args
+        self.assertEqual(args[1], "blocked")
+        self.assertEqual(kwargs["dispatch_result"]["output"], qa_output)
+        self.assertEqual(kwargs["error"], "stage contract outcome: blocked")
 
     def test_runner_parks_tool_approval_block_without_retry_or_hooks(self):
         runner_module = load_runner()
@@ -1785,6 +1888,136 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(memory.blocked, [("task-1", "awaiting_external:v1.event")])
 
 
+class BlockingAdapter:
+    """Holds every dispatch until ``release`` is set, like a long OpenCode run."""
+
+    def __init__(self, result=None):
+        self.result = result or {"status": "succeeded", "output": {"summary": "done"}}
+        self.release = threading.Event()
+        self.started = []
+        self._lock = threading.Lock()
+
+    def dispatch(self, payload):
+        with self._lock:
+            self.started.append(payload["task_id"])
+        self.release.wait(5)
+        return self.result
+
+
+def _task(task_id, workflow_id):
+    return {
+        "id": task_id,
+        "workflow_id": workflow_id,
+        "workflow_type": "prd_request",
+        "step_name": "draft_prd",
+        "agent_id": "pm-agent",
+    }
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class WorkerPoolTests(unittest.TestCase):
+    def setUp(self):
+        self._hook_engine_patch = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false"})
+        self._hook_engine_patch.start()
+        self.addCleanup(self._hook_engine_patch.stop)
+        self.runner_module = load_runner()
+        self.tick_path = Path(tempfile.mkdtemp()) / "workflow-runner.tick"
+
+    def _runner(self, memory, adapter, max_workers=4):
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.addCleanup(executor.shutdown, wait=True)
+        runner = self.runner_module.WorkflowRunner(
+            memory,
+            adapter,
+            runner_id="runner-1",
+            tick_file=self.tick_path,
+            concurrency_limiter=self.runner_module.ConcurrencyLimiter(max_workers),
+            executor=executor,
+        )
+        self.addCleanup(adapter.release.set)
+        return runner
+
+    def test_long_dispatches_run_in_parallel_and_tick_returns(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-2")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 2))
+        self.assertEqual(memory.completed, [])
+        self.assertTrue(self.tick_path.exists())
+        adapter.release.set()
+        self.assertTrue(_wait_for(lambda: len(memory.completed) == 2))
+
+    def test_only_one_task_per_workflow_is_in_flight(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-1")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+        memory.ready = [_task("t2", "wf-1")]
+        runner.tick()
+
+        self.assertEqual([c[0]["id"] for c in memory.claims], ["t1"])
+        adapter.release.set()
+        self.assertTrue(_wait_for(lambda: len(memory.completed) == 1))
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: [c[0]["id"] for c in memory.claims] == ["t1", "t2"]))
+
+    def test_limit_caps_parallel_dispatches(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-2")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter, max_workers=1)
+
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+        self.assertEqual(len(memory.claims), 1)
+
+    def test_stale_sweep_skips_tasks_this_runner_is_still_running(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+
+        memory.ready = []
+        memory.stale = [{"id": "t1"}, {"id": "orphan"}]
+        runner.tick()
+
+        self.assertEqual(memory.blocked, [("orphan", "task lease expired")])
+
+    def test_adapter_failure_in_a_worker_still_recovers_the_task(self):
+        task = {**_task("t1", "wf-1"), "attempt": 0, "max_retries": 2}
+        memory = FakeMemoryClient(ready=[task])
+
+        class RaisingAdapter(BlockingAdapter):
+            def dispatch(self, payload):
+                raise RuntimeError("boom")
+
+        adapter = RaisingAdapter()
+        runner = self._runner(memory, adapter)
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(memory.retried) == 1))
+        self.assertIn("boom", memory.blocked[0][1])
+        memory.ready = [task]
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(memory.claims) == 2))
+
+
 class GitHubWaitRetryTests(unittest.TestCase):
     def _dispatch(self, error):
         runner_module = load_runner()
@@ -1985,6 +2218,265 @@ class LeaderLeaseTests(unittest.TestCase):
             )
         self.assertLess(time.monotonic() - started, 1)
         self.assertIn("runner_shutdown", captured.getvalue())
+
+
+class CodingJobMemoryClient(FakeMemoryClient):
+    def __init__(self, ready=None, jobs=None):
+        super().__init__(ready)
+        self.jobs = list(jobs or [])
+        self.created_jobs = []
+        self.consumed = []
+
+    def list_coding_jobs(self, *, task_id=None, unconsumed=False, limit=50, **_):
+        return [j for j in self.jobs if j.get("task_id") == task_id]
+
+    def create_coding_job(self, **kwargs):
+        self.created_jobs.append(kwargs)
+        return {"id": "job-new", "status": "queued", "created": True}
+
+    def consume_coding_job(self, job_id):
+        self.consumed.append(job_id)
+
+    def task_program(self, task_id):
+        return {"task_id": task_id, "program_id": "prog-1"}
+
+
+class CodingJobDispatchTests(unittest.TestCase):
+    PR = "https://github.com/acme/app/pull/7"
+
+    def setUp(self):
+        env = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false", "CODING_JOBS_ENABLED": "true"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner_module = load_runner()
+        self.skeletons = self.runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+
+    def task(self, **extra):
+        return {
+            "id": "task-1",
+            "workflow_id": "wf-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "deliver_work_order",
+            "agent_id": "dev-agent",
+            "input": {"work_order_id": "WO-1", "work_order_body": "Do it", "repo_url": "https://github.com/acme/app"},
+            "attempt": 0,
+            "max_retries": 2,
+            **extra,
+        }
+
+    def run_tick(self, memory, adapter=None):
+        adapter = adapter or FakeAdapter({"status": "succeeded", "output": {"summary": "agent ran"}})
+        runner = self.runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-1", skeletons={"deliver_work_order": self.skeletons["deliver_work_order"]}
+        )
+        runner.tick()
+        return adapter
+
+    def test_flag_off_keeps_the_agent_path(self):
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch.dict("os.environ", {"CODING_JOBS_ENABLED": "false"}):
+            adapter = self.run_tick(memory)
+        self.assertEqual(len(adapter.payloads), 1)
+        self.assertEqual(memory.created_jobs, [])
+
+    def test_queues_a_job_and_parks_the_task_without_dispatching(self):
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}) as spec:
+            adapter = self.run_tick(memory)
+        self.assertEqual(adapter.payloads, [])
+        self.assertEqual(spec.call_args.kwargs["program_id"], "prog-1")
+        self.assertEqual(memory.created_jobs[0]["task_id"], "task-1")
+        self.assertEqual(memory.created_jobs[0]["program_id"], "prog-1")
+        self.assertEqual(memory.waits, [("task-1", "job-new", "coding.finished")])
+        self.assertEqual(memory.blocked, [("task-1", "awaiting_external:coding.finished")])
+
+    def test_an_active_job_is_reparked_not_duplicated(self):
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "running"}])
+        self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.waits, [("task-1", "job-1", "coding.finished")])
+
+    def test_bad_request_blocks_with_the_reason(self):
+        from ts_harness.implementation.coding_job import CodingRequestError
+
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", side_effect=CodingRequestError("repo not allowed")):
+            self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.blocked[0], ("task-1", "repo not allowed"))
+
+    def test_succeeded_job_completes_the_task_and_is_consumed(self):
+        result = {"ok": True, "work_order_id": "WO-1", "pr_url": self.PR, "branch": "wo-1", "head_sha": "abc", "security": {"secret_scan": {}}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "succeeded", "result": result}])
+        adapter = self.run_tick(memory)
+        self.assertEqual(adapter.payloads, [])
+        (task_id, output), = memory.completed
+        self.assertEqual((task_id, output["pr_url"], output["head_sha"], output["branch"]), ("task-1", self.PR, "abc", "wo-1"))
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_failed_job_blocks_with_the_contract_error_and_is_consumed(self):
+        result = {"ok": False, "work_order_id": "WO-1", "error": "tests failed"}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "failed", "result": result}])
+        self.run_tick(memory)
+        self.assertEqual(memory.completed, [])
+        self.assertIn("run_coding_backend failed: tests failed", memory.blocked[0][1])
+        self.assertEqual(memory.retried, [])
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_runner_memory_client_speaks_the_coding_job_api(self):
+        client = self.runner_module.MemoryApiClient("http://memory", token="t")
+        calls = []
+        client._request = lambda method, path, body=None: calls.append((method, path, body)) or {"jobs": [{"id": "j"}]}
+        self.assertEqual(client.list_coding_jobs(task_id="task-1", unconsumed=True, limit=10), [{"id": "j"}])
+        client.create_coding_job(spec={"repo_url": "r"}, task_id="task-1")
+        client.consume_coding_job("j")
+        client.task_program("task-1")
+        self.assertEqual(calls[0][:2], ("GET", "/coding-jobs?limit=10&task_id=task-1&unconsumed=true"))
+        self.assertEqual(calls[1], ("POST", "/coding-jobs/create", {"spec": {"repo_url": "r"}, "task_id": "task-1", "actor": "workflow-runner"}))
+        self.assertEqual(calls[2][:2], ("POST", "/coding-jobs/j/consume"))
+        self.assertEqual(calls[3][:2], ("GET", "/workflow/tasks/task-1/program"))
+
+    def test_lost_job_is_retried(self):
+        memory = CodingJobMemoryClient(
+            ready=[self.task()],
+            jobs=[{"id": "job-1", "task_id": "task-1", "status": "lost", "result": {"ok": False, "error": "coding job lost: no heartbeat for 5 minutes"}}],
+        )
+        self.run_tick(memory)
+        self.assertEqual(memory.retried[0][0], "task-1")
+        self.assertIn("coding job lost: no heartbeat", memory.retried[0][1])
+        self.assertEqual(memory.consumed, ["job-1"])
+
+
+
+class LaneMemoryClient(FakeMemoryClient):
+    def __init__(self, by_lane=None, leader=True):
+        super().__init__()
+        self.by_lane = {lane: list(tasks) for lane, tasks in (by_lane or {}).items()}
+        self.batch_claims = []
+        self.renewals = []
+        self.leader = leader
+        self.stale_listed = 0
+        self.locks = []
+
+    def acquire_leader(self, runner_id, ttl_seconds):
+        return self.leader
+
+    def list_stale_tasks(self):
+        self.stale_listed += 1
+        return []
+
+    def list_ready_tasks(self, limit):
+        raise AssertionError("lane mode must not list ready tasks")
+
+    def claim_ready_tasks(self, *, runner, lane, limit, lease_seconds):
+        self.batch_claims.append((lane, limit))
+        tasks, self.by_lane[lane] = self.by_lane.get(lane, [])[:limit], self.by_lane.get(lane, [])[limit:]
+        return tasks
+
+    def renew_task_lease(self, task_id, *, runner, lease_seconds):
+        self.renewals.append(task_id)
+        return True
+
+    def acquire_workflow_lock(self, workflow_id, *, owner, ttl_seconds):
+        self.locks.append(("acquire", workflow_id))
+        return True
+
+    def release_workflow_lock(self, workflow_id, *, owner):
+        self.locks.append(("release", workflow_id))
+        return True
+
+
+def _lane_task(task_id, workflow_id="workflow-1"):
+    return {
+        "id": task_id,
+        "workflow_id": workflow_id,
+        "workflow_type": "prd_request",
+        "step_name": "draft_prd",
+        "agent_id": "pm-agent",
+        "input": {},
+    }
+
+
+class LaneModeTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.runner_module = load_runner()
+
+    def runner(self, memory, caps, adapter=None, executor=None):
+        adapter = adapter or FakeAdapter({"status": "succeeded", "output": {"ok": True}})
+        return self.runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-a", lane_caps=caps, executor=executor
+        )
+
+    def test_claims_each_lane_in_batches_and_runs_the_tasks(self):
+        memory = LaneMemoryClient({"fast": [_lane_task("t1", "w1"), _lane_task("t2", "w2")], "agent": [_lane_task("t3", "w3")]})
+        self.runner(memory, {"fast": 5, "agent": 2}).tick()
+        self.assertEqual(memory.batch_claims, [("fast", 5), ("agent", 2)])
+        self.assertEqual([task_id for task_id, _ in memory.completed], ["t1", "t2", "t3"])
+
+    def test_dispatch_holds_the_workflow_lock_except_during_the_agent_turn(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1", "w1")]})
+        seen = []
+
+        class Adapter(FakeAdapter):
+            def dispatch(self, payload):
+                seen.append(list(memory.locks))
+                return super().dispatch(payload)
+
+        self.runner(memory, {"agent": 1}, adapter=Adapter({"status": "succeeded", "output": {}})).tick()
+        self.assertEqual(seen[0], [("acquire", "w1"), ("release", "w1")])
+        self.assertEqual(memory.locks[-1], ("release", "w1"))
+        self.assertEqual(memory.locks.count(("acquire", "w1")), 2)
+
+    def test_full_lane_claims_nothing(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t2", "w2")]})
+        runner = self.runner(memory, {"agent": 1})
+        runner._inflight_lanes["t1"] = "agent"
+        runner.tick()
+        self.assertEqual(memory.batch_claims, [])
+
+    def test_only_the_leader_sweeps_stale_tasks(self):
+        follower = LaneMemoryClient(leader=False)
+        self.runner(follower, {"agent": 1}).tick()
+        self.assertEqual(follower.stale_listed, 0)
+        leader = LaneMemoryClient(leader=True)
+        self.runner(leader, {"agent": 1}).tick()
+        self.assertEqual(leader.stale_listed, 1)
+
+    def test_followers_still_claim(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1")]}, leader=False)
+        self.runner(memory, {"agent": 1}).tick()
+        self.assertEqual([task_id for task_id, _ in memory.completed], ["t1"])
+
+    def test_renews_leases_of_long_running_tasks(self):
+        memory = LaneMemoryClient()
+        runner = self.runner(memory, {"agent": 1})
+        runner.lease_seconds = 30
+        runner._lease_renewed = {"old": time.monotonic() - 20, "new": time.monotonic()}
+        runner._renew_leases()
+        self.assertEqual(memory.renewals, ["old"])
+
+    def test_lane_mode_does_not_use_the_shared_limiter(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1")]})
+        runner = self.runner(memory, {"agent": 1})
+        runner._limiter = MagicMock()
+        runner.tick()
+        runner._limiter.release.assert_not_called()
+
+    def test_without_claim_support_falls_back_to_list_then_claim(self):
+        memory = FakeMemoryClient(ready=[_lane_task("t1")])
+        self.runner(memory, {"agent": 1}).tick()
+        self.assertEqual(len(memory.claims), 1)
+
+    def test_lane_caps_come_from_the_profile_unless_turned_off(self):
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "", "DEPLOYMENT_PROFILE": "single_host"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {"fast": 10, "agent": 3, "coding": 3})
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "fast=2,agent=1"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {"fast": 2, "agent": 1})
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "off"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {})
 
 
 if __name__ == "__main__":

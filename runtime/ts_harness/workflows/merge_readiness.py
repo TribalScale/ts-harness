@@ -15,7 +15,12 @@ import time
 from typing import Any
 
 from ts_harness.config.governance import independent_review_enabled, program_governance_snapshot
-from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url, parse_repo_slug
+from ts_harness.integrations.github_client import (
+    GitHubClient,
+    classify_github_wait_error,
+    parse_github_pr_url,
+    parse_repo_slug,
+)
 from ts_harness.workflows import independent_review, merge_policy
 from ts_harness.workflows.expressions import resolve_value
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
@@ -258,6 +263,10 @@ def _publish_security_status(
                 slug[0], slug[1], str(head["head_sha"]), state=state, context=SECURITY_STATUS_CONTEXT, description=description
             )
         except Exception as exc:  # noqa: BLE001
+            # On a repo without CI this status is the only check the wait sees,
+            # so a dropped publish would leave the wait pending forever.
+            if classify_github_wait_error(exc)[0]:
+                raise
             warnings.append(f"could not publish {SECURITY_STATUS_CONTEXT} on {head.get('pr_url')}: {exc}")
 
 

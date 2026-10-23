@@ -187,6 +187,8 @@ def _build_work_orders_inputs(
         intake["approved_prd"] = artifacts["approved_prd"]
     if artifacts.get("completed_work_order_ids") is not None:
         intake["completed_work_order_ids"] = artifacts.get("completed_work_order_ids")
+    if artifacts.get("project_repositories"):
+        intake["project_repositories"] = artifacts["project_repositories"]
     return intake
 
 
@@ -322,7 +324,13 @@ def _build_implement_inputs(
                 intake["work_order_body"] = body
         except Exception:  # noqa: BLE001
             pass
-    if workflow_type:
+    repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
+    project_default = repositories[0] if len(repositories) == 1 else None
+    if project_default:
+        intake["repo_url"] = project_default["repo_url"]
+        if project_default.get("default_branch"):
+            intake["base_branch"] = project_default["default_branch"]
+    elif workflow_type:
         try:
             from ts_harness.implementation.config import repo_for_workflow
 
@@ -340,7 +348,31 @@ def _build_implement_inputs(
         "main",
     }:
         intake["base_branch"] = "dev"
+    if repositories and artifacts.get("work_orders_markdown"):
+        _route_work_orders_to_repositories(intake, str(artifacts["work_orders_markdown"]), repositories)
     return intake
+
+
+def _route_work_orders_to_repositories(
+    intake: dict[str, Any], markdown: str, repositories: list[dict[str, Any]]
+) -> None:
+    """Give each work order the repo_url and base_branch of the repository it names."""
+    from ts_harness.implementation.work_order_context import parse_work_order_repositories, resolve_repository
+
+    named = parse_work_order_repositories(markdown)
+
+    def target(work_order_id: Any) -> dict[str, Any]:
+        repository = resolve_repository(named.get(str(work_order_id or "").upper()), repositories)
+        if repository is None:
+            return {}
+        out = {"repo_url": repository["repo_url"]}
+        if repository.get("default_branch"):
+            out["base_branch"] = repository["default_branch"]
+        return out
+
+    for item in intake.get("work_orders") or []:
+        item.update(target(item.get("work_order_id")))
+    intake.update(target(intake.get("work_order_id")))
 
 
 def _extract_implement_outputs(
@@ -380,7 +412,46 @@ def _extract_implement_outputs(
             if item not in completed:
                 completed.append(item)
         patch["completed_work_order_ids"] = completed
+    merged_work_orders = _merged_work_orders(tasks, merged, existing)
+    if merged_work_orders:
+        patch["merged_work_orders"] = merged_work_orders
     return patch
+
+
+def _merged_work_orders(
+    tasks: list[dict[str, Any]], merged: dict[str, Any], existing: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Every merged PR of the program so far, one entry per PR URL, for per-repository releases."""
+    by_pr: dict[str, dict[str, Any]] = {
+        str(item["pr_url"]): dict(item)
+        for item in existing.get("merged_work_orders") or []
+        if isinstance(item, dict) and item.get("pr_url")
+    }
+
+    def add(work_order_id: Any, pr_url: Any, merge_sha: Any, merged_at: Any) -> None:
+        if pr_url and merge_sha:
+            by_pr[str(pr_url)] = {
+                "work_order_id": str(work_order_id or ""),
+                "pr_url": str(pr_url),
+                "merge_sha": str(merge_sha),
+                "merged_at": str(merged_at or ""),
+            }
+
+    found_prs = False
+    for task in tasks:
+        output = task.get("output") if task.get("status") == "succeeded" else None
+        for pr in (output or {}).get("prs") or [] if isinstance(output, dict) else []:
+            if isinstance(pr, dict):
+                found_prs = True
+                add(pr.get("work_order_id"), pr.get("pr_url"), pr.get("merge_sha"), pr.get("merged_at"))
+    if not found_prs:
+        add(
+            merged.get("work_order_id"),
+            merged.get("pr_url"),
+            merged.get("merge_sha") or merged.get("merge_commit_sha"),
+            merged.get("merged_at"),
+        )
+    return list(by_pr.values())
 
 
 def _build_deploy_inputs(
@@ -393,7 +464,17 @@ def _build_deploy_inputs(
 ) -> dict[str, Any]:
     del transcript_messages
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
-    for key in ("pr_url", "pr_urls", "merge_sha", "repo_url", "rollback_environment", "rollback_sha"):
+    for key in (
+        "pr_url",
+        "pr_urls",
+        "merge_sha",
+        "repo_url",
+        "rollback_environment",
+        "rollback_sha",
+        "merged_work_orders",
+        "work_orders_markdown",
+        "project_repositories",
+    ):
         if artifacts.get(key):
             intake[key] = artifacts[key]
     base_branch = artifacts.get("base_branch") or artifacts.get("default_branch")
@@ -430,6 +511,9 @@ def _extract_deploy_outputs(
         and task["output"].get("release_id")
         and task["output"].get("environment")
     ]
+    for output in (merged.get("children_outputs") or {}).values():
+        if isinstance(output, dict):
+            released.extend(str(env) for env in output.get("environments") or [])
     if released:
         patch["released_environments"] = list(dict.fromkeys(released))
     return patch

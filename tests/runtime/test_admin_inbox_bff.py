@@ -50,7 +50,7 @@ class AdminBffTests(unittest.TestCase):
             status="pending",
             requested_at="2026-08-01T00:00:00Z",
         )
-        queue = SimpleNamespace(_requests={"appr-1": approval})
+        queue = SimpleNamespace(list_pending=lambda: [approval])
         memory = mock.Mock()
         memory.list_programs.return_value = {
             "programs": [
@@ -87,6 +87,100 @@ class AdminBffTests(unittest.TestCase):
         self.assertIn("skill_draft", types)
         self.assertIn("tool_approval", types)
         self.assertIn("workflow_gate", types)
+
+    def test_build_inbox_finds_gates_from_the_raw_memory_api_status(self):
+        from ts_harness.memory.client import MemoryClient
+
+        raw_status = {
+            "program_id": "prog-1",
+            "status": "running",
+            "active_workflow_id": "wf-1",
+            "artifacts": {},
+            "active_workflow": {"id": "wf-1", "definition_version": "2.0.0"},
+            "active_tasks": [
+                {"id": "draft", "step_name": "draft_prd", "status": "succeeded"},
+                {
+                    "id": "task-1",
+                    "step_name": "approve_prd",
+                    "status": "pending",
+                    "approval_required": True,
+                    "approval_status": "pending",
+                    "created_at": "2026-08-01T01:00:00Z",
+                },
+            ],
+        }
+        programs = {"programs": [{"id": "prog-1", "status": "running", "display_name": "Delivery"}]}
+        client = MemoryClient("http://memory.test")
+
+        def request(method, path, body=None, **_):
+            return raw_status if path.endswith("/status") else programs
+
+        auth = AuthContext(actor_id="admin", tenant_id="default", roles=["admin"])
+        runtime = SimpleNamespace(
+            policy=SimpleNamespace(evaluate_identity=mock.Mock(return_value=SimpleNamespace(decision="allow")))
+        )
+        with (
+            mock.patch.object(client, "_request", side_effect=request),
+            mock.patch.object(client, "list_stuck_tasks", return_value=[], create=True),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
+        ):
+            result = build_inbox(runtime, auth, memory=client, skills_root="skills")
+
+        [gate] = [item for item in result["items"] if item["type"] == "workflow_gate"]
+        self.assertEqual((gate["id"], gate["title"]), ("task-1", "approve_prd"))
+        self.assertEqual(gate["meta"]["waiting_on"]["kind"], "approval")
+
+    def test_build_inbox_lists_steps_waiting_for_a_human_decision(self):
+        from ts_harness.workflows.engine import WorkflowEngine
+        from ts_harness.workflows.hooks import build_default_registry
+
+        stuck = {
+            "id": "finalize-4",
+            "workflow_id": "wf-d",
+            "workflow_type": "deliver_work_order",
+            "step_name": "finalize_code_review",
+            "error": "barrier_blocked: code_review_blocked: 1 blocking findings",
+            "input": {"_awaiting_human_decision": {"reason": "revision_limit"}},
+            "output": {"review_feedback": "Fix the persistence bug."},
+            "updated_at": "2026-10-22T17:34:10Z",
+            "parent_workflow_id": "wf-impl",
+        }
+        deliver = {
+            "id": "deliver-1",
+            "step_name": "deliver_work_order",
+            "status": "succeeded",
+            "input": {"work_order_id": "WO-003"},
+            "output": {"pr_url": "https://github.com/org/app/pull/18"},
+        }
+        memory = mock.Mock()
+        memory.list_programs.return_value = {"programs": []}
+        memory.list_stuck_tasks.return_value = [stuck]
+        payloads = {
+            "wf-d": {"workflow": {"id": "wf-d", "workflow_type": "deliver_work_order", "parent_workflow_id": "wf-impl"}, "tasks": [deliver, {**stuck, "status": "blocked"}]},
+            "wf-impl": {"workflow": {"id": "wf-impl", "program_id": "prog-1"}, "tasks": []},
+        }
+        memory.get_workflow.side_effect = lambda workflow_id: payloads[workflow_id]
+        engine = WorkflowEngine(client=memory, registry=build_default_registry())
+        auth = AuthContext(actor_id="ops", tenant_id="acme", roles=None)
+        runtime = SimpleNamespace(policy=SimpleNamespace())
+        with (
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine),
+            mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
+        ):
+            result = build_inbox(runtime, auth, memory=memory, skills_root="skills")
+
+        memory.list_stuck_tasks.assert_called_once_with(tenant_id="acme")
+        [item] = [item for item in result["items"] if item["type"] == "stuck_step"]
+        self.assertEqual(item["id"], "finalize-4")
+        self.assertEqual(item["title"], "WO-003 · finalize_code_review")
+        meta = item["meta"]
+        self.assertEqual(meta["decisions"], ["revise", "accept", "stop"])
+        self.assertEqual((meta["workflow_id"], meta["program_id"]), ("wf-d", "prog-1"))
+        self.assertEqual(meta["pr_url"], "https://github.com/org/app/pull/18")
+        self.assertIn("Fix the persistence bug.", meta["feedback"])
+        self.assertEqual(meta["status"], "blocked")
 
 
 class SessionMessagesTenantScopeTests(unittest.TestCase):
@@ -125,6 +219,15 @@ class SessionMessagesTenantScopeTests(unittest.TestCase):
         self.assertEqual(result["session_id"], "session-1")
         self.assertEqual(result["agent_id"], "ops-agent")
         self.assertEqual(result["messages"], [{"role": "user", "content": "hello"}])
+        self.assertNotIn("program_id", result)
+
+    def test_program_id_comes_from_session_metadata(self):
+        self.session.metadata = {"program_id": "program-1"}
+        auth = AuthContext(actor_id="admin", tenant_id="tenant-a", roles=["admin"])
+
+        result = session_messages_admin("session-1", auth)
+
+        self.assertEqual(result["program_id"], "program-1")
 
     def test_cross_tenant_read_is_not_found(self):
         auth = AuthContext(actor_id="admin", tenant_id="tenant-b", roles=["admin"])

@@ -45,6 +45,19 @@ ORDER=(
   028_audit_details_program_index.sql
   029_runner_leader_lease.sql
   030_program_department.sql
+  031_teams_directory.sql
+  032_program_access.sql
+  033_coding_jobs.sql
+  034_projects_registries.sql
+  035_github_app.sql
+  036_project_repositories.sql
+  037_task_lanes.sql
+  038_workflow_locks.sql
+  039_shared_runtime_state.sql
+  040_llm_usage_budgets.sql
+  041_team_budgets.sql
+  042_scale_out_metrics.sql
+  043_shared_runtime_state.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'
