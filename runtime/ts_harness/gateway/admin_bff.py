@@ -102,7 +102,9 @@ def build_inbox(
     if is_admin(auth, runtime):
         try:
             from ts_harness.skills.authoring import list_drafts
+            from ts_harness.skills.repository import sync_skill_mirror
 
+            sync_skill_mirror()
             drafts = list_drafts(skills_root)
         except Exception:
             drafts = []

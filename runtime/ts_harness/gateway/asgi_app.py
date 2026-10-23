@@ -565,12 +565,6 @@ def _skills_root() -> str:
     return str(managed_root())
 
 
-def _skills_read_roots() -> list[str]:
-    from ts_harness.skills.roots import catalog_roots
-
-    return [str(item) for item in catalog_roots()]
-
-
 # ── GET /admin/skills/drafts ──────────────────────────────────────────────────
 
 
@@ -612,10 +606,10 @@ async def admin_skills_drafts_list(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.authoring import list_drafts
+    from ts_harness.skills.repository import skill_repository
 
     try:
-        drafts = list_drafts(_skills_root())
+        drafts = skill_repository().list_drafts()
         return _json({"drafts": drafts, "total": len(drafts)})
     except ValueError as exc:
         return _json({"error": str(exc)}, 400)
@@ -633,11 +627,12 @@ async def admin_skills_drafts_get(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.authoring import SkillAuthoringError, get_draft
+    from ts_harness.skills.authoring import SkillAuthoringError
+    from ts_harness.skills.repository import skill_repository
 
     skill_id = request.path_params["skill_id"]
     try:
-        return _json(get_draft(_skills_root(), skill_id, read_roots=_skills_read_roots()))
+        return _json(skill_repository().get_draft(skill_id))
     except SkillAuthoringError as exc:
         return _json({"error": str(exc)}, 404)
     except ValueError as exc:
@@ -701,12 +696,8 @@ async def admin_skills_drafts_create(request: Request) -> Response:
     if not isinstance(body, dict):
         return _json({"error": "body must be an object"}, 400)
 
-    from ts_harness.skills.authoring import (
-        SkillAuthoringError,
-        build_skill_markdown,
-        propose_skill_draft,
-        propose_skill_folder_draft,
-    )
+    from ts_harness.skills.authoring import SkillAuthoringError, build_skill_markdown
+    from ts_harness.skills.repository import skill_repository
 
     mode = str(body.get("mode") or "").strip()
     actor = str(auth.actor_id or "admin")
@@ -721,25 +712,21 @@ async def admin_skills_drafts_create(request: Request) -> Response:
                 description=str(body.get("description") or ""),
                 version=str(body.get("version") or ""),
             )
-            result = propose_skill_draft(
-                root=_skills_root(),
+            result = skill_repository().propose_markdown(
                 agent_id=actor,
                 tenant_id=tenant_id,
                 markdown=markdown,
                 revision_of=revision_of,
                 source="admin_paste",
                 created_by=actor,
-                read_roots=_skills_read_roots(),
             )
         elif mode == "folder":
-            result = propose_skill_folder_draft(
-                root=_skills_root(),
+            result = skill_repository().propose_folder(
                 actor_id=actor,
                 tenant_id=tenant_id,
                 files=body.get("files"),
                 revision_of=revision_of,
                 source="admin_upload",
-                read_roots=_skills_read_roots(),
             )
         else:
             return _json({"error": "mode must be text or folder"}, 400)
@@ -775,12 +762,12 @@ async def admin_skills_drafts_file(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.authoring import SkillAuthoringError, read_draft_file
+    from ts_harness.skills.authoring import SkillAuthoringError
+    from ts_harness.skills.repository import skill_repository
 
     try:
         return _json(
-            read_draft_file(
-                _skills_root(),
+            skill_repository().read_draft_file(
                 request.path_params["skill_id"],
                 request.path_params["file_path"],
             )
@@ -806,16 +793,12 @@ async def admin_skills_drafts_approve(request: Request) -> Response:
     except Exception:
         return _json({"error": "invalid json"}, 400)
 
-    from ts_harness.skills.authoring import SkillAuthoringError, approve_draft
+    from ts_harness.skills.authoring import SkillAuthoringError
+    from ts_harness.skills.repository import skill_repository
 
     skill_id = request.path_params["skill_id"]
     try:
-        result = approve_draft(
-            root=_skills_root(),
-            skill_id=skill_id,
-            reviewer=str(auth.actor_id or "admin"),
-            read_roots=_skills_read_roots(),
-        )
+        result = skill_repository().approve(skill_id=skill_id, reviewer=str(auth.actor_id or "admin"))
         runtime.skill_catalog.reload()
         tenant_id = runtime.config.gateway.default_tenant_id
         runtime.audit.append(
@@ -859,17 +842,13 @@ async def admin_skills_drafts_reject(request: Request) -> Response:
     except Exception:
         return _json({"error": "invalid json"}, 400)
 
-    from ts_harness.skills.authoring import SkillAuthoringError, reject_draft
+    from ts_harness.skills.authoring import SkillAuthoringError
+    from ts_harness.skills.repository import skill_repository
 
     skill_id = request.path_params["skill_id"]
     reason = str((body or {}).get("reason") or "")
     try:
-        result = reject_draft(
-            root=_skills_root(),
-            skill_id=skill_id,
-            reviewer=str(auth.actor_id or "admin"),
-            reason=reason,
-        )
+        result = skill_repository().reject(skill_id=skill_id, reviewer=str(auth.actor_id or "admin"), reason=reason)
         runtime.skill_catalog.reload()
         runtime.audit.append(
             tenant_id=runtime.config.gateway.default_tenant_id,

@@ -167,6 +167,9 @@ class RuntimeState:
         self.audit = AuditWriter(os.environ.get("TS_HARNESS_AUDIT_LOG") or None)
         self.metrics = MetricsRegistry()
         self.policy = PolicyEngine(self.config)
+        from ts_harness.skills.repository import sync_skill_mirror
+
+        sync_skill_mirror(force=True)
         self.skill_catalog = SkillCatalog.default()
         self.skill_catalog.load()
         configure_tool_audit(
@@ -407,6 +410,19 @@ class RuntimeState:
                 log_event("runtime_shared_definitions_reload_failed", store=name, error=str(exc)[:300])
         return changed
 
+    def apply_shared_skill_changes(self) -> bool:
+        """Rebuild the managed skill mirror and reload the catalog when another replica approved or rejected."""
+        from ts_harness.skills.repository import sync_skill_mirror
+
+        if not sync_skill_mirror():
+            return False
+        try:
+            self.skill_catalog.load()
+            log_event("runtime_shared_skills_reloaded")
+        except Exception as exc:  # noqa: BLE001
+            log_event("runtime_shared_skills_reload_failed", error=str(exc)[:300])
+        return True
+
     def _start_definitions_watcher(self) -> None:
         from ts_harness.storage.backend import shared_state_enabled
 
@@ -418,6 +434,7 @@ class RuntimeState:
         def loop() -> None:
             while not self._shutdown.wait(interval):
                 self.apply_shared_definition_changes()
+                self.apply_shared_skill_changes()
 
         threading.Thread(target=loop, daemon=True, name="ts-harness-definitions-sync").start()
 
