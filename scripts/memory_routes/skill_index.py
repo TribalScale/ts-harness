@@ -255,7 +255,7 @@ def approve_draft(conn, draft_id: Any, body: dict[str, Any]) -> dict[str, Any]:
         )
         superseded = cur.fetchone()
         cur.execute(
-            f"""
+            """
             UPDATE skill_versions SET status = 'approved', decided_by = %s, decided_at = now(), updated_at = now()
              WHERE id = %s
             """,

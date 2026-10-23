@@ -43,7 +43,8 @@ def _npmrc(entries: list[dict[str, Any]]) -> str:
         if token:
             key = "//" + url.split("://", 1)[1]
             if entry.get("username"):
-                lines.append(f"{key}:_auth={_b64(f'{entry['username']}:{token}')}")
+                auth = _b64(f"{entry['username']}:{token}")
+                lines.append(f"{key}:_auth={auth}")
             else:
                 lines.append(f"{key}:_authToken={token}")
             lines.append(f"{key}:always-auth=true")

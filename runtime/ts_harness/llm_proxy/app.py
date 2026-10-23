@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import AsyncIterator, Callable, Mapping
 
 import httpx
 from starlette.applications import Starlette

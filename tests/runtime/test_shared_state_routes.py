@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 import unittest
 import uuid
 from pathlib import Path

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from ts_harness.workflows.engine import WorkflowEngine
 from ts_harness.workflows.hooks import build_default_registry
 from ts_harness.workflows.human_decisions import stuck_steps
-from ts_harness.workflows.materialize import load_skeleton
 
 ERROR = "barrier_blocked: code_review_blocked: 1 blocking findings"
 FEEDBACK = "Blocking findings (fix every one):\n- [major/correctness] clearing the portfolio keeps the old balance"
