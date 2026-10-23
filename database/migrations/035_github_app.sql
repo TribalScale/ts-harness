@@ -2,6 +2,8 @@
 -- installations that App has (kept current by installation webhooks), and the
 -- webhook delivery ids already processed so redeliveries are dropped.
 
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS github_app_registrations (
     host                    TEXT PRIMARY KEY CHECK (host ~ '^[a-z0-9.-]+(:[0-9]+)?$'),
     app_id                  TEXT NOT NULL,
