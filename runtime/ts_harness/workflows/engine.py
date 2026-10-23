@@ -12,6 +12,7 @@ from typing import Any, Callable
 from ts_harness.agent.sessions import SessionRecord
 from ts_harness.memory.client import MemoryClient, get_memory_client
 from ts_harness.repo_paths import workflows_dir
+from ts_harness.storage.shared_tree import sync_definitions
 from ts_harness.workflows.hooks import build_default_registry
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.materialize import (
@@ -92,6 +93,7 @@ class WorkflowEngine:
         self._versioned_skeletons: dict[tuple[str, str], Any] = {}
         self._skeleton_dir = skeleton_dir or workflows_dir()
         self._definition_manifest_generation: int | None = None
+        sync_definitions(force=True)
         root = self._skeleton_dir
         if root.exists():
             for workflow_type in list_skeleton_types(root):
@@ -182,6 +184,7 @@ class WorkflowEngine:
 
     def reload_if_changed(self) -> bool:
         workflow_ok = True
+        sync_definitions()
         try:
             generation = self._read_manifest_generation()
         except Exception:

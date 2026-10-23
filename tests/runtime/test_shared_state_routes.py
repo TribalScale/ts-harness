@@ -72,6 +72,21 @@ class SharedFilesTests(_Base):
         paths = [f["path"] for f in self.call(shared_state.pull_files, "definitions", {})["files"]]
         self.assertEqual(paths, ["a"])
 
+    def test_scoped_base_generation_only_conflicts_inside_the_scope(self):
+        self.call(shared_state.commit_files, "definitions", {"puts": [{"path": "active/a.json", "content": "1"}]})
+        self.call(shared_state.commit_files, "definitions", {"puts": [{"path": "routing/active/r.json", "content": "1"}]})
+        out = self.call(shared_state.commit_files, "definitions", {
+            "base_generation": 1, "scope": ["active", "drafts"], "puts": [{"path": "drafts/d.json", "content": "1"}],
+        })
+        self.assertEqual(out["generation"], 3)
+        with self.assertRaises(shared_state.StaleGeneration):
+            self.call(shared_state.commit_files, "definitions", {
+                "base_generation": 2, "scope": ["drafts"], "puts": [{"path": "drafts/e.json", "content": "1"}],
+            })
+        self.call(shared_state.commit_files, "definitions", {
+            "base_generation": 1, "scope": ["routing/drafts"], "puts": [{"path": "routing/drafts/x.json", "content": "1"}],
+        })
+
     def test_deletes_leave_tombstones_for_incremental_pulls_only(self):
         self.call(shared_state.commit_files, "cron", {"puts": [{"path": "a", "content": "1"}, {"path": "b", "content": "2"}]})
         self.call(shared_state.commit_files, "cron", {"deletes": ["a"], "puts": [{"path": "c", "content": "3"}]})

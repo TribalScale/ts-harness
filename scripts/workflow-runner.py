@@ -52,6 +52,7 @@ from ts_harness.workflows.definition_paths import (  # noqa: E402
     list_history_paths_for_version,
     safe_component,
 )
+from ts_harness.storage.shared_tree import sync_definitions  # noqa: E402
 from ts_harness.workflows.wait_deadlines import wait_deadlines  # noqa: E402
 from ts_harness.workflows.workflow_locks import suspended, workflow_lock  # noqa: E402
 from ts_harness.tools.approvals import AWAITING_TOOL_APPROVAL_PREFIX  # noqa: E402
@@ -904,6 +905,7 @@ class WorkflowRunner:
         return True
 
     def reload_if_changed(self) -> bool:
+        sync_definitions()
         try:
             generation = read_definition_manifest_generation()
         except Exception as exc:
@@ -1982,6 +1984,11 @@ def main() -> None:
     if os.environ.get("WORKFLOW_RUNNER_ENABLED", "false").lower() != "true":
         print("workflow-runner disabled", flush=True)
         return
+    from ts_harness.storage.backend import apply_mirror_paths
+
+    for name, value in apply_mirror_paths().items():
+        log_event("runner_storage_mirror_path", variable=name, path=value)
+    sync_definitions(force=True)
     skeleton_dir = Path(os.environ.get("WORKFLOW_DEFINITIONS_DIR", "/config/workflows"))
     skeletons = load_workflow_skeletons(skeleton_dir)
     runner_id = os.environ.get("WORKFLOW_RUNNER_ID") or f"workflow-runner-{socket.gethostname()}"

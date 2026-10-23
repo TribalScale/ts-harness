@@ -131,8 +131,24 @@ class _TraceMiddleware(BaseHTTPMiddleware):
             trace_id_var.reset(token)
 
 
+_SHARED_DEFINITION_PREFIXES = (
+    "/admin/workflow-definitions",
+    "/admin/program-definitions",
+    "/admin/workflow-fragments",
+    "/admin/routing-definitions",
+    "/admin/runtime-settings",
+    "/admin/mcp-settings",
+    "/admin/agents",
+    "/admin/program-builder",
+)
+
+
 class _AdminGuardMiddleware(BaseHTTPMiddleware):
-    """Rate-limit /admin/* after routing; origin still checked in handlers."""
+    """Rate-limit /admin/* after routing; origin still checked in handlers.
+
+    Definition reads pull the shared tree first, so a save on another replica
+    shows up on the next request here.
+    """
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/admin"):
@@ -143,6 +159,10 @@ class _AdminGuardMiddleware(BaseHTTPMiddleware):
                 check_admin_rate_limit(client)
             except AuthError as exc:
                 return _json({"error": str(exc)}, exc.status)
+            if request.method == "GET" and request.url.path.startswith(_SHARED_DEFINITION_PREFIXES):
+                from ts_harness.storage.shared_tree import sync_definitions
+
+                await asyncio.to_thread(sync_definitions, force=True)
         return await call_next(request)
 
 

@@ -115,7 +115,11 @@ def pull_files(conn, namespace: Any, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def commit_files(conn, namespace: Any, body: dict[str, Any]) -> dict[str, Any]:
-    """Apply puts and deletes in one transaction; refuse when ``base_generation`` is stale."""
+    """Apply puts and deletes in one transaction; refuse when ``base_generation`` is stale.
+
+    With ``scope`` (path prefixes), only files under those prefixes count: several
+    writers can each own part of one namespace without refusing each other.
+    """
     ns = _namespace(namespace)
     actor = str(body.get("actor") or "").strip()[:200]
     puts: dict[str, str] = {}
@@ -129,9 +133,23 @@ def commit_files(conn, namespace: Any, body: dict[str, Any]) -> dict[str, Any]:
         puts[path] = content
     deletes = sorted({_path(p) for p in body.get("deletes") or []} - set(puts))
     base = body.get("base_generation")
+    scope = [str(p).strip().strip("/") for p in body.get("scope") or [] if str(p).strip().strip("/")]
+    for prefix in scope:
+        _path(prefix)
     with conn.cursor() as cur:
         current = _generation(cur, ns, lock=True)
-        if base is not None and int(base) != current:
+        if base is not None and scope:
+            cur.execute(
+                """
+                SELECT COALESCE(max(generation), 0) AS latest FROM shared_files
+                 WHERE namespace = %s AND (path = ANY(%s) OR path LIKE ANY(%s))
+                """,
+                (ns, scope, [p.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%" for p in scope]),
+            )
+            if int(cur.fetchone()["latest"]) > int(base):
+                conn.rollback()
+                raise StaleGeneration(current)
+        elif base is not None and int(base) != current:
             conn.rollback()
             raise StaleGeneration(current)
         if not puts and not deletes:

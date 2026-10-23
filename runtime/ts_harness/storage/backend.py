@@ -45,6 +45,48 @@ def scratch_dir() -> Path:
     return Path(os.environ.get("TS_HARNESS_SCRATCH_DIR") or DEFAULT_SCRATCH_DIR)
 
 
+_STORE_OVERRIDES = (
+    "TS_HARNESS_ROUTING_DEFINITION_STORE",
+    "TS_HARNESS_RUNTIME_SETTINGS_STORE",
+    "TS_HARNESS_MCP_SETTINGS_STORE",
+    "TS_HARNESS_AGENTS_STORE",
+)
+
+
+def apply_mirror_paths() -> dict[str, str]:
+    """Point the definition, cron and managed-skill path variables into the mirror; return what changed.
+
+    Readers keep using those variables, so they read the mirror without knowing
+    where the files really live. Idempotent.
+    """
+    changed: dict[str, str] = {}
+
+    def put(name: str, value: Path | None) -> None:
+        current = os.environ.get(name)
+        if value is None:
+            if current is not None:
+                os.environ.pop(name)
+                changed[name] = ""
+            return
+        if current != str(value):
+            os.environ[name] = str(value)
+            changed[name] = str(value)
+
+    mirror = mirror_dir()
+    if shared_state_enabled():
+        definitions = mirror / "definitions"
+        put("TS_HARNESS_WORKFLOW_DEFINITION_STORE", definitions)
+        put("TS_HARNESS_MANAGED_WORKFLOWS_DIR", definitions / "active")
+        put("TS_HARNESS_PROGRAM_DEFINITION_STORE", definitions / "programs")
+        put("TS_HARNESS_FRAGMENT_DEFINITION_STORE", definitions / "fragments")
+        for name in _STORE_OVERRIDES:
+            put(name, None)
+        put("TS_HARNESS_CRON_CONFIG", mirror / "cron" / "runtime-cron-jobs.json")
+    if object_backend() != "local":
+        put("SKILLS_MANAGED_DIR", mirror / "skills" / "current")
+    return changed
+
+
 def validate_storage_config() -> list[str]:
     """Raise on combinations that cannot work; return warnings for ones that work but lose data."""
     state, objects = state_backend(), object_backend()

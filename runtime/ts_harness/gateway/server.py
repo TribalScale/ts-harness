@@ -208,6 +208,7 @@ class RuntimeState:
         self._session_locks: dict[str, threading.Lock] = {}
         self._session_locks_guard = threading.Lock()
         self._start_sandbox_reaper()
+        self._start_definitions_watcher()
         self.mcp = get_mcp_manager()
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
         for name, server_cfg in self.config.mcp_servers.items():
@@ -353,6 +354,72 @@ class RuntimeState:
             correlation_id=payload.get("correlation_id"),
         )
         self.metrics.inc("agent_runs")
+
+    def _settings_generations(self) -> dict[str, int]:
+        from ts_harness.workflows.agents_overlay_store import agents_overlay_store_root
+        from ts_harness.workflows.mcp_settings_store import mcp_settings_store_root
+        from ts_harness.workflows.routing_definition_store import routing_definition_store_root
+        from ts_harness.workflows.runtime_settings_store import runtime_settings_store_root
+
+        out: dict[str, int] = {}
+        for name, root in (
+            ("settings", runtime_settings_store_root()),
+            ("routing", routing_definition_store_root()),
+            ("mcp", mcp_settings_store_root()),
+            ("agents", agents_overlay_store_root()),
+        ):
+            try:
+                out[name] = int(json.loads((root / "active" / "manifest.json").read_text(encoding="utf-8")).get("generation") or 0)
+            except (OSError, ValueError, AttributeError):
+                out[name] = 0
+        return out
+
+    def apply_shared_definition_changes(self) -> list[str]:
+        """Pull the shared definitions tree and reload whatever another replica activated."""
+        from ts_harness.storage.shared_tree import sync_definitions
+
+        if not sync_definitions():
+            return []
+        current = self._settings_generations()
+        changed = [name for name, gen in current.items() if gen != self._seen_settings_generations.get(name)]
+        self._seen_settings_generations = current
+        for name in changed:
+            try:
+                if name == "settings":
+                    from ts_harness.config.runtime_settings import reload_runtime_settings_into_runtime
+
+                    reload_runtime_settings_into_runtime(self)
+                elif name == "routing":
+                    from ts_harness.gateway.routing_definitions_bff import reload_routing_into_runtime
+
+                    reload_routing_into_runtime(self)
+                elif name == "mcp":
+                    from ts_harness.config.mcp_settings import reload_mcp_settings_into_runtime
+
+                    if reload_mcp_settings_into_runtime(self):
+                        self.rebuild_mcp_runtime()
+                elif name == "agents":
+                    from ts_harness.config.agents_overlay import reload_agents_overlay_into_runtime
+
+                    reload_agents_overlay_into_runtime(self)
+                log_event("runtime_shared_definitions_reloaded", store=name)
+            except Exception as exc:  # noqa: BLE001
+                log_event("runtime_shared_definitions_reload_failed", store=name, error=str(exc)[:300])
+        return changed
+
+    def _start_definitions_watcher(self) -> None:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        self._seen_settings_generations = self._settings_generations()
+        if not shared_state_enabled():
+            return
+        interval = float(os.environ.get("TS_HARNESS_SHARED_SYNC_SECONDS") or 2)
+
+        def loop() -> None:
+            while not self._shutdown.wait(interval):
+                self.apply_shared_definition_changes()
+
+        threading.Thread(target=loop, daemon=True, name="ts-harness-definitions-sync").start()
 
     def _start_sandbox_reaper(self) -> None:
         if os.environ.get("SANDBOX_REAPER_ENABLED", "false").lower() != "true":
@@ -2729,10 +2796,12 @@ def main() -> None:
     config_path = os.environ.get("TS_HARNESS_CONFIG", "config/ts-harness-runtime.yaml.tmpl")
     # Ensure token is available for config validation during boot.
     os.environ.setdefault("GATEWAY_TOKEN", token)
-    from ts_harness.storage.backend import validate_storage_config
+    from ts_harness.storage.backend import apply_mirror_paths, validate_storage_config
 
     for warning in validate_storage_config():
         log_event("runtime_storage_warning", message=warning)
+    for name, value in apply_mirror_paths().items():
+        log_event("runtime_storage_mirror_path", variable=name, path=value)
     runtime = get_runtime()
     if not runtime.config.gateway.token:
         runtime.config.gateway.token = token

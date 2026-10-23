@@ -1266,11 +1266,12 @@ class MemoryClient:
         puts: list[dict[str, str]],
         deletes: list[str],
         actor: str = "",
+        scope: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/shared-files/{namespace}/commit",
-            {"base_generation": base_generation, "puts": puts, "deletes": deletes, "actor": actor},
+            {"base_generation": base_generation, "puts": puts, "deletes": deletes, "actor": actor, "scope": scope or []},
         )
 
     def acquire_shared_lock(self, namespace: str, name: str, *, holder: str, ttl_seconds: int = 60) -> bool:
