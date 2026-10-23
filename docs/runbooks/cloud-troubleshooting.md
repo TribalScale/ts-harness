@@ -45,25 +45,12 @@ Use `scripts/ops/post-deploy-smoke.sh` and
 ## AWS-specific
 
 - Root must be `infra/aws/` (see [`aws-terraform-root-migration.md`](aws-terraform-root-migration.md)).
-- `TERRAFORM_TOO_OLD` from `validate`: S3-native locking needs Terraform
-  `>= 1.10`. Upgrade, or set `terraform_state.lock_table` to a DynamoDB table.
-- `SECRET_PREFIX_CHANGED` from `validate`: the account already has secrets
-  under `<project_name>/` but the install config sets a different
-  `secret_prefix`. Set `secret_prefix` to `project_name`. Renaming means
-  re-creating every secret and re-bootstrapping the VM, which the installer
-  does not do.
-- `account ... not allowed` from plan: the credentials belong to a different
-  account than `aws_account_id` in the install config.
-- `Saved plan is stale` from `apply --plan-file`: the state changed after the
-  plan was made. Plan again.
 - Upgrade rehearsal: `AWS_UPGRADE_CONFIRM=1 ./scripts/ops/aws-install-upgrade-smoke.sh`
 - Bedrock embeddings require `CLOUD_PROVIDER=aws`.
 
 ## GCP-specific
 
-- Root must be `infra/gcp/`. Backend settings come from `terraform_state` in
-  the install config; `init` prompting for a bucket means Terraform ran
-  outside `./scripts/install.sh` without `-backend-config` flags.
+- Root must be `infra/gcp/` with `backend.tf` configured.
 - Disposable smoke: `GCP_SMOKE_CONFIRM=1 ./scripts/ops/gcp-disposable-smoke.sh`
 - Ensure required APIs are enabled (Terraform `apis.tf`).
 - Operator SSH via `gcloud compute ssh` (port 2222 after harden).

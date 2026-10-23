@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -9,18 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from ts_harness.implementation.security_scan import SecurityConfig, run_security_scan
-from ts_harness.implementation.test_env import (
-    BDD_IN_UNIT_STACKS,
-    HOST_TOOLCHAINS,
-    TestEnvironment,
-    bdd_test_command,
-    detect_stack,
-    missing_tools,
-    unit_test_command,
-)
 
 _LOG_TAIL_CHARS = 4000
-_SHADOW_MODULES = {"pytest": ("pytest", "_pytest"), "behave": ("behave",)}
 _GWT_RE = re.compile(r"\bgiven\b.*\bwhen\b.*\bthen\b", re.IGNORECASE | re.DOTALL)
 _NON_BEHAVIORAL_RE = re.compile(r"\b(chore|refactor|docs-only|rename only)\b", re.IGNORECASE)
 _ACCEPTANCE_RE = re.compile(r"\bacceptance criteria\b|\bacceptance\b", re.IGNORECASE)
@@ -158,31 +149,37 @@ def validate_work_order_changeset(
     return reasons
 
 
-def detect_unit_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | None:
-    return unit_test_command(Path(repo_dir), python=python)
+def detect_unit_test_command(repo_dir: Path) -> list[str] | None:
+    package_scripts = _read_package_scripts(repo_dir)
+    if "test" in package_scripts:
+        return ["npm", "test"]
+    if "test:unit" in package_scripts:
+        return ["npm", "run", "test:unit"]
+
+    pyproject = repo_dir / "pyproject.toml"
+    if (
+        (repo_dir / "pytest.ini").exists()
+        or (pyproject.exists() and "[tool.pytest" in _read_text(pyproject))
+        or (repo_dir / "tests").is_dir()
+    ):
+        return ["python3", "-m", "pytest"]
+
+    makefile = repo_dir / "Makefile"
+    if makefile.exists() and re.search(r"^test:", _read_text(makefile), re.MULTILINE):
+        return ["make", "test"]
+
+    return None
 
 
-def detect_bdd_command(repo_dir: Path, *, python: str = "python3") -> list[str] | None:
-    return bdd_test_command(Path(repo_dir), python=python)
+def detect_bdd_command(repo_dir: Path) -> list[str] | None:
+    package_scripts = _read_package_scripts(repo_dir)
+    for script in ("test:bdd", "cucumber", "bdd"):
+        if script in package_scripts:
+            return ["npm", "run", script]
 
+    if (repo_dir / "behave.ini").exists() or (repo_dir / "features").is_dir():
+        return ["python3", "-m", "behave"]
 
-def shadowed_runner_modules(repo_dir: Path, runner: str | None = None) -> list[str]:
-    """Repo-root modules that `python -m pytest|behave` would import instead of the real runner."""
-    found = []
-    for runner_name, modules in _SHADOW_MODULES.items():
-        if runner is not None and runner != runner_name:
-            continue
-        for name in modules:
-            if (Path(repo_dir) / f"{name}.py").is_file():
-                found.append(f"{name}.py")
-            if (Path(repo_dir) / name).is_dir():
-                found.append(f"{name}/")
-    return found
-
-
-def _python_runner(command: list[str] | None) -> str | None:
-    if command and len(command) >= 3 and command[1] == "-m" and command[2] in _SHADOW_MODULES:
-        return command[2]
     return None
 
 
@@ -234,7 +231,6 @@ def verify_implementation(
     security: SecurityConfig | None = None,
     base_ref: str | None = None,
     which=None,
-    test_env: TestEnvironment | None = None,
 ) -> VerifyResult:
     reasons: list[str] = []
     logs: list[str] = []
@@ -242,22 +238,6 @@ def verify_implementation(
     bdd_command: list[str] | None = None
     skipped_unit = False
     skipped_bdd = False
-    python = test_env.python if test_env is not None else "python3"
-    env = test_env.merged_env() if test_env is not None else None
-
-    def blocked(command: list[str]) -> bool:
-        """Add a reason and skip the run when the command cannot be trusted or started."""
-        runner_name = _python_runner(command)
-        shadowed = shadowed_runner_modules(repo_dir, runner_name) if runner_name else []
-        if shadowed:
-            reasons.append("shadowed_test_runner:" + ",".join(shadowed))
-            return True
-        if env is not None:
-            missing = missing_tools(command, env)
-            if missing:
-                reasons.extend(f"missing_toolchain:{tool}" for tool in missing)
-                return True
-        return False
 
     behavioral = looks_behavioral(work_order_body)
     docs_text = collect_docs_text(repo_dir)
@@ -272,17 +252,13 @@ def verify_implementation(
             )
         )
 
-    unit_ran = False
     if behavioral:
-        unit_command = detect_unit_test_command(repo_dir, python=python)
+        unit_command = detect_unit_test_command(repo_dir)
         if unit_command is None:
             reasons.append("no_test_runner")
             skipped_unit = True
-        elif blocked(unit_command):
-            skipped_unit = True
         else:
-            unit_result = _run_command(runner, unit_command, repo_dir, env=env)
-            unit_ran = True
+            unit_result = _run_command(runner, unit_command, repo_dir)
             logs.append(_format_command_log("unit", unit_command, unit_result))
             if unit_result.returncode != 0:
                 reasons.append("unit_tests_failed")
@@ -295,19 +271,12 @@ def verify_implementation(
             reasons.append("no_bdd_runner_or_features")
             skipped_bdd = True
         else:
-            bdd_command = detect_bdd_command(repo_dir, python=python)
-            bdd_in_unit = bdd_command is None and detect_stack(repo_dir) in BDD_IN_UNIT_STACKS
-            if bdd_in_unit:
-                bdd_command = unit_command or detect_unit_test_command(repo_dir, python=python)
+            bdd_command = detect_bdd_command(repo_dir)
             if bdd_command is None:
                 reasons.append("no_bdd_runner_or_features")
                 skipped_bdd = True
-            elif bdd_in_unit and behavioral:
-                skipped_bdd = not unit_ran
-            elif blocked(bdd_command):
-                skipped_bdd = True
             else:
-                bdd_result = _run_command(runner, bdd_command, repo_dir, env=env)
+                bdd_result = _run_command(runner, bdd_command, repo_dir)
                 logs.append(_format_command_log("bdd", bdd_command, bdd_result))
                 if bdd_result.returncode != 0:
                     reasons.append("bdd_tests_failed")
@@ -376,21 +345,8 @@ def build_verification_fix_prompt(
     ]
     if "no_test_runner" in verify.reasons:
         lines.append(
-            "Add the standard test runner for this repo's language, declared in its manifest, "
-            "and tests that cover this work order's behavior. "
-            f"The host provides: {', '.join(HOST_TOOLCHAINS)}."
-        )
-    shadowed = [r.split(":", 1)[1] for r in verify.reasons if r.startswith("shadowed_test_runner:")]
-    if shadowed:
-        lines.append(
-            f"Delete the stand-in test framework modules ({', '.join(shadowed)}) and use the real "
-            "framework; it is installed on the host. Do not recreate them under another name."
-        )
-    missing = [r.split(":", 1)[1] for r in verify.reasons if r.startswith("missing_toolchain:")]
-    if missing:
-        lines.append(
-            f"The host lacks {', '.join(missing)}; do not try to install it or replace it with a stand-in. "
-            "Fix the other reasons only."
+            "Add a minimal runnable unit/integration test setup for this stack "
+            "(e.g. pytest, npm test, or make test) and tests that cover this work order's behavior."
         )
     if "no_bdd_runner_or_features" in verify.reasons or "missing_bdd_feature_for_work_order" in verify.reasons:
         lines.append(
@@ -455,6 +411,18 @@ def _format_security_log(security: dict[str, Any]) -> str:
     return "$ host security scan\n" + "\n".join(parts)
 
 
+def _read_package_scripts(repo_dir: Path) -> dict[str, str]:
+    package_json = repo_dir / "package.json"
+    if not package_json.exists():
+        return {}
+    try:
+        data = json.loads(_read_text(package_json))
+    except json.JSONDecodeError:
+        return {}
+    scripts = data.get("scripts", {})
+    return scripts if isinstance(scripts, dict) else {}
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -462,16 +430,9 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _run_command(
-    runner,
-    command: list[str],
-    repo_dir: Path,
-    *,
-    env: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess:
-    kwargs = {"env": env} if env is not None else {}
+def _run_command(runner, command: list[str], repo_dir: Path) -> subprocess.CompletedProcess:
     try:
-        return runner(command, cwd=repo_dir, capture_output=True, text=True, **kwargs)
+        return runner(command, cwd=repo_dir, capture_output=True, text=True)
     except Exception as exc:  # pragma: no cover - exercised through subprocess-like runners.
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=str(exc))
 

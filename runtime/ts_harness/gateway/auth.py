@@ -19,7 +19,7 @@ Two authentication modes are supported:
 from __future__ import annotations
 
 import hmac
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,8 +35,6 @@ class AuthContext:
     groups: list[str] | None = None
     roles: list[str] | None = None
     auth_provider: str = "static"
-    teams: list[dict[str, str]] = field(default_factory=list)
-    is_service: bool = False
 
 
 class AuthError(Exception):
@@ -76,12 +74,6 @@ def check_allowed_origin(
         return
     if origin not in allowed_origins:
         raise AuthError("origin not allowed", status=403)
-
-
-def _directory_disabled(tenant_id: str, subject: str) -> bool:
-    from ts_harness.gateway.directory_links import subject_disabled
-
-    return subject_disabled(tenant_id, subject)
 
 
 def authenticate_request(
@@ -124,19 +116,14 @@ def authenticate_request(
             if not tenant_id:
                 raise AuthError("tenant_id is required", status=400)
 
-        actor_id = str(identity.get("actor_id") or "oidc-user")
-        if _directory_disabled(str(tenant_id), actor_id):
-            raise AuthError("this account has been disabled")
-
         return AuthContext(
-            actor_id=actor_id,
+            actor_id=str(identity.get("actor_id") or "oidc-user"),
             tenant_id=str(tenant_id),
             email=identity.get("email"),
-            display_name=identity.get("display_name"),
+            display_name=None,
             groups=list(identity.get("groups") or []),
             roles=list(identity.get("roles") or ["member"]),
             auth_provider=str(identity.get("auth_provider", "oidc")),
-            teams=list(identity.get("teams") or []),
         )
 
     # --- Static path: pre-shared token comparison -----------------------
@@ -195,5 +182,4 @@ def _context_from_body(
         groups=groups,
         roles=roles,
         auth_provider=auth_provider,
-        is_service=True,
     )

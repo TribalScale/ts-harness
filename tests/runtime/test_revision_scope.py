@@ -47,26 +47,6 @@ class RevisionScopeTests(unittest.TestCase):
         allowed = allowed_revision_paths(["app/pricing_client.py"], self.repo_dir)
         self.assertEqual(unexpected_revision_paths([".opencode/opencode.json"], allowed), [])
 
-    def test_tests_and_step_definitions_are_allowed(self):
-        allowed = allowed_revision_paths(["src/PortfolioDashboard.jsx"], self.repo_dir)
-        changed = [
-            "src/PortfolioDashboard.jsx",
-            "src/PortfolioDashboard.test.jsx",
-            "src/__tests__/storage.js",
-            "tests/test_pricing.py",
-            "app/pricing_test.go",
-            "features/portfolio.feature",
-            "features/step_definitions/portfolio.steps.js",
-        ]
-        self.assertEqual(unexpected_revision_paths(changed, allowed), [])
-
-    def test_app_source_outside_the_finding_is_still_unexpected(self):
-        allowed = allowed_revision_paths(["src/PortfolioDashboard.jsx"], self.repo_dir)
-        self.assertEqual(
-            unexpected_revision_paths(["src/App.jsx", "src/contest.js"], allowed),
-            ["src/App.jsx", "src/contest.js"],
-        )
-
     def test_empty_citation_list_does_not_constrain(self):
         self.assertEqual(unexpected_revision_paths(["requirements-dev.txt"], set()), [])
 

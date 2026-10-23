@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { InboxType } from "./api/types";
-import { ApiError, apiFetch } from "./api/client";
+import { apiFetch } from "./api/client";
 import type { AuthConfig } from "./api/types";
 import { LoginPage } from "./auth/LoginPage";
 import { setPermissions, setRoles, takeLegacyToken } from "./auth/session";
 import { setUnauthorizedHandler } from "./api/client";
 import { ChatPage } from "./chat/ChatPage";
-import { ErrorBanner } from "./components/ErrorBanner";
 import { InboxPage } from "./inbox/InboxPage";
 import { AppShell, type NavKey } from "./layout/AppShell";
 import { ProgramDefinitionStudio } from "./program-definitions/ProgramDefinitionStudio";
@@ -36,7 +35,6 @@ interface RouteState {
   mcpName?: string;
   agentId?: string;
   skillId?: string;
-  projectId?: string;
   attachSkill?: string;
   attachStage?: string;
   attachJob?: string;
@@ -195,7 +193,6 @@ export function parseHash(hash = window.location.hash): RouteState {
       mcpName: section === "mcp" && rest ? decodeURIComponent(rest) : undefined,
       agentId: section === "agents" && rest ? decodeURIComponent(rest) : undefined,
       skillId: section === "skills" && rest ? decodeURIComponent(rest) : undefined,
-      projectId: section === "projects" && rest ? decodeURIComponent(rest) : undefined,
       ...attach,
     };
   }
@@ -205,8 +202,6 @@ export function parseHash(hash = window.location.hash): RouteState {
 
 export default function App() {
   const [authed, setAuthed] = useState(false);
-  const [authCheck, setAuthCheck] = useState<"checking" | "done" | "unreachable">("checking");
-  const [authAttempt, setAuthAttempt] = useState(0);
   const [, setPermissionStamp] = useState(0);
   const [route, setRoute] = useState<RouteState>(() => parseHash());
   const [workflowDirty, setWorkflowDirty] = useState(false);
@@ -237,7 +232,6 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    setAuthCheck("checking");
     (async () => {
       const legacy = takeLegacyToken();
       if (legacy) {
@@ -251,32 +245,22 @@ export default function App() {
         }
       }
       try {
-        const cfg = await apiFetch<AuthConfig>("/admin/auth/config", {
-          signal: AbortSignal.timeout(15000),
-        });
+        const cfg = await apiFetch<AuthConfig>("/admin/auth/config");
         if (cancelled) return;
         setPermissions(cfg.permissions || []);
         if (cfg.roles) setRoles(cfg.roles);
         setAuthed(Boolean(cfg.authenticated));
         setPermissionStamp((value) => value + 1);
-        setAuthCheck("done");
-      } catch (err) {
+      } catch {
         if (cancelled) return;
-        // Only the gateway saying "unauthorized" signs the user out; a slow or
-        // unreachable API keeps the session cookie and offers a retry.
-        if (err instanceof ApiError && err.status === 401) {
-          setPermissions([]);
-          setAuthed(false);
-          setAuthCheck("done");
-        } else {
-          setAuthCheck("unreachable");
-        }
+        setPermissions([]);
+        setAuthed(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [authAttempt]);
+  }, []);
 
   useEffect(() => {
     if (!authed) {
@@ -418,37 +402,8 @@ export default function App() {
     setRoute(parseHash("#/inbox"));
   }, [authed, route.nav]);
 
-  if (!authed && authCheck === "checking") {
-    return (
-      <div className="login">
-        <h1>TS Harness</h1>
-        <p className="muted">Connecting…</p>
-      </div>
-    );
-  }
-
-  if (!authed && authCheck === "unreachable") {
-    return (
-      <div className="login">
-        <h1>TS Harness</h1>
-        <ErrorBanner
-          message="The console API is not responding. You are still signed in."
-          onRetry={() => setAuthAttempt((value) => value + 1)}
-        />
-      </div>
-    );
-  }
-
   if (!authed || route.nav === "login") {
-    return (
-      <LoginPage
-        onAuthed={() => {
-          // LoginPage moves to #/inbox with replaceState, which fires no hashchange.
-          setAuthed(true);
-          setRoute(parseHash(window.location.hash));
-        }}
-      />
-    );
+    return <LoginPage onAuthed={() => setAuthed(true)} />;
   }
 
   return (
@@ -535,7 +490,6 @@ export default function App() {
           mcpName={route.mcpName}
           agentId={route.agentId}
           skillId={route.skillId}
-          projectId={route.projectId}
           attachSkill={route.attachSkill}
           attachJob={route.attachJob}
           attachProgram={route.attachProgram}

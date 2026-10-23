@@ -9,7 +9,7 @@ Governed product delivery uses a **delivery program** coordinator linking phase 
 3. **`work_orders_from_prd` (v1.0)** — Refinery/Foundry/Planner + prepare handoff. Program phase: `work_orders`.
 4. **`implement_delivery` (v1.0)** — implement Jira tickets → await merge. Program phase: `implement` (Jira track).
 5. **`implement_work_orders` (v2.0)** — fork a wave of ready work orders as `deliver_work_order` child workflows, join them, and re-enter with the next wave until every WO is done. Program phase: `implement` (work-orders track).
-6. **`deploy_release` (v3.0)** — one `release_track` per repository, ordered by work-order dependencies. Each track runs CI on its merge SHA, then promotes to staging and production through the repo's GitHub deploy, each behind a recorded promote decision. Program phase: `release` (terminal, automatic after `implement`).
+6. **`deploy_release` (v2.0)** — CI on the merge SHA, then promote to staging and production through the target repo's GitHub deploy, each behind a recorded promote decision. Program phase: `release` (terminal, automatic after `implement`).
 7. **`rollback_release` (v1.0)** — redeploy the last successful SHA for one environment. Program phase: `rollback` (startable on demand).
 
 In-flight `implement_work_orders` 1.x workflows stay on their pinned version and keep delivering one work order at a time.

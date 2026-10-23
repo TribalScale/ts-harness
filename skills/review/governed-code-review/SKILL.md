@@ -37,10 +37,7 @@ Then:
    be excluded; `input.diff_stats` has the totals.
 3. Read `input.work_order_body` and `input.work_order_ref`. Judge scope against
    its **In Scope** and **Out of Scope** sections (and a `## Files` list when
-   present). `input.human_change_requests` lists changes a human reviewer
-   requested on this PR, oldest first. They amend the work order: where one
-   conflicts with the work order or an earlier request, the latest request
-   wins. Never flag code for doing what a human requested.
+   present).
 4. Read `input.scope_findings`. These are deterministic findings for files
    outside a declared `## Files` list; they are merged automatically, so do
    not repeat them.

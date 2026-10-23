@@ -338,7 +338,7 @@ def _rename(value: Any, renames: dict[str, str], key: str | None = None) -> Any:
             return renames[value]
         for old, new in renames.items():
             value = value.replace(f"$prior.{old}.", f"$prior.{new}.")
-            if value.startswith("$runtime.") and value.endswith(f":{old}"):
+            if value.endswith(f"revision_count:{old}"):
                 value = value[: -len(old)] + new
         return value
     if isinstance(value, list):

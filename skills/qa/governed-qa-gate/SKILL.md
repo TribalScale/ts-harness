@@ -42,10 +42,7 @@ Then:
    If `checks_state` is `failure`, the PR whose check failed is `failed` and
    each failed check is listed in `defects`.
 3. Read `input.work_order_body` / work-item references, `input.files`, and
-   `input.host_verify_summary`. `input.human_change_requests` lists changes a
-   human reviewer requested on this PR, oldest first. They amend the work
-   order's acceptance criteria: where one conflicts with the work order or an
-   earlier request, the latest request wins, and meeting it is not a defect. Each `input.files` entry is one changed file
+   `input.host_verify_summary`. Each `input.files` entry is one changed file
    (`filename`, `patch`, `additions`, `deletions`). That patch is the
    implementation. Judge each acceptance criterion from the patch. A missing
    `host_verify_summary` is not a defect and is not a reason to fail: host

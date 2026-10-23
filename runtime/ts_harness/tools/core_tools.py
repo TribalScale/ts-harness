@@ -776,8 +776,8 @@ def register_core_tools(registry: ToolRegistry) -> None:
 
 def _handle_propose_skill(args: dict[str, Any], ctx) -> dict[str, Any]:
     from ts_harness.gateway.program_builder_bff import BUILDER_CHANNEL, track_skill_proposal
-    from ts_harness.skills.authoring import SkillAuthoringError
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import SkillAuthoringError, propose_skill_draft
+    from ts_harness.skills.roots import catalog_roots, managed_root
 
     builder_session = None
     created_by = ""
@@ -789,13 +789,15 @@ def _handle_propose_skill(args: dict[str, Any], ctx) -> dict[str, Any]:
             return error
         created_by = str((builder_session.metadata or {}).get("builder_actor", {}).get("actor_id") or "")
     try:
-        result = skill_repository().propose_markdown(
+        result = propose_skill_draft(
+            root=managed_root(),
             agent_id=str(getattr(ctx, "agent_id", "") or ""),
             tenant_id=str(getattr(ctx, "tenant_id", "") or ""),
             markdown=str(args.get("markdown") or ""),
             revision_of=str(args.get("revision_of") or "").strip() or None,
             source="learn",
             created_by=created_by,
+            read_roots=catalog_roots(),
         )
     except SkillAuthoringError as exc:
         payload = {"error": str(exc)}

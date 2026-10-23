@@ -27,70 +27,8 @@ _ACTIVE_CHILDREN = 0
 _STATE_PATH = os.environ.get("TS_HARNESS_DELEGATION_STATE") or None
 
 
-DELEGATION_STATE_NAMESPACE = "delegation"
-DELEGATION_STATE_KEY = "state"
-
-
-def _shared() -> bool:
-    from ts_harness.storage.backend import shared_state_enabled
-
-    return shared_state_enabled()
-
-
-def _apply_shared(state: dict[str, Any]) -> None:
-    global _ACTIVE_CHILDREN, _subagent_children
-    _ACTIVE_CHILDREN = int(state.get("active_children", 0))
-    _subagent_children = {str(k): list(v) for k, v in (state.get("children") or {}).items()}
-
-
-def _update_shared(change) -> None:
-    """Apply ``change`` to the shared delegation state with compare-and-set, since any replica can delegate."""
-    from ts_harness.storage.kv import kv_update
-
-    def apply(state: dict[str, Any]) -> dict[str, Any]:
-        state.setdefault("active_children", 0)
-        state.setdefault("children", {})
-        change(state)
-        return state
-
-    _apply_shared(kv_update(DELEGATION_STATE_NAMESPACE, DELEGATION_STATE_KEY, apply, default={}))
-
-
-def _children_of(parent_session_id: str) -> list[str]:
-    if _shared():
-        from ts_harness.storage.kv import kv_read
-
-        _apply_shared(kv_read(DELEGATION_STATE_NAMESPACE, DELEGATION_STATE_KEY, default={}))
-    return _subagent_children.setdefault(parent_session_id, [])
-
-
-def _record_child(parent_session_id: str, child_session_id: str) -> None:
-    if _shared():
-        _update_shared(lambda s: s["children"].setdefault(parent_session_id, []).append(child_session_id))
-        return
-    _subagent_children.setdefault(parent_session_id, []).append(child_session_id)
-    _save_state()
-
-
-def _adjust_active(delta: int) -> None:
-    global _ACTIVE_CHILDREN
-    if _shared():
-        _update_shared(lambda s: s.update(active_children=max(0, int(s["active_children"]) + delta)))
-        return
-    _ACTIVE_CHILDREN += delta
-    _save_state()
-
-
 def _load_state() -> None:
     global _ACTIVE_CHILDREN, _subagent_children
-    if _shared():
-        from ts_harness.storage.kv import kv_read
-
-        try:
-            _apply_shared(kv_read(DELEGATION_STATE_NAMESPACE, DELEGATION_STATE_KEY, default={}))
-        except Exception:  # noqa: BLE001 - delegation works on an empty view until the memory API is back
-            pass
-        return
     if not _STATE_PATH:
         return
     path = Path(_STATE_PATH)
@@ -157,17 +95,18 @@ def handle_delegate_task(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[s
     if parent_session.depth >= _MAX_DEPTH:
         return {"error": "max delegation depth exceeded"}
 
-    children = _children_of(parent_session.session_id)
+    children = _subagent_children.setdefault(parent_session.session_id, [])
     if len(children) >= _MAX_CHILDREN:
         return {"error": "max children per parent exceeded"}
+    global _ACTIVE_CHILDREN
     state_store = get_state_store()
     active = int(state_store.get("delegation:active_children") or str(_ACTIVE_CHILDREN))
     if active >= _MAX_CONCURRENT:
         return {"error": "max concurrent subagents exceeded"}
 
     child_session = session_store.create_subagent_session(parent_session, child_id)
-    _record_child(parent_session.session_id, child_session.session_id)
-    children = _subagent_children.get(parent_session.session_id, [])
+    children.append(child_session.session_id)
+    _save_state()
     parent_tools = agent_effective_tools(parent_agent, _runtime_config)
     if ctx.stage_tool_allow is not None:
         parent_tools &= set(ctx.stage_tool_allow) | STAGE_ALWAYS_ALLOWED_TOOLS
@@ -183,9 +122,10 @@ def handle_delegate_task(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[s
         "required_artifacts": [],
         "skill_hints": list(child_agent.skills),
     }
-    _adjust_active(1)
+    _ACTIVE_CHILDREN += 1
     state_store.set("delegation:active_children", str(active + 1))
     state_store.set_json(f"delegation:children:{parent_session.session_id}", children)
+    _save_state()
     try:
         result = _runtime_agent.run_workflow_dispatch(
             tenant_id=ctx.tenant_id,
@@ -196,9 +136,10 @@ def handle_delegate_task(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[s
             parent_tools=parent_tools,
         )
     finally:
-        _adjust_active(-1)
+        _ACTIVE_CHILDREN -= 1
         remaining = max(0, int(state_store.get("delegation:active_children") or "1") - 1)
         state_store.set("delegation:active_children", str(remaining))
+        _save_state()
 
     warnings: list[str] = []
     if result.error:

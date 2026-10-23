@@ -7,45 +7,22 @@ from typing import Any
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.expressions import resolve_input_map, resolve_value
 from ts_harness.workflows.hooks._helpers import create_tasks_bulk, load_workflow_payload
-from ts_harness.workflows.materialize import workflow_definitions
 from ts_harness.workflows.registry import HookContext
 
 
 def _loop_config(ctx: HookContext) -> dict[str, Any]:
     stage = ctx.stage
     if ctx.runner_event == "blocked" and getattr(stage, "on_block", None):
-        return select_block_case(dict(stage.on_block or {}), str(ctx.extras.get("error") or ""))
+        return dict(stage.on_block or {})
     return dict(getattr(stage, "on_reject", None) or {})
 
 
-def select_block_case(config: dict[str, Any], error: str) -> dict[str, Any]:
-    """``on_block`` with the first case whose ``error_prefix`` matches the block reason applied over it."""
-    cases = config.pop("cases", None) or []
-    for case in cases:
-        prefix = str((case or {}).get("error_prefix") or "")
-        if prefix and error.startswith(prefix):
-            return {**config, **{key: value for key, value in case.items() if key != "error_prefix"}}
-    return config
-
-
-_REVISION_ONLY_KEYS = frozenset(
-    {"_revision_budget", "refresh", "qa_feedback", "review_feedback", "revision_files"}
-)
+_REVISION_ONLY_KEYS = frozenset({"_revision_budget", "refresh", "qa_feedback", "review_feedback"})
 
 
 def _revision_budget(task: dict[str, Any]) -> str:
     task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
     return str(task_input.get("_revision_budget") or "")
-
-
-def _latest_grant_at(tasks: list[dict[str, Any]]) -> str | None:
-    """``created_at`` of the newest revision a human granted after the limit, if any."""
-    granted = [
-        str(task.get("created_at") or "")
-        for task in tasks
-        if isinstance(task.get("input"), dict) and task["input"].get("_revision_grant")
-    ]
-    return max(granted) if granted else None
 
 
 def _is_block_loop(ctx: HookContext) -> bool:
@@ -97,7 +74,6 @@ def _task_body_from_stage(
         "max_retries": int((stage.retry or {}).get("max_retries", 0)),
         "definition_version": skeleton.definition_version,
         "contract": skeleton.resolve_stage_contract(stage) or {},
-        "lane": workflow_definitions.stage_lane(stage),
     }
 
 
@@ -171,8 +147,6 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     raw_resume = config.get("resume_after") or {}
     resume_chain = [dict(item) for item in raw_resume] if isinstance(raw_resume, list) else [dict(raw_resume)] if raw_resume else []
     block_loop = _is_block_loop(ctx)
-    if block_loop and config.get("action") == "stop":
-        return {"status": "stopped", "workflow_id": ctx.workflow_id}
 
     workflow, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
     gate = ctx.task
@@ -189,8 +163,6 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     revise_step = str(revise_cfg.get("step_name") or "revise")
     budget = str(revise_cfg.get("budget") or "")
     max_revisions = int(config.get("max_revisions") or 0)
-    grant = dict(ctx.extras.get("grant") or {}) if block_loop else {}
-    position: int | None = None
     if block_loop:
         if max_revisions <= 0:
             max_revisions = 2
@@ -201,14 +173,8 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             and task.get("status") != "cancelled"
             and _revision_budget(task) == budget
         ]
-        granted_at = _latest_grant_at(existing)
-        if granted_at is not None:
-            existing = [task for task in existing if str(task.get("created_at") or "") >= granted_at]
-        if grant:
-            existing = []
-        # The unbudgeted count includes the graph's own first run of the step;
-        # a human grant restarts the count at the granted revision.
-        limit = max_revisions if budget or grant or granted_at is not None else 1 + max_revisions
+        # The unbudgeted count includes the graph's own first run of the step.
+        limit = max_revisions if budget else 1 + max_revisions
         if len(existing) >= limit:
             return {
                 "status": "revision_limit",
@@ -216,8 +182,6 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 "existing_revisions": len(existing),
                 "max_revisions": max_revisions,
             }
-        if grant or granted_at is not None:
-            position = len(existing) + 1
 
     source = _latest_succeeded(tasks, source_steps) if source_steps else None
     source_input = dict((source or {}).get("input") or {})
@@ -233,17 +197,10 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         **dict(revise_cfg.get("static_input") or {}),
         **{key: value for key, value in mapped.items() if value is not None},
     }
-    revise_input.pop("_revision_grant", None)
     if budget:
         revise_input["_revision_budget"] = budget
         if block_loop:
             revise_input["revision_number"] = len(existing) + 1
-    if grant:
-        # Human guidance can ask for changes beyond the files a review finding named.
-        revise_input.pop("revision_files", None)
-        revise_input["_revision_grant"] = grant
-    if position is not None:
-        revise_input["revision_number"] = position
     revision_number = revise_input.get("revision_number")
 
     revise_depends_on = _resolve_depends_on(
@@ -359,7 +316,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     }
     if block_loop:
         result["status"] = "revising"
-        result["max_revisions"] = max_revisions if budget or position is not None else 1 + max_revisions
+        result["max_revisions"] = max_revisions if budget else 1 + max_revisions
         result["resume_after_task_ids"] = resume_ids
         result["cancelled_task_ids"] = cancelled
     return result

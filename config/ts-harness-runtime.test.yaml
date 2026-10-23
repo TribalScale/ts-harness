@@ -173,7 +173,7 @@ routing:
     - id: jira_to_pr
       program_type: jira_to_pr
       entry_phase: pick
-      signals: ["my tickets", "pick up my jira", "implement [a-z][a-z0-9]+-\\d+"]
+      signals: ["my tickets", "pick up my jira", "implement TFS-"]
       orchestrator_hint: >
         User wants the decoupled implement program. Call propose_start_program
         with program_type=jira_to_pr. If they pasted a ticket key, use

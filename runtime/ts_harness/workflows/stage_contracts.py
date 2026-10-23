@@ -253,15 +253,6 @@ def validate_work_order_artifacts(
     )
     if reason:
         return [ContractViolation("/artifacts", reason)]
-    repositories = stage_input.get("project_repositories")
-    if stage == "planner" and isinstance(repositories, list) and isinstance(artifacts, dict):
-        from ts_harness.implementation.work_order_context import work_order_repository_problems
-
-        markdown = str(artifacts.get("work_orders_markdown") or "")
-        return [
-            ContractViolation("/artifacts/work_orders_markdown", problem)
-            for problem in work_order_repository_problems(markdown, repositories)
-        ]
     return []
 
 

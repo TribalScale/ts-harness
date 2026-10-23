@@ -49,7 +49,7 @@ Classify using the **primary** action and domain. When multiple signals appear, 
 | Defect, regression, or broken behavior | `propose_start_program(program_type='bug_to_jira_work_orders', entry_phase='bug_intake')` |
 | Feature or pasted content to plan | `propose_start_program(program_type='content_to_jira_work_orders', entry_phase='intake')` |
 | Vague code change, open a PR, or refactor | Ask once: bug or feature, then start the matching program. Do not delegate to `dev-agent`. |
-| Assigned ticket (`implement PROJ-123`, my tickets) | `propose_start_program(program_type='jira_to_pr')`. `dev-agent` implements only inside that program. |
+| Assigned ticket (`implement TFS-`, my tickets) | `propose_start_program(program_type='jira_to_pr')`. `dev-agent` implements only inside that program. |
 | Infrastructure, deploys, monitoring, incidents | `ops-agent` |
 | Testing, QA, coverage, bug triage | `qa-agent` |
 | Data queries, reports, metrics, cost analysis | `analyst-agent` |

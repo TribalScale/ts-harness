@@ -10,7 +10,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Callable
+from typing import Any
 
 AWAITING_TOOL_APPROVAL_PREFIX = "awaiting_tool_approval:"
 
@@ -95,9 +95,6 @@ class ApprovalQueue:
     def get(self, approval_id: str) -> ApprovalRequest:
         return self._requests[approval_id]
 
-    def all(self) -> list[ApprovalRequest]:
-        return list(self._requests.values())
-
     def list_pending(self, *, tenant_id: str | None = None) -> list[ApprovalRequest]:
         pending = [r for r in self._requests.values() if r.status == "pending"]
         if tenant_id:
@@ -129,20 +126,6 @@ class ApprovalQueue:
         approval.decided_by_roles = list(roles or [])
         self._persist(approval)
         return approval
-
-    def decide_pending(
-        self,
-        approval_id: str,
-        *,
-        approved: bool,
-        actor_id: str = "system",
-        roles: list[str] | None = None,
-    ) -> ApprovalRequest:
-        """Decide a pending request; ``ApprovalAlreadyDecided`` when someone got there first."""
-        approval = self.get(approval_id)
-        if approval.status != "pending":
-            raise ApprovalAlreadyDecided(approval)
-        return self.decide(approval_id, approved=approved, actor_id=actor_id, roles=roles)
 
     def is_approved_and_matches(
         self,
@@ -198,108 +181,6 @@ class ApprovalAlreadyDecided(ValueError):
         self.approval = approval
 
 
-_COLUMNS = (
-    "approval_id, tenant_id, agent_id, tool_name, args, args_fingerprint, reason, status, requested_at, "
-    "decided_by_actor_id, decided_by_roles, consumed_at, workflow_id, task_id"
-)
-
-
-class PostgresApprovalQueue(ApprovalQueue):
-    """Approvals in ``tool_approvals`` (migration 039), shared by every runtime replica."""
-
-    def __init__(self, connect: Callable[[], Any]):
-        super().__init__(None)
-        self._connect = connect
-
-    def _query(self, sql: str, params: tuple[Any, ...]) -> list[ApprovalRequest]:
-        from psycopg.rows import dict_row
-
-        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall() if cur.description else []
-        return [self._from_row(row) for row in rows]
-
-    @staticmethod
-    def _from_row(row: dict[str, Any]) -> ApprovalRequest:
-        return ApprovalRequest(**{**row, "approval_id": str(row["approval_id"]), "args": row.get("args") or {}})
-
-    def request(self, **kwargs: Any) -> ApprovalRequest:
-        approval = super().request(**kwargs)
-        self._requests.pop(approval.approval_id, None)
-        return approval
-
-    def _persist(self, approval: ApprovalRequest) -> None:
-        from psycopg.types.json import Jsonb
-
-        data = dict(approval.__dict__)
-        data["args"] = Jsonb(data.get("args") or {})
-        data["decided_by_roles"] = Jsonb(data["decided_by_roles"]) if data.get("decided_by_roles") is not None else None
-        names = [name.strip() for name in _COLUMNS.split(",")]
-        updates = ", ".join(f"{name} = EXCLUDED.{name}" for name in names if name != "approval_id")
-        self._query(
-            f"INSERT INTO tool_approvals ({_COLUMNS}) VALUES ({', '.join(['%s'] * len(names))}) "
-            f"ON CONFLICT (approval_id) DO UPDATE SET {updates}",
-            tuple(data[name] for name in names),
-        )
-
-    def get(self, approval_id: str) -> ApprovalRequest:
-        try:
-            uuid.UUID(str(approval_id))
-        except ValueError:
-            raise KeyError(approval_id) from None
-        rows = self._query(f"SELECT {_COLUMNS} FROM tool_approvals WHERE approval_id = %s", (approval_id,))
-        if not rows:
-            raise KeyError(approval_id)
-        return rows[0]
-
-    def all(self) -> list[ApprovalRequest]:
-        return self._query(f"SELECT {_COLUMNS} FROM tool_approvals ORDER BY requested_at DESC LIMIT 500", ())
-
-    def list_pending(self, *, tenant_id: str | None = None) -> list[ApprovalRequest]:
-        return self._query(
-            f"SELECT {_COLUMNS} FROM tool_approvals WHERE status = 'pending' AND (%s::text IS NULL OR tenant_id = %s) "
-            "ORDER BY requested_at",
-            (tenant_id or None, tenant_id or None),
-        )
-
-    def decided_for_task(self, workflow_id: str, task_id: str) -> list[ApprovalRequest]:
-        return self._query(
-            f"SELECT {_COLUMNS} FROM tool_approvals WHERE workflow_id = %s AND task_id = %s "
-            "AND status IN ('approved', 'denied') AND consumed_at IS NULL ORDER BY requested_at",
-            (workflow_id, task_id),
-        )
-
-    def decide_pending(
-        self,
-        approval_id: str,
-        *,
-        approved: bool,
-        actor_id: str = "system",
-        roles: list[str] | None = None,
-    ) -> ApprovalRequest:
-        from psycopg.types.json import Jsonb
-
-        self.get(approval_id)
-        rows = self._query(
-            "UPDATE tool_approvals SET status = %s, decided_by_actor_id = %s, decided_by_roles = %s "
-            f"WHERE approval_id = %s AND status = 'pending' RETURNING {_COLUMNS}",
-            ("approved" if approved else "denied", actor_id, Jsonb(list(roles or [])), approval_id),
-        )
-        if not rows:
-            raise ApprovalAlreadyDecided(self.get(approval_id))
-        return rows[0]
-
-    def consume(self, approval_id: str) -> ApprovalRequest:
-        consumed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        rows = self._query(
-            f"UPDATE tool_approvals SET consumed_at = COALESCE(consumed_at, %s) WHERE approval_id = %s RETURNING {_COLUMNS}",
-            (consumed_at, approval_id),
-        )
-        if not rows:
-            raise KeyError(approval_id)
-        return rows[0]
-
-
 def decide_and_resume(
     queue: ApprovalQueue,
     memory: Any,
@@ -314,7 +195,10 @@ def decide_and_resume(
     Raises ``KeyError`` for an unknown id and ``ApprovalAlreadyDecided`` when the
     request is no longer pending. The resume dict is ``None`` for an unlinked request.
     """
-    approval = queue.decide_pending(approval_id, approved=approved, actor_id=actor_id, roles=roles)
+    approval = queue.get(approval_id)
+    if approval.status != "pending":
+        raise ApprovalAlreadyDecided(approval)
+    approval = queue.decide(approval_id, approved=approved, actor_id=actor_id, roles=roles)
     if not approval.task_id:
         return approval, None
     try:
@@ -332,21 +216,8 @@ def decide_and_resume(
     return approval, {"status": "resumed"}
 
 
-def build_approval_queue() -> ApprovalQueue:
-    """Postgres when the runtime has a session database, so replicas share approvals; else JSONL or memory."""
-    from ts_harness.agent.sessions import shared_state_connection
-
-    connect = shared_state_connection()
-    if connect is not None:
-        return PostgresApprovalQueue(connect)
-    return ApprovalQueue(os.environ.get("TS_HARNESS_APPROVAL_STORE") or None)
-
-
-_approval_queue: ApprovalQueue | None = None
+_approval_queue = ApprovalQueue(os.environ.get("TS_HARNESS_APPROVAL_STORE") or None)
 
 
 def get_approval_queue() -> ApprovalQueue:
-    global _approval_queue
-    if _approval_queue is None:
-        _approval_queue = build_approval_queue()
     return _approval_queue

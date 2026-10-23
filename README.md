@@ -1,7 +1,5 @@
 # TS Harness
 
-Built by [TribalScale](https://www.tribalscale.com).
-
 TS Harness is a governed control plane for multi-agent work inside an
 organization. People state intent in Slack, Discord, Telegram, the admin
 console, or the HTTP API. The gateway classifies that intent, applies policy, and

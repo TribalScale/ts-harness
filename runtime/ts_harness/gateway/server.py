@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Iterator
+from typing import Any
 import hashlib
 import hmac
 import json
@@ -17,7 +16,6 @@ from pathlib import Path
 from ts_harness.agent.loop import EnterpriseAgent
 from ts_harness.agent.provider import FakeProvider
 from ts_harness.agent.sessions import get_session_store
-from ts_harness.gateway.service_lease import scheduler_lease
 from ts_harness.audit.writer import AuditWriter
 from ts_harness.config.reload import default_lkg_path, reload_runtime_config
 from ts_harness.secrets.resolver import SecretResolver
@@ -167,9 +165,6 @@ class RuntimeState:
         self.audit = AuditWriter(os.environ.get("TS_HARNESS_AUDIT_LOG") or None)
         self.metrics = MetricsRegistry()
         self.policy = PolicyEngine(self.config)
-        from ts_harness.skills.repository import sync_skill_mirror
-
-        sync_skill_mirror(force=True)
         self.skill_catalog = SkillCatalog.default()
         self.skill_catalog.load()
         configure_tool_audit(
@@ -211,7 +206,6 @@ class RuntimeState:
         self._session_locks: dict[str, threading.Lock] = {}
         self._session_locks_guard = threading.Lock()
         self._start_sandbox_reaper()
-        self._start_definitions_watcher()
         self.mcp = get_mcp_manager()
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
         for name, server_cfg in self.config.mcp_servers.items():
@@ -240,23 +234,18 @@ class RuntimeState:
                 actor_id="scheduler",
                 payload=event,
             ),
-            leader=scheduler_lease().held,
-            cron_path=Path(os.environ.get("TS_HARNESS_CRON_CONFIG", "config/runtime-cron-jobs.json")),
         )
         self.scheduler.start()
         self.slack_socket = SlackSocketListener(self)
         self.slack_socket.start()
 
-    @contextmanager
-    def _session_lock(self, session_id: str) -> Iterator[None]:
-        """One turn per session at a time: in this process, then across replicas."""
+    def _session_lock(self, session_id: str) -> threading.Lock:
         with self._session_locks_guard:
             lock = self._session_locks.get(session_id)
             if lock is None:
                 lock = threading.Lock()
                 self._session_locks[session_id] = lock
-        with lock, get_session_store().turn_lock(session_id):
-            yield
+            return lock
 
     def _slack_socket_health(self) -> tuple[str | None, str | None]:
         health = self.slack_socket.health()
@@ -357,86 +346,6 @@ class RuntimeState:
             correlation_id=payload.get("correlation_id"),
         )
         self.metrics.inc("agent_runs")
-
-    def _settings_generations(self) -> dict[str, int]:
-        from ts_harness.workflows.agents_overlay_store import agents_overlay_store_root
-        from ts_harness.workflows.mcp_settings_store import mcp_settings_store_root
-        from ts_harness.workflows.routing_definition_store import routing_definition_store_root
-        from ts_harness.workflows.runtime_settings_store import runtime_settings_store_root
-
-        out: dict[str, int] = {}
-        for name, root in (
-            ("settings", runtime_settings_store_root()),
-            ("routing", routing_definition_store_root()),
-            ("mcp", mcp_settings_store_root()),
-            ("agents", agents_overlay_store_root()),
-        ):
-            try:
-                out[name] = int(json.loads((root / "active" / "manifest.json").read_text(encoding="utf-8")).get("generation") or 0)
-            except (OSError, ValueError, AttributeError):
-                out[name] = 0
-        return out
-
-    def apply_shared_definition_changes(self) -> list[str]:
-        """Pull the shared definitions tree and reload whatever another replica activated."""
-        from ts_harness.storage.shared_tree import sync_definitions
-
-        if not sync_definitions():
-            return []
-        current = self._settings_generations()
-        changed = [name for name, gen in current.items() if gen != self._seen_settings_generations.get(name)]
-        self._seen_settings_generations = current
-        for name in changed:
-            try:
-                if name == "settings":
-                    from ts_harness.config.runtime_settings import reload_runtime_settings_into_runtime
-
-                    reload_runtime_settings_into_runtime(self)
-                elif name == "routing":
-                    from ts_harness.gateway.routing_definitions_bff import reload_routing_into_runtime
-
-                    reload_routing_into_runtime(self)
-                elif name == "mcp":
-                    from ts_harness.config.mcp_settings import reload_mcp_settings_into_runtime
-
-                    if reload_mcp_settings_into_runtime(self):
-                        self.rebuild_mcp_runtime()
-                elif name == "agents":
-                    from ts_harness.config.agents_overlay import reload_agents_overlay_into_runtime
-
-                    reload_agents_overlay_into_runtime(self)
-                log_event("runtime_shared_definitions_reloaded", store=name)
-            except Exception as exc:  # noqa: BLE001
-                log_event("runtime_shared_definitions_reload_failed", store=name, error=str(exc)[:300])
-        return changed
-
-    def apply_shared_skill_changes(self) -> bool:
-        """Rebuild the managed skill mirror and reload the catalog when another replica approved or rejected."""
-        from ts_harness.skills.repository import sync_skill_mirror
-
-        if not sync_skill_mirror():
-            return False
-        try:
-            self.skill_catalog.load()
-            log_event("runtime_shared_skills_reloaded")
-        except Exception as exc:  # noqa: BLE001
-            log_event("runtime_shared_skills_reload_failed", error=str(exc)[:300])
-        return True
-
-    def _start_definitions_watcher(self) -> None:
-        from ts_harness.storage.backend import shared_state_enabled
-
-        self._seen_settings_generations = self._settings_generations()
-        if not shared_state_enabled():
-            return
-        interval = float(os.environ.get("TS_HARNESS_SHARED_SYNC_SECONDS") or 2)
-
-        def loop() -> None:
-            while not self._shutdown.wait(interval):
-                self.apply_shared_definition_changes()
-                self.apply_shared_skill_changes()
-
-        threading.Thread(target=loop, daemon=True, name="ts-harness-definitions-sync").start()
 
     def _start_sandbox_reaper(self) -> None:
         if os.environ.get("SANDBOX_REAPER_ENABLED", "false").lower() != "true":
@@ -711,44 +620,17 @@ class RuntimeState:
         )
         return result
 
-    def _session_for_message(
-        self,
-        body: dict[str, Any],
-        *,
-        tenant_id: str,
-        channel: str,
-        agent_id: str,
-    ):
-        """Route a chat post to the open session when the client names one.
-
-        Admin chat keeps a single browser binding and also sends ``session_id``
-        for the thread on screen. The binding can still point at an older
-        conversation, so the named session wins.
-        """
-        store = get_session_store()
-        requested = str(body.get("session_id") or "").strip()
-        if requested:
-            existing = store.get(requested)
-            if existing is not None and existing.tenant_id == tenant_id:
-                return existing
-        return store.get_or_create(
-            tenant_id=tenant_id,
-            source=channel,
-            agent_id=agent_id,
-            channel=channel,
-            thread_id=body.get("thread_id"),
-        )
-
     def handle_session_message(self, body: dict[str, Any], auth) -> dict[str, Any]:
         req = normalize_runtime_body(body, default_tenant=self.config.gateway.default_tenant_id)
         channel = body.get("channel", "slack")
         agent_id = self.config.bindings.get(channel, self.config.default_agent().id)
         agent_cfg = self.config.get_agent(agent_id)
-        session = self._session_for_message(
-            body,
+        session = get_session_store().get_or_create(
             tenant_id=req.tenant_id,
-            channel=channel,
+            source=channel,
             agent_id=agent_id,
+            channel=channel,
+            thread_id=body.get("thread_id"),
         )
         with self._session_lock(session.session_id):
             return self._handle_session_message_locked(
@@ -788,19 +670,16 @@ class RuntimeState:
         from ts_harness.routing.intents import classify_channel_intent
 
         metadata = dict(session.metadata or {})
-        metadata["channel"] = channel
-        # An open chat posts its own session id. A stale browser binding must
-        # not retarget that chat onto a different thread.
-        if not str(metadata.get("channel_id") or "").strip():
-            metadata["channel_id"] = body.get("channel_id") or channel
-        if not str(metadata.get("thread_id") or "").strip():
-            incoming_thread = str(body.get("thread_id") or "").strip()
-            if incoming_thread:
-                metadata["thread_id"] = incoming_thread
-        if not str(metadata.get("binding_key") or "").strip():
-            binding_key = str(body.get("binding_key") or "").strip()
-            if binding_key:
-                metadata["binding_key"] = binding_key
+        metadata.update(
+            {
+                "channel": channel,
+                "channel_id": body.get("channel_id") or metadata.get("channel_id") or channel,
+                "thread_id": body.get("thread_id") or metadata.get("thread_id"),
+            },
+        )
+        binding_key = str(body.get("binding_key") or metadata.get("binding_key") or "").strip()
+        if binding_key:
+            metadata["binding_key"] = binding_key
         session.metadata = metadata
         get_session_store().save(session)
 
@@ -818,14 +697,6 @@ class RuntimeState:
             if metadata.get("actor_email") != actor_email:
                 metadata["actor_email"] = actor_email
                 session.metadata = metadata
-                get_session_store().save(session)
-
-        if channel == "slack" and getattr(self.config.identity, "provider", "static") == "oidc":
-            from ts_harness.gateway.directory_links import link_channel_session
-
-            linked = link_channel_session(dict(session.metadata or {}), actor_email, auth.tenant_id)
-            if linked != (session.metadata or {}):
-                session.metadata = linked
                 get_session_store().save(session)
 
         raw_user = str((body.get("actor") or {}).get("actor_id") or auth.actor_id or "")
@@ -864,9 +735,6 @@ class RuntimeState:
             execute_workflow_tool_approval_reply,
             format_workflow_tool_approval_ack,
             should_intercept_workflow_tool_approval_reply,
-            execute_stuck_step_command,
-            format_stuck_step_ack,
-            parse_stuck_step_command,
             execute_bridge_workflow_proposal,
             execute_governed_workflow_proposal,
             execute_intake_response,
@@ -1022,45 +890,6 @@ class RuntimeState:
                 "status": "succeeded",
                 "session_id": session.session_id,
                 "output": {**decision_result, "summary": summary},
-            }
-        if parse_stuck_step_command(user_text) is not None:
-            try:
-                stuck_result = execute_stuck_step_command(
-                    session,
-                    user_text=user_text,
-                    actor_id=auth.actor_id,
-                    channel=channel,
-                    auth=auth,
-                    actor_email=actor_email,
-                    config=self.config,
-                )
-            except Exception as exc:  # noqa: BLE001
-                stuck_result = {"error": str(exc)}
-            summary = format_stuck_step_ack(stuck_result)
-            get_transcript_store().append_turn(
-                session.session_id,
-                user_text=user_text,
-                assistant_messages=[{"role": "assistant", "content": summary}],
-            )
-            self.audit.append(
-                tenant_id=req.tenant_id,
-                action_type="stuck_step_decided",
-                actor_id=auth.actor_id,
-                correlation_id=req.correlation_id,
-                payload={
-                    "session_id": session.session_id,
-                    "channel": channel,
-                    "action": stuck_result.get("action"),
-                    "work_order": stuck_result.get("work_order"),
-                    "status": stuck_result.get("status"),
-                    "error": stuck_result.get("error"),
-                    "actor_email": actor_email,
-                },
-            )
-            return {
-                "status": "succeeded",
-                "session_id": session.session_id,
-                "output": {**stuck_result, "summary": summary},
             }
         if workflow_confirmation.confirmed:
             try:
@@ -2417,17 +2246,7 @@ def get_runtime() -> RuntimeState:
                 "config/ts-harness-runtime.yaml.tmpl",
             )
             _RUNTIME = RuntimeState(config_path)
-            _register_group_resolvers(_RUNTIME.config)
         return _RUNTIME
-
-
-def _register_group_resolvers(config: Any) -> None:
-    try:
-        from ts_harness.identity_directory import register_group_resolvers
-
-        register_group_resolvers(config)
-    except Exception as exc:  # noqa: BLE001 - sign-in falls back to token groups
-        log_event("group_resolver_registration_failed", error=str(exc))
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -2738,21 +2557,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.path == "/webhooks/github":
                 from ts_harness.gateway.github_webhook import (
                     delivery_already_handled,
-                    delivery_host,
+                    github_webhook_secret,
                     handle_github_webhook,
                     remember_delivery,
-                    verify_delivery,
-                    webhook_secrets,
+                    verify_github_signature,
                 )
 
-                host = delivery_host(dict(self.headers.items()))
-                secrets = webhook_secrets(host)
+                secret = github_webhook_secret()
                 delivery_id = str(self.headers.get("X-GitHub-Delivery", "") or "").strip()
-                event_name = str(self.headers.get("X-GitHub-Event", "") or "")
-                if secrets:
+                if secret:
                     signature = self.headers.get("X-Hub-Signature-256", "")
                     raw = getattr(self, "_last_raw_body", b"")
-                    if not verify_delivery(raw, signature, secrets):
+                    if not verify_github_signature(raw, signature, secret):
                         self._send(401, {"error": "invalid github signature"})
                         return
                     if not delivery_id:
@@ -2764,8 +2580,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 result = handle_github_webhook(
                     body,
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
-                    event_name=event_name,
-                    host=host,
                 )
                 runtime.audit.append(
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
@@ -2775,7 +2589,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 )
                 runtime.metrics.inc("github_webhook")
                 if delivery_id:
-                    remember_delivery(delivery_id, host=host, event=event_name)
+                    remember_delivery(delivery_id)
                 self._send(200, result)
                 return
             if self.path.startswith("/channels/"):
@@ -2813,12 +2627,6 @@ def main() -> None:
     config_path = os.environ.get("TS_HARNESS_CONFIG", "config/ts-harness-runtime.yaml.tmpl")
     # Ensure token is available for config validation during boot.
     os.environ.setdefault("GATEWAY_TOKEN", token)
-    from ts_harness.storage.backend import apply_mirror_paths, validate_storage_config
-
-    for warning in validate_storage_config():
-        log_event("runtime_storage_warning", message=warning)
-    for name, value in apply_mirror_paths().items():
-        log_event("runtime_storage_mirror_path", variable=name, path=value)
     runtime = get_runtime()
     if not runtime.config.gateway.token:
         runtime.config.gateway.token = token

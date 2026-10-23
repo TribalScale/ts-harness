@@ -73,8 +73,6 @@ KNOWN_STAGE_KEYS = frozenset(
         "contract_ref",
         "allowed_contracts",
         "output_schema",
-        "execution",
-        "lane",
     }
 )
 
@@ -121,44 +119,6 @@ class Stage:
     tool_allow: list[str] | None = None
     # Name of the fragment include this stage was expanded from, if any.
     origin: str = ""
-    # "agent" dispatches to the runtime; "coding_job" queues a coding worker.
-    execution: str = "agent"
-    # Claim lane override; empty means the default from stage_lane().
-    lane: str = ""
-
-
-STAGE_EXECUTIONS = frozenset({"agent", "coding_job"})
-
-
-def _stage_execution(raw: dict[str, Any], name: str, kind: str) -> str:
-    execution = str(raw.get("execution") or "agent").strip()
-    if execution not in STAGE_EXECUTIONS:
-        raise ValueError(f"stage '{name}' execution must be one of {sorted(STAGE_EXECUTIONS)}")
-    if execution == "coding_job" and (kind != "task" or raw.get("wait_external") or raw.get("barrier")):
-        raise ValueError(f"stage '{name}' execution coding_job needs a plain task stage")
-    return execution
-
-
-STAGE_LANES = frozenset({"fast", "agent", "coding"})
-
-
-def _stage_lane_override(raw: dict[str, Any], name: str) -> str:
-    lane = str(raw.get("lane") or "").strip()
-    if lane and lane not in STAGE_LANES:
-        raise ValueError(f"stage '{name}' lane must be one of {sorted(STAGE_LANES)}")
-    return lane
-
-
-def stage_lane(stage: Stage) -> str:
-    """Claim lane: ``coding`` for coding jobs, ``fast`` for barriers, waits and approvals, else ``agent``."""
-    lane = getattr(stage, "lane", "")
-    if lane:
-        return lane
-    if getattr(stage, "execution", "agent") == "coding_job":
-        return "coding"
-    if any(getattr(stage, key, None) for key in ("barrier", "wait_external", "join", "approval_required")):
-        return "fast"
-    return "agent"
 
 
 APPROVAL_POLICY_KEYS = frozenset(
@@ -501,8 +461,6 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
             raw.get("approval"), stage_name=name, approval_required=approval_required
         ),
         tool_allow=_optional_tool_allow(raw, name),
-        execution=_stage_execution(raw, name, kind),
-        lane=_stage_lane_override(raw, name),
     )
 
 
@@ -610,10 +568,6 @@ def _stage_to_payload(stage: Stage) -> dict[str, Any]:
         payload["present_output"] = stage.present_output
     if stage.tool_allow is not None:
         payload["tool_allow"] = list(stage.tool_allow)
-    if stage.execution != "agent":
-        payload["execution"] = stage.execution
-    if stage.lane:
-        payload["lane"] = stage.lane
     return payload
 
 

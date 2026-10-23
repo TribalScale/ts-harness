@@ -158,21 +158,10 @@ def ensure_history_snapshot(
         revision,
     )
     path = history_dir(Path(store_root), skeleton.workflow_type) / filename
-    from ts_harness.storage.shared_tree import definitions_tree_for
-
-    shared = definitions_tree_for(store_root) if not path.exists() else None
-    errors: tuple[type[BaseException], ...] = (Exception,) if shared is not None else (OSError,)
     try:
-        if shared is not None:
-            tree, rel = shared
-            prefix = "" if rel == "." else f"{rel}/"
-            history_rel = path.parent.relative_to(Path(store_root)).as_posix()
-            with tree.transaction(f"store:{rel if rel != '.' else 'root'}", [f"{prefix}{history_rel}"]):
-                if not path.exists():
-                    _atomic_write_json(path, payload)
-        elif not path.exists():
+        if not path.exists():
             _atomic_write_json(path, payload)
-    except errors:
+    except (OSError, PermissionError):
         logger.exception(
             "workflow history snapshot write failed "
             "workflow_type=%s definition_version=%s",

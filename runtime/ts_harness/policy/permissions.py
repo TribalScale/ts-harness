@@ -40,11 +40,6 @@ DEFAULT_BUNDLES: dict[str, frozenset[str]] = {
 
 DEFAULT_SERVICE_PERMISSIONS = frozenset(_ADMIN)
 
-TEAM_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-TEAM_ROLES = ("member", "approver", "manager")
-ADMIN_GROUP = "ts-harness-admins"
-USERS_GROUP = "ts-harness-users"
-
 
 def _clean_role(value: Any) -> str:
     return str(value or "").strip().lower()
@@ -182,8 +177,7 @@ def resolve_actor_roles(
     if getattr(identity, "scim_enabled", False):
         scim_roles, scim_groups = _scim_roles_and_groups(email, external_id)
     for group in list(groups or []) + scim_groups:
-        mapped = folded.get(_clean_role(group))
-        for role in mapped if mapped is not None else _default_group_roles(group, identity):
+        for role in folded.get(_clean_role(group)) or []:
             add(role)
     email_key = str(email or "").strip().lower()
     email_map = getattr(identity, "roles", None) or {}
@@ -193,51 +187,6 @@ def resolve_actor_roles(
     for role in scim_roles:
         add(role)
     return names or ["member"]
-
-
-def _team_groups_config(identity: Any) -> tuple[str, str, str]:
-    team_groups = getattr(identity, "team_groups", None)
-    return (
-        str(getattr(team_groups, "prefix", None) or "ts-harness-team-"),
-        str(getattr(team_groups, "approver_suffix", None) or "-approvers"),
-        str(getattr(team_groups, "manager_suffix", None) or "-managers"),
-    )
-
-
-def _default_group_roles(group: Any, identity: Any) -> list[str]:
-    """Built-in roles for the standard groups when ``group_roles`` does not name them."""
-    name = _clean_role(group)
-    if name == ADMIN_GROUP:
-        return ["admin"]
-    if name == USERS_GROUP:
-        return ["requester"]
-    prefix, approver_suffix, _ = _team_groups_config(identity)
-    if name.startswith(prefix) and name.endswith(approver_suffix):
-        return ["approver"]
-    return []
-
-
-def resolve_team_memberships(groups: Iterable[Any] | None, config: Any | None = None) -> list[dict[str, str]]:
-    """Map ``ts-harness-team-<slug>[-approvers|-managers]`` groups to team roles."""
-    identity = getattr(config, "identity", config)
-    prefix, approver_suffix, manager_suffix = _team_groups_config(identity)
-    seen: set[tuple[str, str]] = set()
-    memberships: list[dict[str, str]] = []
-    for raw in groups or []:
-        name = _clean_role(raw)
-        if not name.startswith(prefix):
-            continue
-        slug = name[len(prefix) :]
-        role = "member"
-        if slug.endswith(approver_suffix):
-            slug, role = slug[: -len(approver_suffix)], "approver"
-        elif slug.endswith(manager_suffix):
-            slug, role = slug[: -len(manager_suffix)], "manager"
-        if not TEAM_SLUG_RE.fullmatch(slug) or (slug, role) in seen:
-            continue
-        seen.add((slug, role))
-        memberships.append({"slug": slug, "role": role})
-    return memberships
 
 
 def _scim_roles_and_groups(email: str | None, external_id: str | None) -> tuple[list[str], list[str]]:

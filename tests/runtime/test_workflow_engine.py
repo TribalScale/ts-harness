@@ -39,18 +39,6 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(args[1], "blocked")
         self.assertIn("base_advanced", kwargs["error"])
 
-    def test_block_case_prefixes_follow_the_pinned_definition(self):
-        current = load_skeleton("deliver_work_order").definition_version
-        for version, expected in (
-            (current, ["external_blocked:github.pr_changes_requested", "external_blocked:github.pr_closed"]),
-            ("0.0.1-missing", []),
-        ):
-            with self.subTest(version=version):
-                task = {"id": "w1", "step_name": "await_human_merge", "status": "blocked", "definition_version": version}
-                self.client.get_workflow.return_value = {"workflow": {"workflow_type": "deliver_work_order"}, "tasks": [task]}
-                self.assertEqual(self.engine.block_case_prefixes("wf-1", "w1"), expected)
-        self.assertEqual(self.engine.block_case_prefixes("wf-1", "other"), [])
-
     def test_block_wait_blocks_and_runs_on_block(self):
         task = {"id": "w1", "workflow_id": "wf-1", "step_name": "await_human_merge", "status": "blocked"}
         self.client.get_workflow.return_value = {"workflow": {}, "tasks": [task]}
@@ -66,12 +54,6 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(_revision_cause("barrier_blocked: stale_base: x")[0], "The base branch moved; refreshing the PR")
         self.assertEqual(_revision_cause("barrier_blocked: code_review_blocked: 2")[0], "Code review blocked the PR")
         self.assertEqual(_revision_cause(None)[0], "QA rejected the PR")
-        self.assertEqual(
-            _revision_cause("external_blocked:github.pr_changes_requested by alice"),
-            ("alice requested changes", "Human-requested revision failed"),
-        )
-        self.assertEqual(_revision_cause("external_blocked:github.pr_closed by bob")[0], "bob closed the PR without merging")
-        self.assertEqual(_revision_cause("external_blocked:github.pr_closed")[0], "A reviewer closed the PR without merging")
         self.assertEqual(_qa_feedback_text({}, {"output": {"review_feedback": "fix it"}}, None), "fix it")
 
     def test_handle_reject_falls_back_without_on_reject(self):

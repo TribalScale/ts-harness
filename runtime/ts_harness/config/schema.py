@@ -16,13 +16,6 @@ GLOBAL_DENY_TOOLS = {"browser", "gateway"}
 
 
 @dataclass
-class TeamGroupsConfig:
-    prefix: str = "ts-harness-team-"
-    approver_suffix: str = "-approvers"
-    manager_suffix: str = "-managers"
-
-
-@dataclass
 class IdentityConfig:
     provider: str = "static"
     issuer: str | None = None
@@ -41,14 +34,6 @@ class IdentityConfig:
     service_permissions: list[str] | None = None
     group_roles: dict[str, list[str]] = field(default_factory=dict)
     tenant_claim: str = "tenant_id"
-    preset: str | None = None
-    token_type: str | None = None
-    groups_claim: str | None = None
-    roles_claim: str | None = None
-    groups_source: str | None = None
-    allowed_domains: list[str] = field(default_factory=list)
-    directory: str | None = None
-    team_groups: TeamGroupsConfig = field(default_factory=TeamGroupsConfig)
 
 
 @dataclass
@@ -260,53 +245,6 @@ class ProgramBuilderConfig:
 
 
 @dataclass
-class DeploymentConfig:
-    profile: str = "single_host"
-    overrides: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class SchedulingConfig:
-    """Coding job quotas: running jobs per requester, program and team (0 means no limit)."""
-
-    coding_per_user: int = 2
-    coding_per_program: int = 3
-    coding_per_team: int = 8
-    # None keeps the launcher's CODING_MAX_RUNNING.
-    coding_global: int | None = None
-
-    def quotas(self) -> dict[str, int]:
-        return {
-            "per_user": self.coding_per_user,
-            "per_program": self.coding_per_program,
-            "per_team": self.coding_per_team,
-        }
-
-
-@dataclass
-class BudgetsConfig:
-    """Monthly LLM budgets per team, in ``currency``. Managers may raise their team up to ``manager_max_monthly``."""
-
-    currency: str = "USD"
-    default_team_monthly: float = 5000.0
-    warn_at_percent: int = 80
-    manager_max_monthly: float = 10000.0
-    # team slug (or id) -> monthly amount
-    teams: dict[str, float] = field(default_factory=dict)
-    # Slack channel for warnings; blank uses SLACK_OPS_CHANNEL.
-    notify_channel: str = ""
-
-    def settings_payload(self) -> dict[str, Any]:
-        return {
-            "currency": self.currency,
-            "default_team_monthly": self.default_team_monthly,
-            "warn_at_percent": self.warn_at_percent,
-            "manager_max_monthly": self.manager_max_monthly,
-            "teams": dict(self.teams),
-        }
-
-
-@dataclass
 class RuntimeConfig:
     tenants: list[TenantConfig]
     agents: list[AgentConfig]
@@ -323,9 +261,6 @@ class RuntimeConfig:
     implementation: ImplementationConfig = field(default_factory=ImplementationConfig)
     program_defaults: dict[str, Any] = field(default_factory=dict)
     program_builder: ProgramBuilderConfig = field(default_factory=ProgramBuilderConfig)
-    deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
-    scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
-    budgets: BudgetsConfig = field(default_factory=BudgetsConfig)
 
     @property
     def connectors_dict(self) -> dict[str, GoogleWorkspaceConnectorConfig]:
@@ -518,57 +453,6 @@ def _parse_identity(raw: dict[str, Any]) -> IdentityConfig:
             if isinstance(v, list)
         },
         tenant_claim=str(raw.get("tenant_claim") or "tenant_id"),
-        preset=_identity_choice(raw, "preset", IDENTITY_PRESETS),
-        token_type=_identity_choice(raw, "token_type", ("access", "id")),
-        groups_claim=_rendered(raw.get("groups_claim")),
-        roles_claim=_rendered(raw.get("roles_claim")),
-        groups_source=_identity_choice(raw, "groups_source", GROUPS_SOURCES),
-        allowed_domains=_domain_list(raw.get("allowed_domains")),
-        directory=_identity_choice(raw, "directory", DIRECTORY_SOURCES),
-        team_groups=_parse_team_groups(raw.get("team_groups")),
-    )
-
-
-IDENTITY_PRESETS = ("auth0", "entra", "google", "okta", "generic")
-GROUPS_SOURCES = ("token", "microsoft_graph", "google_directory")
-DIRECTORY_SOURCES = ("scim", "auth0_management", "microsoft_graph", "google_directory", "seen_users")
-
-
-def _rendered(value: Any) -> str | None:
-    """Blank values and unrendered ``{{TEMPLATE}}`` placeholders mean unset."""
-    text = str(value or "").strip()
-    if not text or text.startswith("{{"):
-        return None
-    return text
-
-
-def _identity_choice(raw: dict[str, Any], key: str, allowed: tuple[str, ...]) -> str | None:
-    value = _rendered(raw.get(key))
-    if value is None:
-        return None
-    value = value.lower()
-    if value not in allowed:
-        raise ValueError(f"identity.{key} must be one of {', '.join(allowed)}, got {value!r}")
-    return value
-
-
-def _domain_list(value: Any) -> list[str]:
-    if isinstance(value, str):
-        items = [] if value.strip().startswith("{{") else value.split(",")
-    elif isinstance(value, list):
-        items = value
-    else:
-        items = []
-    return [str(item).strip().lower().lstrip("@") for item in items if str(item).strip()]
-
-
-def _parse_team_groups(raw: Any) -> TeamGroupsConfig:
-    raw = raw if isinstance(raw, dict) else {}
-    defaults = TeamGroupsConfig()
-    return TeamGroupsConfig(
-        prefix=str(raw.get("prefix") or defaults.prefix),
-        approver_suffix=str(raw.get("approver_suffix") or defaults.approver_suffix),
-        manager_suffix=str(raw.get("manager_suffix") or defaults.manager_suffix),
     )
 
 
@@ -759,9 +643,6 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
         program_builder=ProgramBuilderConfig(
             agent_id=str((data.get("program_builder") or {}).get("agent_id") or "builder-agent"),
         ),
-        deployment=_parse_deployment(data.get("deployment")),
-        scheduling=parse_scheduling(data.get("scheduling")),
-        budgets=parse_budgets(data.get("budgets")),
     )
     config.validate()
     config._last_known_good = copy.deepcopy(data)
@@ -771,63 +652,6 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
     fill_agent_souls(config.agents)
     _publish_sandbox_limits(config)
     return config
-
-
-def parse_scheduling(raw: Any) -> SchedulingConfig:
-    raw = raw if isinstance(raw, dict) else {}
-    coding = raw.get("coding") if isinstance(raw.get("coding"), dict) else {}
-    defaults = SchedulingConfig()
-
-    def count(key: str, default: int | None) -> int | None:
-        value = coding.get(key)
-        if value is None:
-            return default
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"scheduling.coding.{key} must be a non-negative integer")
-        return value
-
-    return SchedulingConfig(
-        coding_per_user=count("per_user", defaults.coding_per_user) or 0,
-        coding_per_program=count("per_program", defaults.coding_per_program) or 0,
-        coding_per_team=count("per_team", defaults.coding_per_team) or 0,
-        coding_global=count("global", None),
-    )
-
-
-def parse_budgets(raw: Any) -> BudgetsConfig:
-    raw = raw if isinstance(raw, dict) else {}
-    defaults = BudgetsConfig()
-
-    def amount(value: Any, key: str) -> float:
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-            raise ValueError(f"budgets.{key} must be a non-negative number")
-        return float(value)
-
-    warn = raw.get("warn_at_percent", defaults.warn_at_percent)
-    if isinstance(warn, bool) or not isinstance(warn, int) or not 1 <= warn <= 100:
-        raise ValueError("budgets.warn_at_percent must be an integer from 1 to 100")
-    teams = raw.get("teams") or {}
-    if not isinstance(teams, dict):
-        raise ValueError("budgets.teams must map team slugs to monthly amounts")
-    return BudgetsConfig(
-        currency=str(raw.get("currency") or defaults.currency).upper(),
-        default_team_monthly=amount(raw.get("default_team_monthly", defaults.default_team_monthly), "default_team_monthly"),
-        warn_at_percent=warn,
-        manager_max_monthly=amount(raw.get("manager_max_monthly", defaults.manager_max_monthly), "manager_max_monthly"),
-        teams={str(k): amount(v, f"teams.{k}") for k, v in teams.items()},
-        notify_channel=str(raw.get("notify_channel") or ""),
-    )
-
-
-def _parse_deployment(raw: Any) -> DeploymentConfig:
-    from ts_harness.config.deployment_profile import normalize_profile
-
-    raw = raw if isinstance(raw, dict) else {}
-    overrides = raw.get("overrides")
-    return DeploymentConfig(
-        profile=normalize_profile(raw.get("profile")),
-        overrides=dict(overrides) if isinstance(overrides, dict) else {},
-    )
 
 
 def _substitute_templates(text: str) -> str:

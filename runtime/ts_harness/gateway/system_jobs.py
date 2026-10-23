@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import Any, Callable
 
-from ts_harness.integrations.github_client import GitHubClient, GitHubError, github_for, parse_github_pr_url
+from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url
 from ts_harness.memory.client import get_memory_client
 from ts_harness.workflows.engine import get_workflow_engine
-from ts_harness.workflows.pr_rejection import REJECTION_REASONS, detect_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +21,14 @@ __all__ = [
 ]
 
 
-def _github_or_none() -> GitHubClient | None:
-    try:
-        return github_for(None)
-    except GitHubError:
-        return None
-
-
 def fetch_pull_request(
     owner: str,
     repo: str,
     number: int,
     *,
-    github: GitHubClient,
+    token: str,
 ) -> dict[str, Any]:
-    return github.get_pull(owner, repo, number)
+    return GitHubClient(token=token).get_pull(owner, repo, number)
 
 
 def _resume_merged_pr(
@@ -75,74 +66,10 @@ def _resume_merged_pr(
     )
 
 
-def block_if_rejected(wait: dict[str, Any], pr: dict[str, Any], *, github: GitHubClient, engine: Any, actor: str) -> bool:
-    """Block a merge wait whose PR a human closed or sent back; True when it was blocked."""
-    pr_url = str(wait.get("match_pr_url") or "").strip()
-    workflow_id = str(wait.get("workflow_id") or "").strip()
-    task_id = str(wait.get("task_id") or "").strip()
-    parsed = parse_github_pr_url(pr_url)
-    if parsed is None or not workflow_id or not task_id or pr.get("merged"):
-        return False
-    handled = engine.block_case_prefixes(workflow_id, task_id)
-    if not any(prefix in handled for prefix in REJECTION_REASONS):
-        return False
-    rejection = detect_rejection(github, *parsed, pr)
-    if rejection is None or not any(rejection["reason"].startswith(prefix) for prefix in handled):
-        return False
-    engine.block_wait(
-        workflow_id,
-        task_id,
-        rejection["reason"],
-        output={"pr_url": pr_url, "rejected_by": rejection["actor"], "review_feedback": rejection["feedback"]},
-        actor=actor,
-    )
-    logger.info("%s rejection workflow_id=%s pr_url=%s reason=%s", actor, workflow_id, pr_url, rejection["reason"])
-    return True
-
-
-WEBHOOK_HEALTHY_WINDOW_SECONDS = 3600
-_last_reconcile = {"at": 0.0}
-
-
-def webhooks_healthy(*, now: float | None = None, memory: Any = None) -> bool:
-    """A signed GitHub delivery arrived within the last hour, on any host."""
-    from datetime import datetime
-
-    now = time.time() if now is None else now
-    try:
-        hosts = (memory or get_memory_client()).github_webhook_status()
-    except Exception:  # noqa: BLE001
-        return False
-    for host in hosts:
-        received = host.get("last_received_at")
-        if not received:
-            continue
-        stamp = received if isinstance(received, datetime) else datetime.fromisoformat(str(received).replace("Z", "+00:00"))
-        if now - stamp.timestamp() <= WEBHOOK_HEALTHY_WINDOW_SECONDS:
-            return True
-    return False
-
-
-def reconcile_due(*, now: float | None = None, memory: Any = None) -> bool:
-    """Polling backs off to ``github_reconcile_interval_seconds`` while webhooks are arriving."""
-    from ts_harness.config.deployment_profile import resolve_setting
-
-    now = time.time() if now is None else now
-    interval = int(resolve_setting("github_reconcile_interval_seconds"))
-    if now - _last_reconcile["at"] >= interval or not webhooks_healthy(now=now, memory=memory):
-        _last_reconcile["at"] = now
-        return True
-    return False
-
-
-def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> dict[str, Any]:
-    """Reconcile GitHub waits when webhooks may have been missed; joins and release tracks always."""
-    local = {"joins": poll_wave_joins(tenant_id=tenant_id), "upstreams": poll_release_upstreams(tenant_id=tenant_id)}
-    if not force and not reconcile_due():
-        return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0, **local}
-    github = _github_or_none()
-    if github is None:
-        return {"status": "error", "error": "GITHUB_TOKEN or a GitHub App is required", "checked": 0, "resumed": 0, **local}
+def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        return {"status": "error", "error": "GITHUB_TOKEN is required", "checked": 0, "resumed": 0}
 
     memory = get_memory_client()
     engine = get_workflow_engine()
@@ -154,7 +81,6 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
 
     checked = 0
     resumed = 0
-    rejected = 0
     skipped = 0
     errors = 0
 
@@ -171,12 +97,9 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         owner, repo, number = parsed
         checked += 1
         try:
-            pr = fetch_pull_request(owner, repo, number, github=github)
+            pr = fetch_pull_request(owner, repo, number, token=token)
             if not pr.get("merged"):
-                if block_if_rejected(wait, pr, github=github, engine=engine, actor="github-merge-poller"):
-                    rejected += 1
-                else:
-                    skipped += 1
+                skipped += 1
                 continue
             merge_sha = str(pr.get("merge_commit_sha") or "").strip()
             _resume_merged_pr(
@@ -217,16 +140,15 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         "status": "ok",
         "checked": checked,
         "resumed": resumed,
-        "rejected": rejected,
         "skipped": skipped,
         "errors": errors,
-        "checks": poll_github_checks(tenant_id=tenant_id, github=github),
-        "deployments": poll_github_deployments(tenant_id=tenant_id, github=github),
-        **local,
+        "checks": poll_github_checks(tenant_id=tenant_id, token=token),
+        "deployments": poll_github_deployments(tenant_id=tenant_id, token=token),
+        "joins": poll_wave_joins(tenant_id=tenant_id),
     }
 
 
-def poll_github_checks(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:
+def poll_github_checks(*, tenant_id: str = "default", token: str | None = None) -> dict[str, Any]:
     """Fallback for missed check webhooks: resume SHA-pinned checks waits that are terminal."""
     from ts_harness.workflows.merge_readiness import (
         CHECKS_EVENT,
@@ -236,11 +158,12 @@ def poll_github_checks(*, tenant_id: str = "default", github: GitHubClient | Non
         pinned_heads,
     )
 
-    github = github or _github_or_none()
-    if github is None:
+    token = token or os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
         return {"checked": 0, "resumed": 0, "errors": 0}
     memory = get_memory_client()
     engine = get_workflow_engine()
+    github = GitHubClient(token=token)
     waits = list((memory.find_external_waits(event_type=CHECKS_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
     checked = resumed = errors = 0
     for wait in waits:
@@ -269,7 +192,7 @@ def poll_github_checks(*, tenant_id: str = "default", github: GitHubClient | Non
     return {"checked": checked, "resumed": resumed, "errors": errors}
 
 
-def poll_github_deployments(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:
+def poll_github_deployments(*, tenant_id: str = "default", token: str | None = None) -> dict[str, Any]:
     """Fallback for missed deployment_status webhooks: resume terminal deployment waits."""
     from ts_harness.workflows.release import (
         DEPLOYMENT_EVENT,
@@ -278,11 +201,12 @@ def poll_github_deployments(*, tenant_id: str = "default", github: GitHubClient 
         deployment_state,
     )
 
-    github = github or _github_or_none()
-    if github is None:
+    token = token or os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
         return {"checked": 0, "resumed": 0, "errors": 0}
     memory = get_memory_client()
     engine = get_workflow_engine()
+    github = GitHubClient(token=token)
     waits = list((memory.find_external_waits(event_type=DEPLOYMENT_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
     checked = resumed = errors = 0
     for wait in waits:
@@ -348,39 +272,6 @@ def poll_wave_joins(*, tenant_id: str = "default") -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             errors += 1
             logger.warning("wave_join_poller wait failed workflow_id=%s error=%s", workflow_id, exc)
-    return {"checked": checked, "resumed": resumed, "errors": errors}
-
-
-def poll_release_upstreams(*, tenant_id: str = "default") -> dict[str, Any]:
-    """Fallback for missed upstream notifications: re-evaluate every release track waiting on another."""
-    from ts_harness.workflows.hooks._helpers import load_workflow_payload
-    from ts_harness.workflows.release_tracks import UPSTREAM_EVENT, upstream_status
-
-    memory = get_memory_client()
-    engine = get_workflow_engine()
-    waits = list((memory.find_external_waits(event_type=UPSTREAM_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
-    checked = resumed = errors = 0
-    for wait in waits:
-        slot = str((wait.get("options") or {}).get("environment") or "")
-        workflow_id = str(wait.get("workflow_id") or "")
-        if not slot or not workflow_id:
-            continue
-        checked += 1
-        try:
-            workflow, tasks = load_workflow_payload(memory, workflow_id)
-            if upstream_status(memory, workflow, tasks, slot)["state"] == "pending":
-                continue
-            engine.resume_external(
-                workflow_id,
-                event_type=UPSTREAM_EVENT,
-                payload={"environment": slot, "source": "poller"},
-                actor="github-merge-poller",
-                tenant_id=tenant_id,
-            )
-            resumed += 1
-        except Exception as exc:  # noqa: BLE001
-            errors += 1
-            logger.warning("release_upstream_poller wait failed workflow_id=%s error=%s", workflow_id, exc)
     return {"checked": checked, "resumed": resumed, "errors": errors}
 
 
@@ -618,74 +509,9 @@ def start_scheduled_program(
     }
 
 
-def sync_directory() -> dict[str, Any]:
-    """Pull people, teams and offboarding from the configured identity directory."""
-    from ts_harness.identity_directory import sync_directory as run_sync
-
-    try:
-        return run_sync()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("directory sync failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
-
-
-def sweep_coding_jobs() -> dict[str, Any]:
-    """Mark coding jobs lost when their heartbeat stops or they overrun; their tasks resume as blocked."""
-    from ts_harness.memory.client import get_memory_client
-
-    try:
-        result = get_memory_client().sweep_stale_coding_jobs(
-            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 300),
-            max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 3600),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("coding job sweep failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
-    return {
-        "status": "ok",
-        "lost": [job.get("id") for job in result.get("lost") or []],
-        "resumed_tasks": list(result.get("resumed_tasks") or []),
-    }
-
-
-def budget_alerts() -> dict[str, Any]:
-    """Warn at budgets.warn_at_percent and when a team reaches its monthly LLM budget."""
-    from ts_harness.budgets import budget_alerts as run_alerts
-
-    return run_alerts()
-
-
-def github_rate_limits() -> dict[str, Any]:
-    """Record each GitHub App installation's remaining REST quota for the dashboard and alarm."""
-    from ts_harness.observability.scale_metrics import refresh_github_rate_limits
-
-    return refresh_github_rate_limits()
-
-
-def sweep_channel_dedup() -> dict[str, Any]:
-    """Forget inbound channel event ids older than a week; platforms stop retrying long before that."""
-    from ts_harness.storage.backend import state_backend
-
-    if state_backend() != "postgres":
-        return {"status": "skipped", "reason": "state backend is local"}
-    from ts_harness.memory.client import get_memory_client
-
-    try:
-        result = get_memory_client().sweep_channel_dedup(retention_days=7)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("channel dedup sweep failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
-    return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
-
-
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
-    "sync_directory": sync_directory,
-    "sweep_coding_jobs": sweep_coding_jobs,
-    "budget_alerts": budget_alerts,
-    "github_rate_limits": github_rate_limits,
-    "sweep_channel_dedup": sweep_channel_dedup,
     "start_program": start_scheduled_program,
 }
 

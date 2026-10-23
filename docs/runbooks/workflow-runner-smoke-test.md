@@ -8,19 +8,12 @@ progress. If that dispatch is still running when the grace period ends, Docker
 kills the process. The task lease and `WORKFLOW_RUNNER_STALE_POLICY=block`
 recover it.
 
-Dispatches run on a worker pool of `WORKFLOW_RUNNER_MAX_CONCURRENT` threads
-(compose default 3), so one long OpenCode step no longer holds up other
-workflows. A workflow never has more than one task in flight: the runner skips
-a ready task while another task of the same workflow is still dispatching, and
-the stale sweep leaves in-flight tasks alone.
-
 ## Verify Configuration
 
 1. Confirm Terraform rendered the runner environment:
    - `WORKFLOW_RUNNER_ENABLED`
    - `WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS`
    - `WORKFLOW_RUNNER_BATCH_SIZE`
-   - `WORKFLOW_RUNNER_MAX_CONCURRENT`
    - `WORKFLOW_RUNNER_LEASE_SECONDS`
    - `WORKFLOW_RUNNER_STALE_POLICY`
 2. Confirm compose includes `docker-compose.workflow-runner.yml`.

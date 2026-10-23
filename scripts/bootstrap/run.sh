@@ -61,8 +61,7 @@ run_phase() {
     echo "------------------------------------------"
     echo ">>> Running phase: $script_name"
     echo "[bootstrap] marker dir: $DATA_DIR/.setup (phase-*.done)"
-    # stdin carries the phase list; docker compose exec in a phase would drain it.
-    "$script_path" </dev/null
+    "$script_path"
 }
 
 while IFS= read -r phase_script; do

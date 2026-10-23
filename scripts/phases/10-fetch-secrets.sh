@@ -80,19 +80,6 @@ CODING_BACKEND_API_KEY="$(fetch_secret "coding-backend-api-key" true 2>/dev/null
 CODING_BACKEND_PROVIDER="$(fetch_secret "coding-backend-provider" true 2>/dev/null || true)"
 CODING_BACKEND_MODEL="$(fetch_secret "coding-backend-model" true 2>/dev/null || true)"
 GITHUB_TOKEN="$(fetch_secret "github-token" true 2>/dev/null || true)"
-CODING_JOB_SECRET="$(fetch_secret "coding-job-secret" true 2>/dev/null || true)"
-GITHUB_APP_WEBHOOK_SECRET="$(fetch_secret "github-app-webhook-secret" true 2>/dev/null || true)"
-if is_blank_or_placeholder "$GITHUB_APP_WEBHOOK_SECRET"; then GITHUB_APP_WEBHOOK_SECRET=""; fi
-# The runtime turns literal \n back into newlines, so the PEM fits on one .env line.
-GITHUB_APP_PRIVATE_KEY="$(fetch_secret "github-app-private-key" true 2>/dev/null || true)"
-if is_blank_or_placeholder "$GITHUB_APP_PRIVATE_KEY"; then
-    GITHUB_APP_PRIVATE_KEY=""
-else
-    GITHUB_APP_PRIVATE_KEY="$(printf '%s' "$GITHUB_APP_PRIVATE_KEY" | awk 'BEGIN{ORS="\\n"} {print}')"
-fi
-if is_blank_or_placeholder "$CODING_JOB_SECRET"; then CODING_JOB_SECRET=""; fi
-LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
-if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
 
 # Terraform seeds secrets as a single space; treat that as unset.
 if is_blank_or_placeholder "$CODING_BACKEND_API_KEY"; then CODING_BACKEND_API_KEY=""; fi
@@ -167,10 +154,6 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var GATEWAY_TOKEN "$GATEWAY_TOKEN"
     write_env_var MEMORY_API_TOKEN "$MEMORY_API_TOKEN"
     write_env_var SANDBOX_WORKER_TOKEN "$SANDBOX_WORKER_TOKEN"
-    write_env_var CODING_JOB_SECRET "$CODING_JOB_SECRET"
-    write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"
-    write_env_var GITHUB_APP_WEBHOOK_SECRET "$GITHUB_APP_WEBHOOK_SECRET"
-    write_env_var GITHUB_APP_PRIVATE_KEY "$GITHUB_APP_PRIVATE_KEY"
     write_env_var TS_HARNESS_DB_PASSWORD "$TS_HARNESS_DB_PASSWORD"
     write_env_var MANAGED_DB_PASSWORD "${MANAGED_DB_PASSWORD:-$TS_HARNESS_DB_PASSWORD}"
     write_env_var MANAGED_DB_CREDENTIAL_REF "${MANAGED_DB_CREDENTIAL_REF:-}"

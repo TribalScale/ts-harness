@@ -75,7 +75,7 @@ are shared. See [`runbooks/install.md`](runbooks/install.md).
 | `TS_HARNESS_DB_NAME` / `TS_HARNESS_DB_NAME` | `ts_harness_memory` | Managed database name |
 | `TS_HARNESS_DB_PASSWORD` / `TS_HARNESS_DB_PASSWORD` | Secret catalog `db-password` | Fetched via `MANAGED_DB_CREDENTIAL_REF` |
 
-Session transcripts for production should use Postgres via `TS_HARNESS_SESSION_DB_URL`. Cloud bootstrap builds it from `TS_HARNESS_DB_*` (password URL-encoded, `sslmode=require` for managed databases) each time it runs `docker compose`, so a rotated DB password carries through; set `TS_HARNESS_SESSION_DB_URL` yourself to point sessions elsewhere. Local development may use `TS_HARNESS_SESSION_STORE` JSONL files. Channel chat message replay uses `TS_HARNESS_TRANSCRIPT_STORE` (defaults to `transcripts.jsonl` beside the session store) or the `runtime_transcript_messages` table when session Postgres is enabled.
+Session transcripts for production should use Postgres via `TS_HARNESS_SESSION_DB_URL`. Local development may use `TS_HARNESS_SESSION_STORE` JSONL files. Channel chat message replay uses `TS_HARNESS_TRANSCRIPT_STORE` (defaults to `transcripts.jsonl` beside the session store) or the `runtime_transcript_messages` table when session Postgres is enabled.
 
 To run Postgres session integration tests locally:
 

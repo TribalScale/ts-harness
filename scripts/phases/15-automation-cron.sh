@@ -51,11 +51,8 @@ if [[ ! -f "$CRON_CONFIG" ]]; then
     chown "${ADMIN_USER}:${ADMIN_USER}" "$CRON_CONFIG"
 fi
 
-SYSTEM_JOBS="$(mktemp)"
-trap 'rm -f "$SYSTEM_JOBS"' EXIT
-
-echo "[phase:${PHASE_NAME}] Building system scheduler jobs (timezone: $TZ_VAL) ..."
-python3 - "$SYSTEM_JOBS" "$TZ_VAL" "$STANDUP_CHAN" "$OPS_CHAN" "$DEV_CHAN" "$TEAM_CHAN" "$MARKETING_CHAN" "$SALES_CHAN" <<'PY'
+echo "[phase:${PHASE_NAME}] Writing runtime scheduler config (timezone: $TZ_VAL) ..."
+python3 - "$CRON_CONFIG" "$TZ_VAL" "$STANDUP_CHAN" "$OPS_CHAN" "$DEV_CHAN" "$TEAM_CHAN" "$MARKETING_CHAN" "$SALES_CHAN" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -110,71 +107,10 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
-    # Pulls people and teams from identity.directory and disables people who left.
-    {
-        "name": "sync-directory",
-        "kind": "system",
-        "handler": "sync_directory",
-        "interval_seconds": 900,
-        "active_start": "00:00",
-        "active_end": "23:59",
-        "timezone": "UTC",
-    },
-    # Marks coding jobs lost when their worker stops heartbeating or overruns; the task resumes blocked.
-    {
-        "name": "sweep-coding-jobs",
-        "kind": "system",
-        "handler": "sweep_coding_jobs",
-        "interval_seconds": 60,
-        "active_start": "00:00",
-        "active_end": "23:59",
-        "timezone": "UTC",
-    },
-    # Syncs the budgets config and warns when a team nears or reaches its monthly LLM budget.
-    {
-        "name": "budget-alerts",
-        "kind": "system",
-        "handler": "budget_alerts",
-        "interval_seconds": 300,
-        "active_start": "00:00",
-        "active_end": "23:59",
-        "timezone": "UTC",
-    },
-    # Records each GitHub App installation's remaining REST quota for the dashboard and alarm.
-    {
-        "name": "github-rate-limits",
-        "kind": "system",
-        "handler": "github_rate_limits",
-        "interval_seconds": 300,
-        "active_start": "00:00",
-        "active_end": "23:59",
-        "timezone": "UTC",
-    },
-    # Deletes inbound channel event ids older than 7 days (shared state backend only).
-    {
-        "name": "sweep-channel-dedup",
-        "kind": "system",
-        "handler": "sweep_channel_dedup",
-        "interval_seconds": 86400,
-        "active_start": "00:00",
-        "active_end": "23:59",
-        "timezone": "UTC",
-    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
+print(f"wrote {len(jobs)} scheduler jobs to {out}")
 PY
-
-# Merge by job name so jobs added in the admin console survive a re-run.
-MERGE_CRON="${SCRIPT_DIR_LIB}/../ops/merge-cron-jobs.py"
-if [[ "${TS_HARNESS_STATE_BACKEND:-local}" == "postgres" ]]; then
-    echo "[phase:${PHASE_NAME}] Merging system jobs into the shared cron tree (Postgres) ..."
-    MEMORY_API_TOKEN="${MEMORY_API_TOKEN:-}" python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" \
-        --memory-api "${MEMORY_API_URL:-http://127.0.0.1:18792}"
-else
-    echo "[phase:${PHASE_NAME}] Merging system jobs into $CRON_CONFIG ..."
-    python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" --file "$CRON_CONFIG"
-    chown "${ADMIN_USER}:${ADMIN_USER}" "$CRON_CONFIG" 2>/dev/null || true
-fi
 
 echo "[phase:${PHASE_NAME}] Restarting agent-runtime to load scheduler config."
 cd "$ENTERPRISE_ASSETS_DIR"

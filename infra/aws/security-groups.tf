@@ -3,7 +3,6 @@
 resource "aws_security_group" "harness" {
   name        = "${var.project_name}-ec2"
   description = "TS Harness EC2 instance - SSH on 2222, all egress"
-  vpc_id      = local.vpc_id
 
   tags = {
     Name = "${var.project_name}-ec2"

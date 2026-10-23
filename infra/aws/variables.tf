@@ -4,22 +4,6 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "secret_prefix" {
-  description = "Prefix for Secrets Manager names (<prefix>/<key>) and the SSM runtime-config path. Empty means project_name."
-  type        = string
-  default     = ""
-}
-
-locals {
-  secret_prefix_effective = var.secret_prefix != "" ? var.secret_prefix : var.project_name
-}
-
-variable "aws_account_id" {
-  description = "AWS account this install targets. When set, Terraform refuses to run with credentials for any other account."
-  type        = string
-  default     = null
-}
-
 variable "instance_type" {
   description = "EC2 instance type for the TS Harness agent runtime server"
   type        = string
@@ -106,24 +90,6 @@ variable "implement_work_orders_repo_url" {
   default     = ""
 }
 
-variable "github_app_id" {
-  description = "GitHub App id for github.com (or github_app_host). Empty keeps the github-token PAT."
-  type        = string
-  default     = ""
-}
-
-variable "github_app_slug" {
-  description = "GitHub App slug, used for the install link on the admin GitHub page."
-  type        = string
-  default     = ""
-}
-
-variable "github_app_host" {
-  description = "Host the GitHub App is registered on."
-  type        = string
-  default     = "github.com"
-}
-
 variable "implement_work_orders_base_branch" {
   description = "Base branch for implement_work_orders clones and PRs."
   type        = string
@@ -183,58 +149,6 @@ variable "oidc_token_endpoint" {
   default     = ""
 }
 
-variable "oidc_preset" {
-  description = "Identity provider preset: auth0, entra, google, okta or generic. Empty keeps legacy defaults."
-  type        = string
-  default     = ""
-}
-
-variable "oidc_token_type" {
-  description = "Token the gateway validates: access or id. Empty uses the preset default."
-  type        = string
-  default     = ""
-}
-
-variable "oidc_groups_claim" {
-  description = "Claim holding groups, e.g. https://ts-harness/groups. Empty uses the preset default."
-  type        = string
-  default     = ""
-}
-
-variable "oidc_roles_claim" {
-  description = "Claim holding roles, e.g. https://ts-harness/roles. Empty uses the preset default."
-  type        = string
-  default     = ""
-}
-
-variable "oidc_allowed_domains" {
-  description = "Comma-separated email or hosted domains allowed to sign in. Empty allows any."
-  type        = string
-  default     = ""
-}
-
-variable "oidc_groups_source" {
-  description = "Where sign-in groups come from: token, microsoft_graph or google_directory. Empty means token."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = contains(["", "token", "microsoft_graph", "google_directory"], var.oidc_groups_source)
-    error_message = "oidc_groups_source must be empty, token, microsoft_graph or google_directory."
-  }
-}
-
-variable "identity_directory" {
-  description = "Directory synced every 15 minutes: seen_users, auth0_management, scim, microsoft_graph or google_directory. Empty means seen_users."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = contains(["", "seen_users", "auth0_management", "scim", "microsoft_graph", "google_directory"], var.identity_directory)
-    error_message = "identity_directory must be empty or one of seen_users, auth0_management, scim, microsoft_graph, google_directory."
-  }
-}
-
 variable "rds_skip_final_snapshot" {
   description = "When true, skip final snapshot on RDS instance destruction (dev/test only)"
   type        = bool
@@ -257,29 +171,6 @@ variable "workflow_runner_enabled" {
   description = "When true and multi_agent_enabled is true, deploy the optional workflow-runner sidecar."
   type        = bool
   default     = false
-}
-
-variable "coding_jobs_enabled" {
-  description = "Run deliver_work_order OpenCode runs as queued jobs in worker containers instead of inside agent-runtime."
-  type        = bool
-  default     = false
-}
-
-variable "llm_proxy_enabled" {
-  description = "Route agent and coding-worker model calls through the metering LLM proxy (usage, cost, rate limits, team budgets). Needs a session database."
-  type        = bool
-  default     = false
-}
-
-variable "coding_max_running" {
-  description = "Coding jobs that may run at once."
-  type        = number
-  default     = 3
-
-  validation {
-    condition     = var.coding_max_running >= 1
-    error_message = "coding_max_running must be at least 1."
-  }
 }
 
 variable "workflow_runner_poll_interval_seconds" {
@@ -455,130 +346,4 @@ variable "redis_multi_az" {
   description = "When true, provision a primary and replica node with automatic failover and multi-AZ. Only applies when enable_redis = true."
   type        = bool
   default     = true
-}
-
-variable "deployment_profile" {
-  description = "single_host keeps one EC2 host; scale_out adds Fargate coding workers and replicated services."
-  type        = string
-  default     = "single_host"
-
-  validation {
-    condition     = contains(["single_host", "scale_out"], var.deployment_profile)
-    error_message = "deployment_profile must be single_host or scale_out."
-  }
-}
-
-variable "network_mode" {
-  description = "default keeps the host and RDS in the default VPC; vpc builds a dedicated VPC with private subnets and one NAT gateway. scale_out requires vpc."
-  type        = string
-  default     = "default"
-
-  validation {
-    condition     = contains(["default", "vpc"], var.network_mode)
-    error_message = "network_mode must be default or vpc."
-  }
-}
-
-variable "vpc_cidr" {
-  description = "CIDR block for the dedicated VPC when network_mode = vpc."
-  type        = string
-  default     = "10.40.0.0/16"
-}
-
-variable "coding_worker_image_tag" {
-  description = "Tag of the coding-worker image in ECR (scale_out). CI publishes the git SHA."
-  type        = string
-  default     = "latest"
-}
-
-variable "coding_worker_cpu" {
-  description = "Fargate CPU units per coding worker task."
-  type        = number
-  default     = 2048
-}
-
-variable "coding_worker_memory" {
-  description = "Fargate memory (MiB) per coding worker task."
-  type        = number
-  default     = 4096
-}
-
-variable "coding_worker_ephemeral_storage_gib" {
-  description = "Ephemeral storage (GiB) per coding worker task, used for the clone and dependency installs."
-  type        = number
-  default     = 50
-
-  validation {
-    condition     = var.coding_worker_ephemeral_storage_gib >= 21 && var.coding_worker_ephemeral_storage_gib <= 200
-    error_message = "coding_worker_ephemeral_storage_gib must be between 21 and 200."
-  }
-}
-
-variable "coding_worker_log_retention_days" {
-  description = "CloudWatch retention for coding worker logs."
-  type        = number
-  default     = 30
-}
-
-variable "egress_proxy_image" {
-  description = "Squid image for the coding worker egress proxy."
-  type        = string
-  default     = "public.ecr.aws/ubuntu/squid:6.6-24.04_edge"
-}
-
-variable "egress_allowed_domains" {
-  description = "Domains coding workers may reach through the egress proxy, in addition to the built-in GitHub, npm, PyPI and LLM provider defaults. Prefix with a dot to include subdomains."
-  type        = list(string)
-  default     = []
-}
-
-variable "memory_api_certificate_arn" {
-  description = "ACM certificate for the internal memory API load balancer. Empty serves plain HTTP inside the VPC."
-  type        = string
-  default     = ""
-}
-
-variable "coding_job_queue_alarm_seconds" {
-  description = "Alarm when the oldest queued coding job has waited longer than this many seconds."
-  type        = number
-  default     = 900
-}
-
-variable "coding_job_lost_rate_threshold" {
-  description = "Alarm when this fraction of coding jobs finished in 15 minutes were lost (at least 3 jobs finished)."
-  type        = number
-  default     = 0.2
-
-  validation {
-    condition     = var.coding_job_lost_rate_threshold > 0 && var.coding_job_lost_rate_threshold <= 1
-    error_message = "coding_job_lost_rate_threshold must be above 0 and at most 1."
-  }
-}
-
-variable "github_rate_limit_alarm_percent" {
-  description = "Alarm when any GitHub App installation has less than this percent of its REST rate limit left."
-  type        = number
-  default     = 10
-}
-
-variable "state_backend" {
-  description = "Where runtime state lives: local (files on the host) or postgres (definitions, cron, scheduler state, audit and dedup in the database). Empty follows deployment_profile: postgres for scale_out, local otherwise."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = contains(["", "local", "postgres"], var.state_backend)
-    error_message = "state_backend must be empty, local or postgres."
-  }
-}
-
-variable "object_backend" {
-  description = "Where skill files and agent workspaces live: local (host disk) or s3 (the skills and workspaces buckets). Empty follows deployment_profile: s3 for scale_out, local otherwise."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = contains(["", "local", "s3"], var.object_backend)
-    error_message = "object_backend must be empty, local or s3."
-  }
 }

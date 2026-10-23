@@ -445,26 +445,26 @@ class AutoAdvanceAndCodingFallbackTests(unittest.TestCase):
 
         with (
             patch(
-                "ts_harness.implementation.coding_job.load_active_runtime_config",
+                "ts_harness.tools.coding_backend_tool.load_active_runtime_config",
                 return_value=None,
             ),
             patch(
-                "ts_harness.implementation.coding_job.implementation_config",
+                "ts_harness.tools.coding_backend_tool.implementation_config",
                 return_value=MagicMock(
                     coding_backend="opencode",
                     tools_root="/tools",
                 ),
             ),
             patch(
-                "ts_harness.implementation.coding_job.repo_for_workflow",
+                "ts_harness.tools.coding_backend_tool.repo_for_workflow",
                 return_value=MagicMock(url="https://github.com/example/app.git", base_branch="main", clone_depth=1),
             ),
             patch(
-                "ts_harness.implementation.coding_job.opencode_backend_config",
+                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
                 return_value=MagicMock(binary="opencode", provider="anthropic", model=None, run_args=["run", "--auto"]),
             ),
             patch(
-                "ts_harness.implementation.coding_job.OpenCodeBackend"
+                "ts_harness.tools.coding_backend_tool.OpenCodeBackend"
             ) as backend_cls,
         ):
             backend_cls.return_value.implement.return_value = fake_result
@@ -493,15 +493,15 @@ class AutoAdvanceAndCodingFallbackTests(unittest.TestCase):
         )
         with (
             patch(
-                "ts_harness.implementation.coding_job.load_active_runtime_config",
+                "ts_harness.tools.coding_backend_tool.load_active_runtime_config",
                 return_value=None,
             ),
             patch(
-                "ts_harness.implementation.coding_job.implementation_config",
+                "ts_harness.tools.coding_backend_tool.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
             patch(
-                "ts_harness.implementation.coding_job.repo_for_workflow",
+                "ts_harness.tools.coding_backend_tool.repo_for_workflow",
                 return_value=MagicMock(
                     url="https://github.com/example/app.git",
                     base_branch="dev",
@@ -509,7 +509,7 @@ class AutoAdvanceAndCodingFallbackTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "ts_harness.implementation.coding_job.opencode_backend_config",
+                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
                 return_value=MagicMock(
                     binary="opencode",
                     provider="anthropic",
@@ -517,7 +517,7 @@ class AutoAdvanceAndCodingFallbackTests(unittest.TestCase):
                     run_args=["run"],
                 ),
             ),
-            patch("ts_harness.implementation.coding_job.OpenCodeBackend") as backend_cls,
+            patch("ts_harness.tools.coding_backend_tool.OpenCodeBackend") as backend_cls,
         ):
             backend_cls.return_value.implement.return_value = fake_result
             result = handle_run_coding_backend(

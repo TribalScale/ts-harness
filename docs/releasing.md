@@ -38,9 +38,9 @@ The version lives in two places and must match:
 
 ## Container images
 
-Images are not published or signed yet. The `Release` workflow builds and scans
-the image with `push: false`. Installs build images on the host from the tagged
-source.
+Images are not published yet. The `Release` workflow builds and scans the
+image with `push: false`, and image signing is a stub. Installs build images on
+the host from the tagged source.
 
 Publishing later needs a registry (for example GHCR), `push: true` with a
 registry login in `release.yml`, and cosign signing against the pushed digest.

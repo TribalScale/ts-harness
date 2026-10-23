@@ -176,11 +176,6 @@ output "private_subnet_ids" {
   value       = aws_subnet.private[*].id
 }
 
-output "private_route_table_id" {
-  description = "Route table shared by the private subnets"
-  value       = aws_route_table.private.id
-}
-
 output "internet_gateway_id" {
   description = "Internet Gateway ID"
   value       = aws_internet_gateway.this.id

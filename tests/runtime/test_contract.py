@@ -108,7 +108,6 @@ class ContractTests(unittest.TestCase):
         os.environ["RUNTIME_FAKE_PROVIDER"] = "true"
         os.environ["TS_HARNESS_SKIP_MCP_DISCOVERY"] = "true"
         os.environ["TS_HARNESS_SESSION_STORE"] = str(session_store_path)
-        os.environ["TS_HARNESS_CONFIG_LKG"] = str(Path(cls._session_store_dir.name) / "runtime-config.lkg")
         from ts_harness.agent.sessions import reset_session_store
         from ts_harness.agent.transcript import reset_transcript_store
 
@@ -125,7 +124,6 @@ class ContractTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         os.environ.pop("TS_HARNESS_SESSION_STORE", None)
-        os.environ.pop("TS_HARNESS_CONFIG_LKG", None)
         from ts_harness.agent.sessions import reset_session_store
         from ts_harness.agent.transcript import reset_transcript_store
 

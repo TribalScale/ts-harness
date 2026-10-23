@@ -26,22 +26,7 @@ INSTANCE_RESOURCE_ID="${INSTANCE_RESOURCE_ID:-$INSTANCE_ID}"
 
 HEALTH_BODY="$(mktemp)"
 METRICS_JSON="$(mktemp)"
-SCALE_SNAPSHOT="$(mktemp)"
-SCALE_JSON="$(mktemp)"
-trap 'rm -f "$HEALTH_BODY" "$METRICS_JSON" "$SCALE_SNAPSHOT" "$SCALE_JSON"' EXIT
-
-# Cron has no secrets in its environment; the runtime env file has the memory API token.
-if [[ -z "${MEMORY_API_TOKEN:-}" && -r "${TS_HARNESS_CONFIG_DIR:-}/.env" ]]; then
-    MEMORY_API_TOKEN="$(sed -n 's/^MEMORY_API_TOKEN="\(.*\)"$/\1/p' "$TS_HARNESS_CONFIG_DIR/.env" | head -1)"
-fi
-
-memory_curl() {
-    if [[ -n "${MEMORY_API_TOKEN:-}" ]]; then
-        curl -fsS --max-time 10 -H @<(printf 'Authorization: Bearer %s\n' "$MEMORY_API_TOKEN") "$@"
-    else
-        curl -fsS --max-time 10 "$@"
-    fi
-}
+trap 'rm -f "$HEALTH_BODY" "$METRICS_JSON"' EXIT
 
 HTTP_CODE="$(curl -s -o "$HEALTH_BODY" -w '%{http_code}' \
     --max-time 10 \
@@ -80,7 +65,7 @@ if [[ -f "$RUNNER_TICK_FILE" ]]; then
 fi
 
 PENDING_TASKS=0
-PENDING_PAYLOAD="$(memory_curl \
+PENDING_PAYLOAD="$(curl -fsS --max-time 10 \
     -H "Content-Type: application/json" \
     -d '{"limit":500}' \
     "${MEMORY_API_URL%/}/workflow/ready" 2>/dev/null || true)"
@@ -135,13 +120,4 @@ Path(path).write_text(json.dumps(payload), encoding="utf-8")
 PY
 
 cloud_publish_runtime_metrics "$METRICS_JSON"
-
-# Cluster-wide lanes, coding jobs, gate waits, GitHub quota and LLM spend. No
-# InstanceId dimension: every host reports the same database-backed series.
-if memory_curl "${MEMORY_API_URL%/}/metrics/scale-out?window_seconds=120" > "$SCALE_SNAPSHOT" 2>/dev/null; then
-    python3 "$OPS_DIR/scale_metrics_payload.py" "$SCALE_SNAPSHOT" "$SCALE_JSON" "$INSTANCE_ID" \
-        && cloud_publish_runtime_metrics "$SCALE_JSON"
-else
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scale-out metrics unavailable from memory API" >> /var/log/ts-harness-health.log
-fi
 exit 0

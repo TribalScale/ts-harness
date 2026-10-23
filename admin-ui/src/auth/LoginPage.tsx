@@ -7,7 +7,7 @@ import { ErrorBanner } from "../components/ErrorBanner";
 import {
   createPkce,
   oidcTokenExchangeBody,
-  sessionToken,
+  pickJwt,
   setPermissions,
   setRoles,
   takePkceVerifier,
@@ -59,10 +59,8 @@ export function LoginPage({ onAuthed }: { onAuthed: () => void }) {
         return r.json();
       })
       .then(async (data) => {
-        const access = sessionToken(config.token_type, data);
-        if (!access) {
-          throw new Error(config.token_type === "id" ? "no id_token in response" : "no access_token in response");
-        }
+        const access = pickJwt(data.access_token, data.id_token);
+        if (!access) throw new Error("no access_token in response");
         await establishSession(access);
         window.history.replaceState({}, "", window.location.pathname + "#/inbox");
         onAuthed();
@@ -139,7 +137,6 @@ export function LoginPage({ onAuthed }: { onAuthed: () => void }) {
       {showStatic && (
         <form className="login-form" onSubmit={submitStatic}>
           <TextInput
-            type="password"
             label={
               config?.mode === "oidc"
                 ? "Dev fallback: gateway bearer token"

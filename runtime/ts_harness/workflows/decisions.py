@@ -121,11 +121,6 @@ def channel_permission_refusal(
             resource=permission,
         )
         return f"missing permission {permission}"
-    meta = session_metadata or {}
-    if getattr(getattr(cfg, "identity", None), "provider", "static") == "oidc" and meta.get("directory_linked") is False:
-        from ts_harness.gateway.program_access import UNLINKED_CHANNEL_MESSAGE
-
-        return UNLINKED_CHANNEL_MESSAGE
     actor = resolve_decision_actor(
         session_metadata,
         fallback_actor="",
@@ -134,12 +129,7 @@ def channel_permission_refusal(
     )
     if not actor.email and not actor.actor_id:
         return f"missing permission {permission}"
-    granted = _permissions_for_actor(actor, cfg)
-    if meta.get("directory_linked") and meta.get("directory_roles"):
-        from ts_harness.policy.permissions import effective_bundles, permissions_for_roles
-
-        granted |= permissions_for_roles(meta["directory_roles"], effective_bundles(cfg))
-    if permission in granted:
+    if permission in _permissions_for_actor(actor, cfg):
         return None
     _audit_permission(actor, permission, allowed=False, resource=permission)
     return f"missing permission {permission}"

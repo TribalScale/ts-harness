@@ -13,12 +13,12 @@ locals {
 # ---------------------------------------------------------------------------
 
 data "aws_vpc" "default" {
-  count   = local.create_rds == 1 && !local.use_vpc ? 1 : 0
+  count   = local.create_rds
   default = true
 }
 
 data "aws_subnets" "default" {
-  count = local.create_rds == 1 && !local.use_vpc ? 1 : 0
+  count = local.create_rds
 
   filter {
     name   = "vpc-id"
@@ -29,7 +29,7 @@ data "aws_subnets" "default" {
 resource "aws_db_subnet_group" "harness" {
   count      = local.create_rds
   name       = var.project_name
-  subnet_ids = local.use_vpc ? local.private_subnet_ids : one(data.aws_subnets.default[*].ids)
+  subnet_ids = data.aws_subnets.default[0].ids
 
   tags = {
     Name = "${var.project_name}-db"
@@ -44,7 +44,7 @@ resource "aws_security_group" "rds" {
   count       = local.create_rds
   name        = "${var.project_name}-rds"
   description = "Allow PostgreSQL from the TS Harness EC2 security group"
-  vpc_id      = local.use_vpc ? local.vpc_id : one(data.aws_vpc.default[*].id)
+  vpc_id      = data.aws_vpc.default[0].id
 
   tags = {
     Name = "${var.project_name}-rds"

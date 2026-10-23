@@ -10,12 +10,9 @@ services:
       WORKFLOW_RUNNER_ENABLED: ${WORKFLOW_RUNNER_ENABLED:-false}
       WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS: ${WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS:-10}
       WORKFLOW_RUNNER_BATCH_SIZE: ${WORKFLOW_RUNNER_BATCH_SIZE:-5}
-      WORKFLOW_RUNNER_MAX_CONCURRENT: ${WORKFLOW_RUNNER_MAX_CONCURRENT:-3}
       WORKFLOW_RUNNER_LEASE_SECONDS: ${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}
       WORKFLOW_RUNNER_DISPATCH_TIMEOUT_SECONDS: ${WORKFLOW_RUNNER_DISPATCH_TIMEOUT_SECONDS:-7200}
       WORKFLOW_RUNNER_STALE_POLICY: ${WORKFLOW_RUNNER_STALE_POLICY:-block}
-      # true: deliver stages queue a coding job (docker-compose.coding-jobs.yml) instead of an agent turn.
-      CODING_JOBS_ENABLED: ${CODING_JOBS_ENABLED:-false}
       MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
       MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
       WORKFLOW_RUNNER_ADAPTER: ${WORKFLOW_RUNNER_ADAPTER:-gateway-http}
@@ -23,16 +20,12 @@ services:
       GATEWAY_TOKEN: ${GATEWAY_TOKEN}
       # Merge-readiness system steps (await_pr_checks, review_precheck, merge gates) call GitHub.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      # Web chat posts run in this process and read the same session store as agent-runtime.
-      TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
       WORKFLOW_DEFINITIONS_DIR: /config/workflows
       TS_HARNESS_WORKFLOW_DEFINITION_STORE: /workflow-definitions
       TS_HARNESS_MANAGED_WORKFLOWS_DIR: /workflow-definitions/active
       TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
       TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
       TS_HARNESS_FRAGMENTS_DIR: /config/fragments
-      TS_HARNESS_STATE_BACKEND: ${TS_HARNESS_STATE_BACKEND:-local}
-      TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       # Needed so complete_program_phase / advance_program materialize implement
       # tasks with the real repo_url + base_branch (not ImplementationRepoConfig defaults).
       TS_HARNESS_ROOT: /app

@@ -187,16 +187,15 @@ class PolicyEnforcementTests(unittest.TestCase):
 
 class CodingBackendBindingTests(unittest.TestCase):
     def test_run_coding_backend_denies_repo_outside_binding(self):
-        from ts_harness.implementation import coding_job
         from ts_harness.tools import coding_backend_tool
 
         config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")
         apply_settings_to_config(config, {"program_defaults": copy.deepcopy(DEFAULTS)})
         config.implementation.coding_backend = "opencode"
         ctx = ToolPolicyContext(tenant_id="default", agent_id="dev-agent", source="workflow")
-        with patch.object(coding_job, "_live_runtime_config", return_value=config), patch.object(
-            coding_job, "load_active_runtime_config", return_value=config
-        ), patch.object(coding_job, "OpenCodeBackend") as backend:
+        with patch.object(coding_backend_tool, "_live_runtime_config", return_value=config), patch.object(
+            coding_backend_tool, "load_active_runtime_config", return_value=config
+        ), patch.object(coding_backend_tool, "OpenCodeBackend") as backend:
             result = coding_backend_tool.handle_run_coding_backend(
                 {
                     "work_order_id": "WO-1",

@@ -16,7 +16,6 @@ from ts_harness.agent.transcript import (
 )
 from ts_harness.gateway.workflow_presentation import (
     _parse_source_channel,
-    _session_for_workflow,
     binding_key_from_source_channel,
     _resolve_share_email,
     present_workflow_artifact,
@@ -67,35 +66,6 @@ class WorkflowPresentationTests(unittest.TestCase):
             ("web", "web", "abc-123"),
         )
         self.assertIsNone(_parse_source_channel("slack-only"))
-
-    def test_session_lookup_matches_admin_chat_after_the_workflow_changes(self):
-        chat = SessionRecord(
-            session_id="sess-web-1",
-            routing_key="web:routing",
-            tenant_id="default",
-            agent_id="orchestrator",
-            source="web",
-            metadata={
-                "workflow_id": "wf-work-orders",
-                "active_workflow_id": "wf-implement",
-                "binding_key": "web:abc-123",
-                "program_id": "program-1",
-            },
-        )
-        get_session_store().save(chat)
-
-        by_binding = _session_for_workflow("wf-other", "default", "web:abc-123")
-        by_program = _session_for_workflow(
-            "wf-other",
-            "default",
-            "web:someone-else",
-            program_id="program-1",
-        )
-        by_active = _session_for_workflow("wf-implement", "default", "")
-
-        self.assertEqual(by_binding.session_id, "sess-web-1")
-        self.assertEqual(by_program.session_id, "sess-web-1")
-        self.assertEqual(by_active.session_id, "sess-web-1")
 
     @patch("ts_harness.gateway.workflow_presentation.get_channel_router")
     @patch(

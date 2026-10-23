@@ -2,15 +2,7 @@
 
 Operator console for Inbox, Chat, Programs, and System. The browser talks **same-origin** to nginx (prod) or Vite (dev); APIs are proxied to agent-runtime.
 
-## Cloud installs (AWS and GCP)
-
-Bootstrap starts the console for you. Phase 12 adds `docker/docker-compose.admin-ui.yml` to the compose stack, and phase 6 points `tailscale serve` at the console on port 8080. Open `https://<tailscale-fqdn>` from a device on your tailnet. The cloud firewall only opens SSH, so port 8080 is not reachable from the internet.
-
-Because the tailnet root now serves the console, nginx proxies every agent-runtime route, not only the console APIs. OAuth callbacks, SCIM, `/webhooks/github`, and `/channels/*` keep working on the tailnet URL.
-
-On a host bootstrapped before this change, re-run phase 12 (its fingerprint changes, so it builds and starts `admin-ui`), then delete `/vol/ts-harness-data/.setup/phase-06-tailscale.done` and re-run phase 6 so the tailnet root moves from port 18789 to 8080. See [re-run-bootstrap-phase.md](re-run-bootstrap-phase.md).
-
-## Production deploy (manual compose)
+## Production deploy (recommended)
 
 ```bash
 export ENTERPRISE_ASSETS_DIR=/path/to/ts_harness
@@ -24,7 +16,7 @@ docker compose \
   up -d --build
 ```
 
-Open `http://<host>:8080`. nginx serves `admin-ui/dist` and proxies `/admin`, `/healthz`, `/session`, `/cron`, `/workflow`, `/metrics`, and the remaining gateway routes (`/oauth`, `/scim`, `/webhooks`, `/channels`, `/skills`, `/mcp`, `/connectors`, `/memory`, `/sandbox`) to `agent-runtime:18789`. nginx re-resolves `agent-runtime` through Docker DNS, so recreating that container does not leave the console pointing at a stale IP.
+Open `http://<host>:8080`. nginx serves `admin-ui/dist` and proxies `/admin`, `/healthz`, `/session`, `/cron`, `/workflow` to `agent-runtime:18789`.
 
 The console session is an HttpOnly cookie named `ec_session`. `Secure` is set when `X-Forwarded-Proto` is `https`, or when `TS_HARNESS_SESSION_COOKIE_SECURE` is `true`. Leave it unset for the plain HTTP console on port 8080. A bearer pasted into curl still authenticates; the cookie origin check applies only when the cookie is the credential.
 
@@ -67,9 +59,7 @@ In OIDC mode the gateway still accepts `GATEWAY_TOKEN` from internal services (w
 
 ### Cron CRUD note
 
-With local state, `runtime-cron-jobs.json` is mounted **read-write** so the console can persist jobs, and all replicas on the host share the file.
-
-With `TS_HARNESS_STATE_BACKEND=postgres` the cron file lives in Postgres (shared files, namespace `cron`) and each replica keeps a mirror of it ([shared-state.md](shared-state.md)). Edits take a lock in Postgres, so any replica can save; two saves at once give the second admin a conflict to reload. The scheduler lease holder picks up the change on its next tick. Phase 15 merges system jobs through the memory API, so admin-added jobs are kept.
+`runtime-cron-jobs.json` is mounted **read-write** so the console can persist jobs. Run **one** agent-runtime replica for cron file consistency (no multi-replica file sync).
 
 ## Local development
 

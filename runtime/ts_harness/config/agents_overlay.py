@@ -313,14 +313,12 @@ def apply_agents_to_config(
 def write_overlay_agents_md(
     agent_id: str, obj: dict[str, Any], *, workspace_root: Path
 ) -> Path:
-    from ts_harness.storage.workspace import workspace_store
-
     display_name = str(obj.get("display_name") or agent_id)
     soul = str(obj.get("soul") or "")
     model = str(obj.get("model") or "")
-    store = workspace_store(agent_id, root=workspace_root)
-    store.write_text(
-        "AGENTS.md",
+    dest = Path(workspace_root) / agent_id / "AGENTS.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
         (
             f"# {display_name} ({agent_id})\n\n"
             f"**Soul:** {soul}\n\n"
@@ -329,8 +327,9 @@ def write_overlay_agents_md(
             "This specialist is overlay-managed. It is not defined in "
             "ts-harness-runtime.yaml.\n"
         ),
+        encoding="utf-8",
     )
-    return Path(store.display_path("AGENTS.md"))
+    return dest
 
 
 def _workspace_root(runtime: Any) -> Path:

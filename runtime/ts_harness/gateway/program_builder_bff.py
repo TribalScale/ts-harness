@@ -359,7 +359,8 @@ def _pending_workflow_entry(definition: dict[str, Any]) -> dict[str, Any]:
 
 def _skill_statuses(runtime: Any, skill_ids: list[str]) -> list[dict[str, str]]:
     from ts_harness.gateway.workflow_definitions_bff import _catalogs
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import list_drafts
+    from ts_harness.skills.roots import managed_root
 
     approved = _catalogs(runtime)["skill_ids"]
     drafts: dict[str, str] = {}
@@ -367,7 +368,7 @@ def _skill_statuses(runtime: Any, skill_ids: list[str]) -> list[dict[str, str]]:
         try:
             drafts = {
                 str(item.get("id")): str(item.get("approval_status") or "draft")
-                for item in skill_repository().list_drafts()
+                for item in list_drafts(managed_root())
             }
         except Exception:
             drafts = {}

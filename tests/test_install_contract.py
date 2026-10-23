@@ -45,28 +45,6 @@ class InstallContractTests(unittest.TestCase):
         self.assertEqual(cfg["gcp_project_id"], "example-gcp-project")
         self.assertIn("managed_db", cfg)
 
-    def test_examples_default_to_single_host(self):
-        self.assertEqual(load_install_config(AWS_EXAMPLE)["deployment_profile"], "single_host")
-        self.assertEqual(load_install_config(GCP_EXAMPLE)["deployment_profile"], "single_host")
-
-    def test_aws_accepts_scale_out(self):
-        cfg = _load_yaml(AWS_EXAMPLE)
-        cfg["deployment_profile"] = "scale_out"
-        validate_install_config(cfg)
-
-    def test_gcp_rejects_scale_out(self):
-        cfg = _load_yaml(GCP_EXAMPLE)
-        cfg["deployment_profile"] = "scale_out"
-        with self.assertRaises(InstallContractError) as ctx:
-            validate_install_config(cfg)
-        self.assertIn("scale_out", str(ctx.exception))
-
-    def test_reject_unknown_deployment_profile(self):
-        cfg = _load_yaml(AWS_EXAMPLE)
-        cfg["deployment_profile"] = "kubernetes"
-        with self.assertRaises(InstallContractError):
-            validate_install_config(cfg)
-
     def test_reject_unknown_provider(self):
         cfg = _load_yaml(AWS_EXAMPLE)
         cfg["cloud_provider"] = "azure"
@@ -235,23 +213,6 @@ class InstallContractTests(unittest.TestCase):
             }
         )
         validate_install_config(cfg)
-
-    def test_oidc_endpoints_may_come_from_discovery(self):
-        cfg = _load_yaml(AWS_EXAMPLE)
-        cfg["runtime"].update(
-            {
-                "identity_provider": "oidc",
-                "oidc_preset": "auth0",
-                "oidc_issuer": "https://tenant.us.auth0.com/",
-                "oidc_audience": "https://ts-harness/api",
-                "oidc_client_id": "spa-client-id",
-            }
-        )
-        validate_install_config(cfg)
-        cfg["runtime"]["oidc_client_id"] = ""
-        with self.assertRaises(InstallContractError) as ctx:
-            validate_install_config(cfg)
-        self.assertIn("oidc_client_id", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ class CreateAsChildTests(unittest.TestCase):
         self.assertEqual(result["root_program_id"], self.parent_id)
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
         self.assertIn("parent_program_id, root_program_id", insert[0])
-        self.assertEqual(insert[1][-4:-2], (self.parent_id, self.parent_id))
+        self.assertEqual(insert[1][-2:], (self.parent_id, self.parent_id))
         audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
         self.assertIn("program_child_attached", audits)
 
@@ -125,7 +125,7 @@ class CreateAsChildTests(unittest.TestCase):
         result = self.gateway.create_delivery_program(conn, {"summary": "root", "entry_phase": "prd"})
         self.assertIsNone(result["parent_program_id"])
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
-        self.assertEqual(insert[1][-4:-2], (None, None))
+        self.assertEqual(insert[1][-2:], (None, None))
 
 
 class AdoptParentPatchTests(unittest.TestCase):
@@ -238,9 +238,8 @@ class RollupTests(unittest.TestCase):
             {"id": "c1", "status": "running", "artifacts": {"pr_urls": ["https://x/pull/1"]}},
             {"id": "c2", "status": "succeeded", "artifacts": {"pr_url": "https://x/pull/2"}},
         ]
-        waiting = {"id": "t1", "step_name": "await_merge", "status": "blocked", "error": "awaiting_external:github.merge"}
         statuses = {
-            "c1": {"status": "blocked", "active_workflow_id": "wf-c1", "active_workflow": {"id": "wf-c1"}, "active_tasks": [waiting]},
+            "c1": {"status": "blocked", "waiting_on": {"kind": "external"}},
             "c2": {"status": "succeeded"},
         }
         with mock.patch.object(
@@ -251,14 +250,8 @@ class RollupTests(unittest.TestCase):
             rollup = self.gateway._child_rollup(None, children)
         self.assertEqual(rollup["active_child_count"], 1)
         self.assertEqual(rollup["children"][0]["status"], "blocked")
-        self.assertEqual(rollup["children"][0]["active_tasks"], [waiting])
+        self.assertEqual(rollup["children"][0]["waiting_on"], {"kind": "external"})
         self.assertEqual(rollup["children"][1]["pr_urls"], ["https://x/pull/2"])
-
-        from ts_harness.workflows.operability import with_operability
-
-        child = with_operability({"children": rollup["children"]})["children"][0]
-        self.assertEqual(child["waiting_on"]["event_type"], "github.merge")
-        self.assertEqual(child["active_step"], "await_merge")
 
 
 class PointerAdoptionTests(unittest.TestCase):

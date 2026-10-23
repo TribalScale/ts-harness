@@ -117,7 +117,6 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             "external_ref": body.get("external_ref"),
             "contract": body.get("contract") or {},
             "definition_version": body.get("definition_version"),
-            "lane": body.get("lane"),
             "actor": session.agent_id,
         }
         if depends_on_names:

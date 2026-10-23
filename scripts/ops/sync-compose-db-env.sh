@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh managed DB password from the live cloud secret into compose-env,
-# secrets.env, and runtime .env, then recreate agent-runtime and memory-api.
+# secrets.env, and runtime .env, then recreate memory-api.
 set -euo pipefail
 
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,8 +67,6 @@ set -a
 # shellcheck disable=SC1090
 source "$COMPOSE_ENV"
 set +a
-TS_HARNESS_SESSION_DB_URL="$(session_db_url)"
-export TS_HARNESS_SESSION_DB_URL
 
 cd "$ENTERPRISE_DOCKER_DIR"
 COMPOSE=(docker compose --env-file "$RUNTIME_ENV"
@@ -77,10 +75,7 @@ COMPOSE=(docker compose --env-file "$RUNTIME_ENV"
     -f docker-compose.workflow-runner.yml
     -f docker-compose.admin-ui.yml)
 
-# agent-runtime holds the DB password in its session URL; memory-api shares its
-# network namespace, so it is recreated after agent-runtime.
-echo "=== Recreate agent-runtime and memory-api ==="
-"${COMPOSE[@]}" up -d --no-deps --force-recreate agent-runtime
+echo "=== Recreate memory-api ==="
 "${COMPOSE[@]}" up -d --no-deps --force-recreate memory-api
 sleep 4
 

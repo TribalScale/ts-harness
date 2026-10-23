@@ -30,19 +30,6 @@ def _revision_count(tasks: list[dict[str, Any]], step_name: str) -> int:
     return sum(1 for task in tasks if task.get("step_name") == step_name) + 1
 
 
-def _human_requests(tasks: list[dict[str, Any]], step_name: str) -> list[str]:
-    """Feedback of every human-requested revision of ``step_name``, oldest first."""
-    requests: list[str] = []
-    for task in sorted(tasks, key=lambda item: str(item.get("created_at") or "")):
-        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
-        if task.get("step_name") != step_name or task.get("status") == "cancelled":
-            continue
-        feedback = str(task_input.get("review_feedback") or "").strip()
-        if task_input.get("_revision_budget") == "human" and feedback:
-            requests.append(feedback)
-    return requests
-
-
 def resolve_token(
     token: str,
     *,
@@ -102,8 +89,6 @@ def resolve_token(
     if path.startswith("runtime.revision_count:"):
         step_name = path.split(":", 1)[1]
         return _revision_count(tasks, step_name)
-    if path.startswith("runtime.human_requests:"):
-        return _human_requests(tasks, path.split(":", 1)[1])
     if path == "workflow.binding_key":
         return (workflow or {}).get("source_channel")
     if path in {"workflow.approved_prd", "workflow.approved_artifact"}:
@@ -166,7 +151,6 @@ def resolve_token(
         "workflow.drive_library",
         "workflow.jira_epic_key",
         "workflow.bug_report",
-        "workflow.project_repositories",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):

@@ -67,6 +67,4 @@ enterprise_repo_url = "https://github.com/TribalScale/ts-harness.git"
 # oidc_token_endpoint          = "https://your-tenant.auth0.com/oauth/token"
 
 # workflow_runner_enabled = false
-# coding_jobs_enabled = false
-# coding_max_running = 3
 # multi_agent_enabled     = false

@@ -85,46 +85,35 @@ Produce the PRD as a single Markdown document using this exact section order:
 ## 3. Non-Goals
 - <Explicitly out of scope>
 
-## 4. Requirements
-- [ ] <Each requirement the requester stated, with its exact specifics: named items, intervals, limits, validation rules>
-
-## 5. Technical Constraints
-- <Every framework, language, platform, storage, and data choice the requester stated, word for word>
-
-## 6. User Stories
+## 4. User Stories
 - As a <role>, I want <capability> so that <outcome>.
 - As a <role>, I want <capability> so that <outcome>.
 
-## 7. Acceptance Criteria
+## 5. Acceptance Criteria
 For each user story, provide Given/When/Then:
 - **Story 1:**
   - Given <context>, When <action>, Then <observable outcome>.
 
-## 8. Success Metrics
+## 6. Success Metrics
 | Metric                     | Baseline | Target | Measurement window |
 | -------------------------- | -------- | ------ | ------------------ |
 | <e.g., activation rate>    | <x%>     | <y%>   | 30 days post-launch |
 
-## 9. Open Questions
+## 7. Open Questions
 - [ ] <Question> — owner: <name or role>
 
-## 10. Risks & Dependencies
+## 8. Risks & Dependencies
 - **Technical:** <...>
 - **Product:** <...>
 - **Timeline:** <...>
 
-## 11. Rollout Plan
+## 9. Rollout Plan
 - Flag name: <feature-flag-name>
 - Phasing: <e.g., internal → 10% → 100%>
 - Comms owner: comms-agent (release notes, announcement)
 ```
 
 Every section is mandatory. If a section legitimately has no content, write `_None_` — do not delete it.
-
-Requirements and Technical Constraints carry the request forward to refinement,
-work orders, and the coding agent. Anything the requester stated (for example
-"using React", "BTC, ETH, and SOL", "every 3 seconds", "localStorage") must
-appear there exactly; a generic paraphrase loses it for every later stage.
 
 ### 4. Validate the Draft
 
@@ -133,7 +122,6 @@ Before filing anything in Jira, self-check:
 | Check                                                                       | Pass? |
 | --------------------------------------------------------------------------- | ----- |
 | Every goal is outcome-oriented, not a task list                             |       |
-| Every stated requirement and technology appears in sections 4 and 5         |       |
 | Every user story is in the `As a / I want / so that` form                   |       |
 | Every acceptance criterion is testable and observable                       |       |
 | Success metrics have baselines, targets, and measurement windows            |       |

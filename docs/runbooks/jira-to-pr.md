@@ -4,13 +4,13 @@ Engineer program: list my assigned tickets in a project, implement one, PR again
 
 ## Start
 
-Signals: `my tickets`, `pick up my jira`, and `implement` followed by a Jira key in any project (`implement PROJ-123`; pattern `implement [a-z][a-z0-9]+-\d+`).
+Signals: `my tickets`, `pick up my jira`, `implement TFS-`.
 
 ```text
 propose_start_program(program_type=jira_to_pr, entry_phase=pick)
 ```
 
-With a key: `entry_phase=implement` and `artifacts.jira_issue_key=PROJ-123`.
+With a key: `entry_phase=implement` and `artifacts.jira_issue_key=TFS-184`.
 
 ## Identity
 

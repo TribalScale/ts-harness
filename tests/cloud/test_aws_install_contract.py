@@ -134,36 +134,18 @@ class AwsInstallContractFreezeTests(unittest.TestCase):
         self.assertIn("aws_eip.harness.public_ip", text)
         self.assertIn("ssh -p 2222", text)
 
-    def test_secret_name_pattern_uses_secret_prefix(self):
+    def test_secret_name_pattern_uses_project_prefix(self):
         secrets = SECRETS_TF.read_text()
-        self.assertIn('name     = "${local.secret_prefix_effective}/${each.key}"', secrets)
+        self.assertIn('name     = "${var.project_name}/${each.key}"', secrets)
         for key in FROZEN_SECRET_KEYS:
             self.assertIn(f'"{key}"', secrets)
-
-    def test_secret_prefix_falls_back_to_project_name(self):
-        variables = VARIABLES_TF.read_text()
-        self.assertIn('variable "secret_prefix"', variables)
-        self.assertIn(
-            'secret_prefix_effective = var.secret_prefix != "" ? var.secret_prefix : var.project_name',
-            variables,
-        )
-
-    def test_every_secret_prefix_consumer_uses_effective_prefix(self):
-        ec2 = EC2_TF.read_text()
-        outputs = OUTPUTS_TF.read_text()
-        self.assertIn('"__TF_SECRETS_PREFIX__"                = local.secret_prefix_effective', ec2)
-        self.assertRegex(
-            outputs,
-            r'output "secret_prefix" \{[^}]*value\s+= local\.secret_prefix_effective',
-        )
 
     def test_runtime_config_parameter_and_iam(self):
         runtime = RUNTIME_CONFIG_TF.read_text()
         iam = IAM_TF.read_text() + runtime
         secrets = SECRETS_TF.read_text()
         self.assertTrue(RUNTIME_CONFIG_TF.is_file())
-        self.assertIn('name        = "/${local.secret_prefix_effective}/runtime-config"', runtime)
-        self.assertIn("parameter/${local.secret_prefix_effective}/runtime-config", runtime)
+        self.assertIn('name        = "/${var.project_name}/runtime-config"', runtime)
         self.assertIn("aws_ssm_parameter", runtime)
         self.assertIn("SLACK_DEV_CHANNEL", runtime)
         self.assertIn("OIDC_ISSUER", runtime)
@@ -219,26 +201,6 @@ class AwsInstallContractFreezeTests(unittest.TestCase):
         ):
             self.assertIn(f'metric_name         = "{metric}"', monitoring)
         self.assertIn('namespace           = "TSHarness"', monitoring)
-
-    def test_backend_is_partial_s3(self):
-        backend = (TERRAFORM / "backend.tf").read_text()
-        self.assertIn('backend "s3" {}', backend)
-
-    def test_every_aws_provider_pins_allowed_account(self):
-        providers = []
-        for tf in sorted(TERRAFORM.glob("*.tf")):
-            text = tf.read_text()
-            providers += re.findall(r'provider "aws" \{.*?\n\}', text, flags=re.DOTALL)
-        self.assertGreaterEqual(len(providers), 2)
-        for block in providers:
-            self.assertIn("allowed_account_ids", block)
-        self.assertIn('variable "aws_account_id"', VARIABLES_TF.read_text())
-
-    def test_provider_lock_file_is_committed(self):
-        lock = TERRAFORM / ".terraform.lock.hcl"
-        self.assertTrue(lock.is_file())
-        text = lock.read_text()
-        self.assertIn('provider "registry.terraform.io/hashicorp/aws"', text)
 
     def test_rds_defaults_frozen(self):
         variables = VARIABLES_TF.read_text()

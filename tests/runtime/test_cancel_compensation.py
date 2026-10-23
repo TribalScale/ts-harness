@@ -394,7 +394,6 @@ class AdminEndpointsTests(unittest.TestCase):
             ("post", "/admin/programs/prog-1/advance"),
             ("get", "/admin/programs/prog-1"),
             ("get", "/admin/programs/prog-1/status"),
-            ("get", "/admin/programs/prog-1/phases/implement/activity"),
         ):
             response = getattr(self.client, method)(path, **({"json": {}} if method == "post" else {}))
             self.assertEqual(response.status_code, 404, path)
@@ -404,44 +403,6 @@ class AdminEndpointsTests(unittest.TestCase):
     def test_workflow_of_another_tenant_is_not_found(self):
         self.memory.get_workflow_tasks.return_value = {"workflow_id": "wf-1", "tasks": [{"id": "t1", "tenant_id": "other"}]}
         self.assertEqual(self.client.get("/admin/workflows/wf-1").status_code, 404)
-
-    def test_program_phase_activity_lists_the_stage_and_its_children(self):
-        self.memory.get_program.return_value = {"program": {"id": "prog-1", "tenant_id": "default"}}
-        activity = {"phase": "implement", "workflow": {"state": "Waiting"}, "children": [{"label": "WO-003"}]}
-        with mock.patch("ts_harness.workflows.phase_activity.phase_activity", return_value=activity) as build:
-            response = self.client.get("/admin/programs/prog-1/phases/implement/activity")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), activity)
-        build.assert_called_once_with(self.memory, "prog-1", "implement")
-
-    def test_stuck_step_decision_runs_through_the_engine_as_the_caller(self):
-        self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "default"}, "tasks": []}
-        engine = mock.Mock()
-        engine.decide_blocked_step.return_value = {"status": "revising", "revision_number": 1}
-        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine):
-            response = self.client.post(
-                "/admin/workflows/decide",
-                json={"workflow_id": "wf-d", "task_id": "finalize-4", "action": "revise", "guidance": "Persist empty state"},
-            )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "revising")
-        engine.decide_blocked_step.assert_called_once_with(
-            "wf-d", "finalize-4", "revise", actor="admin-1", guidance="Persist empty state", tenant_id="default"
-        )
-
-    def test_stuck_step_decision_checks_tenant_and_state(self):
-        engine = mock.Mock()
-        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine):
-            self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "other"}, "tasks": []}
-            body = {"workflow_id": "wf-d", "task_id": "t", "action": "accept"}
-            self.assertEqual(self.client.post("/admin/workflows/decide", json=body).status_code, 404)
-            engine.decide_blocked_step.assert_not_called()
-            self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "default"}, "tasks": []}
-            engine.decide_blocked_step.side_effect = ValueError("step is not waiting for a decision")
-            response = self.client.post("/admin/workflows/decide", json=body)
-            self.assertEqual(response.status_code, 409)
-            self.assertIn("not waiting", response.json()["error"])
-            self.assertEqual(self.client.post("/admin/workflows/decide", json={"task_id": "t"}).status_code, 400)
 
     def test_gate_decisions_carry_the_caller_tenant(self):
         self.memory.approve_task.return_value = {"id": "t1"}

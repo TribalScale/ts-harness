@@ -56,16 +56,8 @@ Builtin skills ship read-only from the repo at `SKILLS_DIR` (`/skills` in Docker
 - The catalog loads both. **System → Skills** shows each skill's **Origin** (builtin or managed).
 - Builtin skills are revised in the repo. A revision draft of a builtin skill fails with `skill_revision_builtin` when the two directories differ.
 - If both directories hold the same `id@version`, the builtin copy wins and `skill_doctor` reports the skipped managed copy.
+- The managed volume is written by one `agent-runtime` process. Do not scale it beyond a single replica.
 - Back up the volume with the other runtime state. See [Backup And Restore](program-builder.md#backup-and-restore).
-
-### Skills in object storage
-
-With `TS_HARNESS_OBJECT_BACKEND=s3` (or `gcs`) managed skills leave the volume (see [shared-state.md](shared-state.md)):
-
-- Drafts are written to `skills/drafts/{id}-{token}/` in the skills bucket and indexed in Postgres (`skill_versions`).
-- Approval copies the files to an immutable `skills/{id}/{version}-{sha12}/` prefix and flips the live row in one transaction. The previous version stays in the bucket.
-- Every replica rebuilds `SKILLS_MANAGED_DIR` as a local mirror of the index, so the catalog, `skill_doctor` and agents read plain files as before. Proposals and approvals take a lock in Postgres, so any number of replicas can write.
-- Draft objects expire after 30 days. Approve or reject drafts within that window.
 
 ## Agents reading supporting files
 

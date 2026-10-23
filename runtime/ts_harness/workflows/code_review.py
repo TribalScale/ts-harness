@@ -369,32 +369,6 @@ def _post(
         warnings.append(f"status_post_failed:{pr_url}: {exc}")
 
 
-def publish_override_status(prs: list[dict[str, Any]], actor: str, *, github: GitHubClient | None = None) -> list[str]:
-    """Set ``harness/code-review`` to success on each PR head after a human accepted a blocked review."""
-    warnings: list[str] = []
-    try:
-        client = github or GitHubClient.from_env()
-    except Exception as exc:  # noqa: BLE001 - posting is best effort
-        return [f"status_not_posted: {exc}"]
-    for pr in prs:
-        pr_url, head_sha = str(pr.get("pr_url") or ""), str(pr.get("head_sha") or "")
-        parsed = parse_github_pr_url(pr_url)
-        if parsed is None or not head_sha:
-            warnings.append(f"status_not_posted:{pr_url}: missing PR or head SHA")
-            continue
-        try:
-            client.create_status(
-                *parsed[:2],
-                head_sha,
-                state="success",
-                context=STATUS_CONTEXT,
-                description=f"accepted by {actor} (human override)"[:140],
-            )
-        except Exception as exc:  # noqa: BLE001 - posting is best effort
-            warnings.append(f"status_post_failed:{pr_url}: {exc}")
-    return warnings
-
-
 def finalize_code_review(
     task: dict[str, Any],
     config: dict[str, Any],

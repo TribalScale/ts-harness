@@ -89,24 +89,6 @@ it("exposes alternate nodes and edges in an expandable topology view", async () 
   expect(onSelect).toHaveBeenCalledWith("plan_b");
 });
 
-it("draws a finished current phase as complete", () => {
-  renderPage(
-    <PhaseStrip
-      phases={{
-        prd: { state: "succeeded" },
-        release: { state: "succeeded" },
-      }}
-      phaseOrder={["prd", "release"]}
-      currentPhase="release"
-      onSelect={() => undefined}
-    />
-  );
-
-  const release = screen.getByRole("button", { name: /release/i }).closest("li");
-  expect(release).toHaveClass("complete");
-  expect(release).not.toHaveClass("current");
-});
-
 it("falls back to payload phase keys when phase_order is absent", () => {
   renderPage(
     <PhaseStrip

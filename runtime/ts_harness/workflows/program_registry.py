@@ -132,9 +132,6 @@ class ProgramDefinitionRegistry:
         return True
 
     def reload_if_changed(self) -> bool:
-        from ts_harness.storage.shared_tree import sync_definitions
-
-        sync_definitions()
         try:
             generation = self._read_manifest_generation()
         except Exception:

@@ -1,6 +1,3 @@
-import os
-import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -141,43 +138,6 @@ class BootstrapPhaseOrderTests(unittest.TestCase):
         self.assertIn("identity_provider", example)
         self.assertIn("oidc_issuer", example)
         self.assertIn("oidc_client_id", example)
-
-    def test_runner_reaches_final_phase_when_a_phase_drains_stdin(self):
-        listed = subprocess.run(
-            ["bash", "-c", f'source "{BOOTSTRAP_PHASES}"; bootstrap_phase_list'],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.split()
-        with tempfile.TemporaryDirectory() as tmp:
-            phases_dir = Path(tmp) / "phases"
-            phases_dir.mkdir()
-            ran_log = Path(tmp) / "ran.log"
-            for name in listed:
-                drain = "cat >/dev/null\n" if name == "14-channels-init.sh" else ""
-                (phases_dir / name).write_text(
-                    f'#!/bin/bash\n{drain}echo "{name}" >> "{ran_log}"\n'
-                )
-            env = {
-                **os.environ,
-                "PHASES_DIR": str(phases_dir),
-                "DATA_DIR": str(Path(tmp) / "data"),
-                "MULTI_AGENT_ENABLED": "true",
-            }
-            subprocess.run(
-                ["bash", str(REPO_ROOT / "scripts" / "bootstrap" / "run.sh")],
-                check=True,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(ran_log.read_text().split(), listed)
-
-    def test_runtime_image_ships_eval_datasets_for_release_gates(self):
-        dockerfile = (REPO_ROOT / "docker" / "Dockerfile.agent-runtime").read_text()
-        self.assertIn("COPY evals ./evals", dockerfile)
-        for dataset in ("agent_redteam", "agent_output"):
-            self.assertTrue((REPO_ROOT / "evals" / dataset / "dataset.json").is_file())
 
     def test_agents_init_uses_ts_harness_config_dir(self):
         phase = (REPO_ROOT / "scripts" / "phases" / "11a-agents-init.sh").read_text()

@@ -161,21 +161,16 @@ class CommitIgnoresPycacheTests(unittest.TestCase):
 
 
 class RunnerDetectionTests(unittest.TestCase):
-    def test_bare_tests_dir_is_not_python(self) -> None:
+    def test_detect_unit_uses_python_module_pytest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_dir = Path(tmp)
             (repo_dir / "tests").mkdir()
-            self.assertIsNone(detect_unit_test_command(repo_dir))
-            (repo_dir / "tests" / "test_app.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
             self.assertEqual(detect_unit_test_command(repo_dir), ["python3", "-m", "pytest"])
 
-    def test_bare_features_dir_is_not_behave(self) -> None:
+    def test_detect_bdd_uses_python_module_behave(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_dir = Path(tmp)
             (repo_dir / "features").mkdir()
-            self.assertIsNone(detect_bdd_command(repo_dir))
-            (repo_dir / "features" / "steps").mkdir()
-            (repo_dir / "features" / "steps" / "steps.py").write_text("", encoding="utf-8")
             self.assertEqual(detect_bdd_command(repo_dir), ["python3", "-m", "behave"])
 
     def test_verify_rejects_requirements_only_changeset_for_gwt(self) -> None:

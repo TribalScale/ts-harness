@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from typing import Any, Iterator
+from typing import Any
 import hashlib
 import json
-import logging
 import os
 import time
 import uuid
-
-logger = logging.getLogger(__name__)
-
-DEFAULT_SESSION_LOCK_WAIT_SECONDS = 600
 
 
 class _DirectConnectPool:
@@ -151,13 +145,9 @@ class SessionStore:
         )
 
     def get(self, session_id: str) -> SessionRecord | None:
-        if self.db_url:
-            self._ensure_postgres_loaded()
         return self._by_id.get(session_id)
 
     def list_for_tenant(self, tenant_id: str) -> list[SessionRecord]:
-        if self.db_url:
-            self._ensure_postgres_loaded()
         return [session for session in self._by_id.values() if session.tenant_id == tenant_id]
 
     def save(self, session: SessionRecord) -> None:
@@ -219,42 +209,6 @@ class SessionStore:
     def _connect(self):
         """Return a pooled connection context manager."""
         return self._get_pool().connection()
-
-    def connection(self):
-        """A pooled connection for other runtime state kept beside sessions."""
-        return self._connect()
-
-    @contextmanager
-    def turn_lock(self, session_id: str) -> Iterator[None]:
-        """Hold the session across every runtime replica for one turn.
-
-        A transaction-level advisory lock on its own connection, so it also works
-        through PgBouncer in transaction mode. Without a database, or when the
-        database cannot be reached, the caller's in-process lock is the only guard.
-        """
-        if not self.db_url or not session_id:
-            yield
-            return
-        try:
-            import psycopg
-
-            conn = psycopg.connect(self.db_url, connect_timeout=5)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("session lock unavailable session_id=%s: %s", session_id, exc)
-            yield
-            return
-        wait_ms = int(float(os.environ.get("SESSION_LOCK_WAIT_SECONDS") or DEFAULT_SESSION_LOCK_WAIT_SECONDS) * 1000)
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT set_config('lock_timeout', %s, true)", (f"{wait_ms}ms",))
-                cur.execute("SELECT set_config('idle_in_transaction_session_timeout', '0', true)")
-                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"session:{session_id}",))
-            yield
-        finally:
-            try:
-                conn.rollback()
-            finally:
-                conn.close()
 
     def _load_postgres(self) -> None:
         with self._connect() as conn:
@@ -354,14 +308,6 @@ def build_session_store(db_url: str | None = None) -> SessionStore:
 
 
 _default_store: SessionStore | None = None
-
-
-def shared_state_connection() -> Any | None:
-    """Connection factory for state every runtime replica must see, or None without a session database."""
-    store = get_session_store()
-    if not store.db_url:
-        return None
-    return store.connection
 
 
 def get_session_store() -> SessionStore:

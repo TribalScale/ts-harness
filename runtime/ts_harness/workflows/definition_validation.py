@@ -241,16 +241,6 @@ def _validate_hook_payloads(
         if not isinstance(stage, dict):
             continue
 
-        if stage.get("execution") == "coding_job" and not str(stage.get("contract_ref") or "").strip():
-            issues.append(
-                _issue(
-                    "error",
-                    "coding_job_without_contract",
-                    _stage_path(index, ".contract_ref"),
-                    "a coding_job stage needs a contract_ref so its result can be checked",
-                )
-            )
-
         wait_external = stage.get("wait_external")
         if isinstance(wait_external, dict) and wait_external:
             event_type = str(wait_external.get("event_type") or "").strip()
@@ -341,37 +331,6 @@ def _validate_hook_payloads(
                                 "revise.static_input must be an object",
                             )
                         )
-                if "cases" in config:
-                    _validate_block_cases(config.get("cases"), index=index, field=field, issues=issues)
-
-
-def _validate_block_cases(cases: Any, *, index: int, field: str, issues: list[ValidationIssue]) -> None:
-    def invalid(path: str, message: str) -> None:
-        issues.append(_issue("error", "invalid_revise_on_reject", _stage_path(index, f".{field}.cases{path}"), message))
-
-    if field != "on_block":
-        invalid("", "cases are only supported on on_block")
-        return
-    if not isinstance(cases, list):
-        invalid("", "cases must be an array")
-        return
-    for position, case in enumerate(cases):
-        if not isinstance(case, dict):
-            invalid(f"[{position}]", "each case must be an object")
-            continue
-        prefix = case.get("error_prefix")
-        if not isinstance(prefix, str) or not prefix.strip():
-            invalid(f"[{position}].error_prefix", "each case requires a non-empty error_prefix")
-        if "action" in case and case.get("action") != "stop":
-            invalid(f"[{position}].action", "case action must be \"stop\"")
-        if "revise" in case:
-            revise = case.get("revise")
-            if not isinstance(revise, dict) or not str(revise.get("step_name") or "").strip():
-                invalid(f"[{position}].revise.step_name", "case revise requires revise.step_name")
-            elif "budget" in revise and not isinstance(revise.get("budget"), str):
-                invalid(f"[{position}].revise.budget", "revise.budget must be a string")
-        if "max_revisions" in case and (isinstance(case.get("max_revisions"), bool) or not isinstance(case.get("max_revisions"), int)):
-            invalid(f"[{position}].max_revisions", "max_revisions must be an integer")
 
 
 def _validate_graph(
@@ -599,7 +558,7 @@ def _validate_publish_gates(
             )
 
 
-_FORK_HOOKS = {"fork_children", "fork_work_order_wave", "plan_release_tracks"}
+_FORK_HOOKS = {"fork_children", "fork_work_order_wave"}
 _CHILDREN_SOURCE_RE = re.compile(r"^\$prior\.([^.]+)\.output\.children$")
 _WORKFLOW_TOKEN_PREFIX = "$workflow."
 _IMPLICIT_WORKFLOW_KEYS = {"binding_key"}

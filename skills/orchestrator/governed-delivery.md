@@ -16,7 +16,7 @@ Use this skill when a user asks TS Harness to run a product delivery flow that s
 - Wait for human merge
 - Deploy merged code
 
-Do **not** use this skill for a single-domain task such as "review PR #42" or "deploy staging". Route those directly to the relevant specialist. For **implement PROJ-123** / "my tickets", start `jira_to_pr` instead of `software_delivery`.
+Do **not** use this skill for a single-domain task such as "review PR #42" or "deploy staging". Route those directly to the relevant specialist. For **implement TFS-123** / "my tickets", start `jira_to_pr` instead of `software_delivery`.
 
 For **PRD-only** work with human approval gates, use `propose_start_workflow(workflow_type='prd_request')` — not a one-off pm-agent delegate. For **informal PRD** requests (`quick draft`, `no approval process`), delegate to pm-agent instead.
 

@@ -13,12 +13,6 @@ def _allow_local_internal_tokens(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _last_known_good_config_outside_repo(monkeypatch, tmp_path):
-    """The gateway writes a .lkg copy beside its config; keep it out of config/."""
-    monkeypatch.setenv("TS_HARNESS_CONFIG_LKG", str(tmp_path / "runtime-config.lkg"))
-
-
-@pytest.fixture(autouse=True)
 def _reset_admin_rate_limiter():
     """Admin routes share one in-process limiter; one test's requests must not throttle the next."""
     try:
@@ -28,9 +22,3 @@ def _reset_admin_rate_limiter():
         return
     rate_limit._admin_limiter._hits.clear()
     yield
-
-
-@pytest.fixture(autouse=True)
-def _no_background_scheduler(monkeypatch):
-    """Runtimes built by tests must not poll GitHub or sweep jobs on a background thread."""
-    monkeypatch.setenv("TS_HARNESS_SCHEDULER_DISABLED", "true")

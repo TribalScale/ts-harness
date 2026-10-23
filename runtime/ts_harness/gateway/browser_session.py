@@ -157,15 +157,12 @@ def open_browser_session(
     if getattr(identity, "provider", "static") == "oidc" and auth.auth_provider == "static":
         if not _static_fallback_allowed():
             return 403, {"error": "static token is not accepted"}, None
-    from ts_harness.gateway.directory_links import record_sign_in
     from ts_harness.policy.permissions import actor_permissions
 
-    record_sign_in(auth)
     payload = {
         "authenticated": True,
         "roles": [str(role) for role in (auth.roles or [])],
         "permissions": sorted(actor_permissions(auth, runtime.config)),
-        "teams": list(auth.teams or []),
     }
     cookie = session_cookie_header(
         token,

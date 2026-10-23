@@ -4,7 +4,7 @@ Slack bug report → confirm repo → read the cited files → diagnose → one 
 
 ## Start
 
-Slack signals: `file this bug`, `investigate this error`, `bug report`, `production incident`, `fix bug`, `regression`, `broken`, `error`. `what error` and `error handling` stay off this program. Vague code (`open pr`, `refactor`, `change the`) asks once, then starts this program or `content_to_jira_work_orders`. `implement <ticket key>` (for example `implement PROJ-123`) and `my tickets` stay on `jira_to_pr`.
+Slack signals: `file this bug`, `investigate this error`, `bug report`, `production incident`, `fix bug`, `regression`, `broken`, `error`. `what error` and `error handling` stay off this program. Vague code (`open pr`, `refactor`, `change the`) asks once, then starts this program or `content_to_jira_work_orders`. `implement TFS-` and `my tickets` stay on `jira_to_pr`.
 
 ```text
 propose_start_program(program_type=bug_to_jira_work_orders, entry_phase=bug_intake)

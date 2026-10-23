@@ -9,7 +9,6 @@ from pathlib import Path
 
 from ts_harness.config.schema import OpenCodeBackendConfig, parse_runtime_config
 from ts_harness.implementation.backends.opencode import OpenCodeBackend
-from ts_harness.implementation.test_env import TestEnvironment
 from ts_harness.implementation.verification import (
     build_verification_fix_prompt,
     detect_unit_test_command,
@@ -224,9 +223,8 @@ class VerificationHelperTests(unittest.TestCase):
             ),
         )
 
-        self.assertIn("standard test runner for this repo's language", prompt)
+        self.assertIn("minimal runnable unit/integration test setup", prompt)
         self.assertIn("cover this work order's behavior", prompt)
-        self.assertNotIn("pytest, npm test, or make test", prompt)
 
     def test_build_verification_fix_prompt_includes_bdd_setup_guidance(self):
         prompt = build_verification_fix_prompt(
@@ -244,108 +242,6 @@ class VerificationHelperTests(unittest.TestCase):
         self.assertIn("Gherkin feature file", prompt)
         self.assertIn("WO-456", prompt)
         self.assertIn("acceptance criteria", prompt)
-
-
-class TestRunnerGuardTests(unittest.TestCase):
-    GWT = "Given a cart\nWhen they check out\nThen an order is created"
-
-    def _recording_runner(self, calls):
-        def runner(command, **kwargs):
-            calls.append((list(command), kwargs.get("env")))
-            return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
-
-        return runner
-
-    def test_repo_root_pytest_module_is_rejected_without_running(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
-            (repo_dir / "pytest.py").write_text("print('all passed')\n", encoding="utf-8")
-            result = verify_implementation(
-                repo_dir, work_order_body="Add login validation", runner=self._recording_runner(calls)
-            )
-        self.assertFalse(result.ok)
-        self.assertEqual(result.reasons, ["shadowed_test_runner:pytest.py"])
-        self.assertEqual(calls, [])
-        prompt = build_verification_fix_prompt("WO-1", result)
-        self.assertIn("Delete the stand-in test framework modules (pytest.py)", prompt)
-
-    def test_behave_package_is_rejected_for_bdd(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "features" / "steps").mkdir(parents=True)
-            (repo_dir / "features" / "steps" / "cart.py").write_text("", encoding="utf-8")
-            (repo_dir / "features" / "cart.feature").write_text("Feature: cart\n", encoding="utf-8")
-            (repo_dir / "behave").mkdir()
-            (repo_dir / "package.json").write_text('{"scripts": {"test": "jest"}}', encoding="utf-8")
-            result = verify_implementation(repo_dir, work_order_body=self.GWT, runner=self._recording_runner(calls))
-        self.assertIn("shadowed_test_runner:behave/", result.reasons)
-        self.assertEqual([c[0] for c in calls], [["npm", "test"]])
-
-    def test_behave_stand_in_does_not_block_real_pytest(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
-            (repo_dir / "features" / "steps").mkdir(parents=True)
-            (repo_dir / "features" / "steps" / "cart.py").write_text("", encoding="utf-8")
-            (repo_dir / "features" / "cart.feature").write_text("Feature: cart\n", encoding="utf-8")
-            (repo_dir / "behave").mkdir()
-            result = verify_implementation(repo_dir, work_order_body=self.GWT, runner=self._recording_runner(calls))
-        self.assertEqual(result.reasons, ["shadowed_test_runner:behave/"])
-        self.assertEqual([c[0] for c in calls], [["python3", "-m", "pytest"]])
-
-    def test_missing_toolchain_is_reported_and_not_run(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
-            test_env = TestEnvironment(python="python3", env={"PATH": tmp})
-            result = verify_implementation(
-                repo_dir,
-                work_order_body="Add login validation",
-                runner=self._recording_runner(calls),
-                test_env=test_env,
-            )
-        self.assertEqual(result.reasons, ["missing_toolchain:go"])
-        self.assertEqual(calls, [])
-
-    def test_go_features_run_inside_unit_command(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "go.mod").write_text("module example.com/app\n", encoding="utf-8")
-            (repo_dir / "features").mkdir()
-            (repo_dir / "features" / "cart.feature").write_text("Feature: cart\n", encoding="utf-8")
-            result = verify_implementation(repo_dir, work_order_body=self.GWT, runner=self._recording_runner(calls))
-        self.assertTrue(result.ok, result.reasons)
-        self.assertEqual(result.bdd_command, ["go", "test", "./..."])
-        self.assertEqual([c[0] for c in calls], [["go", "test", "./..."]])
-
-    def test_test_env_supplies_interpreter_and_env(self):
-        calls: list = []
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_dir = Path(tmp)
-            (repo_dir / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
-            venv_bin = Path(tmp) / "venv" / "bin"
-            venv_bin.mkdir(parents=True)
-            python = venv_bin / "python"
-            python.write_text("#!/bin/sh\n", encoding="utf-8")
-            python.chmod(0o755)
-            test_env = TestEnvironment(python=str(python), env={"PATH": str(venv_bin), "VIRTUAL_ENV": "v"})
-            result = verify_implementation(
-                repo_dir,
-                work_order_body="Add login validation",
-                runner=self._recording_runner(calls),
-                test_env=test_env,
-            )
-        self.assertTrue(result.ok, result.reasons)
-        command, env = calls[0]
-        self.assertEqual(command, [str(python), "-m", "pytest"])
-        self.assertEqual(env["VIRTUAL_ENV"], "v")
-        self.assertEqual(env["PATH"], str(venv_bin))
 
 
 class SecurityVerificationTests(unittest.TestCase):

@@ -17,51 +17,6 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
-    },
-    {
-      "name": "sync-directory",
-      "kind": "system",
-      "handler": "sync_directory",
-      "interval_seconds": 900,
-      "active_start": "00:00",
-      "active_end": "23:59",
-      "timezone": "UTC"
-    },
-    {
-      "name": "sweep-coding-jobs",
-      "kind": "system",
-      "handler": "sweep_coding_jobs",
-      "interval_seconds": 60,
-      "active_start": "00:00",
-      "active_end": "23:59",
-      "timezone": "UTC"
-    },
-    {
-      "name": "budget-alerts",
-      "kind": "system",
-      "handler": "budget_alerts",
-      "interval_seconds": 300,
-      "active_start": "00:00",
-      "active_end": "23:59",
-      "timezone": "UTC"
-    },
-    {
-      "name": "github-rate-limits",
-      "kind": "system",
-      "handler": "github_rate_limits",
-      "interval_seconds": 300,
-      "active_start": "00:00",
-      "active_end": "23:59",
-      "timezone": "UTC"
-    },
-    {
-      "name": "sweep-channel-dedup",
-      "kind": "system",
-      "handler": "sweep_channel_dedup",
-      "interval_seconds": 86400,
-      "active_start": "00:00",
-      "active_end": "23:59",
-      "timezone": "UTC"
     }
   ]
 }

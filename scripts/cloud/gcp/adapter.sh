@@ -287,8 +287,6 @@ cloud_get_instance_resource_id() {
 
 # cloud_publish_runtime_metrics <json_file>
 # JSON shape matches AWS adapter; publishes custom.googleapis.com/<namespace>/<name>.
-# Per-metric "dimensions" become metric labels; a top-level "instance_id" names
-# the instance when "dimensions" has no InstanceId.
 cloud_publish_runtime_metrics() {
     local json_file="${1:?json_file required}"
     local bin project
@@ -317,7 +315,7 @@ path, gcloud_bin, project = sys.argv[1:4]
 payload = json.loads(Path(path).read_text(encoding="utf-8"))
 namespace = payload.get("namespace") or "TSHarness"
 dims = payload.get("dimensions") or {}
-instance_id = str(dims.get("InstanceId") or dims.get("instance_id") or payload.get("instance_id") or "")
+instance_id = str(dims.get("InstanceId") or dims.get("instance_id") or "")
 metrics = payload.get("metrics") or []
 failures = []
 
@@ -401,10 +399,9 @@ else:
             "interval": {"endTime": now},
             "value": {"doubleValue": float(value)},
         }
-        labels = {str(k).lower(): str(v) for k, v in (metric.get("dimensions") or {}).items()}
         time_series.append(
             {
-                "metric": {"type": metric_type, "labels": labels} if labels else {"type": metric_type},
+                "metric": {"type": metric_type},
                 "resource": {"type": "gce_instance", "labels": resource_labels},
                 "points": [point],
             }

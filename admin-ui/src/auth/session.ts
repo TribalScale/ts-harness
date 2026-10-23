@@ -20,15 +20,6 @@ export function pickJwt(...candidates: Array<string | null | undefined>): string
   return tokens.find(isJwt) || tokens[0] || "";
 }
 
-/** The token the gateway validates: the ID token when the provider is configured for it. */
-export function sessionToken(
-  tokenType: string | undefined,
-  data: { access_token?: string | null; id_token?: string | null }
-): string {
-  if (tokenType === "id") return data.id_token || "";
-  return pickJwt(data.access_token, data.id_token);
-}
-
 export function oidcTokenExchangeBody(opts: {
   code: string;
   redirectUri: string;

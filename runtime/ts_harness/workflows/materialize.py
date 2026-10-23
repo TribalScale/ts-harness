@@ -410,7 +410,7 @@ def build_fork_graph(skeleton_dir: Path | None = None) -> dict[str, set[str]]:
     return graph
 
 
-FORK_HOOKS = frozenset({"fork_children", "fork_work_order_wave", "plan_release_tracks"})
+FORK_HOOKS = frozenset({"fork_children", "fork_work_order_wave"})
 DEFAULT_WAVE_CHILD_TYPE = "deliver_work_order"
 
 
@@ -450,9 +450,6 @@ def materialize_skeleton_tasks(
     stage_inputs = stage_inputs or {}
     tasks: list[dict[str, Any]] = []
     for stage in skeleton.stages:
-        # compensate_on_failure creates these tasks when a stage fails.
-        if stage.kind == "compensate":
-            continue
         agent_id = stage.agent_id
         if agent_id == "human":
             agent_id = "orchestrator"
@@ -478,7 +475,6 @@ def materialize_skeleton_tasks(
             "max_retries": int(stage.retry.get("max_retries", 0)),
             "definition_version": skeleton.definition_version,
             "contract": skeleton.resolve_stage_contract(stage) or {},
-            "lane": workflow_definitions.stage_lane(stage),
         }
         if external_ref and stage.name == skeleton.intake_stage_name():
             body["external_ref"] = external_ref

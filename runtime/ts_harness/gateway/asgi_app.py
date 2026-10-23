@@ -17,8 +17,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 
-from ts_harness.config.deployment_profile import current_profile
-from ts_harness.gateway.program_access import ProgramAccessDenied
 from ts_harness.gateway.auth import AuthContext, AuthError, authenticate_request, check_allowed_origin
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.contracts import DispatchResult
@@ -131,24 +129,8 @@ class _TraceMiddleware(BaseHTTPMiddleware):
             trace_id_var.reset(token)
 
 
-_SHARED_DEFINITION_PREFIXES = (
-    "/admin/workflow-definitions",
-    "/admin/program-definitions",
-    "/admin/workflow-fragments",
-    "/admin/routing-definitions",
-    "/admin/runtime-settings",
-    "/admin/mcp-settings",
-    "/admin/agents",
-    "/admin/program-builder",
-)
-
-
 class _AdminGuardMiddleware(BaseHTTPMiddleware):
-    """Rate-limit /admin/* after routing; origin still checked in handlers.
-
-    Definition reads pull the shared tree first, so a save on another replica
-    shows up on the next request here.
-    """
+    """Rate-limit /admin/* after routing; origin still checked in handlers."""
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/admin"):
@@ -159,10 +141,6 @@ class _AdminGuardMiddleware(BaseHTTPMiddleware):
                 check_admin_rate_limit(client)
             except AuthError as exc:
                 return _json({"error": str(exc)}, exc.status)
-            if request.method == "GET" and request.url.path.startswith(_SHARED_DEFINITION_PREFIXES):
-                from ts_harness.storage.shared_tree import sync_definitions
-
-                await asyncio.to_thread(sync_definitions, force=True)
         return await call_next(request)
 
 
@@ -286,10 +264,6 @@ async def healthz(request: Request) -> Response:
     report = runtime._build_health_report()
     payload = report.to_dict()
     payload["metrics"] = runtime.metrics.snapshot()
-    try:
-        payload["deployment_profile"] = current_profile(getattr(runtime, "config", None))
-    except ValueError:
-        payload["deployment_profile"] = "unknown"
     return _json(payload)
 
 
@@ -305,9 +279,6 @@ async def metrics(request: Request) -> Response:
         )
 
         if PROMETHEUS_AVAILABLE:
-            from ts_harness.observability.scale_metrics import refresh_prometheus
-
-            await asyncio.to_thread(refresh_prometheus)
             return PlainTextResponse(generate_latest(), media_type=content_type())
     except ImportError:
         pass
@@ -403,8 +374,7 @@ async def workflow_dispatch(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        # Agent turns (and coding-backend runs) last minutes; keep the event loop free.
-        result = await asyncio.to_thread(runtime.dispatch_workflow, body, auth)
+        result = runtime.dispatch_workflow(body, auth)
         runtime.metrics.inc("workflow_dispatch")
         return _json(result.to_dict())
     except AuthError as exc:
@@ -475,7 +445,7 @@ async def session_message(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        result = await asyncio.to_thread(runtime.handle_session_message, body, auth)
+        result = runtime.handle_session_message(body, auth)
         runtime.metrics.inc("session_message")
         return _json(result)
     except AuthError as exc:
@@ -565,6 +535,12 @@ def _skills_root() -> str:
     return str(managed_root())
 
 
+def _skills_read_roots() -> list[str]:
+    from ts_harness.skills.roots import catalog_roots
+
+    return [str(item) for item in catalog_roots()]
+
+
 # ── GET /admin/skills/drafts ──────────────────────────────────────────────────
 
 
@@ -606,10 +582,10 @@ async def admin_skills_drafts_list(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import list_drafts
 
     try:
-        drafts = skill_repository().list_drafts()
+        drafts = list_drafts(_skills_root())
         return _json({"drafts": drafts, "total": len(drafts)})
     except ValueError as exc:
         return _json({"error": str(exc)}, 400)
@@ -627,12 +603,11 @@ async def admin_skills_drafts_get(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.authoring import SkillAuthoringError
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import SkillAuthoringError, get_draft
 
     skill_id = request.path_params["skill_id"]
     try:
-        return _json(skill_repository().get_draft(skill_id))
+        return _json(get_draft(_skills_root(), skill_id, read_roots=_skills_read_roots()))
     except SkillAuthoringError as exc:
         return _json({"error": str(exc)}, 404)
     except ValueError as exc:
@@ -696,8 +671,12 @@ async def admin_skills_drafts_create(request: Request) -> Response:
     if not isinstance(body, dict):
         return _json({"error": "body must be an object"}, 400)
 
-    from ts_harness.skills.authoring import SkillAuthoringError, build_skill_markdown
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import (
+        SkillAuthoringError,
+        build_skill_markdown,
+        propose_skill_draft,
+        propose_skill_folder_draft,
+    )
 
     mode = str(body.get("mode") or "").strip()
     actor = str(auth.actor_id or "admin")
@@ -712,21 +691,25 @@ async def admin_skills_drafts_create(request: Request) -> Response:
                 description=str(body.get("description") or ""),
                 version=str(body.get("version") or ""),
             )
-            result = skill_repository().propose_markdown(
+            result = propose_skill_draft(
+                root=_skills_root(),
                 agent_id=actor,
                 tenant_id=tenant_id,
                 markdown=markdown,
                 revision_of=revision_of,
                 source="admin_paste",
                 created_by=actor,
+                read_roots=_skills_read_roots(),
             )
         elif mode == "folder":
-            result = skill_repository().propose_folder(
+            result = propose_skill_folder_draft(
+                root=_skills_root(),
                 actor_id=actor,
                 tenant_id=tenant_id,
                 files=body.get("files"),
                 revision_of=revision_of,
                 source="admin_upload",
+                read_roots=_skills_read_roots(),
             )
         else:
             return _json({"error": "mode must be text or folder"}, 400)
@@ -762,12 +745,12 @@ async def admin_skills_drafts_file(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
-    from ts_harness.skills.authoring import SkillAuthoringError
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import SkillAuthoringError, read_draft_file
 
     try:
         return _json(
-            skill_repository().read_draft_file(
+            read_draft_file(
+                _skills_root(),
                 request.path_params["skill_id"],
                 request.path_params["file_path"],
             )
@@ -793,12 +776,16 @@ async def admin_skills_drafts_approve(request: Request) -> Response:
     except Exception:
         return _json({"error": "invalid json"}, 400)
 
-    from ts_harness.skills.authoring import SkillAuthoringError
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import SkillAuthoringError, approve_draft
 
     skill_id = request.path_params["skill_id"]
     try:
-        result = skill_repository().approve(skill_id=skill_id, reviewer=str(auth.actor_id or "admin"))
+        result = approve_draft(
+            root=_skills_root(),
+            skill_id=skill_id,
+            reviewer=str(auth.actor_id or "admin"),
+            read_roots=_skills_read_roots(),
+        )
         runtime.skill_catalog.reload()
         tenant_id = runtime.config.gateway.default_tenant_id
         runtime.audit.append(
@@ -842,13 +829,17 @@ async def admin_skills_drafts_reject(request: Request) -> Response:
     except Exception:
         return _json({"error": "invalid json"}, 400)
 
-    from ts_harness.skills.authoring import SkillAuthoringError
-    from ts_harness.skills.repository import skill_repository
+    from ts_harness.skills.authoring import SkillAuthoringError, reject_draft
 
     skill_id = request.path_params["skill_id"]
     reason = str((body or {}).get("reason") or "")
     try:
-        result = skill_repository().reject(skill_id=skill_id, reviewer=str(auth.actor_id or "admin"), reason=reason)
+        result = reject_draft(
+            root=_skills_root(),
+            skill_id=skill_id,
+            reviewer=str(auth.actor_id or "admin"),
+            reason=reason,
+        )
         runtime.skill_catalog.reload()
         runtime.audit.append(
             tenant_id=runtime.config.gateway.default_tenant_id,
@@ -873,7 +864,7 @@ async def admin_approvals_list(request: Request) -> Response:
         return _json({"error": str(exc)}, exc.status)
 
     queue = get_approval_queue()
-    items = [v.__dict__ for v in queue.all()]
+    items = [v.__dict__ for v in queue._requests.values()]
     return _json({"approvals": items, "total": len(items)})
 
 
@@ -983,35 +974,6 @@ def _program_for_tenant(memory: Any, program_id: str, auth: Any) -> dict[str, An
     return payload
 
 
-def _require_program_level(
-    program_id: str, auth: Any, need: str, *, route: str, memory: Any = None
-) -> Any:
-    """Raise ``ProgramAccessDenied`` unless the caller has *need* on the program."""
-    from ts_harness.gateway.program_access import actor_context, check_program_access
-
-    return check_program_access(
-        memory or get_memory_client(),
-        program_id,
-        actor_context(auth),
-        need,
-        tenant_id=str(auth.tenant_id or "default"),
-        route=route,
-    )
-
-
-def _effective_level(access: Any) -> str:
-    """What the console may offer: everything unless access is enforced."""
-    return access.level if access.enforced else "admin"
-
-
-def _with_access(payload: dict[str, Any], access: Any) -> dict[str, Any]:
-    return {
-        **payload,
-        "access_level": _effective_level(access),
-        "visibility": access.visibility or payload.get("visibility"),
-    }
-
-
 def _program_mutation_gate(
     program_id: str,
     auth: Any,
@@ -1086,8 +1048,6 @@ async def admin_programs_list(request: Request) -> Response:
             )
         except Exception as exc:
             return _json({"error": str(exc)}, 502)
-    from ts_harness.gateway.program_access import list_actor_params
-
     try:
         return _json(
             get_memory_client().list_programs(
@@ -1095,7 +1055,6 @@ async def admin_programs_list(request: Request) -> Response:
                 status=status,
                 limit=limit,
                 offset=offset,
-                actor_params=list_actor_params(auth),
             )
         )
     except Exception as exc:
@@ -1110,15 +1069,10 @@ async def admin_programs_get(request: Request) -> Response:
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     program_id = request.path_params["id"]
-    memory = get_memory_client()
     try:
-        payload = _program_for_tenant(memory, program_id, auth)
-        access = _require_program_level(program_id, auth, "read", route="get", memory=memory)
-        return _json(_with_access(payload, access))
+        return _json(_program_for_tenant(get_memory_client(), program_id, auth))
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
 
 
 async def admin_programs_evidence(request: Request) -> Response:
@@ -1132,11 +1086,8 @@ async def admin_programs_evidence(request: Request) -> Response:
     memory = get_memory_client()
     try:
         _program_for_tenant(memory, program_id, auth)
-        _require_program_level(program_id, auth, "read", route="evidence", memory=memory)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     from ts_harness.gateway.program_evidence import build_evidence_document, canonical_json
 
     actor = str(auth.email or auth.actor_id or "admin")
@@ -1177,38 +1128,9 @@ async def admin_programs_status(request: Request) -> Response:
     memory = get_memory_client()
     try:
         _program_for_tenant(memory, program_id, auth)
-        access = _require_program_level(program_id, auth, "read", route="status", memory=memory)
-        return _json(_with_access(memory.get_program_status(program_id), access))
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
+        return _json(memory.get_program_status(program_id))
     except Exception as exc:
         return _json({"error": str(exc)}, 404)
-
-
-async def admin_programs_phase_activity(request: Request) -> Response:
-    try:
-        _check_origin(request)
-        auth = _auth(request, {})
-        _require_admin(get_runtime(), auth, "view")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    program_id = request.path_params["id"]
-    phase = request.path_params["phase"]
-    memory = get_memory_client()
-    try:
-        _program_for_tenant(memory, program_id, auth)
-        _require_program_level(program_id, auth, "read", route="phase_activity", memory=memory)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    except Exception as exc:
-        return _json({"error": str(exc)}, 404)
-    from ts_harness.workflows import phase_activity
-
-    try:
-        return _json(phase_activity.phase_activity(memory, program_id, phase))
-    except Exception as exc:  # noqa: BLE001
-        log_event("admin_program_phase_activity_error", program_id=program_id, phase=phase, error=str(exc))
-        return _json({"error": str(exc)}, 500)
 
 
 async def admin_programs_advance(request: Request) -> Response:
@@ -1232,13 +1154,10 @@ async def admin_programs_advance(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
-        _require_program_level(program_id, auth, "write", route="advance")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     try:
         service = get_delivery_program_service()
         result = service.advance_program(
@@ -1276,13 +1195,10 @@ async def admin_programs_patch(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
-        _require_program_level(program_id, auth, "admin", route="patch")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().patch_program(
             program_id,
@@ -1328,11 +1244,8 @@ async def admin_programs_department_memory(request: Request) -> Response:
     program_id = request.path_params["id"]
     try:
         payload = _program_for_tenant(get_memory_client(), program_id, auth)
-        _require_program_level(program_id, auth, "write", route="department_memory")
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     program = payload.get("program") if isinstance(payload.get("program"), dict) else payload
     from ts_harness.policy.permissions import department_for_email
 
@@ -1377,15 +1290,11 @@ async def admin_programs_link(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
-        _require_program_level(program_id, auth, "admin", route="link")
         _program_for_tenant(get_memory_client(), to_program_id, auth)
-        _require_program_level(to_program_id, auth, "read", route="link")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().create_program_link(
             program_id,
@@ -1421,13 +1330,10 @@ async def admin_programs_unlink(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
-        _require_program_level(program_id, auth, "admin", route="unlink")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     try:
         result = get_memory_client().delete_program_link(
             program_id,
@@ -1468,13 +1374,10 @@ async def admin_programs_cancel(request: Request) -> Response:
         _require_admin(get_runtime(), auth, permission)
         if payload is None:
             raise _NotInTenant("program not found")
-        _require_program_level(program_id, auth, "admin", route="cancel", memory=memory)
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _NotInTenant as exc:
         return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
     try:
         result = memory.cancel_program(program_id, actor=actor, reason=reason)
     except Exception as exc:
@@ -1496,139 +1399,6 @@ async def admin_programs_cancel(request: Request) -> Response:
     return _json(result)
 
 
-async def admin_programs_access_get(request: Request) -> Response:
-    try:
-        _check_origin(request)
-        auth = _auth(request, {})
-        _require_admin(get_runtime(), auth, "view")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    program_id = request.path_params["id"]
-    memory = get_memory_client()
-    try:
-        _program_for_tenant(memory, program_id, auth)
-        access = _require_program_level(program_id, auth, "read", route="access_get", memory=memory)
-        return _json({**memory.list_program_access(program_id), "access_level": _effective_level(access)})
-    except _NotInTenant as exc:
-        return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    except Exception as exc:  # noqa: BLE001
-        return _json({"error": str(exc)}, 502)
-
-
-def _shared_access_json(result: dict[str, Any]) -> Response:
-    return _json({**result, "access_level": "admin"})
-
-
-async def _share_gate(request: Request, body: dict[str, Any], route: str) -> tuple[Any, str] | Response:
-    try:
-        _check_origin(request)
-        auth = _auth(request, body)
-        _require_admin(get_runtime(), auth, "view")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    program_id = request.path_params["id"]
-    try:
-        _program_for_tenant(get_memory_client(), program_id, auth)
-        _require_program_level(program_id, auth, "admin", route=route)
-    except _NotInTenant as exc:
-        return _json({"error": str(exc)}, 404)
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    return auth, program_id
-
-
-async def admin_programs_access_grant(request: Request) -> Response:
-    try:
-        body = await _json_object_body(request)
-    except _BadJsonBody as exc:
-        return _json({"error": str(exc)}, 400)
-    except Exception:
-        return _json({"error": "invalid json"}, 400)
-    gate = await _share_gate(request, body, "access_grant")
-    if isinstance(gate, Response):
-        return gate
-    auth, program_id = gate
-    try:
-        return _shared_access_json(
-            get_memory_client().grant_program_access(
-                program_id,
-                principal_type=str(body.get("principal_type") or ""),
-                principal_id=str(body.get("principal_id") or ""),
-                level=str(body.get("level") or ""),
-                actor=str(auth.actor_id or "admin"),
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        return _json({"error": str(exc)}, 400)
-
-
-async def admin_programs_access_revoke(request: Request) -> Response:
-    gate = await _share_gate(request, {}, "access_revoke")
-    if isinstance(gate, Response):
-        return gate
-    auth, program_id = gate
-    try:
-        return _shared_access_json(
-            get_memory_client().revoke_program_access(
-                program_id,
-                principal_type=request.path_params["principal_type"],
-                principal_id=request.path_params["principal_id"],
-                actor=str(auth.actor_id or "admin"),
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        return _json({"error": str(exc)}, 400)
-
-
-async def admin_programs_visibility(request: Request) -> Response:
-    try:
-        body = await _json_object_body(request)
-    except _BadJsonBody as exc:
-        return _json({"error": str(exc)}, 400)
-    except Exception:
-        return _json({"error": "invalid json"}, 400)
-    gate = await _share_gate(request, body, "visibility")
-    if isinstance(gate, Response):
-        return gate
-    auth, program_id = gate
-    try:
-        return _shared_access_json(
-            get_memory_client().set_program_visibility(
-                program_id,
-                visibility=str(body.get("visibility") or ""),
-                actor=str(auth.actor_id or "admin"),
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        return _json({"error": str(exc)}, 400)
-
-
-async def admin_directory_search(request: Request) -> Response:
-    try:
-        _check_origin(request)
-        auth = _auth(request, {})
-        _require_admin(get_runtime(), auth, "view")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    try:
-        limit = int(request.query_params.get("limit") or "20")
-    except ValueError:
-        return _json({"error": "invalid limit"}, 400)
-    try:
-        return _json(
-            await asyncio.to_thread(
-                get_memory_client().directory_search,
-                tenant_id=str(auth.tenant_id or "default"),
-                q=request.query_params.get("q") or "",
-                limit=limit,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        return _json({"error": str(exc)}, 502)
-
-
 async def admin_workflows_get(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -1645,24 +1415,6 @@ async def admin_workflows_get(request: Request) -> Response:
     if any(str(task.get("tenant_id") or "default") != tenant for task in (payload or {}).get("tasks") or []):
         return _json({"error": "workflow not found"}, 404)
     return _json(payload)
-
-
-def _require_task_program_level(task_id: str, auth: Any, need: str, *, route: str) -> None:
-    """Gate actions need *need* on the task's program; tasks outside programs only need the permission."""
-    from ts_harness.gateway.program_access import access_mode, actor_context
-
-    actor = actor_context(auth)
-    if actor is None or access_mode() == "off":
-        return
-    memory = get_memory_client()
-    try:
-        program_id = (memory.task_program(task_id) or {}).get("program_id")
-    except Exception as exc:  # noqa: BLE001
-        if access_mode() == "enforce":
-            raise ProgramAccessDenied("task not found", 404) from exc
-        return
-    if program_id:
-        _require_program_level(str(program_id), auth, need, route=route, memory=memory)
 
 
 def _auth_decision_fields(auth: Any, body: Any) -> dict[str, Any]:
@@ -1706,10 +1458,6 @@ async def admin_workflows_approve(request: Request) -> Response:
     if not task_id:
         return _json({"error": "id is required"}, 400)
     try:
-        _require_task_program_level(task_id, auth, "approve", route="approve")
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    try:
         return _json(
             get_memory_client().approve_task(
                 task_id,
@@ -1736,10 +1484,6 @@ async def admin_workflows_reject(request: Request) -> Response:
     if not task_id:
         return _json({"error": "id is required"}, 400)
     try:
-        _require_task_program_level(task_id, auth, "approve", route="reject")
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    try:
         return _json(
             get_memory_client().reject_task(
                 task_id,
@@ -1750,51 +1494,6 @@ async def admin_workflows_reject(request: Request) -> Response:
         )
     except Exception as exc:
         return _json({"error": str(exc)}, 400)
-
-
-async def admin_workflows_decide(request: Request) -> Response:
-    """Revise again, accept, or stop a step parked for a human decision."""
-    try:
-        _check_origin(request)
-        body = await request.json()
-        auth = _auth(request, body if isinstance(body, dict) else {})
-        _require_admin(get_runtime(), auth, "approve_gate")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    except Exception:
-        return _json({"error": "invalid json"}, 400)
-    body = body if isinstance(body, dict) else {}
-    workflow_id = str(body.get("workflow_id") or "").strip()
-    task_id = str(body.get("task_id") or "").strip()
-    action = str(body.get("action") or "").strip()
-    if not workflow_id or not task_id or not action:
-        return _json({"error": "workflow_id, task_id and action are required"}, 400)
-    tenant_id = str(auth.tenant_id or "default")
-    try:
-        workflow = get_memory_client().get_workflow(workflow_id).get("workflow") or {}
-    except Exception:
-        workflow = {}
-    if not workflow or str(workflow.get("tenant_id") or "default") != tenant_id:
-        return _json({"error": "workflow not found"}, 404)
-    try:
-        _require_task_program_level(task_id, auth, "approve", route="decide")
-    except ProgramAccessDenied as exc:
-        return _json({"error": str(exc)}, exc.status)
-    try:
-        result = get_workflow_engine().decide_blocked_step(
-            workflow_id,
-            task_id,
-            action,
-            actor=str(auth.actor_id or "admin"),
-            guidance=str(body.get("guidance") or ""),
-            tenant_id=tenant_id,
-        )
-    except ValueError as exc:
-        return _json({"error": str(exc)}, 409)
-    except Exception as exc:  # noqa: BLE001
-        log_event("admin_workflow_decide_error", workflow_id=workflow_id, task_id=task_id, error=str(exc))
-        return _json({"error": str(exc)}, 500)
-    return _json(result)
 
 
 # ── Workflow definition admin BFF ─────────────────────────────────────────────
@@ -2623,153 +2322,6 @@ async def admin_mcp_settings_get(request: Request) -> Response:
     from ts_harness.gateway.mcp_settings_bff import get_mcp_settings_admin
 
     return _json(get_mcp_settings_admin(runtime))
-
-
-async def internal_coding_job_github_token(request: Request) -> Response:
-    from ts_harness.coding.github_tokens import JobTokenRejected, NoAppForRepository, mint_job_github_token
-    from ts_harness.gateway.auth import extract_bearer_token
-
-    job_id = request.path_params["job_id"]
-    token = extract_bearer_token(dict(request.headers)) or ""
-    try:
-        payload = await asyncio.to_thread(mint_job_github_token, job_id, token)
-    except JobTokenRejected as exc:
-        return _json({"error": str(exc)}, 403)
-    except NoAppForRepository as exc:
-        return _json({"error": str(exc)}, 404)
-    except Exception as exc:  # noqa: BLE001
-        log_event("coding_job_github_token_failed", job_id=job_id, error=str(exc)[:200])
-        return _json({"error": "token minting failed"}, 502)
-    return _json(payload)
-
-
-async def _admin_projects_call(request: Request, call) -> Response:
-    from ts_harness.memory.client import ProgramNotFound
-
-    body: dict[str, Any] = {}
-    try:
-        _check_origin(request)
-        if request.method in {"POST", "PUT"}:
-            body = await _json_object_body(request)
-        auth = _auth(request, body)
-        runtime = get_runtime()
-        _require_admin(runtime, auth, "view")
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    except _BadJsonBody as exc:
-        return _json({"error": str(exc)}, 400)
-    except Exception:
-        return _json({"error": "invalid json"}, 400)
-    try:
-        payload = await asyncio.to_thread(call, get_memory_client(), auth, getattr(runtime, "config", None), body)
-    except PermissionError as exc:
-        return _json({"error": str(exc)}, 403)
-    except (LookupError, ProgramNotFound):
-        return _json({"error": "not found"}, 404)
-    except ValueError as exc:
-        return _json({"error": str(exc)}, 400)
-    except RuntimeError as exc:
-        try:
-            message = str(json.loads(str(exc)).get("error") or exc)
-        except (ValueError, AttributeError):
-            message = str(exc)
-        return _json({"error": message[:300]}, 400)
-    return _json(payload)
-
-
-async def admin_github(request: Request) -> Response:
-    from ts_harness.gateway import github_bff as bff
-
-    return await _admin_projects_call(request, bff.github_overview)
-
-
-async def admin_github_sync(request: Request) -> Response:
-    from ts_harness.gateway import github_bff as bff
-
-    return await _admin_projects_call(request, bff.sync_installations)
-
-
-async def admin_budgets(request: Request) -> Response:
-    from ts_harness.gateway import budgets_bff as bff
-
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_budgets_admin(m, a, c))
-
-
-async def admin_program_budget(request: Request) -> Response:
-    from ts_harness.gateway import budgets_bff as bff
-
-    program_id = request.path_params["program_id"]
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.program_budget_admin(m, a, c, program_id))
-
-
-async def admin_budget_raise(request: Request) -> Response:
-    from ts_harness.gateway import budgets_bff as bff
-
-    team_id = request.path_params["team_id"]
-    return await _admin_projects_call(request, lambda m, a, c, b: bff.raise_budget_admin(m, a, c, team_id, b))
-
-
-async def admin_projects(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    if request.method == "POST":
-        return await _admin_projects_call(request, bff.create_project_admin)
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_projects_admin(m, a, c))
-
-
-async def admin_project(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    if request.method == "PUT":
-        return await _admin_projects_call(request, lambda m, a, c, b: bff.update_project_admin(m, a, c, pid, b))
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.get_project_admin(m, a, c, pid))
-
-
-async def admin_project_registries(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    if request.method == "POST":
-        return await _admin_projects_call(request, lambda m, a, c, b: bff.create_registry_admin(m, a, c, pid, b))
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_registries_admin(m, a, c, pid))
-
-
-async def admin_project_registry(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    rid = request.path_params["registry_id"]
-    if request.method == "DELETE":
-        return await _admin_projects_call(request, lambda m, a, c, _b: bff.delete_registry_admin(m, a, c, pid, rid))
-    return await _admin_projects_call(request, lambda m, a, c, b: bff.update_registry_admin(m, a, c, pid, rid, b))
-
-
-async def admin_project_repositories(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    if request.method == "POST":
-        return await _admin_projects_call(request, lambda m, a, c, b: bff.create_repository_admin(m, a, c, pid, b))
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_repositories_admin(m, a, c, pid))
-
-
-async def admin_project_repository(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    rid = request.path_params["repository_id"]
-    if request.method == "DELETE":
-        return await _admin_projects_call(request, lambda m, a, c, _b: bff.delete_repository_admin(m, a, c, pid, rid))
-    return await _admin_projects_call(request, lambda m, a, c, b: bff.update_repository_admin(m, a, c, pid, rid, b))
-
-
-async def admin_project_registry_test(request: Request) -> Response:
-    from ts_harness.gateway import projects_bff as bff
-
-    pid = request.path_params["project_id"]
-    rid = request.path_params["registry_id"]
-    return await _admin_projects_call(request, lambda m, a, c, _b: bff.test_registry_admin(m, a, c, pid, rid))
 
 
 async def admin_mcp_settings_drafts_create(request: Request) -> Response:
@@ -3785,24 +3337,21 @@ async def github_webhook(request: Request) -> Response:
 
     from ts_harness.gateway.github_webhook import (
         delivery_already_handled,
-        delivery_host,
+        github_webhook_secret,
         handle_github_webhook,
         remember_delivery,
-        verify_delivery,
-        webhook_secrets,
+        verify_github_signature,
     )
 
-    host = delivery_host(dict(request.headers))
-    secrets = await asyncio.to_thread(webhook_secrets, host)
+    secret = github_webhook_secret()
     delivery_id = request.headers.get("x-github-delivery", "").strip()
-    event_name = request.headers.get("x-github-event", "")
-    if secrets:
+    if secret:
         signature = request.headers.get("x-hub-signature-256", "")
-        if not verify_delivery(raw, signature, secrets):
+        if not verify_github_signature(raw, signature, secret):
             return _json({"error": "invalid github signature"}, 401)
         if not delivery_id:
             return _json({"error": "missing X-GitHub-Delivery"}, 400)
-        if await asyncio.to_thread(delivery_already_handled, delivery_id):
+        if delivery_already_handled(delivery_id):
             return _json({"status": "duplicate", "delivery_id": delivery_id})
     else:
         # Fall back to gateway token auth when webhook secret is unset (dev/smoke).
@@ -3814,12 +3363,11 @@ async def github_webhook(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        result = await asyncio.to_thread(
-            handle_github_webhook,
+        event_name = request.headers.get("x-github-event", "")
+        result = handle_github_webhook(
             body,
             tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
             event_name=event_name,
-            host=host,
         )
         audit_payload = {
             "event": event_name,
@@ -3837,7 +3385,7 @@ async def github_webhook(request: Request) -> Response:
             payload=audit_payload,
         )
         if delivery_id:
-            await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
+            remember_delivery(delivery_id)
         return _json(result)
     except Exception as exc:
         log_event("github_webhook_error", error=str(exc))
@@ -3893,83 +3441,55 @@ async def channel_webhook(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
-# ── SCIM v2 ───────────────────────────────────────────────────────────────────
+# ── SCIM v2 stubs ─────────────────────────────────────────────────────────────
 
-_SCIM_MEDIA_TYPE = "application/scim+json"
-_SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
-
-
-def _scim_json(data: Any, status: int = 200) -> Response:
-    return Response(json.dumps(data, default=str), status_code=status, media_type=_SCIM_MEDIA_TYPE)
+_SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+_SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 
 
-def _scim_error(detail: str, status: int) -> Response:
-    return _scim_json({"schemas": [_SCIM_ERROR_SCHEMA], "detail": detail, "status": str(status)}, status)
-
-
-def _scim_denied(request: Request) -> Response | None:
-    """SCIM uses its own bearer token (``TS_HARNESS_SCIM_TOKEN``); unset means SCIM is off."""
-    expected = os.environ.get("TS_HARNESS_SCIM_TOKEN", "").strip()
-    if not expected:
-        return _scim_error("SCIM provisioning is not enabled", 404)
-    presented = str(request.headers.get("authorization") or "")
-    if not hmac.compare_digest(presented.encode(), f"Bearer {expected}".encode()):
-        return _scim_error("invalid SCIM token", 401)
-    return None
-
-
-async def scim_resource(request: Request) -> Response:
-    denied = _scim_denied(request)
-    if denied is not None:
-        return denied
-    resource = request.path_params["resource"]
-    resource_id = request.path_params.get("id")
-    body: dict[str, Any] | None = None
-    if request.method in {"POST", "PUT", "PATCH"}:
-        try:
-            body = await request.json()
-        except Exception:
-            return _scim_error("invalid JSON", 400)
-        if not isinstance(body, dict):
-            return _scim_error("request body must be a JSON object", 400)
-    query = {key: request.query_params.get(key) or "" for key in ("filter", "startIndex", "count")}
-    path = resource if not resource_id else f"{resource}/{resource_id}"
+async def scim_users_list(request: Request) -> Response:
     try:
-        status, data = await asyncio.to_thread(
-            get_memory_client().scim_request,
-            request.method,
-            path,
-            tenant_id=str(get_runtime().config.gateway.default_tenant_id or "default"),
-            query=query,
-            body=body,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return _scim_error(f"directory unavailable: {exc}", 502)
-    if request.method == "DELETE" and status < 400:
-        return Response(status_code=204)
-    if status < 400:
-        log_event("scim_provisioning", method=request.method, resource=resource, status=status)
-    return _scim_json(data, status)
+        _check_origin(request)
+        _auth(request, {})
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
 
+    try:
+        from ts_harness import scim  # type: ignore[import]
 
-async def scim_service_provider_config(request: Request) -> Response:
-    denied = _scim_denied(request)
-    if denied is not None:
-        return denied
-    return _scim_json(
-        {
-            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-            "patch": {"supported": True},
-            "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
-            "filter": {"supported": True, "maxResults": 500},
-            "changePassword": {"supported": False},
-            "sort": {"supported": False},
-            "etag": {"supported": False},
-            "authenticationSchemes": [
-                {"type": "oauthbearertoken", "name": "Bearer token", "description": "TS_HARNESS_SCIM_TOKEN"}
-            ],
-        }
+        return _json(await scim.list_users(request))
+    except (ImportError, AttributeError):
+        pass
+
+    return _json(
+        {"schemas": [_SCIM_LIST_SCHEMA], "totalResults": 0, "Resources": []},
     )
+
+
+async def scim_users_create(request: Request) -> Response:
+    try:
+        _check_origin(request)
+        body = await request.json()
+        _auth(request, body)
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+
+    try:
+        from ts_harness import scim  # type: ignore[import]
+
+        return _json(await scim.create_user(request, body), status=201)
+    except (ImportError, AttributeError):
+        pass
+
+    user: dict[str, Any] = {
+        "schemas": [_SCIM_USER_SCHEMA],
+        "id": "",
+        "meta": {"resourceType": "User"},
+    }
+    user.update({k: v for k, v in body.items() if k != "schemas"})
+    return _json(user, status=201)
 
 
 # ── Application assembly ──────────────────────────────────────────────────────
@@ -4026,7 +3546,6 @@ routes = [
     Route("/admin/programs", endpoint=admin_programs_list, methods=["GET"]),
     Route("/admin/programs/{id}/status", endpoint=admin_programs_status, methods=["GET"]),
     Route("/admin/programs/{id}/evidence", endpoint=admin_programs_evidence, methods=["GET"]),
-    Route("/admin/programs/{id}/phases/{phase}/activity", endpoint=admin_programs_phase_activity, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",
@@ -4034,21 +3553,11 @@ routes = [
         methods=["POST"],
     ),
     Route("/admin/programs/{id}/cancel", endpoint=admin_programs_cancel, methods=["POST"]),
-    Route("/admin/programs/{id}/access", endpoint=admin_programs_access_get, methods=["GET"]),
-    Route("/admin/programs/{id}/access", endpoint=admin_programs_access_grant, methods=["POST"]),
-    Route(
-        "/admin/programs/{id}/access/{principal_type}/{principal_id:path}",
-        endpoint=admin_programs_access_revoke,
-        methods=["DELETE"],
-    ),
-    Route("/admin/programs/{id}/visibility", endpoint=admin_programs_visibility, methods=["PATCH"]),
-    Route("/admin/directory/search", endpoint=admin_directory_search, methods=["GET"]),
     Route("/admin/programs/{id}/links/{to_id}", endpoint=admin_programs_unlink, methods=["DELETE"]),
     Route("/admin/programs/{id}/links", endpoint=admin_programs_link, methods=["POST"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_get, methods=["GET"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_patch, methods=["PATCH"]),
     Route("/admin/workflows/approve", endpoint=admin_workflows_approve, methods=["POST"]),
-    Route("/admin/workflows/decide", endpoint=admin_workflows_decide, methods=["POST"]),
     Route("/admin/workflows/reject", endpoint=admin_workflows_reject, methods=["POST"]),
     Route("/admin/workflow-definitions", endpoint=admin_workflow_definitions_list, methods=["GET"]),
     Route(
@@ -4150,39 +3659,6 @@ routes = [
         "/admin/mcp-settings/drafts/{draft_id}",
         endpoint=admin_mcp_settings_drafts_update,
         methods=["PUT"],
-    ),
-    Route(
-        "/internal/coding-jobs/{job_id}/github-token",
-        endpoint=internal_coding_job_github_token,
-        methods=["POST"],
-    ),
-    Route("/admin/github", endpoint=admin_github, methods=["GET"]),
-    Route("/admin/github/sync", endpoint=admin_github_sync, methods=["POST"]),
-    Route("/admin/budgets", endpoint=admin_budgets, methods=["GET"]),
-    Route("/admin/budgets/{team_id}/raise", endpoint=admin_budget_raise, methods=["POST"]),
-    Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET"]),
-    Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
-    Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
-    Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),
-    Route(
-        "/admin/projects/{project_id}/repositories/{repository_id}",
-        endpoint=admin_project_repository,
-        methods=["PUT", "DELETE"],
-    ),
-    Route(
-        "/admin/projects/{project_id}/registries",
-        endpoint=admin_project_registries,
-        methods=["GET", "POST"],
-    ),
-    Route(
-        "/admin/projects/{project_id}/registries/{registry_id}",
-        endpoint=admin_project_registry,
-        methods=["PUT", "DELETE"],
-    ),
-    Route(
-        "/admin/projects/{project_id}/registries/{registry_id}/test",
-        endpoint=admin_project_registry_test,
-        methods=["POST"],
     ),
     Route("/admin/agents", endpoint=admin_agents_get, methods=["GET"]),
     Route("/admin/agents/drafts", endpoint=admin_agents_drafts_create, methods=["POST"]),
@@ -4362,9 +3838,8 @@ routes = [
         methods=["GET"],
     ),
     # SCIM v2
-    Route("/scim/v2/ServiceProviderConfig", endpoint=scim_service_provider_config, methods=["GET"]),
-    Route("/scim/v2/{resource:str}", endpoint=scim_resource, methods=["GET", "POST"]),
-    Route("/scim/v2/{resource:str}/{id:str}", endpoint=scim_resource, methods=["GET", "PUT", "PATCH", "DELETE"]),
+    Route("/scim/v2/Users", endpoint=scim_users_list, methods=["GET"]),
+    Route("/scim/v2/Users", endpoint=scim_users_create, methods=["POST"]),
     # GitHub merge webhook bridge
     Route("/webhooks/github", endpoint=github_webhook, methods=["POST"]),
     # Channel webhooks — specific sub-paths before the bare channel route

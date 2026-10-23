@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 import json
 import os
@@ -35,40 +34,6 @@ class DockerExecutionEnvironment:
     def run(self, command: str, *, workspace: str, tenant_id: str) -> dict[str, Any]:
         if os.environ.get("SANDBOX_WORKER_URL"):
             return self._run_worker(command, workspace=workspace, tenant_id=tenant_id)
-        if self.persistent_workspace:
-            from ts_harness.storage.workspace import objects_enabled
-
-            if objects_enabled():
-                return self._run_object_workspace(command, workspace=workspace, tenant_id=tenant_id)
-        return self._run_here(command, workspace=workspace, tenant_id=tenant_id)
-
-    def _run_object_workspace(self, command: str, *, workspace: str, tenant_id: str) -> dict[str, Any]:
-        """Fill a scratch dir from the agent's object workspace, run there, then upload what changed."""
-        import shutil
-        import tempfile
-
-        from ts_harness.storage.backend import scratch_dir
-        from ts_harness.storage.workspace import ObjectWorkspace, WorkspaceTooLarge
-
-        agent_id = os.path.basename(os.path.normpath(workspace))
-        store = ObjectWorkspace(agent_id)
-        parent = scratch_dir() / "sandbox"
-        parent.mkdir(parents=True, exist_ok=True)
-        local = tempfile.mkdtemp(prefix=f"{agent_id}-", dir=parent)
-        try:
-            try:
-                before = store.fill(Path(local))
-            except WorkspaceTooLarge as exc:
-                return {"error": str(exc), "backend": "object_workspace"}
-            result = self._run_here(command, workspace=local, tenant_id=tenant_id, mount_target=workspace)
-            result["workspace_sync"] = store.upload_changes(Path(local), before)
-            return result
-        finally:
-            shutil.rmtree(local, ignore_errors=True)
-
-    def _run_here(
-        self, command: str, *, workspace: str, tenant_id: str, mount_target: str | None = None
-    ) -> dict[str, Any]:
         if not self.enabled:
             if os.environ.get("SANDBOX_STRICT", "true").lower() == "true":
                 return {"error": "sandbox unavailable in strict mode", "backend": "denied"}
@@ -104,14 +69,14 @@ class DockerExecutionEnvironment:
             "--label",
             f"ts-harness.tenant={tenant_id}",
             "-w",
-            mount_target or workspace,
+            workspace,
             "ts-harness-sandbox:latest",
             "sh",
             "-lc",
             command,
         ]
         if self.persistent_workspace:
-            docker_cmd[16:16] = ["-v", f"{workspace}:{mount_target or workspace}:rw"]
+            docker_cmd[16:16] = ["-v", f"{workspace}:{workspace}:rw"]
         try:
             completed = self.runner(docker_cmd, capture_output=True, text=True, timeout=120)
             return {

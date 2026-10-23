@@ -151,8 +151,6 @@ class PhaseGapTests(unittest.TestCase):
             self.assertEqual(result["reply"]["status"], "sent")
             self.assertEqual(sent[0][0]["channel"], "C123")
         finally:
-            if gateway_server._RUNTIME is not None:
-                gateway_server._RUNTIME.shutdown()
             gateway_server._RUNTIME = None
             os.environ.pop("RUNTIME_FAKE_PROVIDER", None)
             os.environ.pop("TS_HARNESS_SKIP_MCP_DISCOVERY", None)

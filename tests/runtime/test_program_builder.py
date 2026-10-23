@@ -668,7 +668,9 @@ class ToolPolicyTests(unittest.TestCase):
 
         names = (
             "ts-harness-runtime.yaml.tmpl",
+            "ts-harness-runtime.yaml.tmpl.lkg",
             "ts-harness-runtime.test.yaml",
+            "ts-harness-runtime.test.yaml.lkg",
         )
         for name in names:
             with self.subTest(name=name):

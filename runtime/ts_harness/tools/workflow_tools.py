@@ -898,7 +898,6 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             link_program_ids=[str(item) for item in link_program_ids],
             parent_program_id=parent_program_id,
             department=department,
-            owner_id=str((session.metadata or {}).get("directory_subject") or "") or None,
         )
     except ValueError as exc:
         return {"error": str(exc)}

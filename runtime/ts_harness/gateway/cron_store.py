@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from croniter import croniter
 
@@ -18,24 +17,7 @@ def cron_config_path() -> Path:
     return Path(os.environ.get("TS_HARNESS_CRON_CONFIG", "config/runtime-cron-jobs.json"))
 
 
-@contextlib.contextmanager
-def editing_cron_file(actor: str = "") -> Iterator[None]:
-    """Hold the cron file for a read-modify-write; in Postgres mode the change commits as one shared-tree push."""
-    from ts_harness.storage.shared_tree import cron_tree
-
-    tree = cron_tree()
-    if tree is None:
-        yield
-        return
-    with tree.transaction("cron-file", [cron_config_path().name], actor=actor):
-        yield
-
-
 def load_cron_file(path: Path | None = None) -> list[dict[str, Any]]:
-    if path is None:
-        from ts_harness.storage.shared_tree import sync_cron
-
-        sync_cron()
     cfg = path or cron_config_path()
     if not cfg.exists():
         return []
@@ -45,7 +27,8 @@ def load_cron_file(path: Path | None = None) -> list[dict[str, Any]]:
     return [dict(item) for item in list(data.get("jobs") or [])]
 
 
-def _write_cron_file(jobs: list[dict[str, Any]], cfg: Path) -> None:
+def save_cron_file(jobs: list[dict[str, Any]], path: Path | None = None) -> Path:
+    cfg = path or cron_config_path()
     cfg.parent.mkdir(parents=True, exist_ok=True)
     payload = {"jobs": jobs}
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -55,15 +38,6 @@ def _write_cron_file(jobs: list[dict[str, Any]], cfg: Path) -> None:
         handle.write(text)
         tmp = Path(handle.name)
     tmp.replace(cfg)
-
-
-def save_cron_file(jobs: list[dict[str, Any]], path: Path | None = None) -> Path:
-    cfg = path or cron_config_path()
-    if path is None:
-        with editing_cron_file():
-            _write_cron_file(jobs, cfg)
-    else:
-        _write_cron_file(jobs, cfg)
     return cfg
 
 

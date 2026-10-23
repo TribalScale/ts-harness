@@ -113,13 +113,3 @@ output "service_account_email" {
   description = "Runtime service account email"
   value       = google_service_account.runtime.email
 }
-
-output "skills_bucket" {
-  description = "GCS bucket for managed skill files (object_backend=gcs)"
-  value       = try(google_storage_bucket.skills[0].name, "")
-}
-
-output "workspaces_bucket" {
-  description = "GCS bucket for agent workspaces (object_backend=gcs)"
-  value       = try(google_storage_bucket.workspaces[0].name, "")
-}

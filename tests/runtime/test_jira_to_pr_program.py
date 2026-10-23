@@ -96,7 +96,7 @@ class JiraToPrProgramTests(unittest.TestCase):
             "intents": [
                 {
                     "id": "jira_to_pr",
-                    "signals": ["my tickets", "pick up my jira", r"implement [a-z][a-z0-9]+-\d+"],
+                    "signals": ["my tickets", "pick up my jira", "implement TFS-"],
                     "program_type": "jira_to_pr",
                     "entry_phase": "pick",
                     "policy": {

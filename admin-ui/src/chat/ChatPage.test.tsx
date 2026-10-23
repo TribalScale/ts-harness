@@ -76,46 +76,6 @@ it("sends text and renders output.summary", async () => {
   fetchMock.mockRestore();
 });
 
-it("shows working while a program status still means work is in progress", async () => {
-  mockFetch((url) => {
-    if (url.includes("/messages")) {
-      return jsonResponse({
-        program_id: "program-1",
-        messages: [{ role: "assistant", content: "Drafting the PRD." }],
-      });
-    }
-    if (url.includes("/admin/programs/program-1/status")) {
-      return jsonResponse({ status: "pending" });
-    }
-    return jsonResponse({ sessions: THREADS });
-  });
-
-  renderPage(<ChatPage sessionId="session-1" onSelectSession={() => undefined} />);
-  expect(await screen.findByText("Working")).toBeInTheDocument();
-});
-
-it("stays quiet when the program is waiting or finished", async () => {
-  const fetchMock = mockFetch((url) => {
-    if (url.includes("/messages")) {
-      return jsonResponse({
-        program_id: "program-1",
-        messages: [{ role: "assistant", content: "Drafting the PRD." }],
-      });
-    }
-    if (url.includes("/admin/programs/program-1/status")) {
-      return jsonResponse({ status: "blocked" });
-    }
-    return jsonResponse({ sessions: THREADS });
-  });
-
-  renderPage(<ChatPage sessionId="session-1" onSelectSession={() => undefined} />);
-  expect(await screen.findByText("Drafting the PRD.")).toBeInTheDocument();
-  await waitFor(() =>
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/status"))).toBe(true)
-  );
-  expect(screen.queryByText("Working")).not.toBeInTheDocument();
-});
-
 it("shows an intentional start state", async () => {
   mockFetch(() => jsonResponse({ sessions: [] }));
   renderPage(<ChatPage onSelectSession={() => undefined} />);
@@ -456,46 +416,6 @@ it("hides typeahead once the caret leaves the leading slash token", async () => 
   expect(screen.getByLabelText("Message")).toHaveValue("/j leftover");
 });
 
-it("sends the open chat binding instead of the leftover browser binding", async () => {
-  sessionStorage.setItem("ec_web_binding", "web:leftover-chat");
-  let posted: { session_id?: string; thread_id?: string; binding_key?: string } | undefined;
-  mockFetch((url, init) => {
-    if (url.includes("/messages")) {
-      return jsonResponse({ messages: [{ role: "assistant", content: "What should the mock engine do?" }] });
-    }
-    if (url.startsWith("/admin/sessions")) {
-      return jsonResponse({
-        sessions: [
-          { session_id: "openchat1", agent_id: "orchestrator", binding_key: "web:open-chat" },
-          { session_id: "oldchat01", agent_id: "orchestrator", binding_key: "web:leftover-chat" },
-        ],
-      });
-    }
-    if (url === "/session/message") {
-      posted = JSON.parse(String(init?.body));
-      return jsonResponse({
-        status: "ok",
-        session_id: "openchat1",
-        output: { summary: "Thanks — I recorded your answers." },
-      });
-    }
-    throw new Error(`Unexpected URL ${url}`);
-  });
-
-  renderPage(<StatefulChat />);
-  await userEvent.click(await screen.findByRole("button", { name: /openchat/ }));
-  await userEvent.type(screen.getByLabelText("Message"), "Use a local timer");
-  await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  await waitFor(() =>
-    expect(posted).toMatchObject({
-      session_id: "openchat1",
-      thread_id: "web:open-chat",
-      binding_key: "web:open-chat",
-      text: "Use a local timer",
-    })
-  );
-});
-
 it("shows the start state on a narrow screen", async () => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -514,17 +434,4 @@ it("shows the start state on a narrow screen", async () => {
   expect(screen.getByLabelText("Message")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "New chat" }));
   expect(screen.getByLabelText("Message")).toBeInTheDocument();
-});
-
-it("keeps the caret where the user is editing", async () => {
-  mockFetch((url) => {
-    if (url.startsWith("/admin/sessions")) return jsonResponse({ sessions: [] });
-    return jsonResponse({});
-  });
-  renderPage(<ChatPage onSelectSession={() => undefined} />);
-  const input = (await screen.findByRole("textbox", { name: "Message" })) as HTMLTextAreaElement;
-  await userEvent.type(input, "hello world");
-  await userEvent.type(input, "X", { initialSelectionStart: 5, initialSelectionEnd: 5 });
-  expect(input.value).toBe("helloX world");
-  expect(input.selectionStart).toBe(6);
 });

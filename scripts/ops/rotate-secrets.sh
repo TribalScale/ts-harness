@@ -46,7 +46,7 @@ source_refreshed_secrets() {
     fi
     # shellcheck disable=SC1090
     source "$SECRETS_ENV"
-    export GATEWAY_TOKEN MEMORY_API_TOKEN SANDBOX_WORKER_TOKEN CODING_JOB_SECRET
+    export GATEWAY_TOKEN MEMORY_API_TOKEN SANDBOX_WORKER_TOKEN
     export SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_SIGNING_SECRET
     export OPENAI_API_KEY VOYAGE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY ANTHROPIC_API_KEY
     export TS_HARNESS_DB_PASSWORD
@@ -67,11 +67,6 @@ reconstruct_enterprise_compose_files() {
     COMPOSE_FILES=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.memory-api.yml" -f "$ENTERPRISE_DOCKER_DIR/docker-compose.agent-runtime.yml")
     [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml" ]] && \
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml")
-    [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && "${CODING_JOBS_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml" ]] && \
-        COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml")
-    [[ "${LLM_PROXY_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml" ]] && \
-        COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml")
-    return 0
 }
 
 refresh_compose_env() {
@@ -88,7 +83,6 @@ refresh_compose_env() {
             echo "export GATEWAY_TOKEN=$(printf '%q' "${GATEWAY_TOKEN:-}")"
             echo "export MEMORY_API_TOKEN=$(printf '%q' "${MEMORY_API_TOKEN:-}")"
             echo "export SANDBOX_WORKER_TOKEN=$(printf '%q' "${SANDBOX_WORKER_TOKEN:-}")"
-            echo "export CODING_JOB_SECRET=$(printf '%q' "${CODING_JOB_SECRET:-}")"
             echo "export AGENT_RUNTIME_URL=$(printf '%q' "${AGENT_RUNTIME_URL:-http://127.0.0.1:18789}")"
             echo "COMPOSE_FILES_SERIALIZED=$(printf '%q' "$(printf '%s\n' "${COMPOSE_FILES[@]}")")"
         } > "$COMPOSE_ENV"
@@ -104,17 +98,9 @@ recreate_secret_consumers() {
     echo "memory-api recreated."
     docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate sandbox-worker
     echo "sandbox-worker recreated."
-    if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
-        docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate llm-proxy
-        echo "llm-proxy recreated."
-    fi
     if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
         docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate workflow-runner
         echo "workflow-runner recreated."
-        if [[ "${CODING_JOBS_ENABLED:-false}" == "true" ]]; then
-            docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate coding-launcher
-            echo "coding-launcher recreated."
-        fi
     fi
 }
 
@@ -127,8 +113,6 @@ persist_runtime_secret_keys
 refresh_compose_env
 # shellcheck disable=SC1090
 source "$COMPOSE_ENV"
-TS_HARNESS_SESSION_DB_URL="$(session_db_url)"
-export TS_HARNESS_SESSION_DB_URL
 reconstruct_enterprise_compose_files
 recreate_secret_consumers
 

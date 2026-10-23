@@ -14,16 +14,11 @@ cp config/install/aws.example.yaml /path/to/install.yaml   # or gcp.example.yaml
 # Validate config + local prerequisites (no cloud apply)
 ./scripts/install.sh validate --cloud aws --config /path/to/install.yaml
 
-# Plan to a file, review, then apply exactly that plan
-./scripts/install.sh plan   --cloud aws --config /path/to/install.yaml --plan-file prod.tfplan
-./scripts/install.sh apply  --cloud aws --config /path/to/install.yaml --plan-file prod.tfplan
+# Plan / apply / destroy (destroy requires --confirm <environment>)
+./scripts/install.sh plan   --cloud aws --config /path/to/install.yaml
+./scripts/install.sh apply  --cloud aws --config /path/to/install.yaml
 ./scripts/install.sh status --config /path/to/install.yaml
-# destroy requires --confirm <environment>
 ```
-
-The Terraform backend location comes from `terraform_state` in the install
-config; the committed `backend.tf` in each root is intentionally empty. For
-pipeline runs (AWS), see [Run from CI](aws-install.md#run-from-ci).
 
 For GCP, use `--cloud gcp` and `config/install/gcp.example.yaml` (or your copy).
 

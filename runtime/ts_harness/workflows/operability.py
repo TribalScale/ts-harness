@@ -229,33 +229,3 @@ def build_operability_status(
         "compensation": compensation,
         "failed_stage": artifacts.get("failed_stage"),
     }
-
-
-_CHILD_KEYS = ("waiting_on", "last_error", "active_step")
-
-
-def _from_raw(status: dict[str, Any]) -> dict[str, Any]:
-    tasks = status.pop("active_tasks", None)
-    workflow = status.pop("active_workflow", None)
-    if not status.get("active_workflow_id") or (tasks is None and workflow is None):
-        return {}
-    artifacts = status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
-    return build_operability_status(workflow=dict(workflow or {}), tasks=list(tasks or []), artifacts=artifacts)
-
-
-def with_operability(status: dict[str, Any] | None) -> dict[str, Any]:
-    """Add the operability fields to a program status from the memory API, which returns raw tasks."""
-    status = dict(status or {})
-    status.update(_from_raw(status))
-    children = status.get("children")
-    if isinstance(children, list):
-        enriched = []
-        for child in children:
-            child = dict(child) if isinstance(child, dict) else child
-            if isinstance(child, dict):
-                derived = _from_raw(child)
-                child.pop("artifacts", None)
-                child.update({key: derived[key] for key in _CHILD_KEYS if derived.get(key)})
-            enriched.append(child)
-        status["children"] = enriched
-    return status

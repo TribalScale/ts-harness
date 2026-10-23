@@ -101,17 +101,12 @@ class ChannelIntentTests(unittest.TestCase):
             "show my tickets",
             "pick up my jira for this sprint",
             "implement TFS-184",
-            "please implement pay2-42 today",
         ]
         for text in cases:
             intent = classify_channel_intent(text, {}, config=self.config)
             self.assertEqual(intent.kind, "jira_to_pr", msg=text)
             self.assertEqual(intent.program_type, "jira_to_pr")
             self.assertEqual(intent.entry_phase, "pick")
-
-        for text in ("implement retries in checkout", "implement step-by-step logging"):
-            intent = classify_channel_intent(text, {}, config=self.config)
-            self.assertNotEqual(intent.kind, "jira_to_pr", msg=text)
 
         defect = classify_channel_intent("fix bug in checkout retry", {}, config=self.config)
         self.assertEqual(defect.kind, "bug_to_jira")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isJwt, oidcTokenExchangeBody, pickJwt, rolesFromJwt, sessionToken } from "./session";
+import { isJwt, oidcTokenExchangeBody, pickJwt, rolesFromJwt } from "./session";
 
 describe("isJwt", () => {
   it("accepts a three-segment token", () => {
@@ -48,20 +48,5 @@ describe("rolesFromJwt", () => {
     expect(rolesFromJwt(tokenWith({ "https://ts-harness/roles": ["admin"] }))).toEqual([
       "admin",
     ]);
-  });
-});
-
-describe("sessionToken", () => {
-  it("sends the ID token when the provider validates ID tokens", () => {
-    expect(sessionToken("id", { access_token: "aaa.bbb.ccc", id_token: "ddd.eee.fff" })).toBe("ddd.eee.fff");
-  });
-
-  it("prefers a JWT access token otherwise", () => {
-    expect(sessionToken("access", { access_token: "aaa.bbb.ccc", id_token: "ddd.eee.fff" })).toBe("aaa.bbb.ccc");
-    expect(sessionToken(undefined, { access_token: "opaque", id_token: "ddd.eee.fff" })).toBe("ddd.eee.fff");
-  });
-
-  it("returns nothing for id mode without an ID token", () => {
-    expect(sessionToken("id", { access_token: "aaa.bbb.ccc" })).toBe("");
   });
 });

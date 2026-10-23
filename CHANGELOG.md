@@ -17,53 +17,6 @@ First public release.
 - Secret scanning with gitleaks in CI.
 - Governance files: code of conduct, issue and pull request templates,
   CODEOWNERS, Dependabot configuration, and this changelog.
-- `deploy-aws.yml` workflow: plans, waits for environment approval, then applies
-  the saved plan.
-- Installer `plan --plan-file` / `apply --plan-file` and `plan --detailed-exitcode`.
-- Optional `terraform_state.lock_table` in the install contract for DynamoDB locking.
-- `validate` fails with `TERRAFORM_TOO_OLD` when S3-native locking needs a newer
-  Terraform.
-- Cloud bootstrap starts the admin console. Phase 12 adds the `admin-ui` service,
-  and the Tailscale URL now serves the console, with nginx proxying every
-  gateway route.
-- Multi-user scale-out ([design](docs/architecture/multi-user-scale-out.md)).
-  `deployment_profile = scale_out` turns it on; `single_host` remains the
-  default and keeps today's one-host install.
-  - Identity: provider-neutral OIDC with presets (Auth0 first), teams from
-    identity groups, a people directory, directory sync and SCIM offboarding,
-    and programs that are private by default with sharing.
-  - Coding jobs: the deliver stage runs as a queued coding job on a local
-    Docker worker or, on `scale_out`, an ECS Fargate task in a private VPC.
-    Workers egress through a proxy and hold only a job token. A watchdog
-    handles lost and overrunning jobs. Projects add worker sizing and private
-    package registries (migrations 033 and 034).
-  - GitHub: App installation tokens per repository with the PAT as fallback,
-    webhooks per host, and a GitHub tab in System (migration 035).
-  - Delivery: repositories per project, a repository per work order, and
-    `deploy_release` 3.0.0 with one `release_track` per repository, ordered by
-    cross-repository dependencies (migration 036).
-  - Throughput: batch task claims by lane (fast, agent, coding) with fair
-    ordering per requester and team, coding quotas, several workflow runners
-    with workflow locks, and two runtime and memory API replicas behind
-    PgBouncer (migrations 037 to 039).
-  - Cost: an LLM proxy meters every model call per team and program with
-    shared rate limits. Team budgets default to 5,000 USD a month, with a Slack
-    warning at 80%. At 100% the team's agent and coding work is held until a
-    manager (up to 10,000) or an admin raises the budget on the new Budgets
-    page (migrations 040 and 041).
-  - Monitoring: a scale-out CloudWatch dashboard and alarms for coding jobs
-    queued over 15 minutes, lost-job rate and GitHub quota under 10%, with the
-    same numbers as Prometheus gauges (migration 042).
-  - Shared state ([runbook](docs/runbooks/shared-state.md)):
-    `TS_HARNESS_STATE_BACKEND=postgres` keeps workflow definitions, the cron
-    file, scheduler and delegation state, audit events and Slack dedup in
-    Postgres, and `TS_HARNESS_OBJECT_BACKEND=s3|gcs` keeps managed skills
-    (indexed in Postgres, immutable approved versions) and agent workspaces in
-    buckets that Terraform creates on AWS and GCP (migration 043). Replicas read
-    local mirrors and write under Postgres locks. `scale_out` turns both on;
-    `single_host` keeps files on the host. `scripts/ops/migrate-host-state.sh`
-    imports, verifies and exports for rollback; existing `scale_out` installs
-    should pin both flags to `local` until they import.
 
 ### Changed
 
@@ -74,53 +27,9 @@ First public release.
   command, the webhook signature, and Terraform addresses use TS Harness names.
 - The agent-runtime image builds `gh`, gitleaks, and osv-scanner from pinned
   release commits with a current Go toolchain.
-- Terraform backends are committed as empty `backend "s3" {}` / `backend "gcs" {}`
-  blocks; the installer supplies the location from `terraform_state`. Remove any
-  hand-copied `infra/<cloud>/backend.tf` before pulling. The `backend.tf.example`
-  files are gone.
-- Provider lock files (`infra/aws/.terraform.lock.hcl`, `infra/gcp/.terraform.lock.hcl`)
-  are committed.
-- The AWS providers refuse credentials for any account other than `aws_account_id`.
-- Installer Terraform output streams live instead of printing after each command.
-- CI pins Terraform 1.10.5.
-- The `jira_to_pr` routing signal matches `implement` followed by a Jira key in
-  any project (`implement [a-z][a-z0-9]+-\d+`) instead of one internal project
-  prefix.
-- The release workflow no longer has a placeholder cosign signing step or the
-  `id-token: write` permission it requested. Images are not signed until they
-  are published.
-- The release job drops the unused `packages: write` permission and gains
-  `security-events: write`, which the Trivy SARIF upload needs. Upload failures
-  now fail the job instead of being ignored.
-
-### Removed
-
-- The committed `.lkg` last-known-good config copies. The gateway writes them
-  at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
 
 - Workflow dispatch errors returned a server error instead of a blocked result.
 - The embeddings preflight never detected a missing API key.
 - Migrations 018 and 024 now run inside a transaction.
-- AWS ignored `secret_prefix`: secrets and the SSM runtime-config were always
-  named after `project_name`, while the installer printed population commands
-  using `secret_prefix`. AWS now uses `secret_prefix` (falling back to
-  `project_name`), as GCP does. `validate` fails with `SECRET_PREFIX_CHANGED`
-  instead of renaming an existing install's secrets.
-- The installer passed a relative `-var-file` path that broke under `-chdir`
-  when `--state-dir` was relative.
-- Bootstrap stopped after phase 14 and still reported success: the phase list
-  was read from stdin, which `docker compose exec` drained. Phases 15, 16, and
-  99 now run.
-- The agent-runtime image omitted `evals/`, so the `agent_redteam` and
-  `agent_output_judge` release gates failed with missing datasets.
-- The admin console nginx resolved `agent-runtime` once at startup, so it
-  returned errors after that container was recreated.
-- Cloud installs never set `TS_HARNESS_SESSION_DB_URL`, so sessions and
-  transcripts stayed in JSONL files on the host and Google OAuth token storage
-  could not work. Bootstrap now points them at the install's Postgres, and
-  `sync-compose-db-env.sh` recreates agent-runtime after a DB password change.
-- The agent-runtime image's gitleaks build upgrades
-  `github.com/klauspost/compress` from v1.17.11 to v1.18.7, clearing
-  CVE-2026-63209 (HIGH), which failed the release-gates Trivy scan.
