@@ -45,6 +45,7 @@ locals {
     CODING_ECS_SECURITY_GROUPS            = join(",", aws_security_group.coding_worker[*].id)
     CODING_EGRESS_PROXY_SERVICE           = try(aws_ecs_service.egress_proxy[0].name, "")
     CODING_EGRESS_DOMAINS_PARAMETER       = try(aws_ssm_parameter.egress_extra_domains[0].name, "")
+    CODING_EGRESS_PROXY_URL               = local.egress_proxy_url
   }
 }
 

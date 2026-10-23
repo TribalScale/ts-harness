@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
@@ -4521,7 +4522,7 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, scim_routes.ScimError(str(exc), 500).to_scim())
 
-    _WORKER_ACTIONS = {("GET", "spec"), ("POST", "heartbeat"), ("POST", "complete")}
+    _WORKER_ACTIONS = {("GET", "spec"), ("GET", "registries"), ("POST", "heartbeat"), ("POST", "complete")}
 
     def _coding_job_worker_authorized(self, method: str) -> bool:
         """A worker's job token opens only its own job's spec, heartbeat and complete."""
@@ -4561,6 +4562,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, body))
                 elif method == "GET" and len(parts) == 2 and parts[1] == "spec":
                     self._send_json(200, coding_job_routes.get_job_spec(conn, parts[0]))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "registries":
+                    self._send_json(200, project_routes.job_registries(conn, parts[0]))
                 elif method == "POST" and len(parts) == 2:
                     job_id, action = parts
                     if action == "heartbeat":
@@ -4584,6 +4587,53 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def _projects(self, method: str) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["registry-hosts"] and method == "GET":
+                    result = project_routes.registry_hosts(conn)
+                elif parts == ["projects"] and method == "GET":
+                    result = project_routes.list_projects(conn, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                elif parts == ["projects"] and method == "POST":
+                    result = project_routes.create_project(conn, body)
+                elif len(parts) == 2 and method == "GET":
+                    result = project_routes.get_project(conn, parts[1])
+                elif len(parts) == 2 and method == "PUT":
+                    result = project_routes.update_project(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "registries" and method == "GET":
+                    result = project_routes.list_registries(conn, parts[1])
+                elif len(parts) == 3 and parts[2] == "registries" and method == "POST":
+                    result = project_routes.create_registry(conn, parts[1], body)
+                elif len(parts) == 4 and parts[2] == "registries" and method == "PUT":
+                    result = project_routes.update_registry(conn, parts[1], parts[3], body)
+                elif len(parts) == 4 and parts[2] == "registries" and method == "DELETE":
+                    result = project_routes.delete_registry(conn, parts[1], parts[3], body)
+                elif len(parts) == 5 and parts[2] == "registries" and parts[4] == "tested" and method == "POST":
+                    result = project_routes.record_registry_test(conn, parts[1], parts[3], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _is_projects_path(path: str) -> bool:
+        return path == "/registry-hosts" or path == "/projects" or path.startswith(("/projects?", "/projects/"))
+
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()
         if not token:
@@ -4604,6 +4654,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/scim/"):
             self._scim("GET")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("GET")
             return
         if self.path == "/coding-jobs" or self.path.startswith(("/coding-jobs?", "/coding-jobs/")):
             self._coding_jobs("GET")
@@ -4960,6 +5013,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/coding-jobs/"):
             self._coding_jobs("POST")
             return
+        if self._is_projects_path(self.path):
+            self._projects("POST")
+            return
         try:
             body = self._read_body()
         except json.JSONDecodeError as exc:
@@ -5123,6 +5179,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/scim/"):
             self._scim("PUT")
             return
+        if self._is_projects_path(self.path):
+            self._projects("PUT")
+            return
         self._send_json(404, {"error": "not found"})
 
     def do_PATCH(self):
@@ -5164,6 +5223,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/scim/"):
             self._scim("DELETE")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("DELETE")
             return
         if self.path.startswith("/programs/") and "/access/" in self.path:
             from urllib.parse import unquote

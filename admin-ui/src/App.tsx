@@ -36,6 +36,7 @@ interface RouteState {
   mcpName?: string;
   agentId?: string;
   skillId?: string;
+  projectId?: string;
   attachSkill?: string;
   attachStage?: string;
   attachJob?: string;
@@ -194,6 +195,7 @@ export function parseHash(hash = window.location.hash): RouteState {
       mcpName: section === "mcp" && rest ? decodeURIComponent(rest) : undefined,
       agentId: section === "agents" && rest ? decodeURIComponent(rest) : undefined,
       skillId: section === "skills" && rest ? decodeURIComponent(rest) : undefined,
+      projectId: section === "projects" && rest ? decodeURIComponent(rest) : undefined,
       ...attach,
     };
   }
@@ -533,6 +535,7 @@ export default function App() {
           mcpName={route.mcpName}
           agentId={route.agentId}
           skillId={route.skillId}
+          projectId={route.projectId}
           attachSkill={route.attachSkill}
           attachJob={route.attachJob}
           attachProgram={route.attachProgram}

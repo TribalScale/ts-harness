@@ -381,3 +381,31 @@ export interface ArtifactRow {
   href?: string;
   expandable: boolean;
 }
+
+export type RegistryType = "npm" | "pypi" | "maven" | "docker";
+
+export interface Project {
+  id: string;
+  tenant_id: string;
+  key: string;
+  name: string;
+  team_slug: string | null;
+  jira_project_key: string | null;
+  default_base_branch: string | null;
+  worker_cpu: number | null;
+  worker_memory_mb: number | null;
+  can_manage?: boolean;
+}
+
+export interface ProjectRegistry {
+  id: string;
+  project_id: string;
+  type: RegistryType;
+  url: string;
+  scope: string | null;
+  username: string | null;
+  has_credential: boolean;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_error: string | null;
+}

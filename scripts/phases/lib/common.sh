@@ -246,6 +246,13 @@ write_runtime_env_file() {
         MS_GRAPH_CLIENT_SECRET \
         GOOGLE_DIRECTORY_ADMIN_SUBJECT \
         GOOGLE_DIRECTORY_CUSTOMER \
+        CLOUD_PROVIDER \
+        CLOUD_REGION \
+        SECRETS_PREFIX \
+        CODING_ECS_CLUSTER \
+        CODING_EGRESS_PROXY_SERVICE \
+        CODING_EGRESS_DOMAINS_PARAMETER \
+        CODING_EGRESS_PROXY_URL \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -420,6 +427,7 @@ INSTANCE_ENV_KEYS=(
     CODING_ECS_SECURITY_GROUPS
     CODING_EGRESS_PROXY_SERVICE
     CODING_EGRESS_DOMAINS_PARAMETER
+    CODING_EGRESS_PROXY_URL
 )
 
 instance_env_path() {

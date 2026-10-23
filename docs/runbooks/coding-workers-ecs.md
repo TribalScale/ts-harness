@@ -65,6 +65,31 @@ task execution role. They never receive `memory-api-token` or
    `aws ecs list-tasks --cluster <project>-coding --started-by coding-job-<id prefix>`.
 5. Logs: CloudWatch group `/<project>/coding-jobs`, stream `job/coding-worker/<task id>`.
 
+## Project sizing and package registries
+
+**System → Projects** in the admin console. Admins create projects and set the
+owning team; admins and that team's managers change the rest.
+
+- **Worker CPU / memory** override the task size for that project's jobs. The
+  pair must be a valid Fargate combination (for example 4 vCPU with 8–30 GiB);
+  leave both empty for the task definition default. Local Docker launches use
+  the same values for `--cpus` and `--memory`.
+- **Package registries** (npm, PyPI, Maven, Docker). The token is stored in
+  Secrets Manager as `<secrets prefix>/projects/<project id>/registries/<registry id>`
+  and is never returned. **Test** sends one authenticated request through the
+  egress proxy (`CODING_EGRESS_PROXY_URL`) and records the result.
+- Saving or deleting a registry rewrites the
+  `/<prefix>/egress-extra-domains` SSM parameter with every registry host and,
+  when it changed, forces a new deployment of the `egress-proxy` service. The
+  proxy takes about a minute to roll; jobs started during the roll may see a
+  403 from the proxy once and retry.
+- A worker fetches its registries with its job token right after it starts
+  and writes `~/.npmrc`, `~/.config/pip/pip.conf`, `~/.m2/settings.xml` and
+  `~/.docker/config.json` with mode 600. If that fails, the job finishes with
+  "package registry setup failed" and no code runs.
+- Registry credentials need `CLOUD_PROVIDER=aws`; on other providers saving a
+  credential returns an error.
+
 ## Failure modes
 
 | Symptom | Likely cause | Fix |
@@ -75,6 +100,8 @@ task execution role. They never receive `memory-api-token` or
 | Task stops with `ResourceInitializationError: unable to pull secrets` | Secret missing or execution role scope | Populate the secret; re-apply Terraform |
 | Job goes lost with "no heartbeat" right after start | Worker cannot reach the memory API load balancer | Check the host security group admits port 18792 from the load balancer and the target group is healthy (`/health`) |
 | Clone or `npm install` fails with 403 from the proxy | Domain not on the egress allowlist | Add it to `egress_allowed_domains` or the project registries; the proxy restarts on change |
+| Job fails with "package registry setup failed" | Memory API cannot read the registry secret (role scope or deleted secret) | Check the host role has `secretsmanager:GetSecretValue` on `<prefix>/projects/*`; re-save the registry token |
+| Registry **Test** shows "request failed: ConnectTimeout" | Host cannot reach the egress proxy | Check the proxy security group admits 3128 from the host security group |
 | Cancelled job keeps running for a minute | Launcher stops tasks on its next tick (about 5 s) once it sees the job cancelled | None; the task gets `StopTask` with reason "coding job cancelled or lost" |
 
 ## Security notes

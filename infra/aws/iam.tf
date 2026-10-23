@@ -165,3 +165,26 @@ resource "aws_iam_role_policy" "coding_launcher" {
   role   = aws_iam_role.harness.id
   policy = data.aws_iam_policy_document.coding_launcher[0].json
 }
+
+# Project package registry credentials: the admin runtime writes them, the
+# memory API reads them for the coding job that needs them.
+data "aws_iam_policy_document" "project_registry_secrets" {
+  statement {
+    sid = "ManageProjectRegistrySecrets"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:PutSecretValue",
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:DeleteSecret",
+      "secretsmanager:TagResource",
+    ]
+    resources = ["arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.runtime_config.account_id}:secret:${local.secret_prefix_effective}/projects/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "project_registry_secrets" {
+  name   = "${var.project_name}-project-registry-secrets"
+  role   = aws_iam_role.harness.id
+  policy = data.aws_iam_policy_document.project_registry_secrets.json
+}

@@ -86,6 +86,17 @@ resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_workers" {
   description                  = "Proxy port from coding workers"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_host" {
+  count = local.ecs_enabled ? 1 : 0
+
+  security_group_id            = aws_security_group.egress_proxy[0].id
+  from_port                    = 3128
+  to_port                      = 3128
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.harness.id
+  description                  = "Registry tests from the admin runtime"
+}
+
 resource "aws_vpc_security_group_egress_rule" "egress_proxy_https" {
   count = local.ecs_enabled ? 1 : 0
 

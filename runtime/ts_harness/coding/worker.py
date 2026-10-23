@@ -53,6 +53,9 @@ class JobApi:
     def spec(self) -> dict[str, Any]:
         return self._request("GET", "spec")
 
+    def registries(self) -> list[dict[str, Any]]:
+        return list(self._request("GET", "registries").get("registries") or [])
+
     def heartbeat(self, last_output: str | None) -> str:
         return str(self._request("POST", "heartbeat", {"last_output": last_output}).get("status") or "")
 
@@ -81,12 +84,25 @@ def _exit_now() -> None:
     os._exit(143)
 
 
+def _configure_registries(api: JobApi, home: Path) -> list[str]:
+    from ts_harness.coding.registries import write_registry_config
+
+    try:
+        registries = api.registries()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        raise
+    return write_registry_config(registries, home)
+
+
 def run_job(
     api: JobApi,
     *,
     run: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     on_cancel: Callable[[], None] = _exit_now,
+    home: Path | None = None,
 ) -> int:
     """Run the job and report it; returns the process exit code."""
     job = api.spec()
@@ -94,6 +110,14 @@ def run_job(
         _log("coding_job_not_runnable", job_id=api.job_id, status=job.get("status"))
         return 0
     spec = dict(job.get("spec") or {})
+    try:
+        configured = _configure_registries(api, home or Path(os.environ.get("HOME") or "/root"))
+    except Exception as exc:  # noqa: BLE001
+        api.complete(error=f"package registry setup failed: {exc}")
+        _log("coding_job_registry_setup_failed", job_id=api.job_id, error=str(exc)[:300])
+        return 1
+    if configured:
+        _log("coding_job_registries_configured", job_id=api.job_id, types=configured)
     if run is None:
         from ts_harness.implementation.coding_job import run_coding_request
 

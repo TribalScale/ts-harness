@@ -88,6 +88,7 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
         "requested_by", "repo_url", "base_branch", "work_order_id", "status", "launcher",
         "runner_ref", "attempt", "heartbeat_at", "last_output", "result", "error",
         "created_at", "claimed_at", "started_at", "finished_at", "consumed_at",
+        "worker_cpu", "worker_memory_mb",
     )
     job = {key: row.get(key) for key in keys}
     for key in ("id", "workflow_id", "task_id", "program_id"):
@@ -183,6 +184,25 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {**_public(row), "created": True}
 
 
+def _project_sizing(cur, rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
+    keys = {(r["tenant_id"], r["project_id"]) for r in rows if r.get("project_id")}
+    if not keys:
+        return {}
+    cur.execute(
+        """
+        SELECT tenant_id, key, worker_cpu, worker_memory_mb FROM projects
+         WHERE (tenant_id, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))
+        """,
+        ([k[0] for k in keys], [k[1] for k in keys]),
+    )
+    sizing: dict[tuple[str, str], dict[str, int]] = {}
+    for row in cur.fetchall():
+        values = {k: row[k] for k in ("worker_cpu", "worker_memory_mb") if row.get(k)}
+        if values:
+            sizing[(row["tenant_id"], row["key"])] = values
+    return sizing
+
+
 def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     """Claim queued jobs up to ``max_running`` jobs starting or running in total."""
     launcher = str(body.get("launcher") or "local")
@@ -222,6 +242,8 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
                     (launcher, ids),
                 )
                 claimed = sorted(cur.fetchall(), key=lambda r: r["created_at"])
+                sizing = _project_sizing(cur, claimed)
+                claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {})} for r in claimed]
     conn.commit()
     return {
         "running": running,

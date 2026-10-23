@@ -634,7 +634,7 @@ project first needs one, with no config file or deploy.
 
 | Field | Example |
 | --- | --- |
-| Type | npm, PyPI, Maven, NuGet, Go proxy, container registry |
+| Type | npm, PyPI, Maven, container registry (NuGet and Go proxy later) |
 | URL | `https://npm.pkg.github.com`, `https://<company>.jfrog.io/artifactory/api/pypi/pypi/simple` |
 | Scope (npm only) | `@company` |
 | Credential | token, or username and password |
@@ -644,15 +644,19 @@ project first needs one, with no config file or deploy.
   or deleted.
 - **Test connection** makes one authenticated request from the control plane
   through the egress proxy and reports success or the HTTP error.
-- Saving a registry adds its host to that project's egress allowlist.
-- When a coding job starts, the launcher passes the project's registry list,
-  and the worker writes the package-manager config (`.npmrc`, `pip.conf`,
-  `settings.xml`, Docker credentials) inside its own disk. Only jobs for that
-  project receive the credentials, and they are never written into the
-  repository, the PR or logs.
+- Saving a registry adds its host to the egress allowlist. The proxy has one
+  allowlist shared by every project, so a registry host is reachable from any
+  worker; the credential is not.
+- When a coding job starts, the worker fetches its project's registries with
+  its job token (`GET /coding-jobs/{id}/registries`; the memory API reads the
+  secrets) and writes the package-manager config (`.npmrc`, `pip.conf`,
+  `settings.xml`, Docker credentials) inside its own disk. ECS RunTask
+  overrides cannot add secrets, which is why the launcher does not pass them.
+  Only jobs for that project receive the credentials, and they are never
+  written into the repository, the PR or logs.
 - Adding, replacing, testing and deleting a registry are audited.
 
-Data model: `project_registries (id, project_id, type, url, scope, secret_arn, created_by, created_at, last_tested_at, last_test_ok)`.
+Data model: `projects (id, tenant_id, team_id, key, name, jira_project_key, default_base_branch, worker_cpu, worker_memory_mb)` and `project_registries (id, project_id, type, url, scope, username, secret_arn, created_by, created_at, updated_at, last_tested_at, last_test_ok, last_test_error)` (migration 034).
 
 ### Capacity
 

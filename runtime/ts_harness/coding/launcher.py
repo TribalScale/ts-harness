@@ -109,8 +109,8 @@ class LocalDockerLauncher:
             "docker", "run", "-d", "--rm",
             "--name", f"ts-coding-{job_id[:8]}",
             "--label", f"ts-harness.coding-job={job_id}",
-            "--cpus", cfg.cpus,
-            "--memory", cfg.memory,
+            "--cpus", str(int(job["worker_cpu"]) / 1024) if job.get("worker_cpu") else cfg.cpus,
+            "--memory", f"{int(job['worker_memory_mb'])}m" if job.get("worker_memory_mb") else cfg.memory,
             "--pids-limit", str(cfg.pids_limit),
             "--mount", "type=volume,dst=/workspace",
             "-e", f"JOB_ID={job_id}",
@@ -305,6 +305,15 @@ class EcsLauncher:
                 self._sleep(min(2.0**attempt, 20.0))
         raise CapacityError(f"{method} throttled")
 
+    @staticmethod
+    def _sizing(job: dict[str, Any]) -> dict[str, str]:
+        sizing: dict[str, str] = {}
+        if job.get("worker_cpu"):
+            sizing["cpu"] = str(int(job["worker_cpu"]))
+        if job.get("worker_memory_mb"):
+            sizing["memory"] = str(int(job["worker_memory_mb"]))
+        return sizing
+
     def run_task_request(self, job: dict[str, Any], token: str) -> dict[str, Any]:
         cfg = self.config
         job_id = str(job["id"])
@@ -324,6 +333,7 @@ class EcsLauncher:
                 }
             },
             "overrides": {
+                **self._sizing(job),
                 "containerOverrides": [
                     {
                         "name": cfg.container,

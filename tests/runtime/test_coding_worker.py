@@ -21,9 +21,13 @@ class FakeApi:
         self.heartbeats = []
         self.completed = []
         self.beat = threading.Event()
+        self.registry_list = []
 
     def spec(self):
         return self.job
+
+    def registries(self):
+        return list(self.registry_list)
 
     def heartbeat(self, last_output):
         self.heartbeats.append(last_output)

@@ -2134,6 +2134,55 @@ th {
   flex-wrap: wrap;
 }
 
+.projects-page {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 20px;
+  padding-top: 12px;
+}
+
+.projects-list ul {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.projects-list li button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.projects-list li button.active,
+.projects-list li button:hover {
+  background: var(--surface);
+}
+
+.project-new,
+.project-form fieldset,
+.registry-form {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.registries-panel {
+  margin-top: 24px;
+}
+
+@media (max-width: 760px) {
+  .projects-page {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cron-form {
   display: grid;
   gap: 12px;

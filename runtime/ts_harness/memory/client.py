@@ -1043,6 +1043,45 @@ class MemoryClient:
             body["retryable"] = True
         return self._request("POST", f"/coding-jobs/{job_id}/launched", body)
 
+    def list_projects(self, *, tenant_id: str = "default", key: str = "", team: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        query = {k: v for k, v in {"tenant_id": tenant_id, "key": key, "team": team}.items() if v}
+        return self._request("GET", f"/projects?{urlencode(query)}")
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}")
+
+    def create_project(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/projects", body)
+
+    def update_project(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}", body)
+
+    def list_project_registries(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}/registries")
+
+    def create_project_registry(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project_id}/registries", body)
+
+    def update_project_registry(self, project_id: str, registry_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}/registries/{registry_id}", body)
+
+    def delete_project_registry(self, project_id: str, registry_id: str, *, actor: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/projects/{project_id}/registries/{registry_id}", {"actor": actor})
+
+    def record_project_registry_test(
+        self, project_id: str, registry_id: str, *, ok: bool, error: str = "", actor: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/registries/{registry_id}/tested",
+            {"ok": ok, "error": error, "actor": actor},
+        )
+
+    def registry_hosts(self) -> list[str]:
+        return list(self._request("GET", "/registry-hosts").get("hosts") or [])
+
     def consume_coding_job(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
 

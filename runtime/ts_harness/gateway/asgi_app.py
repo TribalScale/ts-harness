@@ -2623,6 +2623,85 @@ async def admin_mcp_settings_get(request: Request) -> Response:
     return _json(get_mcp_settings_admin(runtime))
 
 
+async def _admin_projects_call(request: Request, call) -> Response:
+    from ts_harness.gateway.projects_bff import ProjectAccessDenied
+    from ts_harness.memory.client import ProgramNotFound
+
+    body: dict[str, Any] = {}
+    try:
+        _check_origin(request)
+        if request.method in {"POST", "PUT"}:
+            body = await _json_object_body(request)
+        auth = _auth(request, body)
+        runtime = get_runtime()
+        _require_admin(runtime, auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except _BadJsonBody as exc:
+        return _json({"error": str(exc)}, 400)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    try:
+        payload = await asyncio.to_thread(call, get_memory_client(), auth, getattr(runtime, "config", None), body)
+    except ProjectAccessDenied as exc:
+        return _json({"error": str(exc)}, 403)
+    except (LookupError, ProgramNotFound):
+        return _json({"error": "not found"}, 404)
+    except ValueError as exc:
+        return _json({"error": str(exc)}, 400)
+    except RuntimeError as exc:
+        try:
+            message = str(json.loads(str(exc)).get("error") or exc)
+        except (ValueError, AttributeError):
+            message = str(exc)
+        return _json({"error": message[:300]}, 400)
+    return _json(payload)
+
+
+async def admin_projects(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    if request.method == "POST":
+        return await _admin_projects_call(request, bff.create_project_admin)
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_projects_admin(m, a, c))
+
+
+async def admin_project(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    if request.method == "PUT":
+        return await _admin_projects_call(request, lambda m, a, c, b: bff.update_project_admin(m, a, c, pid, b))
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.get_project_admin(m, a, c, pid))
+
+
+async def admin_project_registries(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    if request.method == "POST":
+        return await _admin_projects_call(request, lambda m, a, c, b: bff.create_registry_admin(m, a, c, pid, b))
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_registries_admin(m, a, c, pid))
+
+
+async def admin_project_registry(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    rid = request.path_params["registry_id"]
+    if request.method == "DELETE":
+        return await _admin_projects_call(request, lambda m, a, c, _b: bff.delete_registry_admin(m, a, c, pid, rid))
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.update_registry_admin(m, a, c, pid, rid, b))
+
+
+async def admin_project_registry_test(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    rid = request.path_params["registry_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.test_registry_admin(m, a, c, pid, rid))
+
+
 async def admin_mcp_settings_drafts_create(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -3997,6 +4076,23 @@ routes = [
         "/admin/mcp-settings/drafts/{draft_id}",
         endpoint=admin_mcp_settings_drafts_update,
         methods=["PUT"],
+    ),
+    Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
+    Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
+    Route(
+        "/admin/projects/{project_id}/registries",
+        endpoint=admin_project_registries,
+        methods=["GET", "POST"],
+    ),
+    Route(
+        "/admin/projects/{project_id}/registries/{registry_id}",
+        endpoint=admin_project_registry,
+        methods=["PUT", "DELETE"],
+    ),
+    Route(
+        "/admin/projects/{project_id}/registries/{registry_id}/test",
+        endpoint=admin_project_registry_test,
+        methods=["POST"],
     ),
     Route("/admin/agents", endpoint=admin_agents_get, methods=["GET"]),
     Route("/admin/agents/drafts", endpoint=admin_agents_drafts_create, methods=["POST"]),

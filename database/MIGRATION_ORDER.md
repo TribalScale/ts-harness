@@ -38,6 +38,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 32 | `031_teams_directory.sql` | Teams from identity groups, people directory, team memberships |
 | 33 | `032_program_access.sql` | Program owner, visibility and sharing grants; access audit actions |
 | 34 | `033_coding_jobs.sql` | Queued coding jobs run by worker containers; coding job audit actions |
+| 35 | `034_projects_registries.sql` | Projects with team ownership and worker sizing; per-project package registries; project and registry audit actions |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.
