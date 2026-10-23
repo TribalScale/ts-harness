@@ -840,15 +840,15 @@ class CodingBackendToolTests(unittest.TestCase):
         }
         with (
             patch(
-                "ts_harness.tools.coding_backend_tool.load_active_runtime_config",
+                "ts_harness.implementation.coding_job.load_active_runtime_config",
                 return_value=MagicMock(),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.repo_for_workflow",
+                "ts_harness.implementation.coding_job.repo_for_workflow",
                 return_value=MagicMock(
                     url="https://github.com/example/app.git",
                     base_branch="dev",
@@ -856,11 +856,11 @@ class CodingBackendToolTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
+                "ts_harness.implementation.coding_job.opencode_backend_config",
                 return_value=MagicMock(provider="anthropic", model="m", binary="opencode", run_args=["run"]),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.OpenCodeBackend",
+                "ts_harness.implementation.coding_job.OpenCodeBackend",
                 FakeBackend,
             ),
         ):
@@ -903,15 +903,15 @@ class CodingBackendToolTests(unittest.TestCase):
         ctx = ToolPolicyContext(tenant_id="default", agent_id="dev-agent", source="test")
         with (
             patch(
-                "ts_harness.tools.coding_backend_tool.load_active_runtime_config",
+                "ts_harness.implementation.coding_job.load_active_runtime_config",
                 return_value=MagicMock(),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.repo_for_workflow",
+                "ts_harness.implementation.coding_job.repo_for_workflow",
                 return_value=MagicMock(
                     url="https://github.com/example/app.git",
                     base_branch="dev",
@@ -919,7 +919,7 @@ class CodingBackendToolTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
+                "ts_harness.implementation.coding_job.opencode_backend_config",
                 return_value=MagicMock(
                     provider="anthropic",
                     model="m",
@@ -928,7 +928,7 @@ class CodingBackendToolTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "ts_harness.tools.coding_backend_tool.OpenCodeBackend",
+                "ts_harness.implementation.coding_job.OpenCodeBackend",
                 FakeBackend,
             ),
         ):
@@ -961,14 +961,14 @@ class CodingBackendToolTests(unittest.TestCase):
         repo = MagicMock(url="https://github.com/example/app.git", base_branch="dev", clone_depth=1)
         backend_cfg = MagicMock(provider="anthropic", model="m", binary="opencode", run_args=["run"])
         with (
-            patch("ts_harness.tools.coding_backend_tool.load_active_runtime_config", return_value=MagicMock()),
+            patch("ts_harness.implementation.coding_job.load_active_runtime_config", return_value=MagicMock()),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
-            patch("ts_harness.tools.coding_backend_tool.repo_for_workflow", return_value=repo),
-            patch("ts_harness.tools.coding_backend_tool.opencode_backend_config", return_value=backend_cfg),
-            patch("ts_harness.tools.coding_backend_tool.OpenCodeBackend", FakeBackend),
+            patch("ts_harness.implementation.coding_job.repo_for_workflow", return_value=repo),
+            patch("ts_harness.implementation.coding_job.opencode_backend_config", return_value=backend_cfg),
+            patch("ts_harness.implementation.coding_job.OpenCodeBackend", FakeBackend),
         ):
             return handle_run_coding_backend(args, ctx), captured
 
@@ -1010,17 +1010,17 @@ class CodingBackendToolTests(unittest.TestCase):
         )
         repo = MagicMock(url="https://github.com/example-org/prd-dev-project.git", base_branch="dev", clone_depth=1)
         with (
-            patch("ts_harness.tools.coding_backend_tool.load_active_runtime_config", return_value=MagicMock()),
+            patch("ts_harness.implementation.coding_job.load_active_runtime_config", return_value=MagicMock()),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
-            patch("ts_harness.tools.coding_backend_tool.repo_for_workflow", return_value=repo),
+            patch("ts_harness.implementation.coding_job.repo_for_workflow", return_value=repo),
             patch(
-                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
+                "ts_harness.implementation.coding_job.opencode_backend_config",
                 return_value=MagicMock(provider="anthropic", model="m", binary="opencode", run_args=["run"]),
             ),
-            patch("ts_harness.tools.coding_backend_tool.OpenCodeBackend", FakeBackend),
+            patch("ts_harness.implementation.coding_job.OpenCodeBackend", FakeBackend),
             patch("ts_harness.tools.coding_backend_tool.delivery_binding", return_value={
                 "repo_url": "https://github.com/example-org/test-ts-harness-repo",
                 "base_branch": "main",
@@ -1061,17 +1061,17 @@ class CodingBackendToolTests(unittest.TestCase):
         ctx = ToolPolicyContext(tenant_id="default", agent_id="dev-agent", source="test", linked_workflow_id="wf-903")
         repo = MagicMock(url="https://github.com/org/app.git", base_branch="dev", clone_depth=1)
         with (
-            patch("ts_harness.tools.coding_backend_tool.load_active_runtime_config", return_value=MagicMock()),
+            patch("ts_harness.implementation.coding_job.load_active_runtime_config", return_value=MagicMock()),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
-            patch("ts_harness.tools.coding_backend_tool.repo_for_workflow", return_value=repo),
+            patch("ts_harness.implementation.coding_job.repo_for_workflow", return_value=repo),
             patch(
-                "ts_harness.tools.coding_backend_tool.opencode_backend_config",
+                "ts_harness.implementation.coding_job.opencode_backend_config",
                 return_value=MagicMock(provider="anthropic", model="m", binary="opencode", run_args=["run"]),
             ),
-            patch("ts_harness.tools.coding_backend_tool.OpenCodeBackend", FakeBackend),
+            patch("ts_harness.implementation.coding_job.OpenCodeBackend", FakeBackend),
             patch("ts_harness.tools.coding_backend_tool.delivery_binding", return_value=binding),
         ):
             handle_run_coding_backend({"work_order_id": "WO-903", **args}, ctx)
@@ -1253,16 +1253,16 @@ class CodingBackendToolTests(unittest.TestCase):
         repo = MagicMock(url="https://github.com/example/app.git", base_branch="dev", clone_depth=1)
         backend_cfg = MagicMock(provider="anthropic", model="m", binary="opencode", run_args=["run"])
         with (
-            patch("ts_harness.tools.coding_backend_tool.load_active_runtime_config", return_value=MagicMock()),
-            patch("ts_harness.tools.coding_backend_tool._live_runtime_config", return_value=live),
+            patch("ts_harness.implementation.coding_job.load_active_runtime_config", return_value=MagicMock()),
+            patch("ts_harness.implementation.coding_job._live_runtime_config", return_value=live),
             patch(
-                "ts_harness.tools.coding_backend_tool.implementation_config",
+                "ts_harness.implementation.coding_job.implementation_config",
                 return_value=MagicMock(coding_backend="opencode", tools_root="/tools"),
             ),
-            patch("ts_harness.tools.coding_backend_tool.repo_for_workflow", return_value=repo),
-            patch("ts_harness.tools.coding_backend_tool.opencode_backend_config", return_value=backend_cfg),
-            patch("ts_harness.tools.coding_backend_tool.check_repo_allowed", return_value=None),
-            patch("ts_harness.tools.coding_backend_tool.OpenCodeBackend", FakeBackend),
+            patch("ts_harness.implementation.coding_job.repo_for_workflow", return_value=repo),
+            patch("ts_harness.implementation.coding_job.opencode_backend_config", return_value=backend_cfg),
+            patch("ts_harness.implementation.coding_job.check_repo_allowed", return_value=None),
+            patch("ts_harness.implementation.coding_job.OpenCodeBackend", FakeBackend),
         ):
             result = handle_run_coding_backend({"work_order_id": "WO-003", "work_order_body": "# WO-003\n"}, ctx)
         config = backend_kwargs[0]["security"]
