@@ -224,6 +224,7 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
                 "workflow_id": child["workflow_id"],
                 "pr_url": output.get("pr_url"),
                 "merge_sha": merge_sha or None,
+                "merged_at": merged_at or None,
             }
         )
     output = {

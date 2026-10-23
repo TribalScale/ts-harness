@@ -164,6 +164,11 @@ def resume(ctx: HookContext) -> dict[str, Any]:
 
         if config.get("children"):
             return _resume_children(ctx, task=task, event_type=event_type, payload=payload)
+        if config.get("upstream"):
+            result = _resume_upstream(ctx, task=task, config=config, workflow=workflow, tasks=tasks, event_type=event_type, payload=payload)
+            if result is None:
+                continue
+            return result
 
         if match_all_cfg:
             result = _resume_match_all(
@@ -248,6 +253,42 @@ def _resume_children(
         details = str(aggregate["output"].get("failure_details") or "").strip()
         if details:
             reason = f"{reason}\n{details}"
+        ctx.memory_client.block_task_api(str(task["id"]), reason, output=output, actor=ctx.actor)
+        return {"status": "blocked", "task_id": str(task["id"]), "reason": reason}
+    return ctx.memory_client.resume_external(
+        ctx.workflow_id,
+        event_type=event_type,
+        payload=payload,
+        actor=ctx.actor,
+        task_output=output,
+    )
+
+
+def _resume_upstream(
+    ctx: HookContext,
+    *,
+    task: dict[str, Any],
+    config: dict[str, Any],
+    workflow: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    event_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resume a release track once its upstream tracks recorded this environment; block if one failed."""
+    from ts_harness.workflows.release_tracks import upstream_slot, upstream_status
+
+    slot = upstream_slot(config)
+    if payload.get("environment") and str(payload["environment"]) != slot:
+        return None
+    status = upstream_status(ctx.memory_client, workflow, tasks, slot)
+    if status["state"] == "pending":
+        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+        options = {**dict(task_input.get("_wait_options") or {}), "pending": status["pending"]}
+        ctx.memory_client.patch_task_input(str(task["id"]), {**task_input, "_wait_options": options}, actor=ctx.actor)
+        return {"status": "awaiting_more_upstream", "task_id": str(task["id"]), "pending": status["pending"]}
+    output = {"event_type": event_type, "external_event": payload, "environment": slot, "upstream": status["upstream"]}
+    if status["state"] == "failed":
+        reason = f"external_blocked:{event_type} upstream release failed: {', '.join(status['failed'])} {slot}"
         ctx.memory_client.block_task_api(str(task["id"]), reason, output=output, actor=ctx.actor)
         return {"status": "blocked", "task_id": str(task["id"]), "reason": reason}
     return ctx.memory_client.resume_external(

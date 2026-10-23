@@ -181,6 +181,45 @@ class PollGithubMergesTests(unittest.TestCase):
         self.assertEqual(result["resumed"], 1)
         engine.resume_external.assert_called_once()
 
+    def test_joins_and_release_upstreams_run_when_github_reconcile_is_skipped(self):
+        joins = MagicMock(return_value={"checked": 1, "resumed": 1, "errors": 0})
+        upstreams = MagicMock(return_value={"checked": 2, "resumed": 0, "errors": 0})
+        with (
+            patch.object(system_jobs, "reconcile_due", return_value=False),
+            patch.object(system_jobs, "poll_wave_joins", joins),
+            patch.object(system_jobs, "poll_release_upstreams", upstreams),
+        ):
+            result = system_jobs.poll_github_merges()
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["joins"]["resumed"], 1)
+        self.assertEqual(result["upstreams"]["checked"], 2)
+
+    def test_release_upstream_poller_resumes_tracks_no_longer_pending(self):
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {
+            "waits": [
+                {"workflow_id": "track-ready", "options": {"environment": "staging"}},
+                {"workflow_id": "track-waiting", "options": {"environment": "staging"}},
+                {"workflow_id": "track-unpinned", "options": {}},
+            ]
+        }
+        memory.get_workflow.side_effect = lambda wid: {"workflow": {"id": wid}, "tasks": []}
+        engine = MagicMock()
+        states = {"track-ready": "ready", "track-waiting": "pending"}
+        with (
+            patch.object(system_jobs, "get_memory_client", return_value=memory),
+            patch.object(system_jobs, "get_workflow_engine", return_value=engine),
+            patch(
+                "ts_harness.workflows.release_tracks.upstream_status",
+                side_effect=lambda _m, workflow, _t, _s: {"state": states[workflow["id"]]},
+            ),
+        ):
+            result = system_jobs.poll_release_upstreams()
+
+        self.assertEqual(result, {"checked": 2, "resumed": 1, "errors": 0})
+        self.assertEqual(engine.resume_external.call_args.args, ("track-ready",))
+
     def test_dispatch_system_job_routes_handler(self):
         poll = MagicMock(return_value={"status": "ok"})
         with patch.dict(system_jobs.SYSTEM_HANDLERS, {"poll_github_merges": poll}):

@@ -410,7 +410,7 @@ def build_fork_graph(skeleton_dir: Path | None = None) -> dict[str, set[str]]:
     return graph
 
 
-FORK_HOOKS = frozenset({"fork_children", "fork_work_order_wave"})
+FORK_HOOKS = frozenset({"fork_children", "fork_work_order_wave", "plan_release_tracks"})
 DEFAULT_WAVE_CHILD_TYPE = "deliver_work_order"
 
 

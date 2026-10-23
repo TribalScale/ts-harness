@@ -136,11 +136,13 @@ def reconcile_due(*, now: float | None = None, memory: Any = None) -> bool:
 
 
 def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> dict[str, Any]:
+    """Reconcile GitHub waits when webhooks may have been missed; joins and release tracks always."""
+    local = {"joins": poll_wave_joins(tenant_id=tenant_id), "upstreams": poll_release_upstreams(tenant_id=tenant_id)}
     if not force and not reconcile_due():
-        return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0}
+        return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0, **local}
     github = _github_or_none()
     if github is None:
-        return {"status": "error", "error": "GITHUB_TOKEN or a GitHub App is required", "checked": 0, "resumed": 0}
+        return {"status": "error", "error": "GITHUB_TOKEN or a GitHub App is required", "checked": 0, "resumed": 0, **local}
 
     memory = get_memory_client()
     engine = get_workflow_engine()
@@ -220,7 +222,7 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         "errors": errors,
         "checks": poll_github_checks(tenant_id=tenant_id, github=github),
         "deployments": poll_github_deployments(tenant_id=tenant_id, github=github),
-        "joins": poll_wave_joins(tenant_id=tenant_id),
+        **local,
     }
 
 
@@ -346,6 +348,39 @@ def poll_wave_joins(*, tenant_id: str = "default") -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             errors += 1
             logger.warning("wave_join_poller wait failed workflow_id=%s error=%s", workflow_id, exc)
+    return {"checked": checked, "resumed": resumed, "errors": errors}
+
+
+def poll_release_upstreams(*, tenant_id: str = "default") -> dict[str, Any]:
+    """Fallback for missed upstream notifications: re-evaluate every release track waiting on another."""
+    from ts_harness.workflows.hooks._helpers import load_workflow_payload
+    from ts_harness.workflows.release_tracks import UPSTREAM_EVENT, upstream_status
+
+    memory = get_memory_client()
+    engine = get_workflow_engine()
+    waits = list((memory.find_external_waits(event_type=UPSTREAM_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
+    checked = resumed = errors = 0
+    for wait in waits:
+        slot = str((wait.get("options") or {}).get("environment") or "")
+        workflow_id = str(wait.get("workflow_id") or "")
+        if not slot or not workflow_id:
+            continue
+        checked += 1
+        try:
+            workflow, tasks = load_workflow_payload(memory, workflow_id)
+            if upstream_status(memory, workflow, tasks, slot)["state"] == "pending":
+                continue
+            engine.resume_external(
+                workflow_id,
+                event_type=UPSTREAM_EVENT,
+                payload={"environment": slot, "source": "poller"},
+                actor="github-merge-poller",
+                tenant_id=tenant_id,
+            )
+            resumed += 1
+        except Exception as exc:  # noqa: BLE001
+            errors += 1
+            logger.warning("release_upstream_poller wait failed workflow_id=%s error=%s", workflow_id, exc)
     return {"checked": checked, "resumed": resumed, "errors": errors}
 
 

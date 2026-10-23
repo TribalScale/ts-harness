@@ -599,7 +599,7 @@ def _validate_publish_gates(
             )
 
 
-_FORK_HOOKS = {"fork_children", "fork_work_order_wave"}
+_FORK_HOOKS = {"fork_children", "fork_work_order_wave", "plan_release_tracks"}
 _CHILDREN_SOURCE_RE = re.compile(r"^\$prior\.([^.]+)\.output\.children$")
 _WORKFLOW_TOKEN_PREFIX = "$workflow."
 _IMPLICIT_WORKFLOW_KEYS = {"binding_key"}

@@ -1056,6 +1056,18 @@ class WorkflowRunner:
         )
         self._resume_ready_wait(task, work_order_waves.CHILD_EVENT, prepared.get("ready"))
 
+    def _prepare_upstream_wait(self, task: dict[str, Any], config: dict[str, Any]) -> None:
+        from ts_harness.workflows import release_tracks
+
+        prepared = release_tracks.prepare_upstream_wait(task, config, memory=_workflow_engine().client)
+        log_event(
+            "upstream_wait_prepared",
+            workflow_id=task.get("workflow_id"),
+            task_id=task.get("id"),
+            pending=prepared["options"]["pending"],
+        )
+        self._resume_ready_wait(task, release_tracks.UPSTREAM_EVENT, prepared.get("ready"))
+
     def _resume_ready_wait(self, task: dict[str, Any], event_type: str, ready: dict[str, Any] | None) -> None:
         if not ready:
             return
@@ -1105,6 +1117,8 @@ class WorkflowRunner:
                     self._prepare_release_wait(task, stage.wait_external)
                 elif stage.wait_external.get("children"):
                     self._prepare_children_wait(task, stage.wait_external)
+                elif stage.wait_external.get("upstream"):
+                    self._prepare_upstream_wait(task, stage.wait_external)
             except Exception as exc:
                 from ts_harness.integrations.github_client import classify_github_wait_error
 

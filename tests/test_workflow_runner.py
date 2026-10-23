@@ -651,7 +651,7 @@ class WorkflowRunnerTests(unittest.TestCase):
         task = {
             "id": "task-1",
             "workflow_id": "workflow-1",
-            "workflow_type": "deploy_release",
+            "workflow_type": "release_track",
             "step_name": step_name,
             "agent_id": "orchestrator",
             "tenant_id": "acme",
@@ -663,7 +663,7 @@ class WorkflowRunnerTests(unittest.TestCase):
             memory,
             adapter,
             runner_id="runner-1",
-            skeletons={"deploy_release": skeletons["deploy_release"]},
+            skeletons={"release_track": skeletons["release_track"]},
         )
         return runner_module, workflow_runner, memory, adapter
 

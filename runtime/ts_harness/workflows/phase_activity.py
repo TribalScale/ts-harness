@@ -25,6 +25,7 @@ EVENT_WAITS = {
     "coding.finished": ("OpenCode implementing", "running"),
 }
 CODING_WAIT = "awaiting_external:coding.finished"
+UPSTREAM_WAIT = "release.upstream_recorded"
 
 
 def _humanize(value: str) -> str:
@@ -75,6 +76,9 @@ def _workflow_label(tasks: list[dict[str, Any]], workflow: dict[str, Any]) -> st
         work_order_id = str(_input(task).get("work_order_id") or "").strip()
         if work_order_id:
             return work_order_id
+        track_repo = str(_input(task).get("track_repo") or "").strip()
+        if track_repo:
+            return track_repo
     return str(workflow.get("external_ref") or _humanize(str(workflow.get("workflow_type") or "")) or "workflow")
 
 
@@ -135,9 +139,22 @@ def _state(
     if status == "blocked":
         if error.startswith("awaiting_external:"):
             event = error.split(":", 1)[1]
+            if event == UPSTREAM_WAIT:
+                return _upstream_wait(current), "waiting"
             return EVENT_WAITS.get(event, (f"Waiting for {event}", "waiting"))
         return f"Blocked at {label}: {error[:120]}", "blocked"
     return f"Queued: {label}", "waiting"
+
+
+def _upstream_wait(task: dict[str, Any]) -> str:
+    """``Waits for api production``: the upstream repositories that have not released there yet."""
+    options = _input(task).get("_wait_options")
+    options = options if isinstance(options, dict) else {}
+    pending = [str(repo).rsplit("/", 1)[-1] for repo in options.get("pending") or options.get("upstream") or []]
+    environment = str(options.get("environment") or "").strip()
+    if not pending:
+        return f"Waiting for upstream releases to {environment}".strip()
+    return f"Waits for {', '.join(pending)} {environment}".strip()
 
 
 def summarize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:

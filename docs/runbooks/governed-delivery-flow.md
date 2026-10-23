@@ -500,17 +500,24 @@ While a PR waits in `await_human_merge`, the merge poller (`poll-github-merges`,
 
 ## Release and rollback
 
-`implement` advances automatically to `release` (`deploy_release` 2.0) once `merge_sha` is known and every child program has finished.
+`implement` advances automatically to `release` (`deploy_release` 3.0) once `merge_sha` is known and every child program has finished.
+
+`deploy_release` starts one `release_track` workflow per repository that merged work in the program (`plan_release_tracks`) and waits for all of them (`join_tracks`). A single-repository program gets one track, which behaves like the 2.0 release. Each track releases the latest merge SHA of its repository.
+
+Tracks are ordered by work-order dependencies. When a work order in `acme/web` depends on one in `acme/api`, the `acme/web` track waits before each environment until `acme/api` has recorded a successful release there (the program page shows "Waits for api production"). Tracks with no dependency between them release in parallel. If an upstream track fails, only the tracks that depend on it block; the others carry on. A dependency cycle between repositories blocks `plan_release_tracks` before any track starts. Missed notifications are picked up by `poll_release_upstreams`, which runs with the GitHub merge poller.
+
+Each track runs these stages:
 
 | Stage | What it does |
 | --- | --- |
-| `plan_release` | Resolves the repo and its two environments from `release.environments` (default `staging`, `production`), and records each environment's current SHA as its rollback target |
+| `plan_track` | Resolves the repo and its two environments from `release.environments` (default `staging`, `production`), and records each environment's current SHA as its rollback target |
 | `await_ci_on_sha` | Waits for checks on the merge SHA; a failure blocks the release |
+| `await_upstream_staging` | Waits until every repository this one depends on has released to staging; immediate when there are none |
 | `approve_promote_staging` | Human gate with the environment's `required_roles`; recorded as a `promote` decision |
 | `trigger_deploy_staging` | Runs the repo's `workflow_dispatch` workflow or creates a GitHub deployment for the SHA |
 | `await_deployment_staging` | Waits for `github.deployment_status` (webhook or `poll_github_deployments`) |
 | `record_release_staging` | Marks the release succeeded, or failed with rollback guidance |
-| `…_production` | Same four stages for production |
+| `…_production` | Same five stages for production, starting with `await_upstream_production` |
 
 A program or node may set `required_permission`. When it is omitted, starting and advancing still require `start_program`, and reads stay on `view`. A node value wins for the node being entered. Add a custom name to a role bundle; the default `admin` and `owner` bundles receive every name listed there unless that role's bundle is replaced:
 

@@ -412,7 +412,46 @@ def _extract_implement_outputs(
             if item not in completed:
                 completed.append(item)
         patch["completed_work_order_ids"] = completed
+    merged_work_orders = _merged_work_orders(tasks, merged, existing)
+    if merged_work_orders:
+        patch["merged_work_orders"] = merged_work_orders
     return patch
+
+
+def _merged_work_orders(
+    tasks: list[dict[str, Any]], merged: dict[str, Any], existing: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Every merged PR of the program so far, one entry per PR URL, for per-repository releases."""
+    by_pr: dict[str, dict[str, Any]] = {
+        str(item["pr_url"]): dict(item)
+        for item in existing.get("merged_work_orders") or []
+        if isinstance(item, dict) and item.get("pr_url")
+    }
+
+    def add(work_order_id: Any, pr_url: Any, merge_sha: Any, merged_at: Any) -> None:
+        if pr_url and merge_sha:
+            by_pr[str(pr_url)] = {
+                "work_order_id": str(work_order_id or ""),
+                "pr_url": str(pr_url),
+                "merge_sha": str(merge_sha),
+                "merged_at": str(merged_at or ""),
+            }
+
+    found_prs = False
+    for task in tasks:
+        output = task.get("output") if task.get("status") == "succeeded" else None
+        for pr in (output or {}).get("prs") or [] if isinstance(output, dict) else []:
+            if isinstance(pr, dict):
+                found_prs = True
+                add(pr.get("work_order_id"), pr.get("pr_url"), pr.get("merge_sha"), pr.get("merged_at"))
+    if not found_prs:
+        add(
+            merged.get("work_order_id"),
+            merged.get("pr_url"),
+            merged.get("merge_sha") or merged.get("merge_commit_sha"),
+            merged.get("merged_at"),
+        )
+    return list(by_pr.values())
 
 
 def _build_deploy_inputs(
@@ -425,7 +464,17 @@ def _build_deploy_inputs(
 ) -> dict[str, Any]:
     del transcript_messages
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
-    for key in ("pr_url", "pr_urls", "merge_sha", "repo_url", "rollback_environment", "rollback_sha"):
+    for key in (
+        "pr_url",
+        "pr_urls",
+        "merge_sha",
+        "repo_url",
+        "rollback_environment",
+        "rollback_sha",
+        "merged_work_orders",
+        "work_orders_markdown",
+        "project_repositories",
+    ):
         if artifacts.get(key):
             intake[key] = artifacts[key]
     base_branch = artifacts.get("base_branch") or artifacts.get("default_branch")
@@ -462,6 +511,9 @@ def _extract_deploy_outputs(
         and task["output"].get("release_id")
         and task["output"].get("environment")
     ]
+    for output in (merged.get("children_outputs") or {}).values():
+        if isinstance(output, dict):
+            released.extend(str(env) for env in output.get("environments") or [])
     if released:
         patch["released_environments"] = list(dict.fromkeys(released))
     return patch
