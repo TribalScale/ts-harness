@@ -729,6 +729,14 @@ class RuntimeState:
                 session.metadata = metadata
                 get_session_store().save(session)
 
+        if channel == "slack" and getattr(self.config.identity, "provider", "static") == "oidc":
+            from ts_harness.gateway.directory_links import link_channel_session
+
+            linked = link_channel_session(dict(session.metadata or {}), actor_email, auth.tenant_id)
+            if linked != (session.metadata or {}):
+                session.metadata = linked
+                get_session_store().save(session)
+
         raw_user = str((body.get("actor") or {}).get("actor_id") or auth.actor_id or "")
         slack_user_id = raw_user.removeprefix("slack:")
         if slack_user_id.startswith(("U", "W")) and len(slack_user_id) >= 8:

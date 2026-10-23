@@ -872,6 +872,38 @@ class MemoryClient:
             params["source_program_id"] = source_program_id
         return self._request("GET", f"/briefs?{urlencode(params)}")
 
+    def directory_upsert_user(
+        self,
+        *,
+        tenant_id: str,
+        subject: str,
+        email: str | None = None,
+        display_name: str | None = None,
+        teams: list[dict[str, str]] | None = None,
+        source: str = "seen_users",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "subject": subject,
+            "email": email,
+            "display_name": display_name,
+            "source": source,
+        }
+        if teams is not None:
+            body["teams"] = teams
+        return self._request("POST", "/directory/upsert-user", body)
+
+    def directory_search(self, *, tenant_id: str, q: str = "", limit: int = 20) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        return self._request("GET", f"/directory/search?{urlencode({'tenant_id': tenant_id, 'q': q, 'limit': limit})}")
+
+    def directory_user(self, *, tenant_id: str, subject: str = "", email: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, "subject": subject, "email": email}
+        return self._request("GET", f"/directory/user?{urlencode(params)}")
+
 
 _default_client: MemoryClient | None = None
 

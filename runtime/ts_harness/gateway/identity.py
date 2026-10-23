@@ -195,7 +195,7 @@ class OidcIdentityProvider:
         claim_roles: list[str] = _claim_list(
             claims, identity_setting(self.config, "roles_claim"), "roles", _AUTH0_ROLES_CLAIM
         )
-        from ts_harness.policy.permissions import resolve_actor_roles
+        from ts_harness.policy.permissions import resolve_actor_roles, resolve_team_memberships
 
         roles = resolve_actor_roles(
             claim_roles=claim_roles,
@@ -211,6 +211,7 @@ class OidcIdentityProvider:
             "display_name": claims.get("name") or None,
             "groups": groups,
             "roles": roles,
+            "teams": resolve_team_memberships(groups, self.config),
             "auth_provider": "oidc",
             "issuer": claims.get("iss"),
             "tenant_id": str(claims.get(self.config.tenant_claim or "tenant_id") or ""),

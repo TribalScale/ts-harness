@@ -35,6 +35,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 29 | `028_audit_details_program_index.sql` | Audit `details` expression indexes for evidence export; `program_evidence_exported` action |
 | 30 | `029_runner_leader_lease.sql` | Single-row workflow runner leader lease |
 | 31 | `030_program_department.sql` | Program department and department-memory promotion audit |
+| 32 | `031_teams_directory.sql` | Teams from identity groups, people directory, team memberships |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

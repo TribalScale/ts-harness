@@ -12,6 +12,7 @@ RUN apt-get update \
 RUN python3 -m pip install --no-cache-dir "psycopg[binary]" "psycopg-pool"
 
 COPY scripts/memory-gateway.py /app/memory-gateway.py
+COPY scripts/memory_routes/ /app/memory_routes/
 COPY scripts/embed.sh /scripts/embed.sh
 
 RUN chmod +x /scripts/embed.sh

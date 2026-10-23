@@ -45,6 +45,7 @@ ORDER=(
   028_audit_details_program_index.sql
   029_runner_leader_lease.sql
   030_program_department.sql
+  031_teams_directory.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

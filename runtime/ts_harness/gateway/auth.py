@@ -19,7 +19,7 @@ Two authentication modes are supported:
 from __future__ import annotations
 
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,6 +35,8 @@ class AuthContext:
     groups: list[str] | None = None
     roles: list[str] | None = None
     auth_provider: str = "static"
+    teams: list[dict[str, str]] = field(default_factory=list)
+    is_service: bool = False
 
 
 class AuthError(Exception):
@@ -124,6 +126,7 @@ def authenticate_request(
             groups=list(identity.get("groups") or []),
             roles=list(identity.get("roles") or ["member"]),
             auth_provider=str(identity.get("auth_provider", "oidc")),
+            teams=list(identity.get("teams") or []),
         )
 
     # --- Static path: pre-shared token comparison -----------------------
@@ -182,4 +185,5 @@ def _context_from_body(
         groups=groups,
         roles=roles,
         auth_provider=auth_provider,
+        is_service=True,
     )

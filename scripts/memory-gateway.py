@@ -8,12 +8,21 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from memory_routes.directory import (  # noqa: E402
+    get_directory_user,
+    search_directory,
+    upsert_directory_user,
+)
 
 
 VALID_MEMORY_TYPES = {
@@ -4439,6 +4448,44 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001
                 self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/directory/search"):
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        search_directory(
+                            conn,
+                            tenant_id=(query.get("tenant_id") or ["default"])[0],
+                            q=(query.get("q") or [""])[0],
+                            limit=(query.get("limit") or ["20"])[0],
+                        ),
+                    )
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/directory/user?"):
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        get_directory_user(
+                            conn,
+                            tenant_id=(query.get("tenant_id") or ["default"])[0],
+                            subject=(query.get("subject") or [""])[0],
+                            email=(query.get("email") or [""])[0],
+                        ),
+                    )
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
         elif self.path.startswith("/programs/by-ref?"):
             from urllib.parse import parse_qs, urlparse
 
@@ -4716,6 +4763,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     )
                 elif self.path == "/decisions":
                     self._send_json(200, create_workflow_decision(conn, body))
+                elif self.path == "/directory/upsert-user":
+                    self._send_json(200, upsert_directory_user(conn, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/advance"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/advance")
                     self._send_json(200, advance_delivery_program(conn, program_id, body))
