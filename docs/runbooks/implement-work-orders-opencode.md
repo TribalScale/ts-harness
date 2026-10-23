@@ -63,9 +63,9 @@ Or via memory API `POST /workflow/resume-external` with the same shape.
 While `deliver_work_order` is running, OpenCode streams to a workspace log and emits `opencode_progress` events on agent-runtime stdout:
 
 ```bash
-# Live OpenCode stream (replace WO-001 as needed)
-docker exec docker-agent-runtime-1 \
-  tail -f /workspace/dev-agent/coding-backend/WO-001/.ts-harness/opencode-WO-001.log
+# Live OpenCode stream (workspace is <WO>-<first 8 chars of the delivery workflow id>)
+docker exec docker-agent-runtime-1 sh -c \
+  'tail -f /workspace/dev-agent/coding-backend/WO-001-*/.ts-harness/opencode-WO-001.log'
 
 # Structured progress heartbeats (~every 30s)
 docker logs -f docker-agent-runtime-1 2>&1 | grep opencode_progress
@@ -73,7 +73,42 @@ docker logs -f docker-agent-runtime-1 2>&1 | grep opencode_progress
 
 Tool results also include `log_path` and `log_tail` after the run finishes.
 
+If OpenCode prints nothing for `CODING_BACKEND_STALL_SECONDS` (default 900; `0` disables), the runtime kills it and its child processes, writes `opencode stalled: no output for Ns` to the log, emits an `opencode_stalled` event, and fails the step with `opencode stalled: no output within the stall window`. The runner's retry policy then decides whether to try again.
+
+Each delivery workflow gets its own workspace and branch: `coding-backend/<WO>-<suffix>/` and `wo/<wo>-<suffix>`, where the suffix is the first 8 characters of the `deliver_work_order` workflow id. Two deliveries of the same work order (a retry after cancel, or a second program) never share a clone or push to each other's branch. A `.ts-harness-owner` marker in the workspace records which delivery owns it; a clone owned by another delivery is discarded before cloning.
+
 `POST /workflow/dispatch` uses `TS_HARNESS_DISPATCH_REQUEST_TIMEOUT` (default **7200s**) so long OpenCode runs are not cut by the general 300s API timeout.
+
+## Host verification test stacks
+
+After OpenCode finishes, the host installs the repo's declared dependencies and runs its own test command (`runtime/ts_harness/implementation/test_env.py`). The first matching stack wins:
+
+| Repo signal | Stack | Unit command | BDD |
+|---|---|---|---|
+| `package.json` with a `test` or `test:unit` script | node | `npm test` / `npm run test:unit` | `npm run test:bdd` / `cucumber` / `bdd` script |
+| `go.mod` | go | `go test ./...` | `.feature` suites (godog) run inside the unit command |
+| `Cargo.toml` | cargo | `cargo test` | inside the unit command |
+| `mvnw` or `pom.xml` | maven | `./mvnw -B test`, else `mvn -B test` | inside the unit command (Cucumber JVM) |
+| `gradlew`, `build.gradle`, `build.gradle.kts` | gradle | `./gradlew test`, else `gradle test` | inside the unit command |
+| `pytest.ini`, `[tool.pytest` in `pyproject.toml`, `[tool:pytest]` in `setup.cfg`, `[pytest]` in `tox.ini`, `conftest.py`, or `.py` files under `tests/` | python | `<venv>/bin/python -m pytest` | `behave.ini`, `features/environment.py`, or `features/steps/*.py`: `python -m behave` |
+| `Makefile` with a `test:` target | make | `make test` | n/a |
+
+A bare `tests/` or `features/` directory does not select a stack. Multi-stack monorepos use the first match.
+
+Dependencies installed before OpenCode runs and again before each verify (only when a manifest changed):
+
+- Python: `requirements.txt`, `requirements-dev.txt`, `requirements-test.txt`, and `pip install -e .` for a `pyproject.toml` with `[project]`. Always into the work order's venv, never the runtime's site-packages.
+- Node: `npm ci` with `package-lock.json`, else `npm install`.
+- Go: `go mod download`. Cargo, Maven and Gradle fetch during the test run.
+
+Where things live, per delivery under `/workspace/dev-agent/coding-backend/<WO>-<suffix>/`:
+
+- `.ts-harness/venv/`: virtualenv with pytest and behave installed offline from `/opt/ts-harness/wheels` (pins in `docker/test-runner-requirements.txt`).
+- `.ts-harness/deps.json`: manifest hashes of the last successful installs.
+- `../.cache/`: shared Go, npm, Cargo, Gradle and Maven caches, reused across work orders.
+- `repo/.git/info/exclude`: `node_modules/` and the stack's build output (`target/`, `.gradle/`, `build/`) so installs are never committed.
+
+OpenCode runs with the same `PATH` and venv, so its own test runs match host verification. The agent-runtime image ships Go, Node.js LTS, JDK 21 with Maven and Gradle, Rust (minimal profile), make and gcc; bump versions with their checksums in `docker/Dockerfile.agent-runtime`.
 
 ## Failure modes
 
@@ -89,8 +124,16 @@ Tool results also include `log_path` and `log_tail` after the run finishes.
 | Compose: `TS_HARNESS_TOOLS_ROOT_HOST is missing` | Phase 12 used an incomplete `sudo env` list; pull fix and re-run 12 (clear phase marker if needed) |
 | Sandbox / network errors | Agent used `exec` instead of `run_coding_backend` |
 | `await_human_merge` stuck | Resume payload `pr_url` does not exactly match deliver output |
+| "Request changes" or `/revise` did nothing | The reviewer lacks write access, the review is on an older commit, or the workflow started on a definition before `verified_merge` 1.6.0. See [human rejection](governed-delivery-flow.md#human-rejection) |
+| `external_blocked:github.pr_closed by <login>` | The PR was closed without merging; the work order stopped by design. Start a new work order to retry |
 | Stage blocked: missing `pr_url` | Tool failed before PR create; check `run_coding_backend` error / `log_tail` / `log_path` |
 | `transport_error: {"error":"request timeout"}` after ~5m | Agent-runtime still on old image/env without `TS_HARNESS_DISPATCH_REQUEST_TIMEOUT`; recreate agent-runtime |
+| `verification_failed: shadowed_test_runner:pytest.py` (or `behave/`, `_pytest/`) | The change added a repo-root module that stands in for the test framework; the suite is not run. The fix pass asks OpenCode to delete it |
+| `verification_failed: missing_toolchain:<tool>` with `fix_passes_used=0` | The repo's stack needs a tool the image lacks (old image, or an unsupported stack). Rebuild agent-runtime from the current Dockerfile; no fix passes are spent |
+| `no_test_runner` on a non-Python repo | No manifest or test script the table above recognizes; add the standard runner to the repo's manifest |
+| `opencode stalled: no output within the stall window` | OpenCode went silent (hung model call or tool) for `CODING_BACKEND_STALL_SECONDS`; it was killed. Check the end of the OpenCode log for the last action |
+| Inbox shows a **Stuck step** after `barrier_blocked: code_review_blocked` or a QA block | The revision budget ran out. Choose revise again (fresh budget of `max_revisions`), accept as is, or stop; see "Code review" in `governed-delivery-flow.md` |
+| `test runner install failed` / `pip install ... failed` in `log_tail` | Wheels missing from the image or a broken requirement; the tests then fail with the import error |
 
 ## Related
 

@@ -15,6 +15,7 @@ from ts_harness.implementation.config import (
     opencode_backend_config,
     repo_for_workflow,
 )
+from ts_harness.implementation.repo import delivery_suffix
 from ts_harness.implementation.security_scan import SecurityConfig
 from ts_harness.integrations.github_client import parse_github_pr_url
 from ts_harness.tools.policy import ToolPolicyContext
@@ -29,10 +30,15 @@ def _live_runtime_config():
         return None
 
 
-def delivery_binding(ctx: ToolPolicyContext, *, client: Any = None) -> dict[str, str]:
-    """Repo, branch, and PR already stored on this workflow's deliver task.
+_BOUND_TEXT_KEYS = ("work_order_body", "review_feedback", "qa_feedback")
 
-    A revision must not follow the agent's default repository when the work order named one.
+
+def delivery_binding(ctx: ToolPolicyContext, *, client: Any = None) -> dict[str, Any]:
+    """Repo, branch, PR, work order and revision feedback stored on this workflow's deliver task.
+
+    A revision must not follow the agent's default repository when the work order named one,
+    and the agent's retyped copy of the feedback can be corrupted (e.g. a NUL from a broken
+    ``\\u00e9`` escape), so the stored task input wins.
     """
     workflow_id = str(getattr(ctx, "linked_workflow_id", None) or "").strip()
     if not workflow_id:
@@ -55,12 +61,22 @@ def delivery_binding(ctx: ToolPolicyContext, *, client: Any = None) -> dict[str,
         task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
         if str(task_input.get("repo_url") or "").strip():
             chosen = task_input
-    binding: dict[str, str] = {}
-    for key in ("repo_url", "base_branch", "pr_url"):
+    binding: dict[str, Any] = {}
+    for key in ("repo_url", "base_branch", "pr_url", *_BOUND_TEXT_KEYS):
         value = str(chosen.get(key) or "").strip()
         if value:
             binding[key] = value
+    for key in ("revision_files", "human_change_requests"):
+        items = _revision_files(chosen.get(key))
+        if items:
+            binding[key] = items
+    if chosen.get("refresh") is True:
+        binding["refresh"] = True
     return binding
+
+
+def _clean_text(value: Any) -> str | None:
+    return str(value or "").replace("\x00", "").strip() or None
 
 
 def _revision_files(value: Any) -> list[str] | None:
@@ -133,8 +149,9 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
     repo = repo_for_workflow(workflow_type, runtime=runtime)
     backend_cfg = opencode_backend_config(runtime=runtime)
 
+    bound = delivery_binding(ctx)
     work_order_id = str(args.get("work_order_id") or "").strip()
-    work_order_body = str(args.get("work_order_body") or "").strip()
+    work_order_body = _clean_text(bound.get("work_order_body") or args.get("work_order_body")) or ""
     if not work_order_body:
         markdown = str(args.get("work_orders_markdown") or "").strip()
         if markdown and work_order_id:
@@ -147,11 +164,18 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
     # base_branch from a poorly materialized task input (e.g. default "main").
     configured_url = str(repo.url or "").strip()
     configured_branch = str(repo.base_branch or "").strip()
-    bound = delivery_binding(ctx)
     repo_url = str(bound.get("repo_url") or args.get("repo_url") or configured_url or "").strip()
     mode = str(args.get("mode") or "implement").strip().lower()
     if mode not in {"implement", "refresh"}:
         return {"ok": False, "error": f"unsupported mode: {mode}"}
+    if mode == "refresh" and bound and not bound.get("refresh"):
+        return {
+            "ok": False,
+            "error": (
+                "this delivery task asks for implementation, not a refresh; "
+                "call run_coding_backend again with mode implement"
+            ),
+        }
     pr_url_arg = str(bound.get("pr_url") or args.get("pr_url") or "").strip() or None
     if mode == "refresh":
         parsed_pr = parse_github_pr_url(pr_url_arg or "")
@@ -199,11 +223,15 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
     elif isinstance(args.get("approved_prd_markdown"), str):
         approved_prd_markdown = str(args.get("approved_prd_markdown") or "").strip() or None
 
+    delivery_workflow_id = str(getattr(ctx, "linked_workflow_id", None) or "").strip() or None
+    workspace_name = work_order_id or "wo"
+    if suffix := delivery_suffix(delivery_workflow_id):
+        workspace_name = f"{workspace_name}-{suffix}"
     workspace = Path(
         str(
             args.get("workspace_dir")
             or os.environ.get("CODING_BACKEND_WORKSPACE")
-            or f"/workspace/{ctx.agent_id}/coding-backend/{work_order_id or 'wo'}"
+            or f"/workspace/{ctx.agent_id}/coding-backend/{workspace_name}"
         )
     )
 
@@ -217,6 +245,7 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
     github_logins = dict(getattr(getattr(live, "identity", None), "github_logins", None) or {})
     requested_login = github_logins.get(requested_by or "") or None
     program_id = str(args.get("program_id") or "").strip() or None
+    feedback_source = bound if bound else args
 
     tools_root = impl.tools_root or os.environ.get("TS_HARNESS_TOOLS_ROOT", "")
     backend = OpenCodeBackend(
@@ -240,15 +269,20 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
             foundry_artifacts=foundry_artifacts,
             planner_artifacts=planner_artifacts,
             approved_prd_markdown=approved_prd_markdown,
-            qa_feedback=str(args.get("qa_feedback") or "").strip() or None,
+            qa_feedback=_clean_text(feedback_source.get("qa_feedback")),
             pr_url=pr_url_arg,
             requested_by=requested_by,
             requested_by_github_login=requested_login,
             program_id=program_id,
+            delivery_workflow_id=delivery_workflow_id,
             decision_id=str(args.get("decision_id") or "").strip() or None,
             mode=mode,
-            review_feedback=str(args.get("review_feedback") or "").strip() or None,
-            revision_files=_revision_files(args.get("revision_files")),
+            review_feedback=_clean_text(feedback_source.get("review_feedback")),
+            revision_files=_revision_files(feedback_source.get("revision_files")),
+            human_change_requests=[
+                text for item in _revision_files(feedback_source.get("human_change_requests")) or [] if (text := _clean_text(item))
+            ]
+            or None,
         )
     )
     if program_id:

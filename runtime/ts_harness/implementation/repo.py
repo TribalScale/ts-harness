@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 
-def work_order_branch_name(work_order_id: str) -> str:
+def delivery_suffix(delivery_workflow_id: str | None) -> str:
+    """Short id that keeps one delivery's branch and workspace apart from another's."""
+    return re.sub(r"[^a-zA-Z0-9-]+", "", str(delivery_workflow_id or "")).lower()[:8]
+
+
+def work_order_branch_name(work_order_id: str, delivery_workflow_id: str | None = None) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(work_order_id or "").strip()).strip("-").lower()
-    return f"wo/{slug or 'work-order'}"
+    suffix = delivery_suffix(delivery_workflow_id)
+    return f"wo/{slug or 'work-order'}" + (f"-{suffix}" if suffix else "")
 
 
 def github_authenticated_url(repo_url: str, token: str | None = None) -> str:
@@ -32,6 +39,33 @@ def github_authenticated_url(repo_url: str, token: str | None = None) -> str:
     if parsed.port:
         netloc = f"{netloc}:{parsed.port}"
     return urlunparse(parsed._replace(netloc=netloc))
+
+
+WORKSPACE_OWNER_FILE = ".ts-harness-owner"
+
+
+def claim_workspace(workspace_dir: Path, owner: str) -> bool:
+    """Bind ``workspace_dir`` to one delivery workflow; return True if an old clone was dropped.
+
+    Workspaces are keyed by work-order id, which repeats across programs. A
+    clone left by another delivery (or one with no owner) carries that
+    delivery's ``wo/*`` commits, so it is removed and recloned from base.
+    Retries and revisions of the same delivery keep their clone.
+    """
+    owner = str(owner or "").strip()
+    if not owner:
+        return False
+    marker = workspace_dir / WORKSPACE_OWNER_FILE
+    current = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    if current == owner:
+        return False
+    repo_dir = workspace_dir / "repo"
+    dropped = repo_dir.exists()
+    if dropped:
+        shutil.rmtree(repo_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_text(owner + "\n", encoding="utf-8")
+    return dropped
 
 
 def ensure_repo_clone(
@@ -205,8 +239,13 @@ def create_work_branch(
     branch: str,
     base_branch: str,
     runner=subprocess.run,
+    from_remote: bool = False,
 ) -> None:
     """Check out the work-order branch from the refreshed base tip.
+
+    With ``from_remote`` (revising an open PR), a branch missing locally starts
+    from ``origin/<branch>`` so the revision builds on the PR's commits instead
+    of replacing them.
 
     Retries previously used ``git checkout -B``, which reset ``wo/*`` to the
     current HEAD (usually base) and orphaned successful Implement commits after
@@ -216,6 +255,24 @@ def create_work_branch(
     shallow clone), recreate the branch from the refreshed base tip.
     """
     start_point = _origin_base_ref(repo_dir, base_branch, runner=runner)
+
+    if from_remote and not _local_branch_exists(repo_dir, branch, runner=runner):
+        fetched = runner(
+            ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetched.returncode == 0:
+            _checkout(
+                repo_dir,
+                "-b",
+                branch,
+                f"origin/{branch}",
+                runner=runner,
+                action=f"git checkout {branch} from origin/{branch}",
+            )
+            return
 
     if _local_branch_exists(repo_dir, branch, runner=runner):
         if _has_merge_base(repo_dir, branch, start_point, runner=runner):

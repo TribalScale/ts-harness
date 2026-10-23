@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import shutil
+import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -31,6 +34,7 @@ from ts_harness.implementation.planning_docs import (
     planning_docs_file_map,
 )
 from ts_harness.implementation.repo import (
+    claim_workspace,
     commit_all_changes,
     create_pull_request,
     create_work_branch,
@@ -40,9 +44,14 @@ from ts_harness.implementation.repo import (
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
+from ts_harness.implementation.test_env import (
+    HOST_TOOLCHAINS,
+    TestEnvironment,
+    install_declared_dependencies,
+    prepare_test_environment,
+)
 from ts_harness.implementation.verification import (
     build_verification_fix_prompt,
-    prepare_test_dependencies,
     verify_implementation,
 )
 from ts_harness.integrations.github_client import (
@@ -54,6 +63,9 @@ from ts_harness.observability.logging import log_event
 
 _OPENCODE_PROGRESS_INTERVAL_SECONDS = 30.0
 _OPENCODE_LOG_TAIL_CHARS = 5000
+_OPENCODE_STALL_SECONDS_DEFAULT = 900
+# Same code as timeout(1) so a stall reads as "killed for taking too long".
+OPENCODE_STALLED_RC = 124
 
 
 def opencode_progress_log_path(workspace_dir: Path, work_order_id: str) -> Path:
@@ -64,6 +76,33 @@ def opencode_progress_log_path(workspace_dir: Path, work_order_id: str) -> Path:
     return Path(workspace_dir) / ".ts-harness" / f"opencode-{safe_id}.log"
 
 
+def opencode_stall_seconds() -> float:
+    """Seconds without OpenCode output before the run is treated as hung; 0 disables."""
+    try:
+        return max(0.0, float(os.environ.get("CODING_BACKEND_STALL_SECONDS", _OPENCODE_STALL_SECONDS_DEFAULT)))
+    except ValueError:
+        return float(_OPENCODE_STALL_SECONDS_DEFAULT)
+
+
+def opencode_exit_error(completed: subprocess.CompletedProcess[str]) -> str:
+    if completed.returncode == OPENCODE_STALLED_RC:
+        return "opencode stalled: no output within the stall window"
+    return f"opencode exit {completed.returncode}"
+
+
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def stream_opencode_process(
     cmd: list[str],
     *,
@@ -71,13 +110,21 @@ def stream_opencode_process(
     env: dict[str, str],
     log_path: Path,
     work_order_id: str,
+    stall_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run OpenCode while streaming output to a tailable log and runtime events."""
+    """Run OpenCode while streaming output to a tailable log and runtime events.
+
+    A run that prints nothing for ``stall_seconds`` is killed with its whole
+    process group and returns ``OPENCODE_STALLED_RC``.
+    """
+    stall = opencode_stall_seconds() if stall_seconds is None else max(0.0, float(stall_seconds))
     log_path.parent.mkdir(parents=True, exist_ok=True)
     collected: list[str] = []
     line_count = 0
     last_progress = time.monotonic()
+    last_output = last_progress
     last_line = ""
+    stalled = False
     with log_path.open("a", encoding="utf-8") as log_fh:
         log_fh.write(f"\n--- opencode start work_order_id={work_order_id} ---\n")
         log_fh.flush()
@@ -95,16 +142,38 @@ def stream_opencode_process(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         assert proc.stdout is not None
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def _pump(stream) -> None:
+            try:
+                for item in stream:
+                    lines.put(item)
+            finally:
+                lines.put(None)
+
+        reader = threading.Thread(target=_pump, args=(proc.stdout,), daemon=True)
+        reader.start()
         try:
-            for line in proc.stdout:
+            while True:
+                try:
+                    line = lines.get(timeout=1.0)
+                except queue.Empty:
+                    if stall and time.monotonic() - last_output >= stall:
+                        stalled = True
+                        break
+                    continue
+                if line is None:
+                    break
                 log_fh.write(line)
                 log_fh.flush()
                 collected.append(line)
                 line_count += 1
                 last_line = line.rstrip("\n")
                 now = time.monotonic()
+                last_output = now
                 if now - last_progress >= _OPENCODE_PROGRESS_INTERVAL_SECONDS:
                     last_progress = now
                     log_event(
@@ -116,8 +185,23 @@ def stream_opencode_process(
                         log_path=str(log_path),
                     )
         finally:
+            if stalled or proc.poll() is None:
+                _kill_process_group(proc)
+            reader.join(timeout=5)
             proc.stdout.close()
-        returncode = proc.wait()
+        returncode = OPENCODE_STALLED_RC if stalled else proc.wait()
+        if stalled:
+            note = f"--- opencode stalled: no output for {stall:g}s; killed ---\n"
+            log_fh.write(note)
+            collected.append(note)
+            log_event(
+                "opencode_stalled",
+                work_order_id=work_order_id,
+                stall_seconds=stall,
+                lines=line_count,
+                last_line=last_line[-300:],
+                log_path=str(log_path),
+            )
         log_fh.write(f"--- opencode end rc={returncode} lines={line_count} ---\n")
         log_fh.flush()
     log_event(
@@ -172,6 +256,7 @@ def build_implement_prompt(
     pr_url: str | None = None,
     review_feedback: str | None = None,
     revision_files: list[str] | None = None,
+    human_change_requests: list[str] | None = None,
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -180,13 +265,19 @@ def build_implement_prompt(
         "Do not stop after analysis — ship code + tests for this work order.\n"
         "Do not expand scope beyond this work order.\n"
         "Do not commit, push, or open a pull request — the host backend handles that.\n"
+        "Use the repo's existing language and test runner. If the repo has none, use the standard "
+        "runner for the language you implement in, declared in that language's manifest.\n"
+        "Never add a module or script that stands in for a test framework "
+        "(for example pytest.py or a behave/ package).\n"
+        f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
     )
     cited = [path for path in (revision_files or []) if str(path).strip()]
     if cited:
         hard_rules += (
             "You may edit only these files: "
             + ", ".join(cited)
-            + ". Revert every other change. You may also update an existing lockfile of a manifest in that list. "
+            + ", plus tests, test fixtures and BDD feature files or step definitions. "
+            "Revert every other change. You may also update an existing lockfile of a manifest in that list. "
             "Do not add a new dependency file.\n"
         )
     pr_line = (
@@ -198,9 +289,9 @@ def build_implement_prompt(
     review = str(review_feedback or "").strip()
     if review:
         qa_section += (
-            "Code review blocked this delivery. Fix every blocking finding before finishing.\n"
+            "A review blocked this delivery. Fix every blocking finding and requested change before finishing.\n"
             f"{pr_line}"
-            f"Code review findings:\n{review}\n"
+            f"Review findings:\n{review}\n"
         )
     feedback = str(qa_feedback or "").strip()
     if feedback:
@@ -208,6 +299,12 @@ def build_implement_prompt(
             "QA rejected this delivery. Address every defect before finishing.\n"
             f"{'' if review else pr_line}"
             f"QA feedback:\n{feedback}\n"
+        )
+    requests = [str(item).strip() for item in human_change_requests or [] if str(item).strip()]
+    if requests:
+        qa_section += (
+            "A human reviewer already requested these changes on this pull request. They amend the work order "
+            "and win over it; keep them in place:\n" + "\n".join(f"- {item}" for item in requests) + "\n"
         )
     if docs_materialized and primary_spec_path:
         skill_line = (
@@ -352,6 +449,12 @@ class OpenCodeBackend:
             work_order_id=work_order_id,
         )
 
+    def _prepare_test_env(self, workspace_dir: Path, repo_dir: Path) -> tuple[TestEnvironment, str]:
+        """Venv with real runners plus the repo's declared deps, before OpenCode and verify run."""
+        test_env, prep_log = prepare_test_environment(workspace_dir, repo_dir, runner=self.runner)
+        deps_log = install_declared_dependencies(test_env, repo_dir, runner=self.runner)
+        return test_env, "\n".join(part for part in [prep_log, deps_log] if part)
+
     def _verify_with_fixes(
         self,
         repo_dir: Path,
@@ -365,6 +468,7 @@ class OpenCodeBackend:
         log_path: Path,
         skills_materialized: bool,
         check_changeset: bool = True,
+        test_env: TestEnvironment | None = None,
     ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
@@ -376,6 +480,11 @@ class OpenCodeBackend:
         while True:
             self._revert_undeclared(repo_dir, request)
             changed = list_changed_files(repo_dir, base_ref=base_ref, runner=self.runner)
+            deps_log = (
+                install_declared_dependencies(test_env, repo_dir, runner=self.runner)
+                if test_env is not None
+                else ""
+            )
             verify = verify_implementation(
                 repo_dir,
                 work_order_id=request.work_order_id,
@@ -384,13 +493,16 @@ class OpenCodeBackend:
                 runner=self.runner,
                 security=self.security,
                 base_ref=base_ref,
+                test_env=test_env,
             )
             verify_logs.append(
-                "\n".join(part for part in [verify.summary, verify.log_tail] if part)
+                "\n".join(part for part in [deps_log, verify.summary, verify.log_tail] if part)
             )
             if verify.ok:
                 return None, log, fix_passes_used, changed, verify.security
-            if fix_passes_used >= self.verification_fix_passes:
+            # The agent cannot install host toolchains; fix passes would only burn budget.
+            toolchain_only = all(r.startswith("missing_toolchain:") for r in verify.reasons)
+            if fix_passes_used >= self.verification_fix_passes or toolchain_only:
                 changed = list_changed_files(repo_dir, runner=self.runner)
                 return (
                     CodingResult(
@@ -459,8 +571,12 @@ class OpenCodeBackend:
                         log_tail="\n".join([log, *verify_logs])[-8000:],
                         log_path=str(log_path),
                         error=(
-                            f"opencode fix exit {fix_completed.returncode}; "
-                            f"fix_passes_used={fix_passes_used}"
+                            (
+                                opencode_exit_error(fix_completed)
+                                if fix_completed.returncode == OPENCODE_STALLED_RC
+                                else f"opencode fix exit {fix_completed.returncode}"
+                            )
+                            + f"; fix_passes_used={fix_passes_used}"
                         ),
                         security=verify.security,
                     ),
@@ -566,7 +682,7 @@ class OpenCodeBackend:
             + ", ".join(extra)
             + ". You may only edit: "
             + ", ".join(cited)
-            + ". Do not add a new dependency file.\n"
+            + ", plus tests. Do not add a new dependency file.\n"
         )
         fix_cmd = build_opencode_command(
             binary=binary,
@@ -639,12 +755,17 @@ class OpenCodeBackend:
                 error="GITHUB_TOKEN is required for clone/push/PR",
             )
 
-        branch = work_order_branch_name(request.work_order_id)
+        branch = work_order_branch_name(request.work_order_id, request.delivery_workflow_id)
         log_path = opencode_progress_log_path(
             request.workspace_dir, request.work_order_id
         )
         try:
+            gone, pr_head = self._revision_target(request)
+            if gone:
+                return CodingResult(ok=False, branch=branch, summary="", pr_url=request.pr_url, error=gone)
+            branch = pr_head or branch
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
+            claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
             repo_dir = ensure_repo_clone(
                 repo_url=request.repo_url,
                 workspace_dir=request.workspace_dir,
@@ -658,6 +779,7 @@ class OpenCodeBackend:
                 branch=branch,
                 base_branch=request.base_branch,
                 runner=self.runner,
+                from_remote=bool(pr_head),
             )
             baseline = self._head_sha(repo_dir) if request.revision_files else ""
             docs_written: list[str] = []
@@ -688,8 +810,7 @@ class OpenCodeBackend:
                 )
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
-            # Install declared deps before OpenCode/verify so runners exist on PATH/modules.
-            prep_log = prepare_test_dependencies(repo_dir, runner=self.runner)
+            test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
             prompt = build_implement_prompt(
                 request.work_order_id,
                 request.work_order_body,
@@ -700,6 +821,7 @@ class OpenCodeBackend:
                 pr_url=request.pr_url,
                 review_feedback=request.review_feedback,
                 revision_files=request.revision_files,
+                human_change_requests=request.human_change_requests,
             )
             cmd = build_opencode_command(
                 binary=binary,
@@ -710,6 +832,7 @@ class OpenCodeBackend:
                 model=request.model,
             )
             env = os.environ.copy()
+            env.update(test_env.env)
             env.update(provider_child_env(provider, api_key))
             completed = self._run_opencode(
                 cmd,
@@ -738,7 +861,7 @@ class OpenCodeBackend:
                     changed_files=changed,
                     log_tail=log,
                     log_path=str(log_path),
-                    error=f"opencode exit {completed.returncode}",
+                    error=opencode_exit_error(completed),
                 )
 
             self._revert_undeclared(repo_dir, request)
@@ -752,6 +875,7 @@ class OpenCodeBackend:
                 log=log,
                 log_path=log_path,
                 skills_materialized=bool(skills_written),
+                test_env=test_env,
             )
             if failure is not None:
                 return failure
@@ -790,6 +914,19 @@ class OpenCodeBackend:
                 return scope_failure
 
             security = self._with_scanned_sha(repo_dir, security)
+            # The reviewer can close the PR while OpenCode is still working.
+            gone, _head = self._revision_target(request)
+            if gone:
+                return CodingResult(
+                    ok=False,
+                    branch=branch,
+                    summary="",
+                    changed_files=changed,
+                    log_tail=log,
+                    log_path=str(log_path),
+                    pr_url=request.pr_url,
+                    error=gone,
+                )
             git_env = _git_env()
             push_branch(repo_dir, branch=branch, runner=self.runner, env=git_env)
             pr_body = (
@@ -859,6 +996,25 @@ class OpenCodeBackend:
                 return head
             self.sleep(2)
         return head
+
+    def _revision_target(self, request: CodingRequest) -> tuple[str, str]:
+        """(error, head branch) of the PR a revision targets.
+
+        The error is set when the PR is no longer open; a revision never opens a
+        replacement PR. The head branch is where the revision must push.
+        """
+        pr_url = str(request.pr_url or "").strip()
+        parsed = parse_github_pr_url(pr_url)
+        if parsed is None:
+            return "", ""
+        if self.github is None:
+            self.github = GitHubClient.from_env()
+        pull = self.github.get_pull(*parsed)
+        if pull.get("merged"):
+            return f"pr_merged: {pr_url} is already merged; not revising it", ""
+        if pull.get("state") == "closed":
+            return f"pr_closed: {pr_url} was closed without merging; not opening a new PR", ""
+        return "", str((pull.get("head") or {}).get("ref") or "")
 
     def refresh(self, request: CodingRequest) -> CodingResult:
         pr_url = str(request.pr_url or "").strip()
@@ -948,7 +1104,9 @@ class OpenCodeBackend:
             resolved: list[str] = []
             method = "local_merge"
             provider, api_key = resolve_coding_backend_credentials(provider=request.provider)
+            test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir)
             env = os.environ.copy()
+            env.update(test_env.env)
             if provider and api_key:
                 env.update(provider_child_env(provider, api_key))
             binary = ""
@@ -974,7 +1132,7 @@ class OpenCodeBackend:
                     log_path=log_path,
                     work_order_id=request.work_order_id,
                 )
-                log = "\n".join(part for part in [(completed.stdout or "")[-3000:], (completed.stderr or "")[-2000:]] if part)
+                log = "\n".join(part for part in [log, (completed.stdout or "")[-3000:], (completed.stderr or "")[-2000:]] if part)
                 if completed.returncode != 0:
                     return CodingResult(
                         ok=False,
@@ -984,7 +1142,7 @@ class OpenCodeBackend:
                         log_path=str(log_path),
                         pr_url=pr_url,
                         resolved_files=resolved,
-                        error=f"opencode exit {completed.returncode}",
+                        error=opencode_exit_error(completed),
                     )
                 remaining = files_with_conflict_markers(repo_dir, resolved)
                 if remaining:
@@ -1010,6 +1168,7 @@ class OpenCodeBackend:
                 log_path=log_path,
                 skills_materialized=False,
                 check_changeset=False,
+                test_env=test_env,
             )
             if failure is not None:
                 failure.pr_url = pr_url

@@ -26,10 +26,12 @@ class CodingRequest:
     requested_by: str | None = None
     requested_by_github_login: str | None = None
     program_id: str | None = None
+    delivery_workflow_id: str | None = None
     decision_id: str | None = None
     mode: str = "implement"
     review_feedback: str | None = None
     revision_files: list[str] | None = None
+    human_change_requests: list[str] | None = None
 
 
 def attribution_markdown(request: CodingRequest) -> str:
