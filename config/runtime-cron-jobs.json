@@ -26,6 +26,15 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
+    },
+    {
+      "name": "sweep-coding-jobs",
+      "kind": "system",
+      "handler": "sweep_coding_jobs",
+      "interval_seconds": 60,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
     }
   ]
 }

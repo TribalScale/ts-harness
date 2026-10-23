@@ -209,6 +209,15 @@
         "enterprise_repo_url": { "type": "string", "minLength": 1 },
         "multi_agent_enabled": { "type": "boolean" },
         "workflow_runner_enabled": { "type": "boolean" },
+        "coding_jobs_enabled": {
+          "type": "boolean",
+          "description": "Run deliver_work_order OpenCode runs as queued jobs in worker containers instead of inside agent-runtime."
+        },
+        "coding_max_running": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Coding jobs that may run at once."
+        },
         "workflow_runner_poll_interval_seconds": {
           "type": "integer",
           "minimum": 1

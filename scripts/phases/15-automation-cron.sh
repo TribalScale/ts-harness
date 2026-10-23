@@ -117,6 +117,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Marks coding jobs lost when their worker stops heartbeating or overruns; the task resumes blocked.
+    {
+        "name": "sweep-coding-jobs",
+        "kind": "system",
+        "handler": "sweep_coding_jobs",
+        "interval_seconds": 60,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 print(f"wrote {len(jobs)} scheduler jobs to {out}")

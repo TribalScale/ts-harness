@@ -539,10 +539,30 @@ def sync_directory() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
+def sweep_coding_jobs() -> dict[str, Any]:
+    """Mark coding jobs lost when their heartbeat stops or they overrun; their tasks resume as blocked."""
+    from ts_harness.memory.client import get_memory_client
+
+    try:
+        result = get_memory_client().sweep_stale_coding_jobs(
+            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 300),
+            max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 3600),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("coding job sweep failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+    return {
+        "status": "ok",
+        "lost": [job.get("id") for job in result.get("lost") or []],
+        "resumed_tasks": list(result.get("resumed_tasks") or []),
+    }
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
     "sync_directory": sync_directory,
+    "sweep_coding_jobs": sweep_coding_jobs,
     "start_program": start_scheduled_program,
 }
 

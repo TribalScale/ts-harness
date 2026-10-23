@@ -2323,6 +2323,19 @@ class CodingJobDispatchTests(unittest.TestCase):
         self.assertEqual(memory.retried, [])
         self.assertEqual(memory.consumed, ["job-1"])
 
+    def test_runner_memory_client_speaks_the_coding_job_api(self):
+        client = self.runner_module.MemoryApiClient("http://memory", token="t")
+        calls = []
+        client._request = lambda method, path, body=None: calls.append((method, path, body)) or {"jobs": [{"id": "j"}]}
+        self.assertEqual(client.list_coding_jobs(task_id="task-1", unconsumed=True, limit=10), [{"id": "j"}])
+        client.create_coding_job(spec={"repo_url": "r"}, task_id="task-1")
+        client.consume_coding_job("j")
+        client.task_program("task-1")
+        self.assertEqual(calls[0][:2], ("GET", "/coding-jobs?limit=10&task_id=task-1&unconsumed=true"))
+        self.assertEqual(calls[1], ("POST", "/coding-jobs/create", {"spec": {"repo_url": "r"}, "task_id": "task-1", "actor": "workflow-runner"}))
+        self.assertEqual(calls[2][:2], ("POST", "/coding-jobs/j/consume"))
+        self.assertEqual(calls[3][:2], ("GET", "/workflow/tasks/task-1/program"))
+
     def test_lost_job_is_retried(self):
         memory = CodingJobMemoryClient(
             ready=[self.task()],

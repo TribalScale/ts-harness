@@ -67,6 +67,8 @@ reconstruct_enterprise_compose_files() {
     COMPOSE_FILES=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.memory-api.yml" -f "$ENTERPRISE_DOCKER_DIR/docker-compose.agent-runtime.yml")
     [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml" ]] && \
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml")
+    [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && "${CODING_JOBS_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml" ]] && \
+        COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml")
 }
 
 refresh_compose_env() {
@@ -101,6 +103,10 @@ recreate_secret_consumers() {
     if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
         docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate workflow-runner
         echo "workflow-runner recreated."
+        if [[ "${CODING_JOBS_ENABLED:-false}" == "true" ]]; then
+            docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate coding-launcher
+            echo "coding-launcher recreated."
+        fi
     fi
 }
 

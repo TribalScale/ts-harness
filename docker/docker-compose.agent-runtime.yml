@@ -11,6 +11,8 @@ services:
     restart: unless-stopped
 
   agent-runtime:
+    # Tagged so the coding worker image can build on it.
+    image: ts-harness-agent-runtime:latest
     build:
       context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
       dockerfile: docker/Dockerfile.agent-runtime

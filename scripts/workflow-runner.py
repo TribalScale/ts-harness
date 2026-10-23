@@ -32,6 +32,7 @@ import threading
 import time
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -520,6 +521,32 @@ class MemoryApiClient:
 
     def get_workflow_record(self, workflow_id: str) -> dict[str, Any]:
         return self._request("GET", f"/workflows/{workflow_id}")
+
+    def task_program(self, task_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/workflow/tasks/{urllib.parse.quote(str(task_id), safe='')}/program")
+
+    def list_coding_jobs(
+        self,
+        *,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        status: str | None = None,
+        unconsumed: bool = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status)):
+            if value:
+                params[key] = value
+        if unconsumed:
+            params["unconsumed"] = "true"
+        return list(self._request("GET", f"/coding-jobs?{urllib.parse.urlencode(params)}").get("jobs") or [])
+
+    def create_coding_job(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/coding-jobs/create", {**body, "actor": "workflow-runner"})
+
+    def consume_coding_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
 
 
 # ---------------------------------------------------------------------------

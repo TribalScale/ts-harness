@@ -39,6 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_coding_jobs_status_created ON coding_jobs (status
 CREATE INDEX IF NOT EXISTS idx_coding_jobs_task ON coding_jobs (task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_coding_jobs_workflow ON coding_jobs (workflow_id);
 
+-- Named singleton leases for background services such as the coding launcher.
+CREATE TABLE IF NOT EXISTS service_leases (
+    name        TEXT        PRIMARY KEY,
+    holder      TEXT        NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+
 ALTER TABLE session_audit_log
     DROP CONSTRAINT IF EXISTS session_audit_log_action_type_check;
 

@@ -241,6 +241,23 @@ variable "workflow_runner_enabled" {
   default     = false
 }
 
+variable "coding_jobs_enabled" {
+  description = "Run deliver_work_order OpenCode runs as queued jobs in worker containers instead of inside agent-runtime."
+  type        = bool
+  default     = false
+}
+
+variable "coding_max_running" {
+  description = "Coding jobs that may run at once."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.coding_max_running >= 1
+    error_message = "coding_max_running must be at least 1."
+  }
+}
+
 variable "workflow_runner_poll_interval_seconds" {
   description = "Workflow runner polling interval in seconds."
   type        = number

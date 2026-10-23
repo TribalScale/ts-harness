@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
     apply_directory_snapshot,
@@ -2075,6 +2076,14 @@ def cancel_workflow_bulk(conn, workflow_id: str, body: dict[str, Any]) -> dict[s
             SET status = 'cancelled',
                 cancellation_reason = %s
             WHERE id = %s
+            """,
+            (reason, parsed_id),
+        )
+        cur.execute(
+            """
+            UPDATE coding_jobs
+            SET status = 'cancelled', error = %s, finished_at = now()
+            WHERE workflow_id = %s AND status IN ('queued', 'starting', 'running')
             """,
             (reason, parsed_id),
         )
@@ -5037,6 +5046,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, create_workflow_tasks(conn, body))
                 elif self.path == "/runner/leader":
                     self._send_json(200, acquire_runner_lease(conn, body))
+                elif self.path == "/leases/acquire":
+                    self._send_json(200, acquire_service_lease(conn, body))
                 elif self.path == "/workflow/ready":
                     self._send_json(200, {"tasks": list_ready_workflow_tasks(conn, body)})
                 elif self.path == "/workflow/retry":

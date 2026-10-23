@@ -125,6 +125,15 @@ if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     else
         echo "[phase:${PHASE_NAME}] WARNING: workflow-runner compose file not found at $WORKFLOW_RUNNER_COMPOSE"
     fi
+    if [[ "${CODING_JOBS_ENABLED:-false}" == "true" ]]; then
+        CODING_JOBS_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml"
+        if [[ -f "$CODING_JOBS_COMPOSE" ]]; then
+            COMPOSE_FILES+=(-f "$CODING_JOBS_COMPOSE")
+            echo "[phase:${PHASE_NAME}] Coding jobs enabled: including coding-launcher and the worker image"
+        else
+            echo "[phase:${PHASE_NAME}] WARNING: coding-jobs compose file not found at $CODING_JOBS_COMPOSE"
+        fi
+    fi
 fi
 
 if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
@@ -204,6 +213,8 @@ fi
     echo "export WORKFLOW_RUNNER_LEASE_SECONDS=$(printf '%q' "${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}")"
     echo "export WORKFLOW_RUNNER_STALE_POLICY=$(printf '%q' "${WORKFLOW_RUNNER_STALE_POLICY:-block}")"
     echo "export WORKFLOW_RUNNER_ADAPTER=$(printf '%q' "${WORKFLOW_RUNNER_ADAPTER:-gateway-http}")"
+    echo "export CODING_JOBS_ENABLED=$(printf '%q' "${CODING_JOBS_ENABLED:-false}")"
+    echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
     echo "export AGENT_RUNTIME_URL=$(printf '%q' "${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}")"
     echo "export TS_HARNESS_TOOLS_ROOT_HOST=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT_HOST}")"
     echo "export TS_HARNESS_TOOLS_ROOT=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT:-/tools}")"

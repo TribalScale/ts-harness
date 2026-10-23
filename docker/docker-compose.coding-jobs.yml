@@ -1,0 +1,39 @@
+services:
+  # Builds the worker image; the launcher starts one container from it per job.
+  coding-worker:
+    image: ${CODING_WORKER_IMAGE:-ts-harness-coding-worker:latest}
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.coding-worker
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-latest}
+    command: ["true"]
+    restart: "no"
+    depends_on:
+      - agent-runtime
+
+  coding-launcher:
+    image: ts-harness-agent-runtime:latest
+    # Shares agent-runtime netns; workers join it too (CODING_WORKER_NETWORK=auto) to reach memory-api.
+    network_mode: "service:agent-runtime"
+    environment:
+      CODING_LAUNCHER: local
+      CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}
+      CODING_WORKER_IMAGE: ${CODING_WORKER_IMAGE:-ts-harness-coding-worker:latest}
+      CODING_WORKER_NETWORK: auto
+      CODING_WORKER_CPUS: ${CODING_WORKER_CPUS:-2}
+      CODING_WORKER_MEMORY: ${CODING_WORKER_MEMORY:-4g}
+      CODING_WORKER_CONFIG_HOST_PATH: ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+    # Worker secrets (GITHUB_TOKEN, provider keys, CODING_BACKEND_*) pass through by name only.
+    env_file:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["python3", "/app/scripts/coding-launcher.py"]
+    restart: unless-stopped
+    depends_on:
+      - agent-runtime
+      - memory-api
+      - coding-worker

@@ -46,6 +46,9 @@ runtime:
   workflow_runner_batch_size: 5
   workflow_runner_lease_seconds: 1800
   workflow_runner_stale_policy: block
+  # OpenCode runs as queued jobs in worker containers; turn on after one supervised run.
+  coding_jobs_enabled: false
+  coding_max_running: 3
   embeddings_provider: gemini
   embeddings_model: text-embedding-004
   embeddings_dimensions: 768

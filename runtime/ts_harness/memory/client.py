@@ -1011,12 +1011,18 @@ class MemoryClient:
         task_id: str | None = None,
         status: str | None = None,
         unconsumed: bool = False,
+        finished_within: int | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         from urllib.parse import urlencode
 
         params: dict[str, Any] = {"limit": limit}
-        for key, value in (("workflow_id", workflow_id), ("task_id", task_id), ("status", status)):
+        for key, value in (
+            ("workflow_id", workflow_id),
+            ("task_id", task_id),
+            ("status", status),
+            ("finished_within", finished_within),
+        ):
             if value:
                 params[key] = value
         if unconsumed:
@@ -1055,6 +1061,9 @@ class MemoryClient:
             "/coding-jobs/stale",
             {"heartbeat_seconds": heartbeat_seconds, "max_runtime_seconds": max_runtime_seconds},
         )
+
+    def acquire_service_lease(self, name: str, *, holder: str, ttl_seconds: int = 30) -> dict[str, Any]:
+        return self._request("POST", "/leases/acquire", {"name": name, "holder": holder, "ttl_seconds": ttl_seconds})
 
     def directory_disable(
         self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None

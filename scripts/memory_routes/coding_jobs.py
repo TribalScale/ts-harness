@@ -463,6 +463,13 @@ def list_coding_jobs(conn, query: dict[str, Any]) -> dict[str, Any]:
         params.append(statuses)
     if str(query.get("unconsumed") or "").lower() in {"1", "true"}:
         clauses.append("consumed_at IS NULL")
+    if query.get("finished_within"):
+        try:
+            seconds = int(query["finished_within"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("finished_within must be seconds") from exc
+        clauses.append("finished_at > now() - make_interval(secs => %s)")
+        params.append(seconds)
     try:
         limit = max(1, min(int(query.get("limit") or 50), 200))
     except (TypeError, ValueError):
