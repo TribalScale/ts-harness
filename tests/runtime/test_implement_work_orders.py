@@ -269,6 +269,12 @@ class _SiblingMemory:
             ids.append(task_id)
         return {"task_ids": ids}
 
+    def acquire_workflow_lock(self, workflow_id, *, owner, ttl_seconds):
+        return True
+
+    def release_workflow_lock(self, workflow_id, *, owner):
+        return True
+
     def __getattr__(self, name):
         return MagicMock(return_value={})
 

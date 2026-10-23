@@ -117,6 +117,22 @@ Approved gates and resumed or retried tasks go first, then the requester and
 team with the fewest running tasks, then the oldest. Runners extend a running
 task's lease with `POST /workflow/tasks/{id}/renew-lease`.
 
+Several runners can share one database. Each claims per lane up to its free
+slots from `lane_caps` (`WORKFLOW_RUNNER_LANE_CAPS`, set it to `off` for the old
+list-then-claim loop) and renews its tasks' leases every third of the lease.
+Only the leader (`runner_leader_lease`) sweeps stale tasks. Give each replica its
+own `WORKFLOW_RUNNER_ID`; the default includes the hostname.
+
+Writes to one workflow are serialized by its row in `workflow_locks` (migration
+038, `POST /workflow/{id}/lock` and `/unlock`). The runner holds it while
+recording a task's outcome, and the engine's entry points (transitions, approve,
+reject, cancel, external resume, blocked-step decisions) take it too. The lock
+is reentrant per thread and released during the agent turn. A holder that dies
+loses it after `WORKFLOW_LOCK_TTL_SECONDS` (300); a writer that waits 30 seconds
+gives up with `WorkflowLockTimeout` and the task is retried. If the memory API
+cannot lock, writers run unlocked for five minutes and log a warning.
+`WORKFLOW_LOCKS_ENABLED=false` turns locking off.
+
 Coding jobs are claimed within the global limit and per-requester, per-program
 and per-team quotas from `scheduling.coding` in the runtime config (defaults 2,
 3 and 8; 0 means no limit). `CODING_QUOTA_PER_USER`, `CODING_QUOTA_PER_PROGRAM`

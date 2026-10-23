@@ -42,6 +42,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 36 | `035_github_app.sql` | GitHub App registrations per host, installations, processed webhook deliveries; directory_users.github_login; GitHub audit actions |
 | 37 | `036_project_repositories.sql` | Repositories per project (host, owner, name, App installation, default branch, role) |
 | 38 | `037_task_lanes.sql` | Task lanes, team and requester per task, batch claims with fair ordering, lease renewal |
+| 39 | `038_workflow_locks.sql` | Per-workflow write lock with expiry for runners and webhooks |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

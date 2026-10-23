@@ -2347,5 +2347,137 @@ class CodingJobDispatchTests(unittest.TestCase):
         self.assertEqual(memory.consumed, ["job-1"])
 
 
+
+class LaneMemoryClient(FakeMemoryClient):
+    def __init__(self, by_lane=None, leader=True):
+        super().__init__()
+        self.by_lane = {lane: list(tasks) for lane, tasks in (by_lane or {}).items()}
+        self.batch_claims = []
+        self.renewals = []
+        self.leader = leader
+        self.stale_listed = 0
+        self.locks = []
+
+    def acquire_leader(self, runner_id, ttl_seconds):
+        return self.leader
+
+    def list_stale_tasks(self):
+        self.stale_listed += 1
+        return []
+
+    def list_ready_tasks(self, limit):
+        raise AssertionError("lane mode must not list ready tasks")
+
+    def claim_ready_tasks(self, *, runner, lane, limit, lease_seconds):
+        self.batch_claims.append((lane, limit))
+        tasks, self.by_lane[lane] = self.by_lane.get(lane, [])[:limit], self.by_lane.get(lane, [])[limit:]
+        return tasks
+
+    def renew_task_lease(self, task_id, *, runner, lease_seconds):
+        self.renewals.append(task_id)
+        return True
+
+    def acquire_workflow_lock(self, workflow_id, *, owner, ttl_seconds):
+        self.locks.append(("acquire", workflow_id))
+        return True
+
+    def release_workflow_lock(self, workflow_id, *, owner):
+        self.locks.append(("release", workflow_id))
+        return True
+
+
+def _lane_task(task_id, workflow_id="workflow-1"):
+    return {
+        "id": task_id,
+        "workflow_id": workflow_id,
+        "workflow_type": "prd_request",
+        "step_name": "draft_prd",
+        "agent_id": "pm-agent",
+        "input": {},
+    }
+
+
+class LaneModeTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.runner_module = load_runner()
+
+    def runner(self, memory, caps, adapter=None, executor=None):
+        adapter = adapter or FakeAdapter({"status": "succeeded", "output": {"ok": True}})
+        return self.runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-a", lane_caps=caps, executor=executor
+        )
+
+    def test_claims_each_lane_in_batches_and_runs_the_tasks(self):
+        memory = LaneMemoryClient({"fast": [_lane_task("t1", "w1"), _lane_task("t2", "w2")], "agent": [_lane_task("t3", "w3")]})
+        self.runner(memory, {"fast": 5, "agent": 2}).tick()
+        self.assertEqual(memory.batch_claims, [("fast", 5), ("agent", 2)])
+        self.assertEqual([task_id for task_id, _ in memory.completed], ["t1", "t2", "t3"])
+
+    def test_dispatch_holds_the_workflow_lock_except_during_the_agent_turn(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1", "w1")]})
+        seen = []
+
+        class Adapter(FakeAdapter):
+            def dispatch(self, payload):
+                seen.append(list(memory.locks))
+                return super().dispatch(payload)
+
+        self.runner(memory, {"agent": 1}, adapter=Adapter({"status": "succeeded", "output": {}})).tick()
+        self.assertEqual(seen[0], [("acquire", "w1"), ("release", "w1")])
+        self.assertEqual(memory.locks[-1], ("release", "w1"))
+        self.assertEqual(memory.locks.count(("acquire", "w1")), 2)
+
+    def test_full_lane_claims_nothing(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t2", "w2")]})
+        runner = self.runner(memory, {"agent": 1})
+        runner._inflight_lanes["t1"] = "agent"
+        runner.tick()
+        self.assertEqual(memory.batch_claims, [])
+
+    def test_only_the_leader_sweeps_stale_tasks(self):
+        follower = LaneMemoryClient(leader=False)
+        self.runner(follower, {"agent": 1}).tick()
+        self.assertEqual(follower.stale_listed, 0)
+        leader = LaneMemoryClient(leader=True)
+        self.runner(leader, {"agent": 1}).tick()
+        self.assertEqual(leader.stale_listed, 1)
+
+    def test_followers_still_claim(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1")]}, leader=False)
+        self.runner(memory, {"agent": 1}).tick()
+        self.assertEqual([task_id for task_id, _ in memory.completed], ["t1"])
+
+    def test_renews_leases_of_long_running_tasks(self):
+        memory = LaneMemoryClient()
+        runner = self.runner(memory, {"agent": 1})
+        runner.lease_seconds = 30
+        runner._lease_renewed = {"old": time.monotonic() - 20, "new": time.monotonic()}
+        runner._renew_leases()
+        self.assertEqual(memory.renewals, ["old"])
+
+    def test_lane_mode_does_not_use_the_shared_limiter(self):
+        memory = LaneMemoryClient({"agent": [_lane_task("t1")]})
+        runner = self.runner(memory, {"agent": 1})
+        runner._limiter = MagicMock()
+        runner.tick()
+        runner._limiter.release.assert_not_called()
+
+    def test_without_claim_support_falls_back_to_list_then_claim(self):
+        memory = FakeMemoryClient(ready=[_lane_task("t1")])
+        self.runner(memory, {"agent": 1}).tick()
+        self.assertEqual(len(memory.claims), 1)
+
+    def test_lane_caps_come_from_the_profile_unless_turned_off(self):
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "", "DEPLOYMENT_PROFILE": "single_host"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {"fast": 10, "agent": 3, "coding": 3})
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "fast=2,agent=1"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {"fast": 2, "agent": 1})
+        with patch.dict("os.environ", {"WORKFLOW_RUNNER_LANE_CAPS": "off"}):
+            self.assertEqual(self.runner_module.runner_lane_caps(), {})
+
+
 if __name__ == "__main__":
     unittest.main()

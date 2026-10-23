@@ -27,6 +27,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import sys
 import threading
 import time
@@ -52,6 +53,7 @@ from ts_harness.workflows.definition_paths import (  # noqa: E402
     safe_component,
 )
 from ts_harness.workflows.wait_deadlines import wait_deadlines  # noqa: E402
+from ts_harness.workflows.workflow_locks import suspended, workflow_lock  # noqa: E402
 from ts_harness.tools.approvals import AWAITING_TOOL_APPROVAL_PREFIX  # noqa: E402
 
 
@@ -429,6 +431,21 @@ class MemoryApiClient:
         )
         return bool(result.get("claimed"))
 
+    def claim_ready_tasks(self, *, runner: str, lane: str, limit: int, lease_seconds: int) -> list[dict[str, Any]]:
+        body = {"runner": runner, "lane": lane, "limit": limit, "lease_seconds": lease_seconds}
+        return list(self._request("POST", "/workflow/claim-batch", body).get("tasks") or [])
+
+    def renew_task_lease(self, task_id: str, *, runner: str, lease_seconds: int) -> bool:
+        body = {"runner": runner, "lease_seconds": lease_seconds}
+        return bool(self._request("POST", f"/workflow/tasks/{task_id}/renew-lease", body).get("renewed"))
+
+    def acquire_workflow_lock(self, workflow_id: str, *, owner: str, ttl_seconds: int) -> bool:
+        body = {"owner": owner, "ttl_seconds": ttl_seconds}
+        return bool(self._request("POST", f"/workflow/{workflow_id}/lock", body).get("acquired"))
+
+    def release_workflow_lock(self, workflow_id: str, *, owner: str) -> bool:
+        return bool(self._request("POST", f"/workflow/{workflow_id}/unlock", {"owner": owner}).get("released"))
+
     def record_runtime_task(self, task_id: str, runtime_task_id: str) -> None:
         self._request(
             "POST",
@@ -623,6 +640,7 @@ class WorkflowRunner:
         runtime_url: str | None = None,
         stop_requested: threading.Event | None = None,
         executor: Executor | None = None,
+        lane_caps: dict[str, int] | None = None,
     ):
         if stale_policy not in {"block", "fail"}:
             raise ValueError("stale_policy must be 'block' or 'fail'")
@@ -654,8 +672,18 @@ class WorkflowRunner:
         self._state_lock = threading.Lock()
         self._inflight_lock = threading.Lock()
         self._inflight: dict[str, str] = {}
+        # With lane caps the runner claims batches per lane; other runners may share the database.
+        self.lane_caps = dict(lane_caps or {})
+        self._inflight_lanes: dict[str, str] = {}
+        self._lease_renewed: dict[str, float] = {}
 
     def tick(self) -> None:
+        if self._lanes_enabled():
+            try:
+                self._tick_lanes()
+            finally:
+                self._touch_tick_file()
+            return
         try:
             if not self._leader.try_become_leader():
                 log_event("leader_election_lost", runner_id=self.runner_id)
@@ -685,12 +713,76 @@ class WorkflowRunner:
                     continue
                 with self._inflight_lock:
                     self._inflight[str(task.get("id") or "")] = workflow_id
-                if self._executor is None:
-                    self._run_claimed_task(task)
-                else:
-                    self._executor.submit(contextvars.copy_context().run, self._run_claimed_task, task)
+                    self._lease_renewed[str(task.get("id") or "")] = time.monotonic()
+                self._submit(task)
+            self._renew_leases()
         finally:
             self._touch_tick_file()
+
+    def _lanes_enabled(self) -> bool:
+        return bool(self.lane_caps) and callable(getattr(self.memory, "claim_ready_tasks", None))
+
+    def _tick_lanes(self) -> None:
+        """Claim up to each lane's free slots; only the leader sweeps stale tasks."""
+        leader = self._leader.try_become_leader()
+        log_event("ticked", runner_id=self.runner_id, leader=leader)
+        with self._state_lock:
+            self.reload_if_changed()
+            if leader:
+                self._sweep_stale()
+        self._renew_leases()
+        if not self._runtime_ready():
+            log_event("runtime_not_ready", runner_id=self.runner_id)
+            return
+        for lane, cap in self.lane_caps.items():
+            if self.stop_requested.is_set():
+                log_event("runner_stop_requested", runner_id=self.runner_id)
+                break
+            with self._inflight_lock:
+                room = cap - sum(1 for value in self._inflight_lanes.values() if value == lane)
+            if room <= 0:
+                continue
+            try:
+                tasks = self.memory.claim_ready_tasks(
+                    runner=self.runner_id, lane=lane, limit=room, lease_seconds=self.lease_seconds
+                )
+            except Exception as exc:
+                log_event("claim_batch_failed", runner_id=self.runner_id, lane=lane, error=str(exc))
+                continue
+            for task in tasks:
+                task_id = str(task.get("id") or "")
+                with self._inflight_lock:
+                    self._inflight[task_id] = str(task.get("workflow_id") or "")
+                    self._inflight_lanes[task_id] = lane
+                    self._lease_renewed[task_id] = time.monotonic()
+                self._submit(task)
+
+    def _submit(self, task: dict[str, Any]) -> None:
+        if self._executor is None:
+            self._run_claimed_task(task)
+        else:
+            self._executor.submit(contextvars.copy_context().run, self._run_claimed_task, task)
+
+    def _renew_leases(self) -> None:
+        """Extend the lease of tasks running here every third of the lease, so the leader never sweeps them."""
+        renew = getattr(self.memory, "renew_task_lease", None)
+        if not callable(renew):
+            return
+        interval = max(5.0, self.lease_seconds / 3)
+        now = time.monotonic()
+        with self._inflight_lock:
+            due = [task_id for task_id, at in self._lease_renewed.items() if now - at >= interval]
+        for task_id in due:
+            try:
+                renewed = renew(task_id, runner=self.runner_id, lease_seconds=self.lease_seconds)
+            except Exception as exc:
+                log_event("lease_renew_failed", task_id=task_id, error=str(exc))
+                continue
+            with self._inflight_lock:
+                if task_id in self._lease_renewed:
+                    self._lease_renewed[task_id] = now
+            if not renewed:
+                log_event("lease_lost", runner_id=self.runner_id, task_id=task_id)
 
     def _workflow_in_flight(self, workflow_id: str) -> bool:
         with self._inflight_lock:
@@ -714,8 +806,9 @@ class WorkflowRunner:
             _runner_metrics.inc("runner_tasks_claimed")
             with self._state_lock:
                 try:
-                    self._ensure_workflow_record(task)
-                    self._dispatch_task(task)
+                    with workflow_lock(self.memory, task.get("workflow_id")):
+                        self._ensure_workflow_record(task)
+                        self._dispatch_task(task)
                 except Exception as exc:
                     log_event(
                         "dispatch_exception",
@@ -725,16 +818,21 @@ class WorkflowRunner:
                     )
                     self._recover_claimed_task(task, str(exc))
         finally:
+            task_id = str(task.get("id") or "")
             with self._inflight_lock:
-                self._inflight.pop(str(task.get("id") or ""), None)
-            self._limiter.release()
+                self._inflight.pop(task_id, None)
+                self._lease_renewed.pop(task_id, None)
+                lane = self._inflight_lanes.pop(task_id, None)
+            if lane is None:
+                self._limiter.release()
             trace_id_var.reset(trace_token)
 
     def _dispatch_unlocked(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Run the agent turn without the state lock so other workers can record results."""
         self._state_lock.release()
         try:
-            return self.adapter.dispatch(payload)
+            with suspended(self.memory, payload.get("workflow_id")):
+                return self.adapter.dispatch(payload)
         finally:
             self._state_lock.acquire()
 
@@ -1800,6 +1898,16 @@ def max_concurrent_dispatches(batch_size: int) -> int:
     return max(1, int(os.environ.get("WORKFLOW_RUNNER_MAX_CONCURRENT", str(batch_size))))
 
 
+def runner_lane_caps() -> dict[str, int]:
+    """Per-lane slots from WORKFLOW_RUNNER_LANE_CAPS or the deployment profile; ``off`` keeps list-then-claim."""
+    raw = os.environ.get("WORKFLOW_RUNNER_LANE_CAPS", "").strip()
+    if raw.lower() == "off":
+        return {}
+    from ts_harness.config.deployment_profile import parse_lane_caps, resolve_setting
+
+    return parse_lane_caps(raw or str(resolve_setting("lane_caps")))
+
+
 def build_concurrency_limiter(batch_size: int) -> ConcurrencyLimiter:
     redis_url = os.environ.get("REDIS_URL") or os.environ.get("TS_HARNESS_REDIS_URL")
     return ConcurrencyLimiter(limit=max_concurrent_dispatches(batch_size), redis_url=redis_url)
@@ -1855,8 +1963,9 @@ def main() -> None:
         return
     skeleton_dir = Path(os.environ.get("WORKFLOW_DEFINITIONS_DIR", "/config/workflows"))
     skeletons = load_workflow_skeletons(skeleton_dir)
-    runner_id = os.environ.get("WORKFLOW_RUNNER_ID", "workflow-runner")
+    runner_id = os.environ.get("WORKFLOW_RUNNER_ID") or f"workflow-runner-{socket.gethostname()}"
     batch_size = int(os.environ.get("WORKFLOW_RUNNER_BATCH_SIZE", "5"))
+    lane_caps = runner_lane_caps()
     runtime_url = (
         os.environ.get("AGENT_RUNTIME_URL") or "http://127.0.0.1:18789"
     )
@@ -1875,9 +1984,10 @@ def main() -> None:
         concurrency_limiter=build_concurrency_limiter(batch_size),
         runtime_url=runtime_url,
         executor=ThreadPoolExecutor(
-            max_workers=max_concurrent_dispatches(batch_size),
+            max_workers=sum(lane_caps.values()) if lane_caps else max_concurrent_dispatches(batch_size),
             thread_name_prefix="dispatch",
         ),
+        lane_caps=lane_caps,
     )
     stop_requested = threading.Event()
     runner.stop_requested = stop_requested

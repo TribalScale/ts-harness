@@ -5204,6 +5204,12 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, claim_workflow_task(conn, body))
                 elif self.path == "/workflow/claim-batch":
                     self._send_json(200, task_claim_routes.claim_batch(conn, body))
+                elif self.path.startswith("/workflow/") and self.path.endswith("/lock") and self.path.count("/") == 3:
+                    workflow_id = self.path.removeprefix("/workflow/").removesuffix("/lock")
+                    self._send_json(200, task_claim_routes.acquire_workflow_lock(conn, workflow_id, body))
+                elif self.path.startswith("/workflow/") and self.path.endswith("/unlock") and self.path.count("/") == 3:
+                    workflow_id = self.path.removeprefix("/workflow/").removesuffix("/unlock")
+                    self._send_json(200, task_claim_routes.release_workflow_lock(conn, workflow_id, body))
                 elif self.path.startswith("/workflow/tasks/") and self.path.endswith("/renew-lease"):
                     task_id = self.path.removeprefix("/workflow/tasks/").removesuffix("/renew-lease")
                     self._send_json(200, task_claim_routes.renew_lease(conn, task_id, body))

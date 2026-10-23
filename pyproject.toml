@@ -73,6 +73,7 @@ where = ["runtime"]
 testpaths = ["tests"]
 pythonpath = ["runtime", "scripts"]
 asyncio_mode = "auto"
+markers = ["integration: multi-process scenarios against Postgres (needs TS_HARNESS_TEST_PG_URL)"]
 
 [tool.ruff]
 line-length = 100

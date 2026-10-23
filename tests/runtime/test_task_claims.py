@@ -206,3 +206,43 @@ class StageLaneTests(unittest.TestCase):
         bodies = materialize_skeleton_tasks(deliver, workflow_id="wf")
         self.assertIn(bodies[0]["lane"], {"agent", "coding"})
         self.assertIn("fast", {body["lane"] for body in bodies})
+
+
+@requires_pg
+class WorkflowLockRouteTests(PgTestCase):
+    def setUp(self):
+        with self.db.connect() as conn, conn.cursor() as cur:
+            conn.execute("DELETE FROM workflow_locks")
+            self.workflow_id = _workflow(cur)
+            conn.commit()
+
+    def acquire(self, owner, ttl=60):
+        with self.db.connect() as conn:
+            return task_claims.acquire_workflow_lock(conn, self.workflow_id, {"owner": owner, "ttl_seconds": ttl})
+
+    def release(self, owner):
+        with self.db.connect() as conn:
+            return task_claims.release_workflow_lock(conn, self.workflow_id, {"owner": owner})
+
+    def test_one_owner_at_a_time(self):
+        self.assertTrue(self.acquire("a")["acquired"])
+        held = self.acquire("b")
+        self.assertEqual((held["acquired"], held["owner"]), (False, "a"))
+        self.assertTrue(self.acquire("a")["acquired"])
+
+    def test_release_only_by_the_owner(self):
+        self.acquire("a")
+        self.assertFalse(self.release("b")["released"])
+        self.assertTrue(self.release("a")["released"])
+        self.assertTrue(self.acquire("b")["acquired"])
+
+    def test_expired_lock_can_be_taken(self):
+        self.acquire("a")
+        with self.db.connect() as conn:
+            conn.execute("UPDATE workflow_locks SET expires_at = now() - interval '1 second'")
+            conn.commit()
+        self.assertTrue(self.acquire("b")["acquired"])
+
+    def test_requires_an_owner(self):
+        with self.assertRaisesRegex(ValueError, "owner is required"):
+            self.acquire("")

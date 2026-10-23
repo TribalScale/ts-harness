@@ -167,6 +167,13 @@ class MemoryClient:
         body = {"runner": runner, "lane": lane, "limit": limit, "lease_seconds": lease_seconds}
         return list(self._request("POST", "/workflow/claim-batch", body).get("tasks") or [])
 
+    def acquire_workflow_lock(self, workflow_id: str, *, owner: str, ttl_seconds: int) -> bool:
+        body = {"owner": owner, "ttl_seconds": ttl_seconds}
+        return bool(self._request("POST", f"/workflow/{workflow_id}/lock", body).get("acquired"))
+
+    def release_workflow_lock(self, workflow_id: str, *, owner: str) -> bool:
+        return bool(self._request("POST", f"/workflow/{workflow_id}/unlock", {"owner": owner}).get("released"))
+
     def renew_task_lease(self, task_id: str, *, runner: str, lease_seconds: int) -> bool:
         body = {"runner": runner, "lease_seconds": lease_seconds}
         return bool(self._request("POST", f"/workflow/tasks/{task_id}/renew-lease", body).get("renewed"))

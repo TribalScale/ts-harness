@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import functools
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ts_harness.agent.sessions import SessionRecord
 from ts_harness.memory.client import MemoryClient, get_memory_client
@@ -28,6 +29,7 @@ from ts_harness.workflows.definition_paths import (
 )
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.registry import HookContext, HookRegistry
+from ts_harness.workflows.workflow_locks import workflow_lock
 from ts_harness.workflows.session_compat import (
     read_source_workflow_id,
     read_workflow_phase,
@@ -48,6 +50,32 @@ logger = logging.getLogger(__name__)
 def hook_engine_enabled() -> bool:
     enabled = os.environ.get("TS_HARNESS_HOOK_ENGINE", "true").lower()
     return enabled in {"1", "true", "yes"}
+
+
+def _locked(workflow_of: Callable[..., Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Hold the workflow's write lock for the call; ``workflow_of`` picks the workflow id from the arguments."""
+
+    def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(method)
+        def wrapper(self: "WorkflowEngine", *args: Any, **kwargs: Any) -> Any:
+            with workflow_lock(self.client, workflow_of(*args, **kwargs)):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def _task_workflow(task: dict[str, Any], *_: Any, **__: Any) -> Any:
+    return (task or {}).get("workflow_id")
+
+
+def _first_workflow(workflow_id: str, *_: Any, **__: Any) -> str:
+    return workflow_id
+
+
+def _keyword_workflow(*_: Any, workflow_id: str = "", **__: Any) -> str:
+    return workflow_id
 
 
 class WorkflowEngine:
@@ -383,6 +411,7 @@ class WorkflowEngine:
         ctx.skeleton = skeleton
         return self.registry.invoke("promote", ctx)
 
+    @_locked(_keyword_workflow)
     def handle_reject(
         self,
         *,
@@ -431,6 +460,7 @@ class WorkflowEngine:
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
         return result
 
+    @_locked(_keyword_workflow)
     def handle_approve(
         self,
         *,
@@ -454,6 +484,7 @@ class WorkflowEngine:
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
         return result
 
+    @_locked(_task_workflow)
     def on_task_transition(
         self,
         task: dict[str, Any],
@@ -648,6 +679,7 @@ class WorkflowEngine:
         )
         return self._maybe_notify(ctx, "awaiting_approval")
 
+    @_locked(_task_workflow)
     def after_task_succeeded(
         self,
         task: dict[str, Any],
@@ -712,6 +744,7 @@ class WorkflowEngine:
             )
             return None
 
+    @_locked(_first_workflow)
     def cancel(self, workflow_id: str, *, actor: str, tenant_id: str = "default", reason: str = "") -> dict[str, Any]:
         payload = self.client.get_workflow(workflow_id)
         workflow_type = str((payload.get("workflow") or {}).get("workflow_type") or "generic")
@@ -726,6 +759,7 @@ class WorkflowEngine:
         self._maybe_notify(ctx, "cancelled")
         return result
 
+    @_locked(_first_workflow)
     def decide_blocked_step(
         self,
         workflow_id: str,
@@ -743,6 +777,7 @@ class WorkflowEngine:
             self, workflow_id, task_id, action, actor=actor, guidance=guidance, tenant_id=tenant_id
         )
 
+    @_locked(_first_workflow)
     def resume_external(
         self,
         workflow_id: str,
@@ -796,6 +831,7 @@ class WorkflowEngine:
                 }
         return result
 
+    @_locked(_first_workflow)
     def block_wait(
         self,
         workflow_id: str,

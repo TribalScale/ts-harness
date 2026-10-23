@@ -54,6 +54,10 @@ Example: a small team that wants five parallel coding jobs on one host keeps
 
 Code reads these with `ts_harness.config.deployment_profile.resolve_setting(name)`.
 
+`lane_caps` is the number of tasks one workflow runner runs at a time in each
+lane. Runner replicas add up, so two `scale_out` runners run up to 12 agent
+tasks. `WORKFLOW_RUNNER_LANE_CAPS=off` restores the single-runner claim loop.
+
 ## What scale_out builds on AWS
 
 `scale_out` needs `network_mode = vpc` (the installer sets it unless the

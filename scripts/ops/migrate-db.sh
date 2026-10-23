@@ -52,6 +52,7 @@ ORDER=(
   035_github_app.sql
   036_project_repositories.sql
   037_task_lanes.sql
+  038_workflow_locks.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

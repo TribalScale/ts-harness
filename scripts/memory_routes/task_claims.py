@@ -73,3 +73,47 @@ def renew_lease(conn, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
         renewed = bool((cur.fetchone() or {}).get("renewed"))
     conn.commit()
     return {"id": task_id, "renewed": renewed}
+
+
+def acquire_workflow_lock(conn, workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Take the workflow's write lock when it is free, expired, or already ours."""
+    workflow_id = _uuid(workflow_id, "workflow id")
+    owner = str(body.get("owner") or "").strip()
+    if not owner:
+        raise ValueError("owner is required")
+    ttl = _int(body.get("ttl_seconds"), "ttl_seconds", default=120, low=1, high=3600)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO workflow_locks (workflow_id, owner, acquired_at, expires_at)
+            VALUES (%s, %s, now(), now() + make_interval(secs => %s))
+            ON CONFLICT (workflow_id) DO UPDATE
+               SET owner = EXCLUDED.owner,
+                   acquired_at = CASE WHEN workflow_locks.owner = EXCLUDED.owner
+                                      THEN workflow_locks.acquired_at ELSE now() END,
+                   expires_at = EXCLUDED.expires_at
+             WHERE workflow_locks.owner = EXCLUDED.owner
+                OR workflow_locks.expires_at < now()
+            RETURNING owner
+            """,
+            (workflow_id, owner, ttl),
+        )
+        acquired = cur.fetchone() is not None
+        holder = owner
+        if not acquired:
+            cur.execute("SELECT owner FROM workflow_locks WHERE workflow_id = %s", (workflow_id,))
+            holder = str((cur.fetchone() or {}).get("owner") or "")
+    conn.commit()
+    return {"workflow_id": workflow_id, "acquired": acquired, "owner": holder}
+
+
+def release_workflow_lock(conn, workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    workflow_id = _uuid(workflow_id, "workflow id")
+    owner = str(body.get("owner") or "").strip()
+    if not owner:
+        raise ValueError("owner is required")
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM workflow_locks WHERE workflow_id = %s AND owner = %s", (workflow_id, owner))
+        released = getattr(cur, "rowcount", 0) > 0
+    conn.commit()
+    return {"workflow_id": workflow_id, "released": released}
