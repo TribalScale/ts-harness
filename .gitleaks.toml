@@ -2,7 +2,7 @@
 useDefault = true
 
 [allowlist]
-description = "Empty key placeholders in bootstrap scripts; local quickstart tokens and bytecode caches"
+description = "Empty key placeholders in bootstrap scripts; local quickstart tokens, bytecode caches, and the LLM proxy test fixtures"
 regexTarget = "match"
 regexes = ['''[A-Z_]+_API_KEY=""''']
-paths = ['''^\.quickstart/''', '''(^|/)__pycache__/''']
+paths = ['''^\.quickstart/''', '''(^|/)__pycache__/''', '''tests/runtime/test_llm_proxy\.py''']

@@ -27,6 +27,13 @@ mock_provider "aws" {
   }
 }
 
+# The default mock does not cover the aliased provider in multiregion.tf.
+# Without this, terraform test configures the real secondary provider and CI
+# fails looking for AWS credentials.
+mock_provider "aws" {
+  alias = "secondary"
+}
+
 mock_provider "random" {}
 
 variables {

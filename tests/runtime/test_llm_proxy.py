@@ -29,7 +29,7 @@ from ts_harness.llm_proxy.metering import (
 from ts_harness.llm_proxy.store import ModelRateLimiter
 from ts_harness.llm_proxy.tokens import InvalidProxyToken, mint_proxy_token, verify_proxy_token
 
-SECRET = "proxy-secret-0123456789abcdef-0123"
+SECRET = "proxy-test-secret"
 
 
 class TokenTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class TokenTests(unittest.TestCase):
     def test_rejects_wrong_secret_expired_and_missing(self):
         token = mint_proxy_token({"tenant": "acme"}, secret=SECRET)
         with self.assertRaises(InvalidProxyToken):
-            verify_proxy_token(token, secret="other-secret-0123456789abcdef-0123")
+            verify_proxy_token(token, secret="other-proxy-test-secret")
         with self.assertRaises(InvalidProxyToken):
             verify_proxy_token(mint_proxy_token({}, secret=SECRET, ttl_seconds=10, now=1000), secret=SECRET)
         with self.assertRaises(InvalidProxyToken):
@@ -157,7 +157,7 @@ class ProxyAppTests(unittest.TestCase):
         upstream = _Upstream(b"{}")
         client = self.client(upstream)
         self.assertEqual(client.post("/llm/openai/v1/chat/completions", json={}).status_code, 401)
-        bad = mint_proxy_token({"tenant": "acme"}, secret="wrong-secret-0123456789abcdef-0123")
+        bad = mint_proxy_token({"tenant": "acme"}, secret="wrong-proxy-test-secret")
         response = client.post("/llm/openai/v1/chat/completions", json={}, headers={"Authorization": f"Bearer {bad}"})
         self.assertEqual(response.status_code, 401)
         self.assertEqual(upstream.requests, [])
