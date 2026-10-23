@@ -25,31 +25,39 @@ def auth_config_payload(runtime: Any) -> dict[str, Any]:
         "yes",
     }
     if getattr(identity, "provider", "static") == "oidc":
+        from ts_harness.gateway.identity_presets import identity_setting, uses_legacy_endpoints
+        from ts_harness.gateway.oidc_discovery import discover
+
         issuer = (identity.issuer or "").rstrip("/")
         client_id = (
             getattr(identity, "client_id", None)
             or os.environ.get("OIDC_CLIENT_ID")
             or ""
         )
-        authz = (
-            getattr(identity, "authorization_endpoint", None)
-            or os.environ.get("OIDC_AUTHORIZATION_ENDPOINT")
-            or (f"{issuer}/authorize" if issuer else "")
+        authz = getattr(identity, "authorization_endpoint", None) or os.environ.get(
+            "OIDC_AUTHORIZATION_ENDPOINT"
         )
-        token_ep = (
-            getattr(identity, "token_endpoint", None)
-            or os.environ.get("OIDC_TOKEN_ENDPOINT")
-            or (f"{issuer}/oauth/token" if issuer else "")
-        )
+        token_ep = getattr(identity, "token_endpoint", None) or os.environ.get("OIDC_TOKEN_ENDPOINT")
+        jwks_url = identity.jwks_url
+        legacy = uses_legacy_endpoints(identity)
+        if issuer and not legacy and not (authz and token_ep and jwks_url):
+            doc = discover(identity.issuer)
+            authz = authz or doc.get("authorization_endpoint")
+            token_ep = token_ep or doc.get("token_endpoint")
+            jwks_url = jwks_url or doc.get("jwks_uri")
+        if legacy and issuer:
+            authz = authz or f"{issuer}/authorize"
+            token_ep = token_ep or f"{issuer}/oauth/token"
         return {
             "mode": "oidc",
             "issuer": identity.issuer,
             "client_id": client_id,
-            "authorization_endpoint": authz,
-            "token_endpoint": token_ep,
+            "authorization_endpoint": authz or "",
+            "token_endpoint": token_ep or "",
             "audience": identity.audience,
+            "token_type": identity_setting(identity, "token_type"),
             "scopes": (os.environ.get("OIDC_SCOPES") or "openid profile email").split(),
-            "jwks_url": identity.jwks_url,
+            "jwks_url": jwks_url,
             "allow_static_fallback": allow_static
             and os.environ.get("TS_HARNESS_OIDC_STATIC_FALLBACK", "false").lower()
             in {"1", "true", "yes"},

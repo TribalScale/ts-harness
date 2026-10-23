@@ -165,6 +165,36 @@ variable "oidc_token_endpoint" {
   default     = ""
 }
 
+variable "oidc_preset" {
+  description = "Identity provider preset: auth0, entra, google, okta or generic. Empty keeps legacy defaults."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_token_type" {
+  description = "Token the gateway validates: access or id. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_groups_claim" {
+  description = "Claim holding groups, e.g. https://ts-harness/groups. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_roles_claim" {
+  description = "Claim holding roles, e.g. https://ts-harness/roles. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_allowed_domains" {
+  description = "Comma-separated email or hosted domains allowed to sign in. Empty allows any."
+  type        = string
+  default     = ""
+}
+
 variable "rds_skip_final_snapshot" {
   description = "When true, skip final snapshot on RDS instance destruction (dev/test only)"
   type        = bool

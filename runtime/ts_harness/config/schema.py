@@ -16,6 +16,13 @@ GLOBAL_DENY_TOOLS = {"browser", "gateway"}
 
 
 @dataclass
+class TeamGroupsConfig:
+    prefix: str = "ts-harness-team-"
+    approver_suffix: str = "-approvers"
+    manager_suffix: str = "-managers"
+
+
+@dataclass
 class IdentityConfig:
     provider: str = "static"
     issuer: str | None = None
@@ -34,6 +41,14 @@ class IdentityConfig:
     service_permissions: list[str] | None = None
     group_roles: dict[str, list[str]] = field(default_factory=dict)
     tenant_claim: str = "tenant_id"
+    preset: str | None = None
+    token_type: str | None = None
+    groups_claim: str | None = None
+    roles_claim: str | None = None
+    groups_source: str | None = None
+    allowed_domains: list[str] = field(default_factory=list)
+    directory: str | None = None
+    team_groups: TeamGroupsConfig = field(default_factory=TeamGroupsConfig)
 
 
 @dataclass
@@ -460,6 +475,57 @@ def _parse_identity(raw: dict[str, Any]) -> IdentityConfig:
             if isinstance(v, list)
         },
         tenant_claim=str(raw.get("tenant_claim") or "tenant_id"),
+        preset=_identity_choice(raw, "preset", IDENTITY_PRESETS),
+        token_type=_identity_choice(raw, "token_type", ("access", "id")),
+        groups_claim=_rendered(raw.get("groups_claim")),
+        roles_claim=_rendered(raw.get("roles_claim")),
+        groups_source=_identity_choice(raw, "groups_source", GROUPS_SOURCES),
+        allowed_domains=_domain_list(raw.get("allowed_domains")),
+        directory=_identity_choice(raw, "directory", DIRECTORY_SOURCES),
+        team_groups=_parse_team_groups(raw.get("team_groups")),
+    )
+
+
+IDENTITY_PRESETS = ("auth0", "entra", "google", "okta", "generic")
+GROUPS_SOURCES = ("token", "microsoft_graph", "google_directory")
+DIRECTORY_SOURCES = ("scim", "auth0_management", "microsoft_graph", "google_directory", "seen_users")
+
+
+def _rendered(value: Any) -> str | None:
+    """Blank values and unrendered ``{{TEMPLATE}}`` placeholders mean unset."""
+    text = str(value or "").strip()
+    if not text or text.startswith("{{"):
+        return None
+    return text
+
+
+def _identity_choice(raw: dict[str, Any], key: str, allowed: tuple[str, ...]) -> str | None:
+    value = _rendered(raw.get(key))
+    if value is None:
+        return None
+    value = value.lower()
+    if value not in allowed:
+        raise ValueError(f"identity.{key} must be one of {', '.join(allowed)}, got {value!r}")
+    return value
+
+
+def _domain_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        items = [] if value.strip().startswith("{{") else value.split(",")
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = []
+    return [str(item).strip().lower().lstrip("@") for item in items if str(item).strip()]
+
+
+def _parse_team_groups(raw: Any) -> TeamGroupsConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = TeamGroupsConfig()
+    return TeamGroupsConfig(
+        prefix=str(raw.get("prefix") or defaults.prefix),
+        approver_suffix=str(raw.get("approver_suffix") or defaults.approver_suffix),
+        manager_suffix=str(raw.get("manager_suffix") or defaults.manager_suffix),
     )
 
 

@@ -16,6 +16,12 @@ identity:
   client_id: "{{OIDC_CLIENT_ID}}"
   authorization_endpoint: "{{OIDC_AUTHORIZATION_ENDPOINT}}"
   token_endpoint: "{{OIDC_TOKEN_ENDPOINT}}"
+  # preset: auth0 | entra | google | okta | generic (empty keeps legacy defaults)
+  preset: "{{OIDC_PRESET}}"
+  token_type: "{{OIDC_TOKEN_TYPE}}"
+  groups_claim: "{{OIDC_GROUPS_CLAIM}}"
+  roles_claim: "{{OIDC_ROLES_CLAIM}}"
+  allowed_domains: "{{OIDC_ALLOWED_DOMAINS}}"
   scim_enabled: false
   jira_account_ids: {}
 

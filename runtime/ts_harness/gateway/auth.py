@@ -120,7 +120,7 @@ def authenticate_request(
             actor_id=str(identity.get("actor_id") or "oidc-user"),
             tenant_id=str(tenant_id),
             email=identity.get("email"),
-            display_name=None,
+            display_name=identity.get("display_name"),
             groups=list(identity.get("groups") or []),
             roles=list(identity.get("roles") or ["member"]),
             auth_provider=str(identity.get("auth_provider", "oidc")),

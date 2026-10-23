@@ -53,6 +53,11 @@ export OIDC_JWKS_URL="${OIDC_JWKS_URL:-}"
 export OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-}"
 export OIDC_AUTHORIZATION_ENDPOINT="${OIDC_AUTHORIZATION_ENDPOINT:-}"
 export OIDC_TOKEN_ENDPOINT="${OIDC_TOKEN_ENDPOINT:-}"
+export OIDC_PRESET="${OIDC_PRESET:-}"
+export OIDC_TOKEN_TYPE="${OIDC_TOKEN_TYPE:-}"
+export OIDC_GROUPS_CLAIM="${OIDC_GROUPS_CLAIM:-}"
+export OIDC_ROLES_CLAIM="${OIDC_ROLES_CLAIM:-}"
+export OIDC_ALLOWED_DOMAINS="${OIDC_ALLOWED_DOMAINS:-}"
 export DEPLOYMENT_PROFILE="${DEPLOYMENT_PROFILE:-single_host}"
 if is_blank_or_placeholder "${GATEWAY_TOKEN:-}"; then
     echo "[phase:${PHASE_NAME}] ERROR: GATEWAY_TOKEN is missing or placeholder after secrets fetch." >&2

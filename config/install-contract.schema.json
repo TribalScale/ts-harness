@@ -258,7 +258,12 @@
         "oidc_jwks_url": { "type": "string" },
         "oidc_client_id": { "type": "string" },
         "oidc_authorization_endpoint": { "type": "string" },
-        "oidc_token_endpoint": { "type": "string" }
+        "oidc_token_endpoint": { "type": "string" },
+        "oidc_preset": { "type": "string" },
+        "oidc_token_type": { "type": "string" },
+        "oidc_groups_claim": { "type": "string" },
+        "oidc_roles_claim": { "type": "string" },
+        "oidc_allowed_domains": { "type": "string" }
       }
     }
   }

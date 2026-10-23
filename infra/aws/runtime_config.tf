@@ -28,6 +28,11 @@ locals {
     OIDC_CLIENT_ID                        = var.oidc_client_id
     OIDC_AUTHORIZATION_ENDPOINT           = var.oidc_authorization_endpoint
     OIDC_TOKEN_ENDPOINT                   = var.oidc_token_endpoint
+    OIDC_PRESET                           = var.oidc_preset
+    OIDC_TOKEN_TYPE                       = var.oidc_token_type
+    OIDC_GROUPS_CLAIM                     = var.oidc_groups_claim
+    OIDC_ROLES_CLAIM                      = var.oidc_roles_claim
+    OIDC_ALLOWED_DOMAINS                  = var.oidc_allowed_domains
     DEPLOYMENT_PROFILE                    = var.deployment_profile
   }
 }

@@ -99,6 +99,7 @@ export interface AuthConfig {
   authorization_endpoint?: string;
   token_endpoint?: string;
   audience?: string | null;
+  token_type?: "access" | "id";
   scopes?: string[];
   allow_static_fallback?: boolean;
   error?: string;
