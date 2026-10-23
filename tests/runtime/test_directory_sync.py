@@ -231,6 +231,12 @@ class SyncDirectoryTests(unittest.TestCase):
             result = sync_directory(config(directory="microsoft_graph"), memory=mock.MagicMock())
         self.assertEqual(result["status"], "skipped")
 
+    def test_preset_picks_the_default_source(self):
+        env = {"AUTH0_MGMT_CLIENT_ID": "cid", "AUTH0_MGMT_CLIENT_SECRET": "s", "AUTH0_MGMT_DOMAIN": ""}
+        with mock.patch.dict(os.environ, env):
+            source = build_source(config(preset="auth0", issuer="https://acme.us.auth0.com/"))
+        self.assertIsInstance(source, Auth0ManagementSource)
+
     def test_build_source_for_scim(self):
         memory = mock.MagicMock()
         self.assertIsInstance(build_source(config(directory="scim"), memory=memory), ScimSource)

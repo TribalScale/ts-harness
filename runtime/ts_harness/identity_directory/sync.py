@@ -27,6 +27,12 @@ def _tenant(config: Any) -> str:
     return str(getattr(getattr(config, "gateway", None), "default_tenant_id", None) or "default")
 
 
+def _setting(config: Any, name: str) -> str:
+    from ts_harness.gateway.identity_presets import identity_setting
+
+    return identity_setting(getattr(config, "identity", None), name)
+
+
 def _group_prefix(config: Any) -> str:
     team_groups = getattr(getattr(config, "identity", None), "team_groups", None)
     prefix = str(getattr(team_groups, "prefix", "") or "ts-harness-team-")
@@ -35,7 +41,7 @@ def _group_prefix(config: Any) -> str:
 
 def build_source(config: Any, *, memory: Any = None) -> DirectorySource | None:
     """The configured source, or None when it is not set up (missing credentials)."""
-    name = str(getattr(getattr(config, "identity", None), "directory", None) or "seen_users")
+    name = _setting(config, "directory")
     if name == "seen_users":
         return SeenUsersSource()
     if name == "scim":
@@ -109,7 +115,7 @@ def register_group_resolvers(config: Any) -> str | None:
     """Register the sign-in group resolver for ``identity.groups_source``; returns its name."""
     from ts_harness.gateway.identity import register_group_resolver
 
-    name = str(getattr(getattr(config, "identity", None), "groups_source", None) or "token")
+    name = _setting(config, "groups_source")
     factory = GROUP_RESOLVER_SOURCES.get(name)
     if factory is None:
         return None

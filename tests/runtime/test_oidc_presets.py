@@ -90,6 +90,23 @@ class ClaimMappingTests(unittest.TestCase):
         self.assertEqual(identity["groups"], ["ts-harness-users", "ts-harness-team-payments"])
         self.assertEqual(identity["display_name"], "Alice")
 
+    def test_namespaced_profile_claims_from_auth0_access_tokens(self):
+        provider = provider_with_keys(_config(preset="auth0", allowed_domains=["example.com"]))
+        identity = provider.validate_token(
+            make_token(
+                **{
+                    "https://ts-harness/email": "bob@example.com",
+                    "https://ts-harness/email_verified": True,
+                    "https://ts-harness/name": "Bob",
+                }
+            )
+        )
+        self.assertEqual((identity["email"], identity["display_name"]), ("bob@example.com", "Bob"))
+        with self.assertRaisesRegex(ValueError, "not verified"):
+            provider.validate_token(
+                make_token(**{"https://ts-harness/email": "bob@example.com", "https://ts-harness/email_verified": False})
+            )
+
     def test_custom_groups_claim(self):
         provider = provider_with_keys(_config(groups_claim="org_groups"))
         identity = provider.validate_token(make_token(org_groups=["ts-harness-users"]))

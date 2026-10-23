@@ -33,6 +33,13 @@ _JWKS_CACHE_TTL = 300  # seconds
 # https://ts-harness/roles on the access token instead.
 _AUTH0_ROLES_CLAIM = "https://ts-harness/roles"
 _AUTH0_GROUPS_CLAIM = "https://ts-harness/groups"
+_PROFILE_NAMESPACE = "https://ts-harness/"
+
+
+def _profile_claim(claims: dict[str, Any], name: str) -> Any:
+    """Standard profile claim, or its namespaced copy (Auth0 access tokens carry no profile)."""
+    value = claims.get(name)
+    return value if value is not None else claims.get(_PROFILE_NAMESPACE + name)
 
 
 class GroupResolver(Protocol):
@@ -186,8 +193,8 @@ class OidcIdentityProvider:
         claims: dict[str, Any] = _jwt.decode(token, signing_key, **decode_kwargs)
 
         sub: str = claims.get("sub") or "oidc-user"
-        email: str | None = claims.get("email")
-        if claims.get("email_verified") is False:
+        email: str | None = _profile_claim(claims, "email")
+        if _profile_claim(claims, "email_verified") is False:
             raise ValueError("email address is not verified")
         self._check_allowed_domain(email, claims)
 
@@ -208,7 +215,7 @@ class OidcIdentityProvider:
         return {
             "actor_id": sub,
             "email": email,
-            "display_name": claims.get("name") or None,
+            "display_name": _profile_claim(claims, "name") or None,
             "groups": groups,
             "roles": roles,
             "teams": resolve_team_memberships(groups, self.config),
