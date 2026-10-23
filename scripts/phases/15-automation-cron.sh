@@ -51,8 +51,11 @@ if [[ ! -f "$CRON_CONFIG" ]]; then
     chown "${ADMIN_USER}:${ADMIN_USER}" "$CRON_CONFIG"
 fi
 
-echo "[phase:${PHASE_NAME}] Writing runtime scheduler config (timezone: $TZ_VAL) ..."
-python3 - "$CRON_CONFIG" "$TZ_VAL" "$STANDUP_CHAN" "$OPS_CHAN" "$DEV_CHAN" "$TEAM_CHAN" "$MARKETING_CHAN" "$SALES_CHAN" <<'PY'
+SYSTEM_JOBS="$(mktemp)"
+trap 'rm -f "$SYSTEM_JOBS"' EXIT
+
+echo "[phase:${PHASE_NAME}] Building system scheduler jobs (timezone: $TZ_VAL) ..."
+python3 - "$SYSTEM_JOBS" "$TZ_VAL" "$STANDUP_CHAN" "$OPS_CHAN" "$DEV_CHAN" "$TEAM_CHAN" "$MARKETING_CHAN" "$SALES_CHAN" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -159,8 +162,19 @@ jobs = [
     },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
-print(f"wrote {len(jobs)} scheduler jobs to {out}")
 PY
+
+# Merge by job name so jobs added in the admin console survive a re-run.
+MERGE_CRON="${SCRIPT_DIR_LIB}/../ops/merge-cron-jobs.py"
+if [[ "${TS_HARNESS_STATE_BACKEND:-local}" == "postgres" ]]; then
+    echo "[phase:${PHASE_NAME}] Merging system jobs into the shared cron tree (Postgres) ..."
+    MEMORY_API_TOKEN="${MEMORY_API_TOKEN:-}" python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" \
+        --memory-api "${MEMORY_API_URL:-http://127.0.0.1:18792}"
+else
+    echo "[phase:${PHASE_NAME}] Merging system jobs into $CRON_CONFIG ..."
+    python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" --file "$CRON_CONFIG"
+    chown "${ADMIN_USER}:${ADMIN_USER}" "$CRON_CONFIG" 2>/dev/null || true
+fi
 
 echo "[phase:${PHASE_NAME}] Restarting agent-runtime to load scheduler config."
 cd "$ENTERPRISE_ASSETS_DIR"

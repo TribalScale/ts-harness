@@ -1319,7 +1319,7 @@ class MemoryClient:
     def append_audit_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         return self._request("POST", "/audit-events", {"events": events})
 
-    def list_audit_events(self, *, tenant_id: str, since: str = "", until: str = "") -> list[dict[str, Any]]:
+    def list_audit_events(self, *, tenant_id: str = "", since: str = "", until: str = "") -> list[dict[str, Any]]:
         from urllib.parse import urlencode
 
         params = {k: v for k, v in {"tenant_id": tenant_id, "since": since, "until": until}.items() if v}

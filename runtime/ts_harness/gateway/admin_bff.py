@@ -9,6 +9,7 @@ from urllib.parse import quote
 from ts_harness.gateway.auth import AuthContext
 from ts_harness.gateway.cron_store import (
     cron_config_path,
+    editing_cron_file,
     load_cron_file,
     save_cron_file,
     validate_cron_job,
@@ -323,38 +324,41 @@ def list_cron_jobs_admin(runtime: Any) -> dict[str, Any]:
 
 
 def create_cron_job_admin(runtime: Any, body: dict[str, Any]) -> dict[str, Any]:
-    jobs = load_cron_file()
-    names = {str(j.get("name")) for j in jobs}
-    job = validate_cron_job(body, existing_names=names)
-    hints = list(job.get("skill_hints") or [])
-    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
-    jobs.append(job)
-    save_cron_file(jobs)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        names = {str(j.get("name")) for j in jobs}
+        job = validate_cron_job(body, existing_names=names)
+        hints = list(job.get("skill_hints") or [])
+        validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+        jobs.append(job)
+        save_cron_file(jobs)
     runtime.scheduler.replace_cron_jobs(jobs)
     return {"job": job}
 
 
 def update_cron_job_admin(runtime: Any, name: str, body: dict[str, Any]) -> dict[str, Any]:
-    jobs = load_cron_file()
-    idx = next((i for i, j in enumerate(jobs) if str(j.get("name")) == name), -1)
-    if idx < 0:
-        raise KeyError(f"cron job not found: {name}")
-    merged = {**jobs[idx], **body, "name": name}
-    job = validate_cron_job(merged, existing_names=None)
-    hints = list(job.get("skill_hints") or [])
-    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
-    jobs[idx] = job
-    save_cron_file(jobs)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        idx = next((i for i, j in enumerate(jobs) if str(j.get("name")) == name), -1)
+        if idx < 0:
+            raise KeyError(f"cron job not found: {name}")
+        merged = {**jobs[idx], **body, "name": name}
+        job = validate_cron_job(merged, existing_names=None)
+        hints = list(job.get("skill_hints") or [])
+        validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+        jobs[idx] = job
+        save_cron_file(jobs)
     runtime.scheduler.replace_cron_jobs(jobs)
     return {"job": job}
 
 
 def delete_cron_job_admin(runtime: Any, name: str) -> dict[str, Any]:
-    jobs = load_cron_file()
-    kept = [j for j in jobs if str(j.get("name")) != name]
-    if len(kept) == len(jobs):
-        raise KeyError(f"cron job not found: {name}")
-    save_cron_file(kept)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        kept = [j for j in jobs if str(j.get("name")) != name]
+        if len(kept) == len(jobs):
+            raise KeyError(f"cron job not found: {name}")
+        save_cron_file(kept)
     runtime.scheduler.replace_cron_jobs(kept)
     return {"deleted": name}
 

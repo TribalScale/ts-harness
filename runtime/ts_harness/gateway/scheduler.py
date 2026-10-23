@@ -16,6 +16,9 @@ from croniter import croniter
 
 from ts_harness.config.schema import RuntimeConfig
 
+SCHEDULER_STATE_NAMESPACE = "scheduler"
+SCHEDULER_STATE_KEY = "state"
+
 
 @dataclass
 class ScheduledJob:
@@ -94,6 +97,7 @@ class Scheduler:
         self.audit_sink = audit_sink
         self.state_path = state_path
         self._state = self._load_state()
+        self._was_leading = False
         self.jobs: list[ScheduledJob] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -268,10 +272,23 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            if self.leader is None or self.leader():
-                self.reload_cron_file_if_changed()
-                self.run_due_once(now=datetime.now(UTC))
+            self.tick()
             self._stop.wait(5)
+
+    def tick(self) -> bool:
+        """One pass of the loop; returns whether this replica led it."""
+        leading = self.leader is None or self.leader()
+        if leading:
+            if not self._was_leading:
+                # Another replica may have run jobs while it held the lease.
+                self._state = self._merge_state(self._load_state(), self._state)
+            from ts_harness.storage.shared_tree import sync_cron
+
+            sync_cron()
+            self.reload_cron_file_if_changed()
+            self.run_due_once(now=datetime.now(UTC))
+        self._was_leading = leading
+        return leading
 
     def _cron_file_mtime(self) -> float | None:
         try:
@@ -439,11 +456,45 @@ class Scheduler:
         return candidate.astimezone(UTC)
 
     def _load_state(self) -> dict[str, dict[str, float]]:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        if shared_state_enabled():
+            from ts_harness.storage.kv import kv_read
+
+            try:
+                return dict(kv_read(SCHEDULER_STATE_NAMESPACE, SCHEDULER_STATE_KEY, default={}))
+            except Exception as exc:  # noqa: BLE001
+                self._audit({"event": "scheduler_state_load_failed", "error": str(exc)[:300]})
+                return dict(getattr(self, "_state", {}) or {})
         if not self.state_path or not self.state_path.exists():
             return {}
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _merge_state(stored: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+        """Per job, keep whichever record ran last."""
+        merged = dict(stored or {})
+        for name, entry in local.items():
+            if float((merged.get(name) or {}).get("last_run") or 0) <= float((entry or {}).get("last_run") or 0):
+                merged[name] = entry
+        return merged
+
     def _save_state(self) -> None:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        if shared_state_enabled():
+            from ts_harness.storage.kv import kv_update
+
+            try:
+                self._state = kv_update(
+                    SCHEDULER_STATE_NAMESPACE,
+                    SCHEDULER_STATE_KEY,
+                    lambda stored: self._merge_state(stored, self._state),
+                    default={},
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._audit({"event": "scheduler_state_save_failed", "error": str(exc)[:300]})
+            return
         if not self.state_path:
             return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)

@@ -298,6 +298,27 @@ def definitions_tree_for(path: str | Path) -> tuple[SharedTree, str] | None:
     return tree, rel.as_posix()
 
 
+def cron_tree() -> SharedTree | None:
+    """The shared tree holding the cron file (``TS_HARNESS_CRON_CONFIG``) in Postgres mode, else None."""
+    if not shared_state_enabled():
+        return None
+    from ts_harness.gateway.cron_store import cron_config_path
+
+    return shared_tree(CRON_NAMESPACE, cron_config_path().parent)
+
+
+def sync_cron(*, force: bool = False) -> bool:
+    """Pull cron file changes; never raises, the scheduler keeps the jobs it has."""
+    tree = cron_tree()
+    if tree is None:
+        return False
+    try:
+        return tree.sync(force=force)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cron mirror sync failed: %s", exc)
+        return False
+
+
 def sync_definitions(*, force: bool = False) -> bool:
     """Pull definition changes for readers; never raises, readers keep the last good mirror."""
     tree = definitions_tree()
