@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "1.4.0",
+  "definition_version": "1.5.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -145,7 +145,7 @@
       "name": "verified_merge",
       "kind": "fragment",
       "fragment": "verified_merge",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "params": {
         "implement_stage": "deliver_work_order"
       },

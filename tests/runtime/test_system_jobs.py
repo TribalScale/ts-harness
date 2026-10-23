@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from ts_harness.gateway import system_jobs
+from ts_harness.workflows.pr_rejection import REJECTION_REASONS
 
 
 class ParseGithubPrUrlTests(unittest.TestCase):
@@ -76,6 +77,57 @@ class PollGithubMergesTests(unittest.TestCase):
         self.assertEqual(result["skipped"], 1)
         self.assertEqual(result["resumed"], 0)
         engine.resume_external.assert_not_called()
+
+    def _poll_rejection(self, rejection, pr, handled=REJECTION_REASONS):
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {
+            "waits": [{"workflow_id": "wf-1", "task_id": "t-wait", "match_pr_url": "https://github.com/org/app/pull/9"}]
+        }
+        engine = MagicMock()
+        engine.block_case_prefixes.return_value = list(handled)
+        with (
+            patch.object(system_jobs, "get_memory_client", return_value=memory),
+            patch.object(system_jobs, "get_workflow_engine", return_value=engine),
+            patch.object(system_jobs, "fetch_pull_request", MagicMock(return_value=pr)),
+            patch.object(system_jobs, "detect_rejection", MagicMock(return_value=rejection)) as detect,
+            patch.dict("os.environ", {"GITHUB_TOKEN": "token"}, clear=False),
+        ):
+            result = system_jobs.poll_github_merges()
+        return result, engine, detect
+
+    def test_blocks_the_wait_when_a_human_rejects_the_pr(self):
+        rejection = {
+            "reason": "external_blocked:github.pr_changes_requested by alice",
+            "actor": "alice",
+            "feedback": "Human reviewer alice requested changes on the pull request:\nRename it.",
+        }
+        result, engine, _ = self._poll_rejection(rejection, {"merged": False, "state": "open", "head": {"sha": "s"}})
+
+        self.assertEqual((result["rejected"], result["skipped"]), (1, 0))
+        engine.resume_external.assert_not_called()
+        engine.block_wait.assert_called_once()
+        args, kwargs = engine.block_wait.call_args
+        self.assertEqual(args, ("wf-1", "t-wait", rejection["reason"]))
+        self.assertEqual(kwargs["output"]["review_feedback"], rejection["feedback"])
+        self.assertEqual(kwargs["output"]["pr_url"], "https://github.com/org/app/pull/9")
+        self.assertEqual(kwargs["actor"], "github-merge-poller")
+
+    def test_definitions_without_rejection_cases_keep_waiting(self):
+        rejection = {"reason": "external_blocked:github.pr_closed by bob", "actor": "bob", "feedback": ""}
+        result, engine, detect = self._poll_rejection(rejection, {"merged": False, "state": "closed"}, handled=())
+
+        self.assertEqual((result["rejected"], result["skipped"]), (0, 1))
+        engine.block_case_prefixes.assert_called_once_with("wf-1", "t-wait")
+        detect.assert_not_called()
+        engine.block_wait.assert_not_called()
+
+    def test_merged_pr_resumes_without_checking_for_rejection(self):
+        result, engine, detect = self._poll_rejection(
+            {"reason": "x", "actor": "", "feedback": ""}, {"merged": True, "merge_commit_sha": "abc", "state": "closed"}
+        )
+        self.assertEqual(result["resumed"], 1)
+        detect.assert_not_called()
+        engine.block_wait.assert_not_called()
 
     def test_no_waits_is_noop(self):
         memory = MagicMock()

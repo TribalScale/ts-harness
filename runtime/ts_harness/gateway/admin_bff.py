@@ -167,8 +167,47 @@ def build_inbox(
             }
         )
 
+    items.extend(_stuck_step_items(memory, auth))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+_STUCK_REASONS = {"revision_limit": "Revision limit reached"}
+
+
+def _stuck_step_items(memory: Any, auth: AuthContext) -> list[dict[str, Any]]:
+    """Steps parked for a human to revise again, accept or stop."""
+    try:
+        stuck = list(memory.list_stuck_tasks(tenant_id=auth.tenant_id) or [])
+    except Exception:
+        return []
+    from ts_harness.workflows.engine import get_workflow_engine
+    from ts_harness.workflows.human_decisions import stuck_summary
+
+    engine = get_workflow_engine()
+    items: list[dict[str, Any]] = []
+    for task in stuck:
+        task_id = str(task.get("id") or "")
+        workflow_id = str(task.get("workflow_id") or "")
+        if not task_id or not workflow_id:
+            continue
+        try:
+            summary = stuck_summary(engine, workflow_id, task_id)
+        except Exception:
+            continue
+        reason = _STUCK_REASONS.get(summary["reason"], "Blocked")
+        items.append(
+            {
+                "type": "stuck_step",
+                "id": task_id,
+                "title": f"{summary['work_order']} · {summary['step_name']}",
+                "subtitle": f"{reason} · waiting for your decision",
+                "created_at": task.get("updated_at") or task.get("created_at"),
+                "href": f"/#/inbox/stuck_step/{quote(task_id, safe='')}",
+                "meta": {**summary, "status": "blocked", "updated_at": task.get("updated_at")},
+            }
+        )
+    return items
 
 
 def build_portfolio(
@@ -292,6 +331,7 @@ def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None 
             "agent_id": s.agent_id,
             "source": s.source,
             "routing_key": s.routing_key,
+            "binding_key": str((s.metadata or {}).get("binding_key") or ""),
             "started_at": getattr(s, "started_at", None),
         }
         for s in sorted(
@@ -326,9 +366,14 @@ def session_messages_admin(session_id: str, auth: AuthContext) -> dict[str, Any]
     if session is None or session.tenant_id != auth.tenant_id:
         raise KeyError("session not found")
     messages = get_transcript_store().load_messages(session_id)
-    return {
+    metadata = session.metadata or {}
+    program_id = str(metadata.get("program_id") or "").strip()
+    payload: dict[str, Any] = {
         "session_id": session_id,
         "agent_id": session.agent_id,
         "source": session.source,
         "messages": messages,
     }
+    if program_id:
+        payload["program_id"] = program_id
+    return payload

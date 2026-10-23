@@ -192,6 +192,23 @@ class SummarizeChecksTests(unittest.TestCase):
     def test_in_progress_run_is_pending(self):
         self.assertEqual(summarize_checks({}, [{"name": "b", "status": "in_progress"}])["state"], "pending")
 
+    def test_later_harness_gates_do_not_hold_checks_without_required_names(self):
+        combined = {
+            "statuses": [
+                {"context": "harness/independent-review", "state": "pending"},
+                {"context": "harness/code-review", "state": "failure"},
+                {"context": "harness/security-scan", "state": "success"},
+            ]
+        }
+        summary = summarize_checks(combined, [])
+        self.assertEqual(summary["state"], "success")
+        self.assertEqual(summary["checks"], {"harness/security-scan": "success"})
+
+    def test_required_harness_gate_still_counts(self):
+        combined = {"statuses": [{"context": "harness/independent-review", "state": "pending"}]}
+        summary = summarize_checks(combined, [], required=["harness/independent-review"])
+        self.assertEqual(summary["state"], "pending")
+
 
 REPO = {"full_name": "o/r"}
 

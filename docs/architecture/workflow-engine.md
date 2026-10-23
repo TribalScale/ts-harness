@@ -78,7 +78,7 @@ and barrier stages, plus declarative contracts (`contracts` / `contract_ref`).
 enforce `qa_gate` before `await_human_merge`. Compensation can be declared via
 `on_failure.compensate_on_failure`.
 
-The `verified_merge` fragment (1.5.0) runs `await_pr_checks` → `review_precheck`
+The `verified_merge` fragment (1.6.0) runs `await_pr_checks` → `review_precheck`
 → `code_review` → `finalize_code_review` → `qa_gate` → `ensure_fresh` →
 `await_human_merge`. `review_precheck`, `finalize_code_review` and
 `ensure_fresh` are system steps (barrier stages run by the runner, no agent);
@@ -88,7 +88,11 @@ both run the stage's `on_block`, so a stale base (`stale_base`) or a sibling
 merge (`base_advanced`) sends the PR back to the implement stage as a refresh
 revision. `revise_on_reject` supports a named `revise.budget`, counted
 separately from the default budget, and `revise.static_input` merged into the
-revision input.
+revision input. `on_block.cases` overrides that config per block reason: the
+first case whose `error_prefix` matches the block error is applied over it, and
+`action: "stop"` leaves the stage blocked without a revision. `await_human_merge`
+uses this for human rejection (a "Request changes" review or `/revise` comment
+revises with `budget: "human"`; a closed PR stops).
 
 **Implemented today:** first-class workflow records, delivery programs, stage
 contracts, QA gates, compensation hooks, external wait/`match_all`, merge poller

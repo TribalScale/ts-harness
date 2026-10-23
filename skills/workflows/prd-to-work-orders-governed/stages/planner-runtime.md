@@ -44,6 +44,9 @@ Each WO in `work_orders_markdown`:
 ## Requirements
 (verbatim from FRD)
 
+## Technical Constraints
+(verbatim from the Technical Constraints in input.prior_refinery requirements and the PRD)
+
 ## In Scope
 ...
 
@@ -62,6 +65,11 @@ Given ... When ... Then ...
 ## Rules
 
 - Requirements copied verbatim from FRDs in `input.prior_refinery`.
+- Every WO repeats the full Technical Constraints list. A coding agent sees only
+  its own WO, so a constraint missing there (for example the framework) is lost.
+- Work Orders build on one shared codebase: the first WO sets up the project in
+  the stated stack and later WOs depend on it instead of creating parallel
+  projects.
 - Each WO independently implementable unless dependencies are explicit.
 - A fresh coding agent should execute without clarifying questions.
 - Do not silently edit blueprints or FRDs; note issues in `warnings`.

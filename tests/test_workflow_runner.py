@@ -703,6 +703,82 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(kwargs["error"], "barrier_blocked: stale_base: x")
         self.assertEqual(kwargs["dispatch_result"], {"output": {"stale": [1]}})
 
+    def _accepted_runner(self, step_name, agent_id):
+        runner_module = load_runner()
+        skeletons = runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+        task = {
+            "id": "task-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": step_name,
+            "agent_id": agent_id,
+            "input": {"_human_accept": {"actor": "alice", "at": "t", "output": {"verdict": "block", "prs": []}}},
+        }
+        memory = FakeMemoryClient(ready=[task])
+        adapter = FakeAdapter({"status": "succeeded", "output": {}})
+        workflow_runner = runner_module.WorkflowRunner(
+            memory,
+            adapter,
+            runner_id="runner-1",
+            skeletons={"deliver_work_order": skeletons["deliver_work_order"]},
+        )
+        return runner_module, workflow_runner, memory, adapter
+
+    def test_accepted_step_completes_with_its_output_without_running(self):
+        for step_name, agent_id in (("finalize_code_review", "orchestrator"), ("qa_gate", "qa-agent")):
+            with self.subTest(step=step_name):
+                runner_module, workflow_runner, memory, adapter = self._accepted_runner(step_name, agent_id)
+                with (
+                    patch("ts_harness.workflows.system_steps.run_system_step") as step,
+                    patch("ts_harness.workflows.code_review.publish_override_status", return_value=[]),
+                ):
+                    workflow_runner.tick()
+
+                step.assert_not_called()
+                self.assertEqual(adapter.payloads, [])
+                [(task_id, output)] = memory.completed
+                self.assertEqual(task_id, "task-1")
+                self.assertEqual(output["human_override"]["actor"], "alice")
+                self.assertEqual(output["human_override"]["step"], step_name)
+
+    def test_qa_gate_publishes_pending_before_dispatch_and_the_verdict_after(self):
+        runner_module = load_runner()
+        skeletons = runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+        prs = [{"pr_url": "https://github.com/o/r/pull/19", "head_sha": "62bb0d4"}]
+        task = {
+            "id": "task-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "input": {"files": [{"filename": "a.js"}], "prs": prs},
+        }
+        result = {"status": "succeeded", "output": {"status": "success", "result": {"prs": []}}}
+        calls = []
+
+        class RecordingAdapter(FakeAdapter):
+            def dispatch(self, payload):
+                calls.append("dispatch")
+                return super().dispatch(payload)
+
+        memory = FakeMemoryClient(ready=[task])
+        workflow_runner = runner_module.WorkflowRunner(
+            memory,
+            RecordingAdapter(result),
+            runner_id="runner-1",
+            skeletons={"deliver_work_order": skeletons["deliver_work_order"]},
+        )
+        with (
+            patch("ts_harness.workflows.qa_status.qa_started", side_effect=lambda i: calls.append(("started", i["prs"])) or []),
+            patch(
+                "ts_harness.workflows.qa_status.qa_finished",
+                side_effect=lambda i, r: calls.append(("finished", r["status"])) or [],
+            ),
+        ):
+            workflow_runner.tick()
+
+        self.assertEqual(calls, [("started", prs), "dispatch", ("finished", "succeeded")])
+
     def test_runner_prepares_deployment_wait(self):
         runner_module, workflow_runner, memory, _ = self._release_runner("await_deployment_staging")
         engine = MagicMock()
@@ -980,6 +1056,33 @@ class WorkflowRunnerTests(unittest.TestCase):
             memory.blocked,
             [("task-1", "draft_prd output must include result.prd_markdown")],
         )
+
+    def test_terminal_block_hands_the_blocked_output_to_the_engine(self):
+        runner_module = load_runner()
+        task = {
+            "id": "qa-1",
+            "workflow_id": "workflow-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "input": {},
+        }
+        qa_output = {"status": "failed", "result": {"summary": "QA blocked", "prs": [{"defects": [{"id": "QA-001"}]}]}}
+        memory = FakeMemoryClient(ready=[task])
+        adapter = FakeAdapter(
+            {"status": "blocked", "error": "stage contract outcome: blocked", "runtime_task_id": "rt-1", "output": qa_output}
+        )
+        workflow_runner = runner_module.WorkflowRunner(memory, adapter, runner_id="runner-1")
+
+        with patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "true"}), patch.object(
+            runner_module, "_workflow_engine"
+        ) as engine, patch.object(workflow_runner, "_publish_qa_status"), redirect_stdout(io.StringIO()):
+            workflow_runner.tick()
+
+        args, kwargs = engine.return_value.on_task_transition.call_args
+        self.assertEqual(args[1], "blocked")
+        self.assertEqual(kwargs["dispatch_result"]["output"], qa_output)
+        self.assertEqual(kwargs["error"], "stage contract outcome: blocked")
 
     def test_runner_parks_tool_approval_block_without_retry_or_hooks(self):
         runner_module = load_runner()
@@ -1783,6 +1886,136 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(adapter.payloads, [])
         self.assertEqual(memory.waits[0][2], "v1.event")
         self.assertEqual(memory.blocked, [("task-1", "awaiting_external:v1.event")])
+
+
+class BlockingAdapter:
+    """Holds every dispatch until ``release`` is set, like a long OpenCode run."""
+
+    def __init__(self, result=None):
+        self.result = result or {"status": "succeeded", "output": {"summary": "done"}}
+        self.release = threading.Event()
+        self.started = []
+        self._lock = threading.Lock()
+
+    def dispatch(self, payload):
+        with self._lock:
+            self.started.append(payload["task_id"])
+        self.release.wait(5)
+        return self.result
+
+
+def _task(task_id, workflow_id):
+    return {
+        "id": task_id,
+        "workflow_id": workflow_id,
+        "workflow_type": "prd_request",
+        "step_name": "draft_prd",
+        "agent_id": "pm-agent",
+    }
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class WorkerPoolTests(unittest.TestCase):
+    def setUp(self):
+        self._hook_engine_patch = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false"})
+        self._hook_engine_patch.start()
+        self.addCleanup(self._hook_engine_patch.stop)
+        self.runner_module = load_runner()
+        self.tick_path = Path(tempfile.mkdtemp()) / "workflow-runner.tick"
+
+    def _runner(self, memory, adapter, max_workers=4):
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.addCleanup(executor.shutdown, wait=True)
+        runner = self.runner_module.WorkflowRunner(
+            memory,
+            adapter,
+            runner_id="runner-1",
+            tick_file=self.tick_path,
+            concurrency_limiter=self.runner_module.ConcurrencyLimiter(max_workers),
+            executor=executor,
+        )
+        self.addCleanup(adapter.release.set)
+        return runner
+
+    def test_long_dispatches_run_in_parallel_and_tick_returns(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-2")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 2))
+        self.assertEqual(memory.completed, [])
+        self.assertTrue(self.tick_path.exists())
+        adapter.release.set()
+        self.assertTrue(_wait_for(lambda: len(memory.completed) == 2))
+
+    def test_only_one_task_per_workflow_is_in_flight(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-1")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+        memory.ready = [_task("t2", "wf-1")]
+        runner.tick()
+
+        self.assertEqual([c[0]["id"] for c in memory.claims], ["t1"])
+        adapter.release.set()
+        self.assertTrue(_wait_for(lambda: len(memory.completed) == 1))
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: [c[0]["id"] for c in memory.claims] == ["t1", "t2"]))
+
+    def test_limit_caps_parallel_dispatches(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1"), _task("t2", "wf-2")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter, max_workers=1)
+
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+        self.assertEqual(len(memory.claims), 1)
+
+    def test_stale_sweep_skips_tasks_this_runner_is_still_running(self):
+        memory = FakeMemoryClient(ready=[_task("t1", "wf-1")])
+        adapter = BlockingAdapter()
+        runner = self._runner(memory, adapter)
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(adapter.started) == 1))
+
+        memory.ready = []
+        memory.stale = [{"id": "t1"}, {"id": "orphan"}]
+        runner.tick()
+
+        self.assertEqual(memory.blocked, [("orphan", "task lease expired")])
+
+    def test_adapter_failure_in_a_worker_still_recovers_the_task(self):
+        task = {**_task("t1", "wf-1"), "attempt": 0, "max_retries": 2}
+        memory = FakeMemoryClient(ready=[task])
+
+        class RaisingAdapter(BlockingAdapter):
+            def dispatch(self, payload):
+                raise RuntimeError("boom")
+
+        adapter = RaisingAdapter()
+        runner = self._runner(memory, adapter)
+        runner.tick()
+
+        self.assertTrue(_wait_for(lambda: len(memory.retried) == 1))
+        self.assertIn("boom", memory.blocked[0][1])
+        memory.ready = [task]
+        runner.tick()
+        self.assertTrue(_wait_for(lambda: len(memory.claims) == 2))
 
 
 class GitHubWaitRetryTests(unittest.TestCase):

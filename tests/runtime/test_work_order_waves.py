@@ -146,6 +146,37 @@ class ChildStateTests(unittest.TestCase):
         workflow, tasks = _child("wf-c1", failed=True)
         self.assertEqual(work_order_waves.child_state(workflow, tasks), "failed")
 
+    def test_terminal_block_counts_as_failed(self):
+        workflow, tasks = _child("wf-c1", merged=False)
+        for task in tasks:
+            if task["step_name"] == "deliver_work_order" and task["status"] == "succeeded":
+                task["status"] = "blocked"
+                task["error"] = "git clone failed: repository not found"
+        self.assertEqual(work_order_waves.child_state(workflow, tasks), "failed")
+
+    def test_block_waiting_for_a_human_decision_keeps_the_child_running(self):
+        workflow, tasks = _child("wf-c1", merged=False)
+        for task in tasks:
+            if task["step_name"] == "deliver_work_order" and task["status"] == "succeeded":
+                task["status"] = "blocked"
+                task["error"] = "barrier_blocked: code_review_blocked: 1 blocking findings"
+                task["input"] = {**(task.get("input") or {}), "_awaiting_human_decision": {"reason": "revision_limit"}}
+        self.assertIsNone(work_order_waves.child_state(workflow, tasks))
+
+    def test_closed_pr_fails_the_child(self):
+        workflow, tasks = _child("wf-c1", merged=False)
+        for task in tasks:
+            if task["step_name"] == "await_human_merge":
+                task["error"] = "external_blocked:github.pr_closed by bob"
+        self.assertEqual(work_order_waves.child_state(workflow, tasks), "failed")
+
+    def test_external_wait_stays_pending(self):
+        workflow, tasks = _child("wf-c1", merged=False)
+        for task in tasks:
+            if task["step_name"] == "await_human_merge":
+                task["error"] = "awaiting_external:github.merge"
+        self.assertIsNone(work_order_waves.child_state(workflow, tasks))
+
 
 CHILDREN = [{"workflow_id": "wf-c1", "work_order_id": "WO-1"}, {"workflow_id": "wf-c2", "work_order_id": "WO-2"}]
 
@@ -205,6 +236,20 @@ class JoinTests(unittest.TestCase):
         self.assertEqual(output["wave_work_order_ids"], ["WO-1", "WO-2"])
         self.assertEqual(output["merge_sha"], "s2")
         self.assertEqual(len(output["pr_urls"]), 2)
+
+    def test_terminal_block_blocks_join_with_the_child_error(self):
+        from ts_harness.workflows.hooks import wait_external
+
+        workflow, tasks = _child("wf-c2", merged=False)
+        for task in tasks:
+            if task["step_name"] == "deliver_work_order" and task["status"] == "succeeded":
+                task["status"] = "blocked"
+                task["error"] = "git clone failed: repository not found"
+        memory = FakeMemory({"wf-c1": _child("wf-c1", sha="s1"), "wf-c2": (workflow, tasks)})
+        result = wait_external.resume(_join_ctx(memory))
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("repository not found", memory.blocked[0][1])
+        self.assertIn("WO-2", memory.blocked[0][1])
 
     def test_partial_failure_blocks_join_and_keeps_merged_results(self):
         from ts_harness.workflows.hooks import wait_external

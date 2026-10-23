@@ -39,6 +39,7 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
             "MEMORY_API_URL",
             "WORKFLOW_RUNNER_ADAPTER",
             "GATEWAY_TOKEN",
+            "TS_HARNESS_SESSION_DB_URL",
             "TS_HARNESS_WORKFLOW_DEFINITION_STORE",
             "TS_HARNESS_MANAGED_WORKFLOWS_DIR",
             "TS_HARNESS_PROGRAM_DEFINITION_STORE",

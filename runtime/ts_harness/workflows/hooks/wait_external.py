@@ -245,6 +245,9 @@ def _resume_children(
             reason = f"external_blocked:{event_type} wave work orders failed: {', '.join(failed_ids)}"
         else:
             reason = f"external_blocked:{event_type} child workflows failed: {', '.join(aggregate['output']['failed_labels'])}"
+        details = str(aggregate["output"].get("failure_details") or "").strip()
+        if details:
+            reason = f"{reason}\n{details}"
         ctx.memory_client.block_task_api(str(task["id"]), reason, output=output, actor=ctx.actor)
         return {"status": "blocked", "task_id": str(task["id"]), "reason": reason}
     return ctx.memory_client.resume_external(

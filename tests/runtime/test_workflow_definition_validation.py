@@ -271,6 +271,28 @@ class WorkflowDefinitionValidationTests(unittest.TestCase):
         self.assertIn("invalid_wait_external", codes)
         self.assertIn("invalid_revise_on_reject", codes)
 
+    def test_on_block_cases(self):
+        def revise_issues(cases):
+            payload = self.valid_payload()
+            payload["stages"][1]["on_block"] = {"hook": "revise_on_reject", "revise": {"step_name": "draft"}, "cases": cases}
+            _skeleton, issues = self.validate(payload)
+            return [issue for issue in issues if issue.code == "invalid_revise_on_reject"]
+
+        good = [
+            {"error_prefix": "external_blocked:github.pr_changes_requested", "max_revisions": 3, "revise": {"step_name": "draft", "budget": "human"}},
+            {"error_prefix": "external_blocked:github.pr_closed", "action": "stop"},
+        ]
+        self.assertEqual(revise_issues(good), [])
+        for bad in (
+            {"cases": "nope"},
+            [{"action": "stop"}],
+            [{"error_prefix": "x", "action": "retry"}],
+            [{"error_prefix": "x", "revise": {}}],
+            [{"error_prefix": "x", "max_revisions": "3"}],
+        ):
+            with self.subTest(cases=bad):
+                self.assertTrue(revise_issues(bad))
+
     def test_empty_wait_external_means_no_wait(self):
         payload = self.valid_payload()
         payload["stages"][1]["wait_external"] = {}

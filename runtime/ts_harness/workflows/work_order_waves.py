@@ -103,10 +103,55 @@ def _compensate_steps(workflow_type: str) -> set[str]:
         return set()
 
 
+_WAIT_ERROR_PREFIXES = ("awaiting_external:", "awaiting_tool_approval:")
+
+
+HUMAN_DECISION_KEY = "_awaiting_human_decision"
+
+
+def awaiting_human_decision(task: dict[str, Any]) -> bool:
+    """A blocked step parked for a human to revise, accept or stop (e.g. after the revision limit)."""
+    task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+    return str(task.get("status") or "") == "blocked" and bool(task_input.get(HUMAN_DECISION_KEY))
+
+
+def _is_terminal_block(task: dict[str, Any]) -> bool:
+    """A blocked task that will not resume on its own.
+
+    External waits, tool approvals and blocks waiting for a human decision stay
+    pending so the parent join keeps waiting.
+    """
+    if str(task.get("status") or "") != "blocked":
+        return False
+    if awaiting_human_decision(task):
+        return False
+    error = str(task.get("error") or "").strip()
+    if not error:
+        return False
+    return not error.startswith(_WAIT_ERROR_PREFIXES)
+
+
+def failure_details(tasks: list[dict[str, Any]]) -> str:
+    """Short step errors for tasks that failed or are blocked for good."""
+    lines: list[str] = []
+    for task in tasks:
+        status = str(task.get("status") or "")
+        if status != "failed" and not _is_terminal_block(task):
+            continue
+        error = str(task.get("error") or "").strip()
+        if not error:
+            continue
+        step = str(task.get("step_name") or "step")
+        lines.append(f"{step}: {error[:400]}")
+    return "\n".join(lines)
+
+
 def child_state(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> str | None:
     """``succeeded``, ``failed`` or ``None`` while the child is still running.
 
     Only the latest task per step counts, so superseded revise-loop tasks are ignored.
+    A blocked task with a real error counts as failed. A wait for the user or an
+    external event does not.
     """
     skip = _compensate_steps(str(workflow.get("workflow_type") or CHILD_WORKFLOW_TYPE))
     latest: dict[str, dict[str, Any]] = {}
@@ -117,7 +162,7 @@ def child_state(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> str | 
     if not latest:
         return None
     statuses = {str(task.get("status") or "") for task in latest.values()}
-    if "failed" in statuses:
+    if "failed" in statuses or any(_is_terminal_block(task) for task in latest.values()):
         return "failed"
     if statuses <= {"succeeded", "cancelled"}:
         return "succeeded"
@@ -145,6 +190,7 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
     prs: list[dict[str, Any]] = []
     failed: list[str] = []
     failed_labels: list[str] = []
+    failure_lines: list[str] = []
     pending: list[str] = []
     children_outputs: dict[str, dict[str, Any]] = {}
     latest_merge: tuple[str, str] = ("", "")
@@ -159,6 +205,9 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
         if state == "failed":
             failed.append(work_order_id)
             failed_labels.append(label)
+            detail = failure_details(tasks)
+            if detail:
+                failure_lines.append(f"{label}: {detail}" if label else detail)
             continue
         output = _merged_output(tasks)
         children_outputs[label] = output
@@ -184,6 +233,7 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
         "failed_work_order_ids": failed,
         "children_outputs": children_outputs,
         "failed_labels": failed_labels,
+        "failure_details": "\n".join(failure_lines),
     }
     if latest_merge[1]:
         output["merge_sha"] = latest_merge[1]

@@ -24,7 +24,7 @@ COPY config/programs /config/programs
 # Built-in workflows include fragments; the runner cannot load them without these.
 COPY config/fragments /app/config/fragments
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . "psycopg[binary]>=3.2"
 
 ENV PYTHONPATH=/app/runtime:/app/scripts
 ENV TS_HARNESS_ROOT=/app

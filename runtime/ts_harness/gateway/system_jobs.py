@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url
 from ts_harness.memory.client import get_memory_client
 from ts_harness.workflows.engine import get_workflow_engine
+from ts_harness.workflows.pr_rejection import REJECTION_REASONS, detect_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
 
     checked = 0
     resumed = 0
+    rejected = 0
     skipped = 0
     errors = 0
 
@@ -99,7 +101,23 @@ def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
         try:
             pr = fetch_pull_request(owner, repo, number, token=token)
             if not pr.get("merged"):
-                skipped += 1
+                task_id = str(wait.get("task_id") or "").strip()
+                handled = engine.block_case_prefixes(workflow_id, task_id) if task_id else []
+                rejection = None
+                if any(prefix in handled for prefix in REJECTION_REASONS):
+                    rejection = detect_rejection(GitHubClient(token=token), owner, repo, number, pr)
+                if rejection is None or not any(rejection["reason"].startswith(prefix) for prefix in handled):
+                    skipped += 1
+                    continue
+                engine.block_wait(
+                    workflow_id,
+                    task_id,
+                    rejection["reason"],
+                    output={"pr_url": pr_url, "rejected_by": rejection["actor"], "review_feedback": rejection["feedback"]},
+                    actor="github-merge-poller",
+                )
+                rejected += 1
+                logger.info("github_merge_poller rejection workflow_id=%s pr_url=%s reason=%s", workflow_id, pr_url, rejection["reason"])
                 continue
             merge_sha = str(pr.get("merge_commit_sha") or "").strip()
             _resume_merged_pr(
@@ -140,6 +158,7 @@ def poll_github_merges(*, tenant_id: str = "default") -> dict[str, Any]:
         "status": "ok",
         "checked": checked,
         "resumed": resumed,
+        "rejected": rejected,
         "skipped": skipped,
         "errors": errors,
         "checks": poll_github_checks(tenant_id=tenant_id, token=token),

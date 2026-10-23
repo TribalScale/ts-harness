@@ -242,6 +242,24 @@ class OpsHardeningContractTests(unittest.TestCase):
                 # gitleaks 8.30.1 only. A shared patch would downgrade gh and osv-scanner.
                 self.assertIn("go get github.com/klauspost/compress@v1.18.7", text)
 
+    def test_agent_runtime_ships_pinned_test_toolchains(self):
+        text = (REPO_ROOT / "docker" / "Dockerfile.agent-runtime").read_text()
+        self.assertIn("COPY --from=go-tools /usr/local/go /usr/local/go", text)
+        for name in ("NODE_VERSION", "MAVEN_VERSION", "GRADLE_VERSION", "RUSTUP_VERSION", "RUST_TOOLCHAIN"):
+            self.assertRegex(text, rf"ARG {name}=\d+\.\d+\.\d+\n")
+        for name in ("NODE_SHA256_AMD64", "NODE_SHA256_ARM64", "GRADLE_SHA256", "RUSTUP_SHA256_AMD64", "RUSTUP_SHA256_ARM64"):
+            self.assertRegex(text, rf"ARG {name}=[0-9a-f]{{64}}\n")
+        self.assertRegex(text, r"ARG MAVEN_SHA512=[0-9a-f]{128}\n")
+        self.assertEqual(text.count("sha256sum -c -"), 3)
+        self.assertIn("sha512sum -c -", text)
+        for package in ("openjdk-21-jdk-headless", "make", "gcc", "libc6-dev"):
+            self.assertRegex(text, rf"\n\s+{package} \\\n")
+        self.assertIn("--profile minimal", text)
+        self.assertIn("-d /opt/ts-harness/wheels", text)
+        requirements = (REPO_ROOT / "docker" / "test-runner-requirements.txt").read_text()
+        self.assertRegex(requirements, r"(?m)^pytest==\S+$")
+        self.assertRegex(requirements, r"(?m)^behave==\S+$")
+
 
 if __name__ == "__main__":
     unittest.main()

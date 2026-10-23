@@ -374,7 +374,8 @@ async def workflow_dispatch(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        result = runtime.dispatch_workflow(body, auth)
+        # Agent turns (and coding-backend runs) last minutes; keep the event loop free.
+        result = await asyncio.to_thread(runtime.dispatch_workflow, body, auth)
         runtime.metrics.inc("workflow_dispatch")
         return _json(result.to_dict())
     except AuthError as exc:
@@ -445,7 +446,7 @@ async def session_message(request: Request) -> Response:
 
     runtime = get_runtime()
     try:
-        result = runtime.handle_session_message(body, auth)
+        result = await asyncio.to_thread(runtime.handle_session_message, body, auth)
         runtime.metrics.inc("session_message")
         return _json(result)
     except AuthError as exc:
@@ -1133,6 +1134,29 @@ async def admin_programs_status(request: Request) -> Response:
         return _json({"error": str(exc)}, 404)
 
 
+async def admin_programs_phase_activity(request: Request) -> Response:
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    program_id = request.path_params["id"]
+    phase = request.path_params["phase"]
+    memory = get_memory_client()
+    try:
+        _program_for_tenant(memory, program_id, auth)
+    except Exception as exc:
+        return _json({"error": str(exc)}, 404)
+    from ts_harness.workflows import phase_activity
+
+    try:
+        return _json(phase_activity.phase_activity(memory, program_id, phase))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_program_phase_activity_error", program_id=program_id, phase=phase, error=str(exc))
+        return _json({"error": str(exc)}, 500)
+
+
 async def admin_programs_advance(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -1494,6 +1518,47 @@ async def admin_workflows_reject(request: Request) -> Response:
         )
     except Exception as exc:
         return _json({"error": str(exc)}, 400)
+
+
+async def admin_workflows_decide(request: Request) -> Response:
+    """Revise again, accept, or stop a step parked for a human decision."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "approve_gate")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    body = body if isinstance(body, dict) else {}
+    workflow_id = str(body.get("workflow_id") or "").strip()
+    task_id = str(body.get("task_id") or "").strip()
+    action = str(body.get("action") or "").strip()
+    if not workflow_id or not task_id or not action:
+        return _json({"error": "workflow_id, task_id and action are required"}, 400)
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        workflow = get_memory_client().get_workflow(workflow_id).get("workflow") or {}
+    except Exception:
+        workflow = {}
+    if not workflow or str(workflow.get("tenant_id") or "default") != tenant_id:
+        return _json({"error": "workflow not found"}, 404)
+    try:
+        result = get_workflow_engine().decide_blocked_step(
+            workflow_id,
+            task_id,
+            action,
+            actor=str(auth.actor_id or "admin"),
+            guidance=str(body.get("guidance") or ""),
+            tenant_id=tenant_id,
+        )
+    except ValueError as exc:
+        return _json({"error": str(exc)}, 409)
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_workflow_decide_error", workflow_id=workflow_id, task_id=task_id, error=str(exc))
+        return _json({"error": str(exc)}, 500)
+    return _json(result)
 
 
 # ── Workflow definition admin BFF ─────────────────────────────────────────────
@@ -3546,6 +3611,7 @@ routes = [
     Route("/admin/programs", endpoint=admin_programs_list, methods=["GET"]),
     Route("/admin/programs/{id}/status", endpoint=admin_programs_status, methods=["GET"]),
     Route("/admin/programs/{id}/evidence", endpoint=admin_programs_evidence, methods=["GET"]),
+    Route("/admin/programs/{id}/phases/{phase}/activity", endpoint=admin_programs_phase_activity, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",
@@ -3558,6 +3624,7 @@ routes = [
     Route("/admin/programs/{id}", endpoint=admin_programs_get, methods=["GET"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_patch, methods=["PATCH"]),
     Route("/admin/workflows/approve", endpoint=admin_workflows_approve, methods=["POST"]),
+    Route("/admin/workflows/decide", endpoint=admin_workflows_decide, methods=["POST"]),
     Route("/admin/workflows/reject", endpoint=admin_workflows_reject, methods=["POST"]),
     Route("/admin/workflow-definitions", endpoint=admin_workflow_definitions_list, methods=["GET"]),
     Route(

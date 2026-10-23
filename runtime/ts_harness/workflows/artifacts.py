@@ -423,6 +423,22 @@ def refinery_artifact_failure_reason(text: str) -> str | None:
     return None
 
 
+_MARKDOWN_HEADING_RE = re.compile(r"(?m)^(#{1,6}[ \t]+\S.*?)$")
+_ELLIPSIS_ONLY_RE = re.compile(r"[.\u2026\s]+")
+
+
+def _ellipsis_only_section_heading(text: str) -> str | None:
+    """Return the first heading whose body is only dots or an ellipsis."""
+    matches = list(_MARKDOWN_HEADING_RE.finditer(text or ""))
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[start:end].strip()
+        if body and _ELLIPSIS_ONLY_RE.fullmatch(body):
+            return match.group(1).lstrip("#").strip()
+    return None
+
+
 def foundry_artifact_failure_reason(text: str) -> str | None:
     """Return a specific validation failure reason for foundry artifact text."""
     cleaned = (text or "").strip()
@@ -450,6 +466,12 @@ def foundry_artifact_failure_reason(text: str) -> str | None:
         return "foundry artifact content too short"
     if count_markdown_headings(cleaned) < FOUNDRY_MIN_HEADINGS:
         return "foundry artifact content lacks enough section headings"
+    placeholder = _ellipsis_only_section_heading(cleaned)
+    if placeholder:
+        return (
+            f"foundry section {placeholder!r} is a placeholder; "
+            "write the decision prose instead of '...'"
+        )
     return None
 
 
@@ -594,6 +616,64 @@ def _looks_like_action_plan_summary(text: str) -> bool:
     return looks_like_action_plan(text)
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _intake_questions(output: dict[str, Any]) -> list[str]:
+    sources: list[dict[str, Any]] = [output]
+    artifacts = output.get("artifacts")
+    if isinstance(artifacts, dict):
+        sources.append(artifacts)
+    result = output.get("result")
+    if isinstance(result, dict):
+        sources.append(result)
+        nested = result.get("artifacts")
+        if isinstance(nested, dict):
+            sources.append(nested)
+    for source in sources:
+        for key in ("questions", "clarifying_questions"):
+            questions = _string_list(source.get(key))
+            if questions:
+                return questions
+    return []
+
+
+def _usable_summary_text(output: dict[str, Any]) -> str:
+    sources: list[Any] = [output, output.get("result")]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        summary = source.get("summary")
+        if not isinstance(summary, str):
+            continue
+        body = summary.strip()
+        if (
+            not body
+            or _is_empty_json_placeholder(body)
+            or _looks_like_action_plan_summary(body)
+            or looks_like_artifact_catalog_summary(body)
+        ):
+            continue
+        return body
+    return ""
+
+
+def _intake_questions_body(output: dict[str, Any]) -> str:
+    questions = _intake_questions(output)
+    if not questions:
+        return ""
+    numbered = "\n".join(
+        f"{index}. {question}" for index, question in enumerate(questions, start=1)
+    )
+    summary = _usable_summary_text(output)
+    if summary and summary not in numbered:
+        return f"{summary}\n\n{numbered}"
+    return numbered
+
+
 def artifact_body(output: dict[str, Any]) -> str:
     prd_keys = ("prd_markdown", "markdown")
     other_keys = ("content", "summary", "text")
@@ -612,6 +692,10 @@ def artifact_body(output: dict[str, Any]) -> str:
     work_orders_body = _work_orders_artifacts_body(output)
     if work_orders_body:
         return work_orders_body
+
+    questions_body = _intake_questions_body(output)
+    if questions_body:
+        return questions_body
 
     for key in other_keys:
         value = output.get(key)

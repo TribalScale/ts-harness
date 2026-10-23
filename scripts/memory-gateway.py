@@ -685,6 +685,72 @@ def resume_tool_approval_task(conn, body: dict[str, Any]) -> dict[str, str]:
     return {"id": task_id, "status": "pending"}
 
 
+def resume_blocked_task(conn, body: dict[str, Any]) -> dict[str, str]:
+    """Return a step that is blocked for good (not waiting on an event or approval) to pending.
+
+    A human decision uses this; ``input`` is merged into the task input so the
+    runner knows what was decided.
+    """
+    task_id = parse_uuid(body.get("id"))
+    actor = str(body.get("actor", "orchestrator"))
+    patch = body.get("input") or {}
+    if not isinstance(patch, dict):
+        raise ValueError("input must be an object")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE workflow_tasks
+            SET status = 'pending',
+                error = NULL,
+                completed_at = NULL,
+                locked_by = NULL,
+                lock_expires_at = NULL,
+                attempt = GREATEST(attempt - 1, 0),
+                next_attempt_at = now(),
+                input = COALESCE(input, '{}'::jsonb) || %s::jsonb
+            WHERE id = %s
+              AND status = 'blocked'
+              AND COALESCE(error, '') NOT LIKE 'awaiting%%'
+            """,
+            (json.dumps(patch), task_id),
+        )
+        if getattr(cur, "rowcount", 1) == 0:
+            raise ValueError("workflow task is not blocked for a human decision")
+        audit_workflow_event(
+            cur,
+            "workflow_task_human_resumed",
+            "Workflow task resumed by a human decision",
+            {"task_id": task_id, "reason": str(body.get("reason") or "")},
+            actor,
+        )
+    conn.commit()
+    return {"id": task_id, "status": "pending"}
+
+
+def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Steps parked for a human decision (revise, accept or stop) in running workflows."""
+    tenant_id = str(body.get("tenant_id") or "default")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.workflow_id, t.workflow_type, t.step_name, t.agent_id,
+                   t.error, t.input, t.output, t.created_at, t.updated_at,
+                   w.parent_workflow_id, w.program_id, w.source_channel
+            FROM workflow_tasks t
+            JOIN workflows w ON w.id = t.workflow_id
+            WHERE t.tenant_id = %s
+              AND t.status = 'blocked'
+              AND t.input ->> '_awaiting_human_decision' IS NOT NULL
+              AND w.status = 'running'
+            ORDER BY t.updated_at DESC
+            LIMIT 100
+            """,
+            (tenant_id,),
+        )
+        return {"tasks": list(cur.fetchall())}
+
+
 def record_runtime_task(conn, body: dict[str, Any]) -> dict[str, str]:
     task_id = parse_uuid(body.get("id"))
     runtime_task_id = str(body.get("runtime_task_id", "")).strip()
@@ -1254,13 +1320,50 @@ def _actor_roles(raw: Any) -> list[str]:
     return sorted({str(item).strip().lower() for item in raw if str(item).strip()})
 
 
-def _actor_permission_set(body: dict[str, Any], roles: list[str]) -> set[str]:
-    from ts_harness.policy.permissions import effective_bundles, permissions_for_roles
+# Default role bundles. This process does not install the ts_harness package, and
+# effective_bundles(None) is these defaults. A caller that already resolved custom
+# bundles sends them as actor_permissions.
+_DEFAULT_ROLE_BUNDLES = {
+    "viewer": frozenset({"view"}),
+    "member": frozenset({"view"}),
+    "requester": frozenset({"view", "start_program"}),
+    "approver": frozenset({"view", "approve_gate", "confirm_delegation"}),
+    "admin": frozenset(
+        {
+            "view",
+            "start_program",
+            "approve_gate",
+            "confirm_delegation",
+            "edit_config",
+            "edit_models",
+            "edit_allowlists",
+            "promote_department",
+        }
+    ),
+}
+_DEFAULT_ROLE_BUNDLES["owner"] = _DEFAULT_ROLE_BUNDLES["admin"]
 
+
+def _actor_permission_set(body: dict[str, Any], roles: list[str]) -> set[str]:
     explicit = body.get("actor_permissions")
     if isinstance(explicit, list):
         return {str(item).strip().lower() for item in explicit if str(item).strip()}
-    return permissions_for_roles(roles, effective_bundles(None))
+    granted: set[str] = set()
+    for role in roles:
+        granted.update(_DEFAULT_ROLE_BUNDLES.get(role, ()))
+    return granted
+
+
+def _permission_allows(granted: set[str], required: list[str]) -> bool:
+    needed = {item for item in required if item}
+    return bool(needed and granted & needed)
+
+
+def _holds_required_role(roles: list[str], granted: set[str], required: str) -> bool:
+    if required in roles:
+        return True
+    bundle = _DEFAULT_ROLE_BUNDLES.get(required)
+    return bool(bundle) and set(bundle) <= granted
 
 
 def _gate_permission_denial(
@@ -1270,18 +1373,15 @@ def _gate_permission_denial(
     granted: set[str],
     extra_permission: str = "",
 ) -> str:
-    from ts_harness.policy.permissions import allows, effective_bundles, holds_required_role
-
-    bundles = effective_bundles(None)
     if required_permissions:
         denied = (
             ""
-            if allows(granted, required_permissions)
+            if _permission_allows(granted, required_permissions)
             else f"approval requires one of permissions: {', '.join(required_permissions)}"
         )
     elif not required_roles:
         denied = ""
-    elif any(holds_required_role(roles, granted, name, bundles) for name in required_roles):
+    elif any(_holds_required_role(roles, granted, name) for name in required_roles):
         denied = ""
     else:
         denied = f"approval requires one of roles: {', '.join(required_roles)}"
@@ -4669,6 +4769,10 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, retry_workflow_task(conn, body))
                 elif self.path == "/workflow/task/resume-approval":
                     self._send_json(200, resume_tool_approval_task(conn, body))
+                elif self.path == "/workflow/task/resume-blocked":
+                    self._send_json(200, resume_blocked_task(conn, body))
+                elif self.path == "/workflow/stuck":
+                    self._send_json(200, list_stuck_tasks(conn, body))
                 elif self.path == "/workflow/runtime":
                     self._send_json(200, record_runtime_task(conn, body))
                 elif self.path == "/workflow/stale":

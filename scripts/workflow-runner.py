@@ -21,6 +21,8 @@ New in this revision:
 
 from __future__ import annotations
 
+from concurrent.futures import Executor, ThreadPoolExecutor
+import contextvars
 import json
 import os
 from pathlib import Path
@@ -593,6 +595,7 @@ class WorkflowRunner:
         leader_election: LeaderElection | None = None,
         runtime_url: str | None = None,
         stop_requested: threading.Event | None = None,
+        executor: Executor | None = None,
     ):
         if stale_policy not in {"block", "fail"}:
             raise ValueError("stale_policy must be 'block' or 'fail'")
@@ -617,6 +620,13 @@ class WorkflowRunner:
         self.runtime_url = (runtime_url or "").rstrip("/")
         # Track workflow_ids we've already created records for this process lifetime.
         self._created_workflows: set[str] = set()
+        # None dispatches inline on the tick thread (unit tests); main() passes a pool.
+        self._executor = executor
+        # Only agent turns run in parallel. Task transitions and hooks hold this lock,
+        # so two workers never update workflow state at the same time.
+        self._state_lock = threading.Lock()
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[str, str] = {}
 
     def tick(self) -> None:
         try:
@@ -625,8 +635,9 @@ class WorkflowRunner:
                 return
 
             log_event("ticked", runner_id=self.runner_id)
-            self.reload_if_changed()
-            self._sweep_stale()
+            with self._state_lock:
+                self.reload_if_changed()
+                self._sweep_stale()
             if not self._runtime_ready():
                 log_event("runtime_not_ready", runner_id=self.runner_id)
                 return
@@ -636,41 +647,79 @@ class WorkflowRunner:
                     break
                 if self._should_skip_retry_backoff(task):
                     continue
+                workflow_id = str(task.get("workflow_id") or "")
+                if workflow_id and self._workflow_in_flight(workflow_id):
+                    continue
                 if not self._limiter.try_acquire():
                     log_event("concurrency_limit_reached", runner_id=self.runner_id)
                     break
                 if not self.memory.claim_task(task, self.runner_id, self.lease_seconds):
                     self._limiter.release()
                     continue
-                from ts_harness.observability.logging import new_trace_id, trace_id_var
-
-                trace_token = trace_id_var.set(new_trace_id())
-                try:
-                    log_event(
-                        "claimed",
-                        workflow_id=task.get("workflow_id"),
-                        task_id=task.get("id"),
-                        agent_id=task.get("agent_id"),
-                    )
-                    _runner_metrics.inc("runner_tasks_claimed")
-                    try:
-                        try:
-                            self._ensure_workflow_record(task)
-                            self._dispatch_task(task)
-                        except Exception as exc:
-                            log_event(
-                                "dispatch_exception",
-                                workflow_id=task.get("workflow_id"),
-                                task_id=task.get("id"),
-                                error=str(exc),
-                            )
-                            self._recover_claimed_task(task, str(exc))
-                    finally:
-                        self._limiter.release()
-                finally:
-                    trace_id_var.reset(trace_token)
+                with self._inflight_lock:
+                    self._inflight[str(task.get("id") or "")] = workflow_id
+                if self._executor is None:
+                    self._run_claimed_task(task)
+                else:
+                    self._executor.submit(contextvars.copy_context().run, self._run_claimed_task, task)
         finally:
             self._touch_tick_file()
+
+    def _workflow_in_flight(self, workflow_id: str) -> bool:
+        with self._inflight_lock:
+            return workflow_id in self._inflight.values()
+
+    def _task_in_flight(self, task_id: str) -> bool:
+        with self._inflight_lock:
+            return task_id in self._inflight
+
+    def _run_claimed_task(self, task: dict[str, Any]) -> None:
+        from ts_harness.observability.logging import new_trace_id, trace_id_var
+
+        trace_token = trace_id_var.set(new_trace_id())
+        try:
+            log_event(
+                "claimed",
+                workflow_id=task.get("workflow_id"),
+                task_id=task.get("id"),
+                agent_id=task.get("agent_id"),
+            )
+            _runner_metrics.inc("runner_tasks_claimed")
+            with self._state_lock:
+                try:
+                    self._ensure_workflow_record(task)
+                    self._dispatch_task(task)
+                except Exception as exc:
+                    log_event(
+                        "dispatch_exception",
+                        workflow_id=task.get("workflow_id"),
+                        task_id=task.get("id"),
+                        error=str(exc),
+                    )
+                    self._recover_claimed_task(task, str(exc))
+        finally:
+            with self._inflight_lock:
+                self._inflight.pop(str(task.get("id") or ""), None)
+            self._limiter.release()
+            trace_id_var.reset(trace_token)
+
+    def _dispatch_unlocked(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run the agent turn without the state lock so other workers can record results."""
+        self._state_lock.release()
+        try:
+            return self.adapter.dispatch(payload)
+        finally:
+            self._state_lock.acquire()
+
+    def shutdown(self) -> None:
+        if self._executor is None:
+            return
+        with self._inflight_lock:
+            inflight = len(self._inflight)
+        log_event("runner_draining", runner_id=self.runner_id, inflight=inflight)
+        # In-flight agent turns keep running in agent-runtime; their tasks are swept
+        # once the lease expires, as after any runner restart.
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _runtime_ready(self) -> bool:
         """Return True when agent-runtime healthz is reachable, or gate is disabled."""
@@ -800,6 +849,10 @@ class WorkflowRunner:
     def _sweep_stale(self) -> None:
         for task in self.memory.list_stale_tasks():
             task_id = task["id"]
+            # A long agent turn outlives its lease while ticks continue; only
+            # tasks no worker here is running are abandoned.
+            if self._task_in_flight(str(task_id)):
+                continue
             if self.stale_policy == "fail":
                 self.memory.fail_task(task_id, "task lease expired")
                 event = "failed"
@@ -992,6 +1045,12 @@ class WorkflowRunner:
         dispatch_started = time.time()
         stage = self._stage_for_task(task)
 
+        from ts_harness.workflows import human_decisions
+
+        if human_decisions.accepted(task):
+            self._complete_succeeded(task, human_decisions.accepted_output(task), event="human_accepted")
+            return
+
         if stage is not None and stage.barrier:
             self._handle_barrier(task)
             return
@@ -1076,8 +1135,13 @@ class WorkflowRunner:
         }
         if stage is not None and stage.tool_allow is not None:
             payload["tool_allow"] = list(stage.tool_allow)
-        result = self.adapter.dispatch(payload)
+        is_qa = task.get("step_name") == "qa_gate"
+        if is_qa:
+            self._publish_qa_status(task, "qa_started", task_input)
+        result = self._dispatch_unlocked(payload)
         log_event("dispatched", workflow_id=payload["workflow_id"], task_id=payload["task_id"])
+        if is_qa:
+            self._publish_qa_status(task, "qa_finished", task_input, result)
         runtime_task_id = result.get("runtime_task_id")
         if runtime_task_id:
             self.memory.record_runtime_task(task["id"], runtime_task_id)
@@ -1293,6 +1357,7 @@ class WorkflowRunner:
                             task,
                             "blocked",
                             error=error,
+                            dispatch_result=result,
                         )
                         log_event(
                             "terminal_block_notified",
@@ -1379,7 +1444,25 @@ class WorkflowRunner:
                 log_event("barrier_block_hook_error", task_id=task.get("id"), error=str(exc))
             return
 
-        output = dict(agg.get("output") or {})
+        self._complete_succeeded(task, dict(agg.get("output") or {}), event="barrier_completed")
+
+    def _publish_qa_status(self, task: dict[str, Any], action: str, *args: Any) -> None:
+        from ts_harness.workflows import qa_status
+
+        try:
+            warnings = getattr(qa_status, action)(*args)
+        except Exception as exc:  # noqa: BLE001 - the status is informational
+            warnings = [str(exc)]
+        if warnings:
+            log_event(
+                "qa_status_warning",
+                workflow_id=task.get("workflow_id"),
+                task_id=task.get("id"),
+                warnings=warnings,
+            )
+
+    def _complete_succeeded(self, task: dict[str, Any], output: dict[str, Any], *, event: str) -> None:
+        """Complete a step the runner settled itself (system step or human accept) and run its hooks."""
         result = {"status": "succeeded", "output": output}
         try:
             from ts_harness.workflows.engine import (
@@ -1395,7 +1478,7 @@ class WorkflowRunner:
 
         self.memory.complete_task(task["id"], output)
         log_event(
-            "barrier_completed",
+            event,
             workflow_id=task.get("workflow_id"),
             task_id=task.get("id"),
             pr_count=len(output.get("pr_urls") or []),
@@ -1602,12 +1685,13 @@ def build_adapter() -> Any:
     raise RuntimeError(f"unsupported WORKFLOW_RUNNER_ADAPTER: {adapter_name}")
 
 
+def max_concurrent_dispatches(batch_size: int) -> int:
+    return max(1, int(os.environ.get("WORKFLOW_RUNNER_MAX_CONCURRENT", str(batch_size))))
+
+
 def build_concurrency_limiter(batch_size: int) -> ConcurrencyLimiter:
     redis_url = os.environ.get("REDIS_URL") or os.environ.get("TS_HARNESS_REDIS_URL")
-    max_concurrent = int(
-        os.environ.get("WORKFLOW_RUNNER_MAX_CONCURRENT", str(batch_size))
-    )
-    return ConcurrencyLimiter(limit=max_concurrent, redis_url=redis_url)
+    return ConcurrencyLimiter(limit=max_concurrent_dispatches(batch_size), redis_url=redis_url)
 
 
 def build_leader_election(runner_id: str, memory: Any = None) -> LeaderElection:
@@ -1650,6 +1734,7 @@ def run_until_stopped(
                 pass
         if stop_requested.wait(interval):
             break
+    runner.shutdown()
     log_event("runner_shutdown", runner_id=runner.runner_id)
 
 
@@ -1678,6 +1763,10 @@ def main() -> None:
         skeleton_dir=skeleton_dir,
         concurrency_limiter=build_concurrency_limiter(batch_size),
         runtime_url=runtime_url,
+        executor=ThreadPoolExecutor(
+            max_workers=max_concurrent_dispatches(batch_size),
+            thread_name_prefix="dispatch",
+        ),
     )
     stop_requested = threading.Event()
     runner.stop_requested = stop_requested

@@ -620,17 +620,44 @@ class RuntimeState:
         )
         return result
 
+    def _session_for_message(
+        self,
+        body: dict[str, Any],
+        *,
+        tenant_id: str,
+        channel: str,
+        agent_id: str,
+    ):
+        """Route a chat post to the open session when the client names one.
+
+        Admin chat keeps a single browser binding and also sends ``session_id``
+        for the thread on screen. The binding can still point at an older
+        conversation, so the named session wins.
+        """
+        store = get_session_store()
+        requested = str(body.get("session_id") or "").strip()
+        if requested:
+            existing = store.get(requested)
+            if existing is not None and existing.tenant_id == tenant_id:
+                return existing
+        return store.get_or_create(
+            tenant_id=tenant_id,
+            source=channel,
+            agent_id=agent_id,
+            channel=channel,
+            thread_id=body.get("thread_id"),
+        )
+
     def handle_session_message(self, body: dict[str, Any], auth) -> dict[str, Any]:
         req = normalize_runtime_body(body, default_tenant=self.config.gateway.default_tenant_id)
         channel = body.get("channel", "slack")
         agent_id = self.config.bindings.get(channel, self.config.default_agent().id)
         agent_cfg = self.config.get_agent(agent_id)
-        session = get_session_store().get_or_create(
+        session = self._session_for_message(
+            body,
             tenant_id=req.tenant_id,
-            source=channel,
-            agent_id=agent_id,
             channel=channel,
-            thread_id=body.get("thread_id"),
+            agent_id=agent_id,
         )
         with self._session_lock(session.session_id):
             return self._handle_session_message_locked(
@@ -670,16 +697,19 @@ class RuntimeState:
         from ts_harness.routing.intents import classify_channel_intent
 
         metadata = dict(session.metadata or {})
-        metadata.update(
-            {
-                "channel": channel,
-                "channel_id": body.get("channel_id") or metadata.get("channel_id") or channel,
-                "thread_id": body.get("thread_id") or metadata.get("thread_id"),
-            },
-        )
-        binding_key = str(body.get("binding_key") or metadata.get("binding_key") or "").strip()
-        if binding_key:
-            metadata["binding_key"] = binding_key
+        metadata["channel"] = channel
+        # An open chat posts its own session id. A stale browser binding must
+        # not retarget that chat onto a different thread.
+        if not str(metadata.get("channel_id") or "").strip():
+            metadata["channel_id"] = body.get("channel_id") or channel
+        if not str(metadata.get("thread_id") or "").strip():
+            incoming_thread = str(body.get("thread_id") or "").strip()
+            if incoming_thread:
+                metadata["thread_id"] = incoming_thread
+        if not str(metadata.get("binding_key") or "").strip():
+            binding_key = str(body.get("binding_key") or "").strip()
+            if binding_key:
+                metadata["binding_key"] = binding_key
         session.metadata = metadata
         get_session_store().save(session)
 
@@ -735,6 +765,9 @@ class RuntimeState:
             execute_workflow_tool_approval_reply,
             format_workflow_tool_approval_ack,
             should_intercept_workflow_tool_approval_reply,
+            execute_stuck_step_command,
+            format_stuck_step_ack,
+            parse_stuck_step_command,
             execute_bridge_workflow_proposal,
             execute_governed_workflow_proposal,
             execute_intake_response,
@@ -890,6 +923,45 @@ class RuntimeState:
                 "status": "succeeded",
                 "session_id": session.session_id,
                 "output": {**decision_result, "summary": summary},
+            }
+        if parse_stuck_step_command(user_text) is not None:
+            try:
+                stuck_result = execute_stuck_step_command(
+                    session,
+                    user_text=user_text,
+                    actor_id=auth.actor_id,
+                    channel=channel,
+                    auth=auth,
+                    actor_email=actor_email,
+                    config=self.config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                stuck_result = {"error": str(exc)}
+            summary = format_stuck_step_ack(stuck_result)
+            get_transcript_store().append_turn(
+                session.session_id,
+                user_text=user_text,
+                assistant_messages=[{"role": "assistant", "content": summary}],
+            )
+            self.audit.append(
+                tenant_id=req.tenant_id,
+                action_type="stuck_step_decided",
+                actor_id=auth.actor_id,
+                correlation_id=req.correlation_id,
+                payload={
+                    "session_id": session.session_id,
+                    "channel": channel,
+                    "action": stuck_result.get("action"),
+                    "work_order": stuck_result.get("work_order"),
+                    "status": stuck_result.get("status"),
+                    "error": stuck_result.get("error"),
+                    "actor_email": actor_email,
+                },
+            )
+            return {
+                "status": "succeeded",
+                "session_id": session.session_id,
+                "output": {**stuck_result, "summary": summary},
             }
         if workflow_confirmation.confirmed:
             try:

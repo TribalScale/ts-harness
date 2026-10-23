@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from ts_harness.integrations.github_client import summarize_checks
+from ts_harness.integrations.github_client import GitHubError, summarize_checks
 from ts_harness.workflows import merge_policy, merge_readiness
 
 PR = "https://github.com/o/r/pull/7"
@@ -282,6 +282,12 @@ class SecurityStatusTests(unittest.TestCase):
         github.create_status.side_effect = RuntimeError("403")
         prepared, _github = self._prepare({"secret_scan": {"findings": []}}, github=github)
         self.assertTrue(any("harness/security-scan" in w for w in prepared["options"]["warnings"]))
+
+    def test_transient_publish_error_fails_setup_so_the_runner_retries(self):
+        github = github_mock({"state": "pending", "checks": {}, "failed": [], "pending": [], "missing": []})
+        github.create_status.side_effect = GitHubError(500, "")
+        with self.assertRaises(GitHubError):
+            self._prepare({"secret_scan": {"findings": []}}, github=github)
 
 
 class MissingGraceTests(unittest.TestCase):

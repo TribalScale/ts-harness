@@ -30,6 +30,8 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 SUCCESS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+# Published by stages that run after the checks wait, so they cannot gate it unless named as required.
+LATER_GATE_CONTEXTS = frozenset({"harness/independent-review", "harness/code-review", "harness/qa"})
 PENDING_STATES = frozenset({"pending", "queued", "in_progress", "requested", "waiting", "expected"})
 
 
@@ -131,6 +133,25 @@ class GitHubClient:
 
     def list_reviews(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         return list(self.request("GET", f"/repos/{owner}/{repo}/pulls/{number}/reviews", query={"per_page": 100}) or [])
+
+    def list_review_comments(self, owner: str, repo: str, number: int, review_id: int | str) -> list[dict[str, Any]]:
+        path = f"/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/comments"
+        return list(self.request("GET", path, query={"per_page": 100}) or [])
+
+    def list_issue_comments(self, owner: str, repo: str, number: int, *, since: str | None = None) -> list[dict[str, Any]]:
+        path = f"/repos/{owner}/{repo}/issues/{number}/comments"
+        return list(self.request("GET", path, query={"per_page": 100, "since": since}) or [])
+
+    def get_issue(self, owner: str, repo: str, number: int) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{owner}/{repo}/issues/{number}")
+
+    def get_commit(self, owner: str, repo: str, sha: str) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{owner}/{repo}/commits/{sha}")
+
+    def collaborator_permission(self, owner: str, repo: str, username: str) -> str:
+        """``admin``, ``maintain``, ``write``, ``triage``, ``read`` or ``none``."""
+        payload = self.request("GET", f"/repos/{owner}/{repo}/collaborators/{username}/permission", allow_404=True)
+        return str((payload or {}).get("role_name") or (payload or {}).get("permission") or "none")
 
     def close_pull(self, owner: str, repo: str, number: int) -> dict[str, Any]:
         return self.request("PATCH", f"/repos/{owner}/{repo}/pulls/{number}", body={"state": "closed"})
@@ -324,7 +345,8 @@ def summarize_checks(
     """Collapse statuses and check runs into ``success``, ``pending`` or ``failure``.
 
     With ``required`` set, only those names count and a missing one is pending.
-    Without it, every check reported on the ref counts and an empty set is pending.
+    Without it, every check reported on the ref counts (except ``LATER_GATE_CONTEXTS``)
+    and an empty set is pending.
     """
     checks: dict[str, str] = {}
     for status in (combined or {}).get("statuses") or []:
@@ -341,7 +363,7 @@ def summarize_checks(
             conclusion = str(run.get("conclusion") or "").lower()
             checks[name] = "success" if conclusion in SUCCESS_CONCLUSIONS else "failure"
 
-    names = list(required) if required else sorted(checks)
+    names = list(required) if required else sorted(n for n in checks if n not in LATER_GATE_CONTEXTS)
     results = {name: checks.get(name, "missing") for name in names}
     failed = sorted(n for n, s in results.items() if s in {"failure", "error"})
     pending = sorted(n for n, s in results.items() if s in PENDING_STATES or s == "missing")

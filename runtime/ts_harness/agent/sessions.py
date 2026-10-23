@@ -145,9 +145,13 @@ class SessionStore:
         )
 
     def get(self, session_id: str) -> SessionRecord | None:
+        if self.db_url:
+            self._ensure_postgres_loaded()
         return self._by_id.get(session_id)
 
     def list_for_tenant(self, tenant_id: str) -> list[SessionRecord]:
+        if self.db_url:
+            self._ensure_postgres_loaded()
         return [session for session in self._by_id.values() if session.tenant_id == tenant_id]
 
     def save(self, session: SessionRecord) -> None:

@@ -366,6 +366,24 @@ class MemoryClient:
             {"id": task_id, "approval_id": approval_id, "actor": actor},
         )
 
+    def resume_blocked_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        input_patch: dict[str, Any] | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/workflow/task/resume-blocked",
+            {"id": task_id, "actor": actor, "input": dict(input_patch or {}), "reason": reason},
+        )
+
+    def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
+        result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
+        return list(result.get("tasks") or [])
+
     def cancel_workflow(self, workflow_id: str, *, actor: str, reason: str = "") -> dict[str, Any]:
         return self._request(
             "POST",

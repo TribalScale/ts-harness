@@ -1,6 +1,6 @@
 {
   "workflow_type": "deliver_work_order",
-  "definition_version": "1.3.0",
+  "definition_version": "1.4.0",
   "display_name": "Deliver one work order",
   "contracts": {
     "deliver_work_order": {
@@ -92,7 +92,7 @@
       "name": "verified_merge",
       "kind": "fragment",
       "fragment": "verified_merge",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "params": {
         "implement_stage": "deliver_work_order"
       },

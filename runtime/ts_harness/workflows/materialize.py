@@ -450,6 +450,9 @@ def materialize_skeleton_tasks(
     stage_inputs = stage_inputs or {}
     tasks: list[dict[str, Any]] = []
     for stage in skeleton.stages:
+        # compensate_on_failure creates these tasks when a stage fails.
+        if stage.kind == "compensate":
+            continue
         agent_id = stage.agent_id
         if agent_id == "human":
             agent_id = "orchestrator"
