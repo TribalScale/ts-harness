@@ -26,6 +26,34 @@ First public release.
 - Cloud bootstrap starts the admin console. Phase 12 adds the `admin-ui` service,
   and the Tailscale URL now serves the console, with nginx proxying every
   gateway route.
+- Multi-user scale-out ([design](docs/architecture/multi-user-scale-out.md)).
+  `deployment_profile = scale_out` turns it on; `single_host` remains the
+  default and keeps today's one-host install.
+  - Identity: provider-neutral OIDC with presets (Auth0 first), teams from
+    identity groups, a people directory, directory sync and SCIM offboarding,
+    and programs that are private by default with sharing.
+  - Coding jobs: the deliver stage runs as a queued coding job on a local
+    Docker worker or, on `scale_out`, an ECS Fargate task in a private VPC.
+    Workers egress through a proxy and hold only a job token. A watchdog
+    handles lost and overrunning jobs. Projects add worker sizing and private
+    package registries (migrations 033 and 034).
+  - GitHub: App installation tokens per repository with the PAT as fallback,
+    webhooks per host, and a GitHub tab in System (migration 035).
+  - Delivery: repositories per project, a repository per work order, and
+    `deploy_release` 3.0.0 with one `release_track` per repository, ordered by
+    cross-repository dependencies (migration 036).
+  - Throughput: batch task claims by lane (fast, agent, coding) with fair
+    ordering per requester and team, coding quotas, several workflow runners
+    with workflow locks, and two runtime and memory API replicas behind
+    PgBouncer (migrations 037 to 039).
+  - Cost: an LLM proxy meters every model call per team and program with
+    shared rate limits. Team budgets default to 5,000 USD a month, with a Slack
+    warning at 80%. At 100% the team's agent and coding work is held until a
+    manager (up to 10,000) or an admin raises the budget on the new Budgets
+    page (migrations 040 and 041).
+  - Monitoring: a scale-out CloudWatch dashboard and alarms for coding jobs
+    queued over 15 minutes, lost-job rate and GitHub quota under 10%, with the
+    same numbers as Prometheus gauges (migration 042).
 
 ### Changed
 
