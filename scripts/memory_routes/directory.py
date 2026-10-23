@@ -209,3 +209,148 @@ def search_directory(conn, *, tenant_id: str, q: str = "", limit: Any = 20) -> d
             for r in cur.fetchall()
         ]
     return {"users": users, "teams": teams}
+
+
+SNAPSHOT_MATCHES = ("subject", "email")
+DEFAULT_MAX_DISABLE_FRACTION = 0.5
+
+
+def _disable(cur, tenant_id: str, subject: str) -> None:
+    cur.execute(
+        "UPDATE directory_users SET disabled_at = COALESCE(disabled_at, now()), updated_at = now() "
+        "WHERE tenant_id = %s AND subject = %s",
+        (tenant_id, subject),
+    )
+    cur.execute("DELETE FROM team_members WHERE tenant_id = %s AND subject = %s", (tenant_id, subject))
+
+
+def disable_directory_users(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Disable people by subject or email at once (SCIM deprovisioning, manual offboarding)."""
+    tenant_id = _tenant(body.get("tenant_id"))
+    subjects = {str(s).strip() for s in body.get("subjects") or [] if str(s).strip()}
+    emails = [str(e).strip().lower() for e in body.get("emails") or [] if str(e).strip()]
+    with conn.cursor() as cur:
+        if emails:
+            cur.execute(
+                "SELECT subject FROM directory_users WHERE tenant_id = %s AND lower(email) = ANY(%s)",
+                (tenant_id, emails),
+            )
+            subjects.update(str(r["subject"]) for r in cur.fetchall())
+        for subject in sorted(subjects):
+            _disable(cur, tenant_id, subject)
+    conn.commit()
+    return {"ok": True, "disabled": sorted(subjects)}
+
+
+def apply_directory_snapshot(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Bring directory users in line with an identity source.
+
+    ``users`` items carry ``subject`` (when the source knows the sign-in
+    subject), ``email``, ``display_name``, optional ``roles`` and ``teams``,
+    and ``disabled``. With ``match: email`` only people who have signed in
+    are updated. With ``complete: true`` anyone the source no longer lists
+    is disabled, unless that would disable more than ``max_disable_fraction``
+    of active people, which usually means the source returned a partial list.
+    """
+    tenant_id = _tenant(body.get("tenant_id"))
+    source = str(body.get("source") or "").strip() or "directory"
+    match = str(body.get("match") or "subject").strip().lower()
+    if match not in SNAPSHOT_MATCHES:
+        raise ValueError("match must be subject or email")
+    complete = bool(body.get("complete"))
+    try:
+        max_fraction = float(body.get("max_disable_fraction", DEFAULT_MAX_DISABLE_FRACTION))
+    except (TypeError, ValueError):
+        max_fraction = DEFAULT_MAX_DISABLE_FRACTION
+    entries = [u for u in body.get("users") or [] if isinstance(u, dict)]
+    result: dict[str, Any] = {
+        "ok": True,
+        "source": source,
+        "created": 0,
+        "updated": 0,
+        "unknown": 0,
+        "disabled": [],
+        "reenabled": [],
+        "disable_skipped": False,
+    }
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT subject, lower(email) AS email, disabled_at FROM directory_users WHERE tenant_id = %s",
+            (tenant_id,),
+        )
+        rows = list(cur.fetchall())
+        by_subject = {str(r["subject"]): r for r in rows}
+        by_email: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if row.get("email"):
+                by_email.setdefault(str(row["email"]), []).append(row)
+        seen: set[str] = set()
+        to_disable: set[str] = set()
+        for entry in entries:
+            subject = str(entry.get("subject") or "").strip()
+            email = str(entry.get("email") or "").strip().lower()
+            if match == "subject" and subject:
+                targets = [subject]
+            else:
+                targets = [str(r["subject"]) for r in by_email.get(email, [])] if email else []
+            if not targets:
+                if match == "subject" and subject:
+                    targets = [subject]
+                else:
+                    result["unknown"] += 1
+                    continue
+            for target in targets:
+                seen.add(target)
+                existing = by_subject.get(target)
+                if entry.get("disabled"):
+                    if existing is not None:
+                        to_disable.add(target)
+                    continue
+                roles = entry.get("roles")
+                roles_json = (
+                    json.dumps(sorted({str(r).strip().lower() for r in roles if str(r).strip()}))
+                    if isinstance(roles, list)
+                    else None
+                )
+                cur.execute(
+                    """
+                    INSERT INTO directory_users (tenant_id, subject, email, display_name, roles, source)
+                    VALUES (%s, %s, %s, %s, COALESCE(%s::jsonb, '[]'::jsonb), %s)
+                    ON CONFLICT (tenant_id, subject) DO UPDATE SET
+                      email = COALESCE(EXCLUDED.email, directory_users.email),
+                      display_name = COALESCE(EXCLUDED.display_name, directory_users.display_name),
+                      roles = CASE WHEN %s::jsonb IS NULL THEN directory_users.roles ELSE EXCLUDED.roles END,
+                      disabled_at = NULL,
+                      updated_at = now()
+                    """,
+                    (
+                        tenant_id,
+                        target,
+                        email or None,
+                        str(entry.get("display_name") or "").strip() or None,
+                        roles_json,
+                        source,
+                        roles_json,
+                    ),
+                )
+                if existing is None:
+                    result["created"] += 1
+                else:
+                    result["updated"] += 1
+                    if existing.get("disabled_at"):
+                        result["reenabled"].append(target)
+                if entry.get("teams") is not None:
+                    replace_memberships(cur, tenant_id, target, _clean_teams(entry.get("teams")))
+        if complete:
+            active = [s for s, r in by_subject.items() if not r.get("disabled_at")]
+            missing = {s for s in active if s not in seen}
+            if missing and entries and len(missing) <= max_fraction * len(active):
+                to_disable |= missing
+            elif missing:
+                result["disable_skipped"] = True
+                result["would_disable"] = len(missing)
+        for subject in sorted(to_disable):
+            _disable(cur, tenant_id, subject)
+        result["disabled"] = sorted(to_disable)
+    conn.commit()
+    return result

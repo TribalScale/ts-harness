@@ -195,6 +195,28 @@ variable "oidc_allowed_domains" {
   default     = ""
 }
 
+variable "oidc_groups_source" {
+  description = "Where sign-in groups come from: token, microsoft_graph or google_directory. Empty means token."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "token", "microsoft_graph", "google_directory"], var.oidc_groups_source)
+    error_message = "oidc_groups_source must be empty, token, microsoft_graph or google_directory."
+  }
+}
+
+variable "identity_directory" {
+  description = "Directory synced every 15 minutes: seen_users, auth0_management, scim, microsoft_graph or google_directory. Empty means seen_users."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "seen_users", "auth0_management", "scim", "microsoft_graph", "google_directory"], var.identity_directory)
+    error_message = "identity_directory must be empty or one of seen_users, auth0_management, scim, microsoft_graph, google_directory."
+  }
+}
+
 variable "rds_skip_final_snapshot" {
   description = "When true, skip final snapshot on RDS instance destruction (dev/test only)"
   type        = bool

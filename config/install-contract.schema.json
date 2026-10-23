@@ -263,7 +263,9 @@
         "oidc_token_type": { "type": "string" },
         "oidc_groups_claim": { "type": "string" },
         "oidc_roles_claim": { "type": "string" },
-        "oidc_allowed_domains": { "type": "string" }
+        "oidc_allowed_domains": { "type": "string" },
+        "oidc_groups_source": { "type": "string", "enum": ["", "token", "microsoft_graph", "google_directory"] },
+        "identity_directory": { "type": "string", "enum": ["", "seen_users", "auth0_management", "scim", "microsoft_graph", "google_directory"] }
       }
     }
   }

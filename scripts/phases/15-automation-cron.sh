@@ -107,6 +107,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Pulls people and teams from identity.directory and disables people who left.
+    {
+        "name": "sync-directory",
+        "kind": "system",
+        "handler": "sync_directory",
+        "interval_seconds": 900,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 print(f"wrote {len(jobs)} scheduler jobs to {out}")

@@ -22,6 +22,10 @@ identity:
   groups_claim: "{{OIDC_GROUPS_CLAIM}}"
   roles_claim: "{{OIDC_ROLES_CLAIM}}"
   allowed_domains: "{{OIDC_ALLOWED_DOMAINS}}"
+  # token (default) | microsoft_graph | google_directory: where sign-in groups come from
+  groups_source: "{{OIDC_GROUPS_SOURCE}}"
+  # seen_users (default) | auth0_management | scim | microsoft_graph | google_directory
+  directory: "{{IDENTITY_DIRECTORY}}"
   scim_enabled: false
   jira_account_ids: {}
 

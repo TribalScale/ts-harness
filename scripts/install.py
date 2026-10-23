@@ -195,6 +195,8 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "oidc_groups_claim",
             "oidc_roles_claim",
             "oidc_allowed_domains",
+            "oidc_groups_source",
+            "identity_directory",
         ):
             if key in runtime and runtime[key] is not None:
                 tfvars[key] = runtime[key]
@@ -260,6 +262,8 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         "oidc_groups_claim",
         "oidc_roles_claim",
         "oidc_allowed_domains",
+        "oidc_groups_source",
+        "identity_directory",
     ):
         if key in runtime and runtime[key] is not None:
             tfvars[key] = runtime[key]

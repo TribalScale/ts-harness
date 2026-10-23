@@ -236,6 +236,16 @@ write_runtime_env_file() {
         TS_HARNESS_DB_USER \
         TS_HARNESS_DB_NAME \
         TS_HARNESS_DB_PASSWORD \
+        TS_HARNESS_PROGRAM_ACCESS \
+        TS_HARNESS_SCIM_TOKEN \
+        AUTH0_MGMT_DOMAIN \
+        AUTH0_MGMT_CLIENT_ID \
+        AUTH0_MGMT_CLIENT_SECRET \
+        MS_GRAPH_TENANT_ID \
+        MS_GRAPH_CLIENT_ID \
+        MS_GRAPH_CLIENT_SECRET \
+        GOOGLE_DIRECTORY_ADMIN_SUBJECT \
+        GOOGLE_DIRECTORY_CUSTOMER \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -398,6 +408,8 @@ INSTANCE_ENV_KEYS=(
     OIDC_GROUPS_CLAIM
     OIDC_ROLES_CLAIM
     OIDC_ALLOWED_DOMAINS
+    OIDC_GROUPS_SOURCE
+    IDENTITY_DIRECTORY
     DEPLOYMENT_PROFILE
 )
 

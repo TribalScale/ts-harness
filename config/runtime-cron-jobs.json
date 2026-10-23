@@ -17,6 +17,15 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
+    },
+    {
+      "name": "sync-directory",
+      "kind": "system",
+      "handler": "sync_directory",
+      "interval_seconds": 900,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
     }
   ]
 }

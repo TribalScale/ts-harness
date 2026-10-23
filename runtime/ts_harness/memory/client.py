@@ -958,6 +958,67 @@ class MemoryClient:
         params = {"tenant_id": tenant_id, "subject": subject, "email": email}
         return self._request("GET", f"/directory/user?{urlencode(params)}")
 
+    def directory_snapshot(
+        self,
+        *,
+        tenant_id: str,
+        source: str,
+        match: str,
+        complete: bool,
+        users: list[dict[str, Any]],
+        max_disable_fraction: float | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "source": source,
+            "match": match,
+            "complete": complete,
+            "users": users,
+        }
+        if max_disable_fraction is not None:
+            body["max_disable_fraction"] = max_disable_fraction
+        return self._request("POST", "/directory/snapshot", body)
+
+    def directory_disable(
+        self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/directory/disable",
+            {"tenant_id": tenant_id, "subjects": subjects or [], "emails": emails or []},
+        )
+
+    def scim_request(
+        self,
+        method: str,
+        resource_path: str,
+        *,
+        tenant_id: str,
+        query: dict[str, str] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, Any]:
+        """Forward a SCIM call; returns ``(status, document)`` including SCIM error documents."""
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, **{k: v for k, v in (query or {}).items() if v not in (None, "")}}
+        path = f"/scim/{resource_path.lstrip('/')}?{urlencode(params)}"
+        data = None if body is None else json.dumps(body).encode()
+        headers = {"Content-Type": "application/json"}
+        if os.environ.get("MEMORY_API_TOKEN"):
+            headers["Authorization"] = f"Bearer {os.environ['MEMORY_API_TOKEN']}"
+        request = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            status = exc.code
+        try:
+            return status, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return status, {"detail": raw.decode(errors="replace")}
+
 
 _default_client: MemoryClient | None = None
 

@@ -10,7 +10,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _LINK_TTL = 300.0
+_DISABLED_TTL = 60.0
 _cache: dict[tuple[str, str], tuple[float, dict[str, Any] | None]] = {}
+_disabled_cache: dict[tuple[str, str], tuple[float, bool]] = {}
 _lock = threading.Lock()
 
 
@@ -87,6 +89,30 @@ def link_channel_session(metadata: dict[str, Any], email: str | None, tenant_id:
     return updated
 
 
+def subject_disabled(tenant_id: str, subject: str, *, memory: Any | None = None) -> bool:
+    """Whether the directory has disabled this person, cached for a minute.
+
+    A failed lookup counts as not disabled, so a memory API outage does not
+    lock everyone out; the identity provider still refuses new tokens.
+    """
+    key = (str(tenant_id), str(subject))
+    now = time.monotonic()
+    with _lock:
+        cached = _disabled_cache.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+    disabled = False
+    try:
+        found = _memory(memory).directory_user(tenant_id=str(tenant_id), subject=str(subject))
+        disabled = bool(found.get("found") and (found.get("user") or {}).get("disabled"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("directory disabled check failed: %s", exc)
+    with _lock:
+        _disabled_cache[key] = (now + _DISABLED_TTL, disabled)
+    return disabled
+
+
 def clear_cache() -> None:
     with _lock:
         _cache.clear()
+        _disabled_cache.clear()

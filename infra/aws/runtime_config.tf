@@ -33,6 +33,8 @@ locals {
     OIDC_GROUPS_CLAIM                     = var.oidc_groups_claim
     OIDC_ROLES_CLAIM                      = var.oidc_roles_claim
     OIDC_ALLOWED_DOMAINS                  = var.oidc_allowed_domains
+    OIDC_GROUPS_SOURCE                    = var.oidc_groups_source
+    IDENTITY_DIRECTORY                    = var.identity_directory
     DEPLOYMENT_PROFILE                    = var.deployment_profile
   }
 }

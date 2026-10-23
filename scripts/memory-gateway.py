@@ -18,7 +18,10 @@ from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
+    apply_directory_snapshot,
+    disable_directory_users,
     get_directory_user,
     search_directory,
     upsert_directory_user,
@@ -4445,6 +4448,69 @@ class MemoryHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw) if raw else {}
 
+    def _scim(self, method: str) -> None:
+        """``/scim/{Users|Groups}[/{id}]`` and ``/scim/snapshot``, all with ``?tenant_id=``."""
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        tenant_id = query.get("tenant_id") or "default"
+        parts = [p for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "PATCH"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, scim_routes.ScimError(f"invalid JSON: {exc}").to_scim())
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["snapshot"] and method == "GET":
+                    self._send_json(200, scim_routes.snapshot(conn, tenant_id=tenant_id))
+                    return
+                if not parts or parts[0] not in {"Users", "Groups"} or len(parts) > 2:
+                    raise scim_routes.ScimError("not found", 404)
+                users = parts[0] == "Users"
+                resource_id = parts[1] if len(parts) == 2 else None
+                if resource_id is None and method == "GET":
+                    lister = scim_routes.list_users if users else scim_routes.list_groups
+                    self._send_json(
+                        200,
+                        lister(
+                            conn,
+                            tenant_id=tenant_id,
+                            filter=query.get("filter"),
+                            start_index=query.get("startIndex"),
+                            count=query.get("count"),
+                        ),
+                    )
+                elif resource_id is None and method == "POST":
+                    creator = scim_routes.create_user if users else scim_routes.create_group
+                    self._send_json(201, creator(conn, tenant_id=tenant_id, data=body))
+                elif resource_id is not None:
+                    key = "user_id" if users else "group_id"
+                    handlers = {
+                        "GET": scim_routes.get_user if users else scim_routes.get_group,
+                        "PUT": scim_routes.replace_user if users else scim_routes.replace_group,
+                        "PATCH": scim_routes.patch_user if users else scim_routes.patch_group,
+                        "DELETE": scim_routes.delete_user if users else scim_routes.delete_group,
+                    }
+                    handler = handlers.get(method)
+                    if handler is None:
+                        raise scim_routes.ScimError("method not allowed", 405)
+                    kwargs = {"tenant_id": tenant_id, key: resource_id}
+                    if method in {"PUT", "PATCH"}:
+                        kwargs["data"] = body
+                    result = handler(conn, **kwargs)
+                    if method == "DELETE":
+                        self._send_json(200, {"ok": True})
+                    else:
+                        self._send_json(200, result)
+                else:
+                    raise scim_routes.ScimError("method not allowed", 405)
+        except scim_routes.ScimError as exc:
+            self._send_json(exc.status, exc.to_scim())
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, scim_routes.ScimError(str(exc), 500).to_scim())
+
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()
         if not token:
@@ -4459,6 +4525,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("GET")
             return
         if self.path.startswith("/workflow/plan/"):
             plan_id = self.path.removeprefix("/workflow/plan/")
@@ -4803,6 +4872,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
             return
+        if self.path.startswith("/scim/"):
+            self._scim("POST")
+            return
         try:
             body = self._read_body()
         except json.JSONDecodeError as exc:
@@ -4832,6 +4904,10 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, create_workflow_decision(conn, body))
                 elif self.path == "/directory/upsert-user":
                     self._send_json(200, upsert_directory_user(conn, body))
+                elif self.path == "/directory/snapshot":
+                    self._send_json(200, apply_directory_snapshot(conn, body))
+                elif self.path == "/directory/disable":
+                    self._send_json(200, disable_directory_users(conn, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/access"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/access")
                     self._send_json(200, grant_program_access(conn, program_id, body))
@@ -4953,9 +5029,21 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def do_PUT(self):
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("PUT")
+            return
+        self._send_json(404, {"error": "not found"})
+
     def do_PATCH(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("PATCH")
             return
         try:
             body = self._read_body()
@@ -4986,6 +5074,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("DELETE")
             return
         if self.path.startswith("/programs/") and "/access/" in self.path:
             from urllib.parse import unquote

@@ -2326,7 +2326,17 @@ def get_runtime() -> RuntimeState:
                 "config/ts-harness-runtime.yaml.tmpl",
             )
             _RUNTIME = RuntimeState(config_path)
+            _register_group_resolvers(_RUNTIME.config)
         return _RUNTIME
+
+
+def _register_group_resolvers(config: Any) -> None:
+    try:
+        from ts_harness.identity_directory import register_group_resolvers
+
+        register_group_resolvers(config)
+    except Exception as exc:  # noqa: BLE001 - sign-in falls back to token groups
+        log_event("group_resolver_registration_failed", error=str(exc))
 
 
 class GatewayHandler(BaseHTTPRequestHandler):

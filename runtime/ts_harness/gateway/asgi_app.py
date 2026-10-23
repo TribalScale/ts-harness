@@ -3740,55 +3740,83 @@ async def channel_webhook(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
-# ── SCIM v2 stubs ─────────────────────────────────────────────────────────────
+# ── SCIM v2 ───────────────────────────────────────────────────────────────────
 
-_SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
-_SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
+_SCIM_MEDIA_TYPE = "application/scim+json"
+_SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 
 
-async def scim_users_list(request: Request) -> Response:
+def _scim_json(data: Any, status: int = 200) -> Response:
+    return Response(json.dumps(data, default=str), status_code=status, media_type=_SCIM_MEDIA_TYPE)
+
+
+def _scim_error(detail: str, status: int) -> Response:
+    return _scim_json({"schemas": [_SCIM_ERROR_SCHEMA], "detail": detail, "status": str(status)}, status)
+
+
+def _scim_denied(request: Request) -> Response | None:
+    """SCIM uses its own bearer token (``TS_HARNESS_SCIM_TOKEN``); unset means SCIM is off."""
+    expected = os.environ.get("TS_HARNESS_SCIM_TOKEN", "").strip()
+    if not expected:
+        return _scim_error("SCIM provisioning is not enabled", 404)
+    presented = str(request.headers.get("authorization") or "")
+    if not hmac.compare_digest(presented.encode(), f"Bearer {expected}".encode()):
+        return _scim_error("invalid SCIM token", 401)
+    return None
+
+
+async def scim_resource(request: Request) -> Response:
+    denied = _scim_denied(request)
+    if denied is not None:
+        return denied
+    resource = request.path_params["resource"]
+    resource_id = request.path_params.get("id")
+    body: dict[str, Any] | None = None
+    if request.method in {"POST", "PUT", "PATCH"}:
+        try:
+            body = await request.json()
+        except Exception:
+            return _scim_error("invalid JSON", 400)
+        if not isinstance(body, dict):
+            return _scim_error("request body must be a JSON object", 400)
+    query = {key: request.query_params.get(key) or "" for key in ("filter", "startIndex", "count")}
+    path = resource if not resource_id else f"{resource}/{resource_id}"
     try:
-        _check_origin(request)
-        _auth(request, {})
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
+        status, data = await asyncio.to_thread(
+            get_memory_client().scim_request,
+            request.method,
+            path,
+            tenant_id=str(get_runtime().config.gateway.default_tenant_id or "default"),
+            query=query,
+            body=body,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _scim_error(f"directory unavailable: {exc}", 502)
+    if request.method == "DELETE" and status < 400:
+        return Response(status_code=204)
+    if status < 400:
+        log_event("scim_provisioning", method=request.method, resource=resource, status=status)
+    return _scim_json(data, status)
 
-    try:
-        from ts_harness import scim  # type: ignore[import]
 
-        return _json(await scim.list_users(request))
-    except (ImportError, AttributeError):
-        pass
-
-    return _json(
-        {"schemas": [_SCIM_LIST_SCHEMA], "totalResults": 0, "Resources": []},
+async def scim_service_provider_config(request: Request) -> Response:
+    denied = _scim_denied(request)
+    if denied is not None:
+        return denied
+    return _scim_json(
+        {
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+            "patch": {"supported": True},
+            "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
+            "filter": {"supported": True, "maxResults": 500},
+            "changePassword": {"supported": False},
+            "sort": {"supported": False},
+            "etag": {"supported": False},
+            "authenticationSchemes": [
+                {"type": "oauthbearertoken", "name": "Bearer token", "description": "TS_HARNESS_SCIM_TOKEN"}
+            ],
+        }
     )
-
-
-async def scim_users_create(request: Request) -> Response:
-    try:
-        _check_origin(request)
-        body = await request.json()
-        _auth(request, body)
-    except AuthError as exc:
-        return _json({"error": str(exc)}, exc.status)
-    except Exception:
-        return _json({"error": "invalid json"}, 400)
-
-    try:
-        from ts_harness import scim  # type: ignore[import]
-
-        return _json(await scim.create_user(request, body), status=201)
-    except (ImportError, AttributeError):
-        pass
-
-    user: dict[str, Any] = {
-        "schemas": [_SCIM_USER_SCHEMA],
-        "id": "",
-        "meta": {"resourceType": "User"},
-    }
-    user.update({k: v for k, v in body.items() if k != "schemas"})
-    return _json(user, status=201)
 
 
 # ── Application assembly ──────────────────────────────────────────────────────
@@ -4148,8 +4176,9 @@ routes = [
         methods=["GET"],
     ),
     # SCIM v2
-    Route("/scim/v2/Users", endpoint=scim_users_list, methods=["GET"]),
-    Route("/scim/v2/Users", endpoint=scim_users_create, methods=["POST"]),
+    Route("/scim/v2/ServiceProviderConfig", endpoint=scim_service_provider_config, methods=["GET"]),
+    Route("/scim/v2/{resource:str}", endpoint=scim_resource, methods=["GET", "POST"]),
+    Route("/scim/v2/{resource:str}/{id:str}", endpoint=scim_resource, methods=["GET", "PUT", "PATCH", "DELETE"]),
     # GitHub merge webhook bridge
     Route("/webhooks/github", endpoint=github_webhook, methods=["POST"]),
     # Channel webhooks — specific sub-paths before the bare channel route

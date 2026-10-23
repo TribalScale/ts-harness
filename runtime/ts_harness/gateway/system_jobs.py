@@ -528,9 +528,21 @@ def start_scheduled_program(
     }
 
 
+def sync_directory() -> dict[str, Any]:
+    """Pull people, teams and offboarding from the configured identity directory."""
+    from ts_harness.identity_directory import sync_directory as run_sync
+
+    try:
+        return run_sync()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("directory sync failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
+    "sync_directory": sync_directory,
     "start_program": start_scheduled_program,
 }
 
