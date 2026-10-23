@@ -61,6 +61,7 @@ def fork_child(
             "max_retries": body.get("max_retries", 0),
             "contract": body.get("contract") or {},
             "definition_version": body.get("definition_version"),
+            "lane": body.get("lane"),
             "actor": actor,
         }
         if depends_on_names:

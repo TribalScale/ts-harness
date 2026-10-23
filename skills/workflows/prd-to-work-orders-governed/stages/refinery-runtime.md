@@ -17,7 +17,7 @@ Return under `output.artifacts`:
 | Key | Content |
 |---|---|
 | `product_overview_markdown` | Business problem, current state, personas, product description, success metrics |
-| `requirements_markdown` | Technical requirements and consolidated requirements |
+| `requirements_markdown` | Technical requirements, consolidated requirements, and a `## Technical Constraints` section |
 | `feature_tree_markdown` | Feature tree with dependencies and complexity |
 | `frds_markdown` | All FRDs (`# FRD-001 Feature Name` sections) |
 
@@ -36,6 +36,10 @@ Return under `output.artifacts`:
 - Every requirement traces to a persona and business problem.
 - Open assumptions use `ASM-*` or `DEFER:*` markers in `warnings` or artifact body.
 - Do not prescribe APIs, databases, or frameworks in FRDs.
+- Technology the PRD itself states (framework, storage, platform, named data
+  such as specific assets) is a requirement, not a design choice. List every one
+  verbatim under `## Technical Constraints` in `requirements_markdown`, and keep
+  named entities, intervals, and limits exact in FRD requirements.
 
 ## FRD Template (inline)
 

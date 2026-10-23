@@ -42,7 +42,7 @@ REVIEW_CHAIN = [
 class DeliverWorkOrderSkeletonTests(unittest.TestCase):
     def test_child_skeleton_loads(self):
         skeleton = load_skeleton("deliver_work_order")
-        self.assertEqual(skeleton.definition_version, "1.3.0")
+        self.assertEqual(skeleton.definition_version, "1.5.0")
         self.assertEqual(skeleton.intake_stage_name(), "deliver_work_order")
         self.assertFalse(skeleton.program)
 
@@ -217,7 +217,13 @@ class DeliverWorkOrderSkeletonTests(unittest.TestCase):
         self.assertEqual(deliver["input"]["work_order_id"], "WO-001")
         qa = next(task for task in tasks if task["step_name"] == "qa_gate")
         self.assertTrue(qa["contract"])
-        self.assertEqual(qa["definition_version"], "1.3.0")
+        self.assertEqual(qa["definition_version"], "1.5.0")
+
+    def test_materialize_leaves_compensation_to_the_failure_hook(self):
+        skeleton = load_skeleton("deliver_work_order")
+        self.assertEqual(skeleton.stage("record_implement_failure").kind, "compensate")
+        tasks = materialize_skeleton_tasks(skeleton, workflow_id="wf-impl-wo")
+        self.assertNotIn("record_implement_failure", [task["step_name"] for task in tasks])
 
 
 class _SiblingMemory:
@@ -262,6 +268,12 @@ class _SiblingMemory:
             self.created.append(task)
             ids.append(task_id)
         return {"task_ids": ids}
+
+    def acquire_workflow_lock(self, workflow_id, *, owner, ttl_seconds):
+        return True
+
+    def release_workflow_lock(self, workflow_id, *, owner):
+        return True
 
     def __getattr__(self, name):
         return MagicMock(return_value={})

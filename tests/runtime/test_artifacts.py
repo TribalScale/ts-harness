@@ -99,6 +99,47 @@ Details here.
         self.assertIn("# PRD: Widget", message)
         self.assertNotIn("Here is your draft.", message)
 
+    def test_format_artifact_for_channel_renders_intake_questions(self):
+        message = format_artifact_for_channel(
+            {
+                "summary": "A few things to clarify before drafting.",
+                "questions": ["Who is the audience?", "What is in scope?"],
+            },
+            display_name="PRD review",
+            present_prompt="intake",
+            step_name="intake",
+            agent_id="pm-agent",
+        )
+        self.assertIn("Who is the audience?", message)
+        self.assertIn("What is in scope?", message)
+        self.assertIn("Reply in this thread with your answers.", message)
+        self.assertNotIn("no readable content", message)
+
+    def test_format_artifact_for_channel_renders_nested_intake_questions(self):
+        message = format_artifact_for_channel(
+            {"result": {"clarifying_questions": ["Which platforms?"]}},
+            display_name="PRD review",
+            present_prompt="intake",
+            step_name="intake",
+            agent_id="pm-agent",
+        )
+        self.assertIn("Which platforms?", message)
+        self.assertNotIn("no readable content", message)
+
+    def test_format_artifact_for_channel_prefers_prd_over_questions(self):
+        message = format_artifact_for_channel(
+            {
+                "prd_markdown": "# PRD: Widget\n\n## Overview\nBody.",
+                "questions": ["Who is the audience?"],
+            },
+            display_name="PRD review",
+            present_prompt="approval",
+            step_name="draft_prd",
+            agent_id="pm-agent",
+        )
+        self.assertIn("# PRD: Widget", message)
+        self.assertNotIn("Who is the audience?", message)
+
     def test_format_artifact_for_channel_does_not_approve_empty_json(self):
         message = format_artifact_for_channel(
             {"summary": "{}"},
@@ -242,6 +283,30 @@ Details here.
         comp_only = "## COMP-001 Lobby Service\nOwns matchmaking queues."
         self.assertFalse(has_foundry_structural_markers(comp_only))
         self.assertTrue(looks_like_invalid_foundry_content(comp_only))
+
+    def test_foundry_rejects_ellipsis_only_sections(self):
+        from ts_harness.workflows.artifacts import foundry_artifact_failure_reason
+
+        placeholder = (
+            "## ADR-001 Real-time Simulation\n\n"
+            "## Context\n...\n\n"
+            "## Alternatives Considered\n...\n\n"
+            "## Decision\nUse WebSockets for real-time updates.\n\n"
+            "## Rejection Rationale\n...\n\n"
+            "## Trade-off Scorecard\n...\n\n"
+            "## Consequences and Downstream Impact\n...\n\n"
+            "## COMP-001 Simulation Engine\n\n"
+            "Handles transaction simulations and price updates for the portfolio.\n\n"
+            "## FB-001 Transaction Simulation\n\n"
+            "Covers buy and sell transactions for FRD-001, including fee calculation.\n\n"
+            "# Architecture Summary\n\n"
+            "The architecture supports a simulation engine for real-time updates "
+            "and portfolio tracking. COMP-001 and FB-001 align with ADR-001.\n"
+        )
+        reason = foundry_artifact_failure_reason(placeholder)
+        self.assertIsNotNone(reason)
+        self.assertIn("placeholder", (reason or "").lower())
+        self.assertIn("Context", reason or "")
 
     def test_foundry_blocks_inline_adr_catalog_summary(self):
         from ts_harness.workflows.artifacts import foundry_artifact_failure_reason

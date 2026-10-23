@@ -355,6 +355,50 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("awaiting_tool_approval:ap-1", executed_params)
         self.assertNotIn("POWER(2", executed_sql)
 
+    def test_resume_blocked_task_requeues_a_stuck_step_with_an_input_patch(self):
+        gateway = load_gateway()
+        task_id = "00000000-0000-4000-8000-000000000001"
+        cursor = FakeCursor()
+        conn = FakeConnection(cursor)
+
+        result = gateway.resume_blocked_task(
+            conn,
+            {"id": task_id, "actor": "alice", "input": {"_human_accept": {"actor": "alice"}}, "reason": "accepted"},
+        )
+
+        self.assertEqual(result, {"id": task_id, "status": "pending"})
+        self.assertTrue(conn.committed)
+        executed_sql = " ".join(" ".join(sql.split()) for sql, _ in cursor.calls)
+        executed_params = [p for _, params in cursor.calls for p in (params or ())]
+        self.assertIn("status = 'pending'", executed_sql)
+        self.assertIn("status = 'blocked'", executed_sql)
+        self.assertIn("input = COALESCE(input, '{}'::jsonb) || %s::jsonb", executed_sql)
+        self.assertIn("NOT LIKE 'awaiting%%'", executed_sql)
+        self.assertIn('{"_human_accept": {"actor": "alice"}}', executed_params)
+        self.assertNotIn("POWER(2", executed_sql)
+
+    def test_list_stuck_tasks_returns_parked_steps_of_running_workflows_for_the_tenant(self):
+        gateway = load_gateway()
+        row = {"id": "t1", "workflow_id": "w1", "step_name": "finalize_code_review"}
+        cursor = FakeCursor(rows=[row])
+
+        result = gateway.list_stuck_tasks(FakeConnection(cursor), {"tenant_id": "acme"})
+
+        self.assertEqual(result, {"tasks": [row]})
+        sql, params = cursor.calls[0]
+        flat = " ".join(sql.split())
+        self.assertIn("t.status = 'blocked'", flat)
+        self.assertIn("t.input ->> '_awaiting_human_decision' IS NOT NULL", flat)
+        self.assertIn("w.status = 'running'", flat)
+        self.assertEqual(params[0], "acme")
+
+    def test_resume_blocked_task_rejects_a_task_that_is_not_stuck(self):
+        gateway = load_gateway()
+        cursor = FakeCursor()
+        cursor.rowcount = 0
+        with self.assertRaisesRegex(ValueError, "not blocked"):
+            gateway.resume_blocked_task(FakeConnection(cursor), {"id": "00000000-0000-4000-8000-000000000001"})
+
     def test_runtime_task_recording_audits_prior_runtime_id(self):
         gateway = load_gateway()
         task_id = "00000000-0000-4000-8000-000000000001"

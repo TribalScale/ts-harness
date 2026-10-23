@@ -78,7 +78,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.10.5
           terraform_wrapper: false
 
       - name: Terraform fmt/validate (AWS)
@@ -87,6 +87,7 @@ jobs:
           terraform init -backend=false
           terraform validate
           terraform fmt -check -recursive
+          terraform test
 
       - name: Terraform fmt/validate (GCP)
         working-directory: infra/gcp

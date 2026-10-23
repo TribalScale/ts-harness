@@ -13,6 +13,9 @@ locals {
     WORKFLOW_RUNNER_BATCH_SIZE            = tostring(var.workflow_runner_batch_size)
     WORKFLOW_RUNNER_LEASE_SECONDS         = tostring(var.workflow_runner_lease_seconds)
     WORKFLOW_RUNNER_STALE_POLICY          = var.workflow_runner_stale_policy
+    CODING_JOBS_ENABLED                   = tostring(var.coding_jobs_enabled)
+    CODING_MAX_RUNNING                    = tostring(var.coding_max_running)
+    LLM_PROXY_ENABLED                     = tostring(var.llm_proxy_enabled)
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider
     EMBEDDINGS_MODEL                      = var.embeddings_model
@@ -21,6 +24,9 @@ locals {
     IMPLEMENT_WORK_ORDERS_REPO_URL        = var.implement_work_orders_repo_url
     IMPLEMENT_WORK_ORDERS_BASE_BRANCH     = var.implement_work_orders_base_branch
     OPENCODE_VERSION                      = var.implement_work_orders_opencode_version
+    GITHUB_APP_ID                         = var.github_app_id
+    GITHUB_APP_SLUG                       = var.github_app_slug
+    GITHUB_APP_HOST                       = var.github_app_host
     IDENTITY_PROVIDER                     = var.identity_provider
     OIDC_ISSUER                           = var.oidc_issuer
     OIDC_AUDIENCE                         = var.oidc_audience
@@ -28,6 +34,17 @@ locals {
     OIDC_CLIENT_ID                        = var.oidc_client_id
     OIDC_AUTHORIZATION_ENDPOINT           = var.oidc_authorization_endpoint
     OIDC_TOKEN_ENDPOINT                   = var.oidc_token_endpoint
+    OIDC_PRESET                           = var.oidc_preset
+    OIDC_TOKEN_TYPE                       = var.oidc_token_type
+    OIDC_GROUPS_CLAIM                     = var.oidc_groups_claim
+    OIDC_ROLES_CLAIM                      = var.oidc_roles_claim
+    OIDC_ALLOWED_DOMAINS                  = var.oidc_allowed_domains
+    OIDC_GROUPS_SOURCE                    = var.oidc_groups_source
+    IDENTITY_DIRECTORY                    = var.identity_directory
+    TS_HARNESS_STATE_BACKEND              = var.state_backend
+    TS_HARNESS_OBJECT_BACKEND             = var.object_backend
+    TS_HARNESS_SKILLS_BUCKET              = try(google_storage_bucket.skills[0].name, "")
+    TS_HARNESS_WORKSPACE_BUCKET           = try(google_storage_bucket.workspaces[0].name, "")
   }
 }
 

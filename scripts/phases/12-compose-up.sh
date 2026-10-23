@@ -44,6 +44,8 @@ export TS_HARNESS_CONFIG_DIR="${TS_HARNESS_CONFIG_DIR:-$DATA_DIR/.ts-harness}"
 echo "[phase:${PHASE_NAME}] Starting containers (memory_backend=${MEMORY_BACKEND:-unset})..."
 
 resolve_cloud_neutral_env
+resolve_storage_backends
+echo "[phase:${PHASE_NAME}] Storage: state=${TS_HARNESS_STATE_BACKEND} objects=${TS_HARNESS_OBJECT_BACKEND}"
 
 # Build COMPOSE_FILES and resolve DB connection vars. TS Harness owns the
 # full compose stack after cutover; no upstream runtime compose is required.
@@ -108,6 +110,15 @@ else
     exit 1
 fi
 
+ADMIN_UI_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.admin-ui.yml"
+if [[ -f "$ADMIN_UI_COMPOSE" ]]; then
+    COMPOSE_FILES+=(-f "$ADMIN_UI_COMPOSE")
+    echo "[phase:${PHASE_NAME}] Including admin console (admin-ui on port 8080)"
+else
+    echo "[phase:${PHASE_NAME}] ERROR: admin-ui compose file not found at $ADMIN_UI_COMPOSE" >&2
+    exit 1
+fi
+
 if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     WORKFLOW_RUNNER_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.workflow-runner.yml"
     if [[ -f "$WORKFLOW_RUNNER_COMPOSE" ]]; then
@@ -116,9 +127,61 @@ if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     else
         echo "[phase:${PHASE_NAME}] WARNING: workflow-runner compose file not found at $WORKFLOW_RUNNER_COMPOSE"
     fi
+    if [[ "${CODING_JOBS_ENABLED:-false}" == "true" ]]; then
+        CODING_JOBS_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml"
+        if [[ -f "$CODING_JOBS_COMPOSE" ]]; then
+            COMPOSE_FILES+=(-f "$CODING_JOBS_COMPOSE")
+            echo "[phase:${PHASE_NAME}] Coding jobs enabled: including coding-launcher and the worker image"
+        else
+            echo "[phase:${PHASE_NAME}] WARNING: coding-jobs compose file not found at $CODING_JOBS_COMPOSE"
+        fi
+    fi
 fi
 
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh")"
+if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
+    SCALE_OUT_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.scale-out.yml"
+    if [[ -f "$SCALE_OUT_COMPOSE" ]]; then
+        COMPOSE_FILES+=(-f "$SCALE_OUT_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Deployment profile scale_out: including replicated services"
+    else
+        echo "[phase:${PHASE_NAME}] WARNING: scale-out compose file not found at $SCALE_OUT_COMPOSE"
+    fi
+    if (( ${AGENT_RUNTIME_REPLICAS:-2} >= 2 )); then
+        REPLICAS_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.replicas.yml"
+        COMPOSE_VERSION="$(docker compose version --short 2>/dev/null || echo 0)"
+        if ! printf '2.24.4\n%s\n' "${COMPOSE_VERSION#v}" | sort -V -C; then
+            echo "[phase:${PHASE_NAME}] ERROR: runtime replicas need Docker Compose 2.24.4+, found ${COMPOSE_VERSION}" >&2
+            exit 1
+        fi
+        if is_blank_or_placeholder "$(session_db_url)"; then
+            echo "[phase:${PHASE_NAME}] ERROR: runtime replicas need a session database (TS_HARNESS_SESSION_DB_URL)" >&2
+            exit 1
+        fi
+        COMPOSE_FILES+=(-f "$REPLICAS_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Including a second agent-runtime and memory-api behind PgBouncer"
+    fi
+fi
+
+if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
+    if is_blank_or_placeholder "${LLM_PROXY_SECRET:-}"; then
+        echo "[phase:${PHASE_NAME}] ERROR: LLM_PROXY_ENABLED=true needs LLM_PROXY_SECRET (secret llm-proxy-secret)" >&2
+        exit 1
+    fi
+    if is_blank_or_placeholder "$(session_db_url)"; then
+        echo "[phase:${PHASE_NAME}] ERROR: the LLM proxy records usage in Postgres and needs TS_HARNESS_SESSION_DB_URL" >&2
+        exit 1
+    fi
+    COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml")
+    export LLM_PROXY_RUNTIME_URL="http://127.0.0.1:18795/llm"
+    if [[ "${COMPOSE_FILES[*]}" == *docker-compose.replicas.yml* ]]; then
+        export LLM_PROXY_REPLICA_URL="http://agent-runtime:18795/llm"
+    fi
+    echo "[phase:${PHASE_NAME}] LLM proxy enabled: model calls are metered through llm-proxy"
+fi
+
+# A path that does not exist is hashed by name, so a storage flag change re-runs compose up.
+STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}"
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -179,12 +242,33 @@ fi
     echo "export GATEWAY_TOKEN=$(printf '%q' "${GATEWAY_TOKEN:-}")"
     echo "export MEMORY_API_TOKEN=$(printf '%q' "${MEMORY_API_TOKEN:-}")"
     echo "export SANDBOX_WORKER_TOKEN=$(printf '%q' "${SANDBOX_WORKER_TOKEN:-}")"
+    echo "export CODING_JOB_SECRET=$(printf '%q' "${CODING_JOB_SECRET:-}")"
     echo "export WORKFLOW_RUNNER_ENABLED=$(printf '%q' "${WORKFLOW_RUNNER_ENABLED:-false}")"
     echo "export WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS=$(printf '%q' "${WORKFLOW_RUNNER_POLL_INTERVAL_SECONDS:-10}")"
     echo "export WORKFLOW_RUNNER_BATCH_SIZE=$(printf '%q' "${WORKFLOW_RUNNER_BATCH_SIZE:-5}")"
     echo "export WORKFLOW_RUNNER_LEASE_SECONDS=$(printf '%q' "${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}")"
     echo "export WORKFLOW_RUNNER_STALE_POLICY=$(printf '%q' "${WORKFLOW_RUNNER_STALE_POLICY:-block}")"
     echo "export WORKFLOW_RUNNER_ADAPTER=$(printf '%q' "${WORKFLOW_RUNNER_ADAPTER:-gateway-http}")"
+    echo "export CODING_JOBS_ENABLED=$(printf '%q' "${CODING_JOBS_ENABLED:-false}")"
+    echo "export LLM_PROXY_ENABLED=$(printf '%q' "${LLM_PROXY_ENABLED:-false}")"
+    echo "export LLM_PROXY_RUNTIME_URL=$(printf '%q' "${LLM_PROXY_RUNTIME_URL:-}")"
+    echo "export LLM_PROXY_REPLICA_URL=$(printf '%q' "${LLM_PROXY_REPLICA_URL:-}")"
+    echo "export LLM_PROXY_HOST_PORT=$(printf '%q' "${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}")"
+    echo "export CODING_WORKER_LLM_PROXY_URL=$(printf '%q' "${CODING_WORKER_LLM_PROXY_URL:-}")"
+    echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
+    echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER:-}")"
+    echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"
+    echo "export TS_HARNESS_STATE_BACKEND=$(printf '%q' "${TS_HARNESS_STATE_BACKEND}")"
+    echo "export TS_HARNESS_OBJECT_BACKEND=$(printf '%q' "${TS_HARNESS_OBJECT_BACKEND}")"
+    echo "export TS_HARNESS_SKILLS_BUCKET=$(printf '%q' "${TS_HARNESS_SKILLS_BUCKET:-}")"
+    echo "export TS_HARNESS_WORKSPACE_BUCKET=$(printf '%q' "${TS_HARNESS_WORKSPACE_BUCKET:-}")"
+    echo "export TS_HARNESS_STATE_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_STATE_VOLUME_MODE}")"
+    echo "export TS_HARNESS_OBJECT_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_OBJECT_VOLUME_MODE}")"
+    echo "export CODING_ECS_CLUSTER=$(printf '%q' "${CODING_ECS_CLUSTER:-}")"
+    echo "export CODING_ECS_TASK_DEFINITION=$(printf '%q' "${CODING_ECS_TASK_DEFINITION:-}")"
+    echo "export CODING_ECS_CONTAINER=$(printf '%q' "${CODING_ECS_CONTAINER:-coding-worker}")"
+    echo "export CODING_ECS_SUBNETS=$(printf '%q' "${CODING_ECS_SUBNETS:-}")"
+    echo "export CODING_ECS_SECURITY_GROUPS=$(printf '%q' "${CODING_ECS_SECURITY_GROUPS:-}")"
     echo "export AGENT_RUNTIME_URL=$(printf '%q' "${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}")"
     echo "export TS_HARNESS_TOOLS_ROOT_HOST=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT_HOST}")"
     echo "export TS_HARNESS_TOOLS_ROOT=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT:-/tools}")"

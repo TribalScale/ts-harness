@@ -11,10 +11,10 @@ function humanize(value: string): string {
 }
 
 function progressClass(state?: string, current = false): string {
-  if (current) return "current";
   if (["succeeded", "complete", "completed"].includes(String(state || "").toLowerCase())) {
     return "complete";
   }
+  if (current) return "current";
   return "upcoming";
 }
 
@@ -64,6 +64,7 @@ export function PhaseStrip({
   currentPhase,
   selectedPhase,
   onSelect,
+  children,
 }: {
   phases: Record<string, PhaseState>;
   phaseOrder?: string[];
@@ -72,6 +73,7 @@ export function PhaseStrip({
   currentPhase?: string;
   selectedPhase?: string;
   onSelect: (phase: string) => void;
+  children?: React.ReactNode;
 }) {
   const visible = resolvePhaseOrder(phaseOrder, phases, topology);
   const allNodeIds = (() => {
@@ -122,6 +124,7 @@ export function PhaseStrip({
           );
         })}
       </ol>
+      {children}
       {showTopology && (
         <details className="topology-expander">
           <summary>Full topology</summary>

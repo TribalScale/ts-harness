@@ -360,9 +360,35 @@ def format_program_proposal_message(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_PROPOSAL_SUMMARY_LIMIT = 280
+
+
+def _present_proposal_summary(summary: str, *, limit: int = _PROPOSAL_SUMMARY_LIMIT) -> str:
+    """Shorten a long request so the confirmation stays readable.
+
+    The full text stays on the workflow input. This only changes the channel message.
+    """
+    text = " ".join(summary.split()).strip()
+    if len(text) <= limit:
+        return text
+    for index, char in enumerate(text):
+        if char not in ".!?" or index + 1 >= len(text) or not text[index + 1].isspace():
+            continue
+        sentence_len = index + 1
+        if sentence_len > limit:
+            break
+        if sentence_len >= 40:
+            return text[:sentence_len].strip()
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    if space >= 40:
+        cut = cut[:space]
+    return cut.rstrip(".,;:") + "…"
+
+
 def format_workflow_proposal_message(result: dict[str, Any]) -> str:
     workflow_type = str(result.get("workflow_type") or "workflow").replace("_", " ")
-    summary = str(result.get("summary") or "").strip()
+    summary = _present_proposal_summary(str(result.get("summary") or ""))
     if summary:
         lead = f"I've prepared a {workflow_type} workflow for: {summary}"
     else:
@@ -446,6 +472,7 @@ def execute_intake_response(
     from ts_harness.workflows.engine import get_workflow_engine
     from ts_harness.workflows.intake import (
         INTAKE_RESPONSE_EVENT,
+        intake_original_request,
         intake_task_output,
         merge_intake_response,
         task_has_external_wait,
@@ -466,7 +493,12 @@ def execute_intake_response(
 
     pending = metadata.get("pending_workflow") or {}
     summary = str(pending.get("summary") or user_text).strip()
-    merged = merge_intake_response(intake_task_output(tasks), user_text, summary=summary)
+    merged = merge_intake_response(
+        intake_task_output(tasks),
+        user_text,
+        summary=summary,
+        original_request=intake_original_request(tasks),
+    )
     if not task_has_external_wait(waiting):
         task_id = str(waiting.get("id") or "")
         if not task_id:
@@ -614,6 +646,16 @@ def execute_workflow_gate_classification(
 
     actor = resolve_decision_actor(metadata, fallback_actor=agent_id)
     denied = refusal_for_permission(actor, "approve_gate")
+    if not denied:
+        from ts_harness.gateway.program_access import channel_program_refusal
+
+        denied = channel_program_refusal(
+            metadata,
+            tenant_id=tenant_id,
+            channel=str(metadata.get("channel") or "slack"),
+            task_id=str(gate.get("id") or ""),
+            route="channel_gate",
+        )
     if denied:
         return {"error": denied, "status": "denied", "task_id": str(gate.get("id"))}
 
@@ -1147,6 +1189,135 @@ def format_tool_approval_ack(result: dict[str, Any]) -> str:
         return "Preview ready. Reply yes to proceed with the pending action."
     tool_name = str(result.get("tool_name") or "action").replace("_", " ")
     return f"Done — completed {tool_name}."
+
+
+_STUCK_COMMAND_RE = re.compile(r"^\s*/(revise|accept|stop)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+
+
+def parse_stuck_step_command(user_text: str) -> tuple[str, str] | None:
+    """``(action, rest)`` for ``/revise``, ``/accept`` or ``/stop`` replies."""
+    match = _STUCK_COMMAND_RE.match(user_text or "")
+    if not match:
+        return None
+    return match.group(1).lower(), (match.group(2) or "").strip()
+
+
+def execute_stuck_step_command(
+    session: SessionRecord,
+    *,
+    user_text: str,
+    actor_id: str,
+    channel: str,
+    auth: Any,
+    actor_email: str | None = None,
+    config: Any = None,
+    memory: Any = None,
+    engine: Any = None,
+) -> dict[str, Any]:
+    """Decide a step of this chat's program that is waiting for a human (revision limit reached)."""
+    from ts_harness.workflows import decisions, human_decisions
+
+    parsed = parse_stuck_step_command(user_text)
+    if parsed is None:
+        return {"status": "none"}
+    action, rest = parsed
+    metadata = dict(session.metadata or {})
+    if memory is None:
+        from ts_harness.memory.client import get_memory_client
+
+        memory = get_memory_client()
+    if engine is None:
+        from ts_harness.workflows.engine import get_workflow_engine
+
+        engine = get_workflow_engine()
+    program_id = str(metadata.get("program_id") or "").strip()
+    linked = {str(metadata.get(key) or "").strip() for key in ("workflow_id", "active_workflow_id")} - {""}
+    candidates: list[dict[str, Any]] = []
+    for task in memory.list_stuck_tasks(tenant_id=session.tenant_id) or []:
+        summary = human_decisions.stuck_summary(engine, str(task.get("workflow_id") or ""), str(task.get("id") or ""))
+        if (program_id and summary.get("program_id") == program_id) or summary.get("workflow_id") in linked:
+            candidates.append(summary)
+    base = {"action": action}
+    if not candidates:
+        return {**base, "status": "nothing_waiting"}
+
+    words = rest.split(maxsplit=1)
+    chosen = None
+    guidance = rest
+    if words:
+        chosen = next((item for item in candidates if item["work_order"].lower() == words[0].lower()), None)
+        if chosen is not None:
+            guidance = words[1] if len(words) > 1 else ""
+    if chosen is None:
+        if len(candidates) > 1:
+            labels = [item["work_order"] for item in candidates]
+            return {**base, "status": "ambiguous", "error": "several work orders are waiting: " + ", ".join(labels), "work_orders": labels}
+        chosen = candidates[0]
+
+    denied = decisions.channel_permission_refusal(
+        metadata,
+        channel=channel,
+        auth=auth,
+        permission="approve_gate",
+        actor_email=actor_email,
+        config=config,
+    )
+    if not denied:
+        from ts_harness.gateway.program_access import channel_program_refusal
+
+        denied = channel_program_refusal(
+            metadata,
+            tenant_id=session.tenant_id,
+            channel=channel,
+            auth=auth,
+            config=config,
+            memory=memory,
+            program_id=str(chosen.get("program_id") or "") or None,
+            route="stuck_command",
+        )
+    if denied:
+        return {**base, "status": "denied", "error": denied, "work_order": chosen["work_order"]}
+    try:
+        result = engine.decide_blocked_step(
+            chosen["workflow_id"],
+            chosen["task_id"],
+            action,
+            actor=str(actor_email or actor_id or "human"),
+            guidance=guidance if action == "revise" else "",
+            tenant_id=session.tenant_id,
+        )
+    except ValueError as exc:
+        return {**base, "error": str(exc), "work_order": chosen["work_order"]}
+    return {**base, "work_order": chosen["work_order"], **result}
+
+
+def format_stuck_step_ack(result: dict[str, Any]) -> str:
+    action = str(result.get("action") or "revise")
+    label = str(result.get("work_order") or "the work order")
+    status = result.get("status")
+    if status == "nothing_waiting":
+        return "Nothing in this program is waiting for a decision right now."
+    if status == "ambiguous":
+        labels = list(result.get("work_orders") or [])
+        examples = " or ".join(f"`/{action} {item}`" for item in labels[:3])
+        return f"Several work orders are waiting ({', '.join(labels)}). Say which one, e.g. {examples}."
+    if status == "denied":
+        error = str(result.get("error") or "")
+        if error and not error.startswith("missing permission"):
+            return f"I can't do that: {error}"
+        return "You need the approve_gate permission to decide this."
+    if result.get("error"):
+        return f"I couldn't {action} {label}: {result['error']}"
+    if status == "revising":
+        return (
+            f"Sent {label} back to OpenCode with a fresh revision budget "
+            f"(revision {result.get('revision_number')}/{result.get('max_revisions')})."
+        )
+    if status == "accepted":
+        return f"Accepted {label} as it is. The delivery continues from the next step."
+    if status == "stopped":
+        return f"Stopped {label}. Its wave will report it as failed."
+    return f"Updated {label}."
 
 
 def _parked_tool_approval(tasks: list[dict[str, Any]]) -> tuple[dict[str, Any], str] | None:

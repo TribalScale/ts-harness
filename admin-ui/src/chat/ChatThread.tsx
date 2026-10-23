@@ -13,9 +13,10 @@ import {
 import React, { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { chatReplyText, messageDisplayText } from "../api/normalizers";
-import type { ChatMessage, SessionMessageResponse, SessionSummary } from "../api/types";
+import type { ChatMessage, ProgramStatus, SessionMessageResponse, SessionSummary } from "../api/types";
 import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
+import { isWorkingActivity } from "./working";
 
 interface DisplayMessage extends ChatMessage {
   id: string;
@@ -197,7 +198,6 @@ function ConsoleComposer({
             onClick={(event) => trackCaret(event.currentTarget)}
             onKeyUp={(event) => trackCaret(event.currentTarget)}
             onSelect={(event) => trackCaret(event.currentTarget)}
-            onChange={(event) => trackCaret(event.currentTarget)}
             onKeyDown={(event) => {
               trackCaret(event.currentTarget);
               if (event.key === "Enter" && !event.shiftKey) {
@@ -278,6 +278,8 @@ export function ChatThread({
 }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  const [programId, setProgramId] = useState("");
+  const [activity, setActivity] = useState("");
   const [composerText, setComposerText] = useState("");
   const activeSession = useRef(sessionId || "");
   const pendingSendSession = useRef<string | null>(null);
@@ -290,10 +292,11 @@ export function ChatThread({
 
   async function loadMessages(id: string, { preserveLocal = false } = {}) {
     try {
-      const data = await apiFetch<{ messages?: ChatMessage[] }>(
+      const data = await apiFetch<{ messages?: ChatMessage[]; program_id?: string }>(
         `/admin/sessions/${encodeURIComponent(id)}/messages`
       );
       if (activeSession.current !== id) return;
+      setProgramId(String(data.program_id || ""));
       if (!Array.isArray(data.messages)) return;
       const displayable = data.messages
         .filter((message) => messageDisplayText(message).trim())
@@ -314,11 +317,17 @@ export function ChatThread({
     activeSession.current = id;
     if (!id) {
       setMessages([]);
+      setProgramId("");
+      setActivity("");
       return;
     }
     const adoptedFromSend = pendingSendSession.current === id;
     pendingSendSession.current = null;
-    if (!adoptedFromSend) setMessages([]);
+    if (!adoptedFromSend) {
+      setMessages([]);
+      setProgramId("");
+      setActivity("");
+    }
     void loadMessages(id, { preserveLocal: adoptedFromSend });
   }, [sessionId]);
 
@@ -329,6 +338,34 @@ export function ChatThread({
     }, 5000);
     return () => window.clearInterval(timer);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!programId) {
+      setActivity("");
+      return;
+    }
+    const watchedSession = activeSession.current;
+    let cancelled = false;
+    async function loadActivity() {
+      try {
+        const status = await apiFetch<ProgramStatus>(
+          `/admin/programs/${encodeURIComponent(programId)}/status`
+        );
+        if (cancelled || activeSession.current !== watchedSession) return;
+        setActivity(String(status.status || ""));
+      } catch {
+        if (!cancelled && activeSession.current === watchedSession) setActivity("");
+      }
+    }
+    void loadActivity();
+    const timer = window.setInterval(() => {
+      void loadActivity();
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [programId]);
 
   async function onNew(message: AppendMessage) {
     const text = appendText(message).trim();
@@ -425,6 +462,16 @@ export function ChatThread({
               <ThreadPrimitive.Messages>
                 {({ message }) => <ChatBubble message={message} />}
               </ThreadPrimitive.Messages>
+              {(busy || isWorkingActivity(activity)) && (
+                <div className="chat-working" role="status">
+                  <span className="chat-working-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  Working
+                </div>
+              )}
             </ThreadPrimitive.Viewport>
           </ThreadPrimitive.Root>
         </div>

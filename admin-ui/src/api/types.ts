@@ -1,4 +1,49 @@
-export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate";
+export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate" | "stuck_step";
+
+export type StuckDecision = "revise" | "accept" | "stop";
+
+export interface WorkflowStep {
+  task_id: string;
+  step_name: string;
+  label: string;
+  agent_id: string;
+  status: string;
+  approval_pending: boolean;
+  error: string;
+  updated_at: string;
+}
+
+export interface CodingJobProgress {
+  id: string;
+  status: "queued" | "starting" | "running";
+  last_output: string;
+  started_at: string;
+  created_at: string;
+}
+
+export interface WorkflowProgress {
+  workflow_id: string;
+  workflow_type: string;
+  label: string;
+  workflow_status: string;
+  pr_url: string;
+  current_step: string;
+  state: string;
+  kind: "running" | "waiting" | "stuck" | "blocked" | "done" | "failed";
+  revisions: number;
+  stuck_task_id: string;
+  updated_at: string;
+  coding_job?: CodingJobProgress | null;
+  steps: WorkflowStep[];
+}
+
+export interface PhaseActivity {
+  phase: string;
+  state: string;
+  workflow_id: string;
+  workflow: WorkflowProgress | null;
+  children: WorkflowProgress[];
+}
 
 export interface InboxItem {
   type: InboxType;
@@ -63,6 +108,7 @@ export interface AuthConfig {
   authorization_endpoint?: string;
   token_endpoint?: string;
   audience?: string | null;
+  token_type?: "access" | "id";
   scopes?: string[];
   allow_static_fallback?: boolean;
   error?: string;
@@ -93,6 +139,35 @@ export interface ProgramSummary {
   escalated?: boolean;
   recommended_action?: string;
   compensation_status?: string;
+  visibility?: ProgramVisibility;
+}
+
+export type ProgramVisibility = "private" | "public";
+export type ProgramGrantLevel = "read" | "write" | "approve" | "admin";
+export type ProgramAccessLevel = "none" | ProgramGrantLevel;
+
+export interface ProgramGrant {
+  principal_type: "user" | "team";
+  principal_id: string;
+  level: ProgramGrantLevel;
+  email?: string | null;
+  display_name?: string | null;
+  granted_by?: string | null;
+}
+
+export interface ProgramAccessList {
+  program_id: string;
+  access_root_id?: string;
+  inherited?: boolean;
+  visibility?: ProgramVisibility;
+  owner?: { subject: string; email?: string | null; display_name?: string | null } | null;
+  grants: ProgramGrant[];
+  access_level?: ProgramAccessLevel;
+}
+
+export interface DirectorySearch {
+  users: Array<{ subject: string; email?: string | null; display_name?: string | null }>;
+  teams: Array<{ slug: string; display_name?: string; member_count?: number }>;
 }
 
 export interface PortfolioFilters {
@@ -180,6 +255,8 @@ export interface ProgramStatus {
   excluded_from_autoshare?: boolean;
   outbound_link_count?: number;
   inbound_link_count?: number;
+  access_level?: ProgramAccessLevel;
+  visibility?: ProgramVisibility;
   links?: {
     outbound?: Array<{ to_program_id?: string; from_program_id?: string }>;
     inbound?: Array<{ to_program_id?: string; from_program_id?: string }>;
@@ -240,6 +317,7 @@ export interface SessionSummary {
   session_id: string;
   agent_id?: string;
   source?: string;
+  binding_key?: string;
   started_at?: string;
 }
 
@@ -302,4 +380,113 @@ export interface ArtifactRow {
   value: string;
   href?: string;
   expandable: boolean;
+}
+
+export type RegistryType = "npm" | "pypi" | "maven" | "docker";
+
+export interface Project {
+  id: string;
+  tenant_id: string;
+  key: string;
+  name: string;
+  team_slug: string | null;
+  jira_project_key: string | null;
+  default_base_branch: string | null;
+  worker_cpu: number | null;
+  worker_memory_mb: number | null;
+  can_manage?: boolean;
+}
+
+export interface ProjectRegistry {
+  id: string;
+  project_id: string;
+  type: RegistryType;
+  url: string;
+  scope: string | null;
+  username: string | null;
+  has_credential: boolean;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_error: string | null;
+}
+
+export interface GitHubOverview {
+  apps: {
+    host: string;
+    configured: boolean;
+    app_id: string;
+    app_slug: string;
+    source: "environment" | "stored" | "";
+    webhook_secret: boolean;
+    install_url: string;
+  }[];
+  installations: {
+    host: string;
+    installation_id: number;
+    account_login: string;
+    account_type: string;
+    repository_selection: string;
+    suspended: boolean;
+    repositories: string[];
+    synced_at: string | null;
+  }[];
+  webhooks: { host: string; last_received_at: string | null; last_day: number }[];
+  rate_limits: { host: string; remaining: number; limit: number; reset: number; observed_at: number }[];
+  pat_fallback: boolean;
+  can_sync: boolean;
+}
+
+export interface ProjectRepository {
+  id: string;
+  project_id: string;
+  github_host: string;
+  owner: string;
+  repo: string;
+  full_name: string;
+  repo_url: string;
+  installation_id: number | null;
+  default_branch: string | null;
+  role: string | null;
+}
+
+export type BudgetStatus = "ok" | "warning" | "reached";
+
+export interface TeamBudgetOverride {
+  id: string;
+  team_id: string;
+  month: string | null;
+  scope: "month" | "permanent";
+  amount_usd: number;
+  raised_by: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface TeamBudget {
+  id: string;
+  slug: string;
+  display_name: string;
+  budget_usd: number;
+  spent_usd: number;
+  percent: number;
+  status: BudgetStatus;
+  held_tasks: number;
+  overrides: TeamBudgetOverride[];
+  can_raise: boolean;
+}
+
+export interface BudgetsOverview {
+  month: string;
+  currency: string;
+  default_team_monthly: number;
+  warn_at_percent: number;
+  manager_max_monthly: number;
+  teams: TeamBudget[];
+  unassigned_spent_usd?: number;
+  is_admin: boolean;
+  raise_limit: number | null;
+}
+
+export interface ProgramBudget {
+  team: Pick<TeamBudget, "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"> | null;
 }

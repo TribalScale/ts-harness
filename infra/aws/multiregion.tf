@@ -92,8 +92,9 @@ variable "rds_replica_instance_class" {
 ###############################################################################
 
 provider "aws" {
-  alias  = "secondary"
-  region = var.secondary_region
+  alias               = "secondary"
+  region              = var.secondary_region
+  allowed_account_ids = var.aws_account_id == null ? null : [var.aws_account_id]
 }
 
 ###############################################################################

@@ -8,12 +8,44 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import budgets as budget_routes  # noqa: E402
+from memory_routes import projects as project_routes  # noqa: E402
+from memory_routes import github_app as github_routes  # noqa: E402
+from memory_routes.leases import acquire_service_lease  # noqa: E402
+from memory_routes import task_claims as task_claim_routes  # noqa: E402
+from memory_routes import scim as scim_routes  # noqa: E402
+from memory_routes import scale_metrics as scale_metric_routes  # noqa: E402
+from memory_routes import shared_state as shared_state_routes  # noqa: E402
+from memory_routes import skill_index as skill_index_routes  # noqa: E402
+from memory_routes.directory import (  # noqa: E402
+    apply_directory_snapshot,
+    disable_directory_users,
+    get_directory_user,
+    search_directory,
+    upsert_directory_user,
+)
+from memory_routes.program_access import (  # noqa: E402
+    grant_program_access,
+    list_filter_clause,
+    list_program_access,
+    parse_actor,
+    program_access_level,
+    record_program_admin_access,
+    revoke_program_access,
+    set_program_visibility,
+    task_program,
+)
 
 
 VALID_MEMORY_TYPES = {
@@ -161,6 +193,10 @@ def _db_connect_kwargs() -> dict[str, Any]:
     # RDS and other managed Postgres endpoints require TLS; local docker-db does not.
     if DB_HOST not in {"ts-harness-db", "localhost", "127.0.0.1"}:
         kwargs["sslmode"] = os.environ.get("PGSSLMODE", "require")
+    # PgBouncer in transaction mode hands each transaction to any server
+    # connection, so server-side prepared statements cannot be reused.
+    if os.environ.get("MEMORY_API_DB_POOLER", "").strip().lower() == "transaction":
+        kwargs["prepare_threshold"] = None
     return kwargs
 
 
@@ -535,6 +571,13 @@ def find_workflow_by_ref(conn, external_ref: str) -> dict[str, Any]:
     return {"workflow": record, "tasks": tasks}
 
 
+def _task_lane(value: Any) -> str:
+    lane = str(value or "agent").strip()
+    if lane not in task_claim_routes.LANES:
+        raise ValueError(f"lane must be one of {sorted(task_claim_routes.LANES)}")
+    return lane
+
+
 def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
     workflow_id = parse_uuid(body.get("workflow_id"))
     task_id = str(uuid.uuid4())
@@ -555,9 +598,9 @@ def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
             INSERT INTO workflow_tasks
               (id, workflow_id, tenant_id, workflow_type, external_ref, step_name,
                agent_id, depends_on, input, approval_required,
-               approval_status, max_retries, contract, definition_version)
+               approval_status, max_retries, contract, definition_version, lane)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s)
+              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             (
                 task_id,
@@ -574,6 +617,7 @@ def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
                 int(body.get("max_retries", 0)),
                 json.dumps(body.get("contract") or {}),
                 body.get("definition_version"),
+                _task_lane(body.get("lane")),
             ),
         )
         audit_workflow_event(
@@ -685,6 +729,72 @@ def resume_tool_approval_task(conn, body: dict[str, Any]) -> dict[str, str]:
     return {"id": task_id, "status": "pending"}
 
 
+def resume_blocked_task(conn, body: dict[str, Any]) -> dict[str, str]:
+    """Return a step that is blocked for good (not waiting on an event or approval) to pending.
+
+    A human decision uses this; ``input`` is merged into the task input so the
+    runner knows what was decided.
+    """
+    task_id = parse_uuid(body.get("id"))
+    actor = str(body.get("actor", "orchestrator"))
+    patch = body.get("input") or {}
+    if not isinstance(patch, dict):
+        raise ValueError("input must be an object")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE workflow_tasks
+            SET status = 'pending',
+                error = NULL,
+                completed_at = NULL,
+                locked_by = NULL,
+                lock_expires_at = NULL,
+                attempt = GREATEST(attempt - 1, 0),
+                next_attempt_at = now(),
+                input = COALESCE(input, '{}'::jsonb) || %s::jsonb
+            WHERE id = %s
+              AND status = 'blocked'
+              AND COALESCE(error, '') NOT LIKE 'awaiting%%'
+            """,
+            (json.dumps(patch), task_id),
+        )
+        if getattr(cur, "rowcount", 1) == 0:
+            raise ValueError("workflow task is not blocked for a human decision")
+        audit_workflow_event(
+            cur,
+            "workflow_task_human_resumed",
+            "Workflow task resumed by a human decision",
+            {"task_id": task_id, "reason": str(body.get("reason") or "")},
+            actor,
+        )
+    conn.commit()
+    return {"id": task_id, "status": "pending"}
+
+
+def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Steps parked for a human decision (revise, accept or stop) in running workflows."""
+    tenant_id = str(body.get("tenant_id") or "default")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.workflow_id, t.workflow_type, t.step_name, t.agent_id,
+                   t.error, t.input, t.output, t.created_at, t.updated_at,
+                   w.parent_workflow_id, w.program_id, w.source_channel
+            FROM workflow_tasks t
+            JOIN workflows w ON w.id = t.workflow_id
+            WHERE t.tenant_id = %s
+              AND t.status = 'blocked'
+              AND t.input ->> '_awaiting_human_decision' IS NOT NULL
+              AND w.status = 'running'
+            ORDER BY t.updated_at DESC
+            LIMIT 100
+            """,
+            (tenant_id,),
+        )
+        return {"tasks": list(cur.fetchall())}
+
+
 def record_runtime_task(conn, body: dict[str, Any]) -> dict[str, str]:
     task_id = parse_uuid(body.get("id"))
     runtime_task_id = str(body.get("runtime_task_id", "")).strip()
@@ -779,9 +889,9 @@ def _insert_workflow_tasks(
             INSERT INTO workflow_tasks
               (id, workflow_id, tenant_id, workflow_type, external_ref, step_name,
                agent_id, depends_on, input, approval_required,
-               approval_status, max_retries, contract, definition_version)
+               approval_status, max_retries, contract, definition_version, lane)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s)
+              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             (
                 task_id,
@@ -798,6 +908,7 @@ def _insert_workflow_tasks(
                 int(task_body.get("max_retries", default_max_retries)),
                 json.dumps(task_body.get("contract") or {}),
                 task_body.get("definition_version"),
+                _task_lane(task_body.get("lane")),
             ),
         )
         created.append(task_id)
@@ -1254,13 +1365,50 @@ def _actor_roles(raw: Any) -> list[str]:
     return sorted({str(item).strip().lower() for item in raw if str(item).strip()})
 
 
-def _actor_permission_set(body: dict[str, Any], roles: list[str]) -> set[str]:
-    from ts_harness.policy.permissions import effective_bundles, permissions_for_roles
+# Default role bundles. This process does not install the ts_harness package, and
+# effective_bundles(None) is these defaults. A caller that already resolved custom
+# bundles sends them as actor_permissions.
+_DEFAULT_ROLE_BUNDLES = {
+    "viewer": frozenset({"view"}),
+    "member": frozenset({"view"}),
+    "requester": frozenset({"view", "start_program"}),
+    "approver": frozenset({"view", "approve_gate", "confirm_delegation"}),
+    "admin": frozenset(
+        {
+            "view",
+            "start_program",
+            "approve_gate",
+            "confirm_delegation",
+            "edit_config",
+            "edit_models",
+            "edit_allowlists",
+            "promote_department",
+        }
+    ),
+}
+_DEFAULT_ROLE_BUNDLES["owner"] = _DEFAULT_ROLE_BUNDLES["admin"]
 
+
+def _actor_permission_set(body: dict[str, Any], roles: list[str]) -> set[str]:
     explicit = body.get("actor_permissions")
     if isinstance(explicit, list):
         return {str(item).strip().lower() for item in explicit if str(item).strip()}
-    return permissions_for_roles(roles, effective_bundles(None))
+    granted: set[str] = set()
+    for role in roles:
+        granted.update(_DEFAULT_ROLE_BUNDLES.get(role, ()))
+    return granted
+
+
+def _permission_allows(granted: set[str], required: list[str]) -> bool:
+    needed = {item for item in required if item}
+    return bool(needed and granted & needed)
+
+
+def _holds_required_role(roles: list[str], granted: set[str], required: str) -> bool:
+    if required in roles:
+        return True
+    bundle = _DEFAULT_ROLE_BUNDLES.get(required)
+    return bool(bundle) and set(bundle) <= granted
 
 
 def _gate_permission_denial(
@@ -1270,18 +1418,15 @@ def _gate_permission_denial(
     granted: set[str],
     extra_permission: str = "",
 ) -> str:
-    from ts_harness.policy.permissions import allows, effective_bundles, holds_required_role
-
-    bundles = effective_bundles(None)
     if required_permissions:
         denied = (
             ""
-            if allows(granted, required_permissions)
+            if _permission_allows(granted, required_permissions)
             else f"approval requires one of permissions: {', '.join(required_permissions)}"
         )
     elif not required_roles:
         denied = ""
-    elif any(holds_required_role(roles, granted, name, bundles) for name in required_roles):
+    elif any(_holds_required_role(roles, granted, name) for name in required_roles):
         denied = ""
     else:
         denied = f"approval requires one of roles: {', '.join(required_roles)}"
@@ -1954,6 +2099,14 @@ def cancel_workflow_bulk(conn, workflow_id: str, body: dict[str, Any]) -> dict[s
             """,
             (reason, parsed_id),
         )
+        cur.execute(
+            """
+            UPDATE coding_jobs
+            SET status = 'cancelled', error = %s, finished_at = now()
+            WHERE workflow_id = %s AND status IN ('queued', 'starting', 'running')
+            """,
+            (reason, parsed_id),
+        )
         audit_workflow_event(
             cur,
             "workflow_cancelled",
@@ -2321,6 +2474,10 @@ def create_delivery_program(
         tenant_id=tenant_id,
         program_id=program_id,
     )
+    owner_id = str(body.get("owner_id") or body.get("requester_actor_id") or "").strip() or None
+    visibility = str(body.get("visibility") or "private").strip().lower()
+    if visibility not in {"private", "public"}:
+        raise ValueError("visibility must be private or public")
 
     with conn.cursor() as cur:
         cur.execute(
@@ -2332,12 +2489,14 @@ def create_delivery_program(
                program_definition_snapshot, resolved_workflow_versions,
                project_id, project_id_source, excluded_from_autoshare,
                department,
-               parent_program_id, root_program_id)
+               parent_program_id, root_program_id,
+               owner_id, visibility)
             VALUES
               (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
                %s, %s, %s, %s::jsonb, %s::jsonb,
                %s, %s, %s,
                %s,
+               %s, %s,
                %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
@@ -2364,6 +2523,8 @@ def create_delivery_program(
                 stored_department,
                 parent_program_id,
                 root_program_id,
+                owner_id,
+                visibility,
             ),
         )
         audit_workflow_event(
@@ -2484,6 +2645,8 @@ def list_program_children(conn, program_id: str) -> dict[str, Any]:
                 "parent_program_id": str(row.get("parent_program_id") or "") or None,
                 "root_program_id": str(row.get("root_program_id") or "") or None,
                 "child_count": int(row.get("child_count") or 0),
+                "owner_id": row.get("owner_id"),
+                "visibility": row.get("visibility"),
                 "artifacts": _program_metadata_artifacts(metadata),
                 "created_at": row.get("created_at"),
                 "updated_at": row.get("updated_at"),
@@ -2943,9 +3106,11 @@ def _child_rollup(conn, children: list[dict[str, Any]]) -> dict[str, Any]:
             child_status = {}
         if child_status:
             item["status"] = child_status.get("status") or status
-            for key in ("waiting_on", "last_error", "active_step", "active_workflow_id"):
+            for key in ("active_workflow_id", "active_workflow", "active_tasks"):
                 if child_status.get(key):
                     item[key] = child_status.get(key)
+            if isinstance(child_status.get("artifacts"), dict):
+                item["artifacts"] = child_status["artifacts"]
         artifacts = child.get("artifacts") if isinstance(child.get("artifacts"), dict) else {}
         pr_urls = artifacts.get("pr_urls") if isinstance(artifacts.get("pr_urls"), list) else []
         if artifacts.get("pr_url") and artifacts.get("pr_url") not in pr_urls:
@@ -2988,8 +3153,12 @@ def list_delivery_programs(
     roots_only: bool = False,
     phase: str | None = None,
     owner: str | None = None,
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """List delivery programs for a tenant, newest updated first."""
+    """List delivery programs for a tenant, newest updated first.
+
+    With *actor*, only programs that actor can read are listed.
+    """
     tenant = str(tenant_id or "default").strip() or "default"
     try:
         limit_n = max(1, min(int(limit), 200))
@@ -3023,6 +3192,10 @@ def list_delivery_programs(
     if owner_filter:
         clauses.append("requester_actor_id = %s")
         params.append(owner_filter)
+    access_clause, access_params = list_filter_clause(actor)
+    if access_clause:
+        clauses.append(access_clause)
+        params.extend(access_params)
     where = " AND ".join(clauses)
     with conn.cursor() as cur:
         cur.execute(
@@ -3037,7 +3210,7 @@ def list_delivery_programs(
                    requester_actor_id, entry_phase, current_phase, status, metadata,
                    program_type, program_definition_version, program_definition_revision,
                    project_id, project_id_source, excluded_from_autoshare,
-                   parent_program_id, root_program_id,
+                   parent_program_id, root_program_id, owner_id, visibility,
                    (SELECT COUNT(*) FROM delivery_programs child
                      WHERE child.parent_program_id = delivery_programs.id) AS child_count,
                    created_at, updated_at
@@ -3662,9 +3835,12 @@ def get_delivery_program_status(
         program_status = stored_status
 
     artifacts = _program_metadata_artifacts(metadata)
-    operability: dict[str, Any] = {}
+    # The runtime derives waiting_on, active_step and the rest from these.
+    active_workflow: dict[str, Any] | None = None
+    active_tasks: list[dict[str, Any]] = []
     if active_workflow_id:
         member = next((wf for wf in workflows if str(wf.get("id")) == active_workflow_id), None)
+        active_workflow = dict(member or {})
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -3676,16 +3852,6 @@ def get_delivery_program_status(
                 (active_workflow_id,),
             )
             active_tasks = list(cur.fetchall())
-        try:
-            from ts_harness.workflows.operability import build_operability_status
-
-            operability = build_operability_status(
-                workflow=dict(member or {}),
-                tasks=active_tasks,
-                artifacts=artifacts if isinstance(artifacts, dict) else {},
-            )
-        except Exception:
-            operability = {}
     resolved_workflow_versions = _parse_json_object(program.get("resolved_workflow_versions")) or {}
     for phase_id, phase_info in phases.items():
         pin = resolved_workflow_versions.get(phase_id)
@@ -3750,7 +3916,8 @@ def get_delivery_program_status(
         "resolved_workflow_versions": resolved_workflow_versions,
         "active_workflow_id": active_workflow_id,
         "artifacts": artifacts,
-        **operability,
+        "active_workflow": active_workflow,
+        "active_tasks": active_tasks,
     }
 
 
@@ -4267,6 +4434,10 @@ def acquire_runner_lease(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {"leader": False, "runner_id": holder}
 
 
+def urlparse_path(path: str) -> str:
+    return path.split("?", 1)[0]
+
+
 class MemoryHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # suppress default access logs
         pass
@@ -4303,6 +4474,365 @@ class MemoryHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw) if raw else {}
 
+    def _scim(self, method: str) -> None:
+        """``/scim/{Users|Groups}[/{id}]`` and ``/scim/snapshot``, all with ``?tenant_id=``."""
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        tenant_id = query.get("tenant_id") or "default"
+        parts = [p for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "PATCH"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, scim_routes.ScimError(f"invalid JSON: {exc}").to_scim())
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["snapshot"] and method == "GET":
+                    self._send_json(200, scim_routes.snapshot(conn, tenant_id=tenant_id))
+                    return
+                if not parts or parts[0] not in {"Users", "Groups"} or len(parts) > 2:
+                    raise scim_routes.ScimError("not found", 404)
+                users = parts[0] == "Users"
+                resource_id = parts[1] if len(parts) == 2 else None
+                if resource_id is None and method == "GET":
+                    lister = scim_routes.list_users if users else scim_routes.list_groups
+                    self._send_json(
+                        200,
+                        lister(
+                            conn,
+                            tenant_id=tenant_id,
+                            filter=query.get("filter"),
+                            start_index=query.get("startIndex"),
+                            count=query.get("count"),
+                        ),
+                    )
+                elif resource_id is None and method == "POST":
+                    creator = scim_routes.create_user if users else scim_routes.create_group
+                    self._send_json(201, creator(conn, tenant_id=tenant_id, data=body))
+                elif resource_id is not None:
+                    key = "user_id" if users else "group_id"
+                    handlers = {
+                        "GET": scim_routes.get_user if users else scim_routes.get_group,
+                        "PUT": scim_routes.replace_user if users else scim_routes.replace_group,
+                        "PATCH": scim_routes.patch_user if users else scim_routes.patch_group,
+                        "DELETE": scim_routes.delete_user if users else scim_routes.delete_group,
+                    }
+                    handler = handlers.get(method)
+                    if handler is None:
+                        raise scim_routes.ScimError("method not allowed", 405)
+                    kwargs = {"tenant_id": tenant_id, key: resource_id}
+                    if method in {"PUT", "PATCH"}:
+                        kwargs["data"] = body
+                    result = handler(conn, **kwargs)
+                    if method == "DELETE":
+                        self._send_json(200, {"ok": True})
+                    else:
+                        self._send_json(200, result)
+                else:
+                    raise scim_routes.ScimError("method not allowed", 405)
+        except scim_routes.ScimError as exc:
+            self._send_json(exc.status, exc.to_scim())
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, scim_routes.ScimError(str(exc), 500).to_scim())
+
+    _WORKER_ACTIONS = {
+        ("GET", "spec"),
+        ("GET", "registries"),
+        ("GET", "identity"),
+        ("POST", "heartbeat"),
+        ("POST", "complete"),
+    }
+
+    def _coding_job_worker_authorized(self, method: str) -> bool:
+        """A worker's job token opens only its own job's spec, heartbeat and complete."""
+        parts = [p for p in self.path.split("?")[0].split("/") if p]
+        if len(parts) != 3 or parts[0] != "coding-jobs" or (method, parts[2]) not in self._WORKER_ACTIONS:
+            return False
+        presented = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+        if not presented.startswith(f"{coding_job_routes.TOKEN_PREFIX}."):
+            return False
+        try:
+            return coding_job_routes.verify_job_token(presented, parts[1])
+        except RuntimeError:
+            return False
+
+    def _coding_jobs(self, method: str) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method == "POST" else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if method == "GET" and not parts:
+                    query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    self._send_json(200, coding_job_routes.list_coding_jobs(conn, query))
+                elif method == "POST" and parts == ["create"]:
+                    self._send_json(200, coding_job_routes.create_coding_job(conn, body))
+                elif method == "POST" and parts == ["claim"]:
+                    self._send_json(200, coding_job_routes.claim_coding_jobs(conn, body))
+                elif method == "POST" and parts == ["stale"]:
+                    self._send_json(200, coding_job_routes.sweep_stale_coding_jobs(conn, body))
+                elif method == "POST" and parts == ["cancel"]:
+                    self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, body))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "spec":
+                    self._send_json(200, coding_job_routes.get_job_spec(conn, parts[0]))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "identity":
+                    self._send_json(200, coding_job_routes.job_identity(conn, parts[0]))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "registries":
+                    self._send_json(200, project_routes.job_registries(conn, parts[0]))
+                elif method == "POST" and len(parts) == 2:
+                    job_id, action = parts
+                    if action == "heartbeat":
+                        self._send_json(200, coding_job_routes.heartbeat_coding_job(conn, job_id, body))
+                    elif action == "complete":
+                        self._send_json(200, coding_job_routes.complete_coding_job(conn, job_id, body))
+                    elif action == "launched":
+                        self._send_json(200, coding_job_routes.record_launch(conn, job_id, body))
+                    elif action == "consume":
+                        self._send_json(200, coding_job_routes.consume_coding_job(conn, job_id))
+                    elif action == "cancel":
+                        self._send_json(200, coding_job_routes.cancel_coding_jobs(conn, {**body, "job_ids": [job_id]}))
+                    else:
+                        self._send_json(404, {"error": "not found"})
+                else:
+                    self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    def _projects(self, method: str) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["registry-hosts"] and method == "GET":
+                    result = project_routes.registry_hosts(conn)
+                elif parts == ["projects"] and method == "GET":
+                    result = project_routes.list_projects(conn, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                elif parts == ["projects"] and method == "POST":
+                    result = project_routes.create_project(conn, body)
+                elif len(parts) == 2 and method == "GET":
+                    result = project_routes.get_project(conn, parts[1])
+                elif len(parts) == 2 and method == "PUT":
+                    result = project_routes.update_project(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "repositories" and method == "GET":
+                    result = project_routes.list_repositories(conn, parts[1])
+                elif len(parts) == 3 and parts[2] == "repositories" and method == "POST":
+                    result = project_routes.create_repository(conn, parts[1], body)
+                elif len(parts) == 4 and parts[2] == "repositories" and method == "PUT":
+                    result = project_routes.update_repository(conn, parts[1], parts[3], body)
+                elif len(parts) == 4 and parts[2] == "repositories" and method == "DELETE":
+                    result = project_routes.delete_repository(conn, parts[1], parts[3], body)
+                elif len(parts) == 3 and parts[2] == "registries" and method == "GET":
+                    result = project_routes.list_registries(conn, parts[1])
+                elif len(parts) == 3 and parts[2] == "registries" and method == "POST":
+                    result = project_routes.create_registry(conn, parts[1], body)
+                elif len(parts) == 4 and parts[2] == "registries" and method == "PUT":
+                    result = project_routes.update_registry(conn, parts[1], parts[3], body)
+                elif len(parts) == 4 and parts[2] == "registries" and method == "DELETE":
+                    result = project_routes.delete_registry(conn, parts[1], parts[3], body)
+                elif len(parts) == 5 and parts[2] == "registries" and parts[4] == "tested" and method == "POST":
+                    result = project_routes.record_registry_test(conn, parts[1], parts[3], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    def _budgets(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PUT"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == [] and method == "GET":
+                    result = budget_routes.list_team_budgets(conn, query)
+                elif parts == ["settings"] and method == "PUT":
+                    result = budget_routes.put_budget_settings(conn, body)
+                elif parts == ["alerts"] and method == "POST":
+                    result = budget_routes.claim_budget_alerts(conn, body)
+                elif len(parts) == 2 and parts[0] == "programs" and method == "GET":
+                    result = budget_routes.program_team_budget(conn, parts[1], query)
+                elif len(parts) == 1 and method == "GET":
+                    result = budget_routes.team_budget(conn, parts[0], query)
+                elif len(parts) == 2 and parts[1] == "raise" and method == "POST":
+                    result = budget_routes.raise_team_budget(conn, parts[0], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _is_budgets_path(path: str) -> bool:
+        return path == "/budgets" or path.startswith(("/budgets?", "/budgets/"))
+
+    def _scale_metrics(self) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+        try:
+            with connect_db() as conn:
+                result = scale_metric_routes.snapshot(conn, query)
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    def _github(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["registrations"] and method == "GET":
+                    result = github_routes.list_registrations(conn)
+                elif len(parts) == 2 and parts[0] == "registrations" and method == "GET":
+                    result = github_routes.get_registration(conn, parts[1])
+                elif len(parts) == 2 and parts[0] == "registrations" and method == "PUT":
+                    result = github_routes.put_registration(conn, parts[1], body)
+                elif parts == ["installations"] and method == "GET":
+                    result = github_routes.list_installations(conn, {k: v[0] for k, v in parse_qs(parsed.query).items()})
+                elif parts == ["installations"] and method == "POST":
+                    result = github_routes.upsert_installation(conn, body)
+                elif len(parts) == 3 and parts[0] == "installations" and method == "DELETE":
+                    result = github_routes.delete_installation(conn, parts[1], parts[2], body)
+                elif len(parts) == 4 and parts[0] == "installations" and parts[3] == "repositories" and method == "POST":
+                    result = github_routes.change_installation_repositories(conn, parts[1], parts[2], body)
+                elif parts == ["webhook-deliveries"] and method == "POST":
+                    result = github_routes.record_delivery(conn, body)
+                elif len(parts) == 2 and parts[0] == "webhook-deliveries" and method == "GET":
+                    result = github_routes.delivery_seen(conn, parts[1])
+                elif parts == ["webhook-status"] and method == "GET":
+                    result = github_routes.webhook_status(conn)
+                elif parts == ["rate-limits"] and method == "POST":
+                    result = github_routes.record_rate_limits(conn, body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    _SHARED_STATE_PREFIXES = ("shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup")
+
+    @classmethod
+    def _is_shared_state_path(cls, path: str) -> bool:
+        head = path.split("?", 1)[0].strip("/").split("/", 1)[0]
+        return head in cls._SHARED_STATE_PREFIXES
+
+    def _shared_state(self, method: str) -> None:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PUT", "DELETE"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        head, rest = parts[0], parts[1:]
+        try:
+            with connect_db() as conn:
+                if head == "shared-files" and len(rest) == 1 and method == "GET":
+                    result = shared_state_routes.pull_files(conn, rest[0], query)
+                elif head == "shared-files" and rest[1:] == ["generation"] and method == "GET":
+                    result = shared_state_routes.namespace_generation(conn, rest[0])
+                elif head == "shared-files" and rest[1:] == ["commit"] and method == "POST":
+                    result = shared_state_routes.commit_files(conn, rest[0], body)
+                elif head == "shared-files" and len(rest) == 3 and rest[1] == "locks" and method == "POST":
+                    result = shared_state_routes.acquire_lock(conn, rest[0], rest[2], body)
+                elif head == "shared-files" and len(rest) == 3 and rest[1] == "locks" and method == "DELETE":
+                    result = shared_state_routes.release_lock(conn, rest[0], rest[2], {**query, **body})
+                elif head == "runtime-kv" and len(rest) >= 2 and method == "GET":
+                    result = shared_state_routes.kv_get(conn, rest[0], "/".join(rest[1:]))
+                elif head == "runtime-kv" and len(rest) >= 2 and method == "PUT":
+                    result = shared_state_routes.kv_put(conn, rest[0], "/".join(rest[1:]), body)
+                elif head == "audit-events" and not rest and method == "POST":
+                    result = shared_state_routes.append_audit_events(conn, body)
+                elif head == "audit-events" and not rest and method == "GET":
+                    result = shared_state_routes.list_audit_events(conn, query)
+                elif head == "channel-dedup" and not rest and method == "POST":
+                    result = shared_state_routes.mark_channel_event(conn, body)
+                elif head == "channel-dedup" and rest == ["sweep"] and method == "POST":
+                    result = shared_state_routes.sweep_channel_dedup(conn, body)
+                elif head == "skill-index" and not rest and method == "GET":
+                    result = skill_index_routes.list_skill_index(conn, query)
+                elif head == "skill-index" and rest == ["drafts"] and method in {"POST", "PUT"}:
+                    result = skill_index_routes.upsert_draft(conn, body)
+                elif head == "skill-index" and len(rest) == 3 and rest[0] == "drafts" and method == "POST":
+                    if rest[2] == "approve":
+                        result = skill_index_routes.approve_draft(conn, rest[1], body)
+                    elif rest[2] == "reject":
+                        result = skill_index_routes.reject_draft(conn, rest[1], body)
+                    else:
+                        raise LookupError("not found")
+                else:
+                    raise LookupError("not found")
+            self._send_json(200, result)
+        except shared_state_routes.StaleGeneration as exc:
+            self._send_json(409, {"error": str(exc), "code": "stale_generation", "generation": exc.current})
+        except shared_state_routes.VersionConflict as exc:
+            self._send_json(409, {"error": str(exc), "code": "version_conflict", "version": exc.current})
+        except skill_index_routes.SkillIndexConflict as exc:
+            self._send_json(409, {"error": str(exc), "code": exc.code})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _is_projects_path(path: str) -> bool:
+        return path == "/registry-hosts" or path == "/projects" or path.startswith(("/projects?", "/projects/"))
+
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()
         if not token:
@@ -4315,8 +4845,32 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True, "service": "memory-api"})
             return
+        if self._coding_job_worker_authorized("GET"):
+            self._coding_jobs("GET")
+            return
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("GET")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("GET")
+            return
+        if self._is_budgets_path(self.path):
+            self._budgets("GET")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("GET")
+            return
+        if self.path == "/metrics/scale-out" or self.path.startswith("/metrics/scale-out?"):
+            self._scale_metrics()
+            return
+        if self.path.startswith("/github/"):
+            self._github("GET")
+            return
+        if self.path == "/coding-jobs" or self.path.startswith(("/coding-jobs?", "/coding-jobs/")):
+            self._coding_jobs("GET")
             return
         if self.path.startswith("/workflow/plan/"):
             plan_id = self.path.removeprefix("/workflow/plan/")
@@ -4335,6 +4889,77 @@ class MemoryHandler(BaseHTTPRequestHandler):
             try:
                 with connect_db() as conn:
                     self._send_json(200, find_workflow_by_ref(conn, external_ref))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/directory/search"):
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        search_directory(
+                            conn,
+                            tenant_id=(query.get("tenant_id") or ["default"])[0],
+                            q=(query.get("q") or [""])[0],
+                            limit=(query.get("limit") or ["20"])[0],
+                        ),
+                    )
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/directory/user?"):
+            from urllib.parse import parse_qs, urlparse
+
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        get_directory_user(
+                            conn,
+                            tenant_id=(query.get("tenant_id") or ["default"])[0],
+                            subject=(query.get("subject") or [""])[0],
+                            email=(query.get("email") or [""])[0],
+                        ),
+                    )
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/programs/") and urlparse_path(self.path).endswith("/access-level"):
+            from urllib.parse import parse_qs, urlparse
+
+            parsed_url = urlparse(self.path)
+            program_id = parsed_url.path.removeprefix("/programs/").removesuffix("/access-level")
+            query = {k: v[0] for k, v in parse_qs(parsed_url.query).items()}
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, program_access_level(conn, program_id, parse_actor(query)))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/programs/") and self.path.endswith("/access"):
+            program_id = self.path.removeprefix("/programs/").removesuffix("/access")
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, list_program_access(conn, program_id))
+            except LookupError as exc:
+                self._send_json(404, {"error": str(exc)})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
+        elif self.path.startswith("/workflow/tasks/") and self.path.endswith("/program"):
+            task_id = self.path.removeprefix("/workflow/tasks/").removesuffix("/program")
+            try:
+                with connect_db() as conn:
+                    self._send_json(200, task_program(conn, task_id))
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001
@@ -4375,6 +5000,7 @@ class MemoryHandler(BaseHTTPRequestHandler):
                             roots_only=(query.get("roots_only") or [""])[0].lower() in {"1", "true", "yes"},
                             phase=(query.get("phase") or [""])[0] or None,
                             owner=(query.get("owner") or [""])[0] or None,
+                            actor=parse_actor({k: v[0] for k, v in query.items()}),
                         ),
                     )
             except ValueError as exc:
@@ -4586,8 +5212,29 @@ class MemoryHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self._coding_job_worker_authorized("POST"):
+            self._coding_jobs("POST")
+            return
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("POST")
+            return
+        if self.path.startswith("/coding-jobs/"):
+            self._coding_jobs("POST")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("POST")
+            return
+        if self._is_budgets_path(self.path):
+            self._budgets("POST")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("POST")
+            return
+        if self.path.startswith("/github/"):
+            self._github("POST")
             return
         try:
             body = self._read_body()
@@ -4616,6 +5263,18 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     )
                 elif self.path == "/decisions":
                     self._send_json(200, create_workflow_decision(conn, body))
+                elif self.path == "/directory/upsert-user":
+                    self._send_json(200, upsert_directory_user(conn, body))
+                elif self.path == "/directory/snapshot":
+                    self._send_json(200, apply_directory_snapshot(conn, body))
+                elif self.path == "/directory/disable":
+                    self._send_json(200, disable_directory_users(conn, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/access"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/access")
+                    self._send_json(200, grant_program_access(conn, program_id, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/admin-access"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/admin-access")
+                    self._send_json(200, record_program_admin_access(conn, program_id, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/advance"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/advance")
                     self._send_json(200, advance_delivery_program(conn, program_id, body))
@@ -4663,12 +5322,18 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, create_workflow_tasks(conn, body))
                 elif self.path == "/runner/leader":
                     self._send_json(200, acquire_runner_lease(conn, body))
+                elif self.path == "/leases/acquire":
+                    self._send_json(200, acquire_service_lease(conn, body))
                 elif self.path == "/workflow/ready":
                     self._send_json(200, {"tasks": list_ready_workflow_tasks(conn, body)})
                 elif self.path == "/workflow/retry":
                     self._send_json(200, retry_workflow_task(conn, body))
                 elif self.path == "/workflow/task/resume-approval":
                     self._send_json(200, resume_tool_approval_task(conn, body))
+                elif self.path == "/workflow/task/resume-blocked":
+                    self._send_json(200, resume_blocked_task(conn, body))
+                elif self.path == "/workflow/stuck":
+                    self._send_json(200, list_stuck_tasks(conn, body))
                 elif self.path == "/workflow/runtime":
                     self._send_json(200, record_runtime_task(conn, body))
                 elif self.path == "/workflow/stale":
@@ -4681,6 +5346,17 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, reject_workflow_plan(conn, body))
                 elif self.path == "/workflow/claim":
                     self._send_json(200, claim_workflow_task(conn, body))
+                elif self.path == "/workflow/claim-batch":
+                    self._send_json(200, task_claim_routes.claim_batch(conn, body))
+                elif self.path.startswith("/workflow/") and self.path.endswith("/lock") and self.path.count("/") == 3:
+                    workflow_id = self.path.removeprefix("/workflow/").removesuffix("/lock")
+                    self._send_json(200, task_claim_routes.acquire_workflow_lock(conn, workflow_id, body))
+                elif self.path.startswith("/workflow/") and self.path.endswith("/unlock") and self.path.count("/") == 3:
+                    workflow_id = self.path.removeprefix("/workflow/").removesuffix("/unlock")
+                    self._send_json(200, task_claim_routes.release_workflow_lock(conn, workflow_id, body))
+                elif self.path.startswith("/workflow/tasks/") and self.path.endswith("/renew-lease"):
+                    task_id = self.path.removeprefix("/workflow/tasks/").removesuffix("/renew-lease")
+                    self._send_json(200, task_claim_routes.renew_lease(conn, task_id, body))
                 elif self.path == "/workflow/complete":
                     body["status"] = "succeeded"
                     self._send_json(200, transition_workflow_task(conn, body))
@@ -4720,14 +5396,40 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, update_workflow_compensation_status(conn, workflow_id, body))
                 else:
                     self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def do_PUT(self):
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("PUT")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("PUT")
+            return
+        if self._is_budgets_path(self.path):
+            self._budgets("PUT")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("PUT")
+            return
+        if self.path.startswith("/github/"):
+            self._github("PUT")
+            return
+        self._send_json(404, {"error": "not found"})
+
     def do_PATCH(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("PATCH")
             return
         try:
             body = self._read_body()
@@ -4740,11 +5442,16 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 if self.path.startswith("/workflow/task/") and self.path.endswith("/input"):
                     task_id = self.path.removeprefix("/workflow/task/").removesuffix("/input")
                     self._send_json(200, patch_workflow_task_input(conn, task_id, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/visibility"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/visibility")
+                    self._send_json(200, set_program_visibility(conn, program_id, body))
                 elif self.path.startswith("/programs/"):
                     program_id = self.path.removeprefix("/programs/")
                     self._send_json(200, patch_delivery_program(conn, program_id, body))
                 else:
                     self._send_json(404, {"error": "not found"})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
@@ -4753,6 +5460,39 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self.path.startswith("/scim/"):
+            self._scim("DELETE")
+            return
+        if self._is_projects_path(self.path):
+            self._projects("DELETE")
+            return
+        if self.path.startswith("/github/"):
+            self._github("DELETE")
+            return
+        if self._is_shared_state_path(self.path):
+            self._shared_state("DELETE")
+            return
+        if self.path.startswith("/programs/") and "/access/" in self.path:
+            from urllib.parse import unquote
+
+            program_id, _, principal = self.path.removeprefix("/programs/").partition("/access/")
+            principal_type, _, principal_id = principal.partition("/")
+            try:
+                body = self._read_body()
+                with connect_db() as conn:
+                    self._send_json(
+                        200,
+                        revoke_program_access(conn, program_id, principal_type, unquote(principal_id), body),
+                    )
+            except json.JSONDecodeError as exc:
+                self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            except LookupError as exc:
+                self._send_json(404, {"error": str(exc)})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": str(exc)})
             return
         if "/links/" not in self.path or not self.path.startswith("/programs/"):
             self._send_json(404, {"error": "not found"})
@@ -4775,7 +5515,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     port = int(os.environ.get("MEMORY_API_PORT", "18792"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), MemoryHandler)
+    bind = os.environ.get("MEMORY_API_BIND", "").strip() or "127.0.0.1"
+    server = ThreadingHTTPServer((bind, port), MemoryHandler)
     server.daemon_threads = True
     print(f"memory-api listening on 127.0.0.1:{port}", flush=True)
     try:

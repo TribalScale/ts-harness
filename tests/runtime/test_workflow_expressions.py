@@ -64,6 +64,20 @@ class WorkflowExpressionTests(unittest.TestCase):
         value = resolve_token("$runtime.revision_count:revise_prd", tasks=self.tasks)
         self.assertEqual(value, 2)
 
+    def test_human_requests_collects_human_revision_feedback_oldest_first(self):
+        def deliver(at, status="succeeded", **task_input):
+            return {"step_name": "deliver_work_order", "status": status, "input": task_input, "created_at": at}
+
+        tasks = [
+            deliver("3", _revision_budget="human", review_feedback="second"),
+            deliver("1", review_feedback="code review finding"),
+            deliver("2", _revision_budget="human", review_feedback="first"),
+            deliver("4", status="cancelled", _revision_budget="human", review_feedback="superseded"),
+            deliver("5", _revision_budget="refresh", refresh=True),
+        ]
+        self.assertEqual(resolve_token("$runtime.human_requests:deliver_work_order", tasks=tasks), ["first", "second"])
+        self.assertEqual(resolve_token("$runtime.human_requests:deliver_work_order", tasks=[]), [])
+
     def test_reject_comments(self):
         value = resolve_token("$reject.comments", tasks=self.tasks, reject_comments="add mobile")
         self.assertEqual(value, "add mobile")

@@ -35,15 +35,31 @@ def _session_for_workflow(
     workflow_id: str,
     tenant_id: str,
     source_channel: str = "",
+    program_id: str = "",
 ) -> SessionRecord | None:
-    binding = binding_key_from_source_channel(source_channel) or (
-        source_channel or ""
-    ).strip()
+    """Find the chat that owns this workflow.
+
+    Admin chat stores ``binding_key`` as ``web:<id>`` while the canonical
+    channel key is ``web:web:<id>``. Later phases keep the original
+    ``workflow_id`` and are linked by ``program_id`` or ``active_workflow_id``.
+    """
+    raw = str(source_channel or "").strip()
+    canonical = binding_key_from_source_channel(raw) or ""
+    bindings = {item for item in (raw, canonical) if item}
+    workflow = str(workflow_id or "").strip()
+    program = str(program_id or "").strip()
     for session in get_session_store().list_for_tenant(tenant_id):
         metadata = session.metadata or {}
-        if metadata.get("workflow_id") == workflow_id:
+        linked = {
+            str(metadata.get("workflow_id") or "").strip(),
+            str(metadata.get("active_workflow_id") or "").strip(),
+        }
+        if workflow and workflow in linked:
             return session
-        if binding and metadata.get("binding_key") == binding:
+        stored_binding = str(metadata.get("binding_key") or "").strip()
+        if stored_binding and stored_binding in bindings:
+            return session
+        if program and str(metadata.get("program_id") or "").strip() == program:
             return session
     return None
 

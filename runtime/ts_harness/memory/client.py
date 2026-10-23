@@ -17,6 +17,15 @@ DEFAULT_MEMORY_API_URL = os.environ.get("MEMORY_API_URL", "http://127.0.0.1:1879
 class ProgramNotFound(RuntimeError):
     """The memory API has no program for this path."""
 
+
+class MemoryApiConflict(RuntimeError):
+    """409 from the memory API: a stale generation, a version conflict or a catalog rule."""
+
+    def __init__(self, message: str, detail: dict[str, Any]):
+        super().__init__(message)
+        self.detail = detail
+        self.code = str(detail.get("code") or "")
+
 _DECISION_KEYS = ("actor_email", "actor_roles", "actor_permissions", "reason", "program_id", "tenant_id")
 
 
@@ -51,6 +60,12 @@ class MemoryClient:
             body = exc.read().decode() or str(exc)
             if exc.code == 404:
                 raise ProgramNotFound(body) from exc
+            if exc.code == 409:
+                try:
+                    detail = json.loads(body)
+                except json.JSONDecodeError:
+                    detail = {}
+                raise MemoryApiConflict(str(detail.get("error") or body), detail if isinstance(detail, dict) else {}) from exc
             raise RuntimeError(body) from exc
         return json.loads(raw) if raw else {}
 
@@ -161,6 +176,22 @@ class MemoryClient:
 
     def create_tasks_bulk(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/workflow/tasks", body)
+
+    def claim_ready_tasks(self, *, runner: str, lane: str, limit: int, lease_seconds: int) -> list[dict[str, Any]]:
+        """Claim up to ``limit`` ready tasks of ``lane``; at most one per workflow."""
+        body = {"runner": runner, "lane": lane, "limit": limit, "lease_seconds": lease_seconds}
+        return list(self._request("POST", "/workflow/claim-batch", body).get("tasks") or [])
+
+    def acquire_workflow_lock(self, workflow_id: str, *, owner: str, ttl_seconds: int) -> bool:
+        body = {"owner": owner, "ttl_seconds": ttl_seconds}
+        return bool(self._request("POST", f"/workflow/{workflow_id}/lock", body).get("acquired"))
+
+    def release_workflow_lock(self, workflow_id: str, *, owner: str) -> bool:
+        return bool(self._request("POST", f"/workflow/{workflow_id}/unlock", {"owner": owner}).get("released"))
+
+    def renew_task_lease(self, task_id: str, *, runner: str, lease_seconds: int) -> bool:
+        body = {"runner": runner, "lease_seconds": lease_seconds}
+        return bool(self._request("POST", f"/workflow/tasks/{task_id}/renew-lease", body).get("renewed"))
 
     def get_workflow(self, workflow_id: str) -> dict[str, Any]:
         return self._request("GET", f"/workflows/{workflow_id}")
@@ -366,6 +397,24 @@ class MemoryClient:
             {"id": task_id, "approval_id": approval_id, "actor": actor},
         )
 
+    def resume_blocked_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        input_patch: dict[str, Any] | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/workflow/task/resume-blocked",
+            {"id": task_id, "actor": actor, "input": dict(input_patch or {}), "reason": reason},
+        )
+
+    def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
+        result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
+        return list(result.get("tasks") or [])
+
     def cancel_workflow(self, workflow_id: str, *, actor: str, reason: str = "") -> dict[str, Any]:
         return self._request(
             "POST",
@@ -504,6 +553,7 @@ class MemoryClient:
         metadata: dict[str, Any] | None = None,
         actor_email: str | None = None,
         department: str | None = None,
+        owner_id: str | None = None,
         actor: str = "orchestrator",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -544,6 +594,8 @@ class MemoryClient:
             body["actor_email"] = actor_email
         if department:
             body["department"] = department
+        if owner_id:
+            body["owner_id"] = owner_id
         return self._request("POST", "/programs/create", body)
 
     def list_program_children(self, program_id: str) -> dict[str, Any]:
@@ -655,6 +707,7 @@ class MemoryClient:
         roots_only: bool = False,
         phase: str | None = None,
         owner: str | None = None,
+        actor_params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         from urllib.parse import urlencode
 
@@ -662,6 +715,7 @@ class MemoryClient:
             "tenant_id": tenant_id,
             "limit": limit,
             "offset": offset,
+            **(actor_params or {}),
         }
         if status:
             params["status"] = status
@@ -679,7 +733,9 @@ class MemoryClient:
         return self._request("GET", self._program_path(program_id))
 
     def get_program_status(self, program_id: str) -> dict[str, Any]:
-        return self._request("GET", self._program_path(program_id, "status"))
+        from ts_harness.workflows.operability import with_operability
+
+        return with_operability(self._request("GET", self._program_path(program_id, "status")))
 
     def find_program_by_binding(self, binding_key: str, *, tenant_id: str = "default") -> dict[str, Any]:
         from urllib.parse import quote
@@ -853,6 +909,471 @@ class MemoryClient:
         if source_program_id:
             params["source_program_id"] = source_program_id
         return self._request("GET", f"/briefs?{urlencode(params)}")
+
+    def directory_upsert_user(
+        self,
+        *,
+        tenant_id: str,
+        subject: str,
+        email: str | None = None,
+        display_name: str | None = None,
+        teams: list[dict[str, str]] | None = None,
+        roles: list[str] | None = None,
+        source: str = "seen_users",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "subject": subject,
+            "email": email,
+            "display_name": display_name,
+            "source": source,
+        }
+        if teams is not None:
+            body["teams"] = teams
+        if roles is not None:
+            body["roles"] = roles
+        return self._request("POST", "/directory/upsert-user", body)
+
+    def program_access_level(self, program_id: str, actor: dict[str, Any] | None) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params: dict[str, str] = {}
+        if actor is not None:
+            params = {
+                "actor_subject": str(actor.get("subject") or ""),
+                "actor_teams": ",".join(
+                    f"{t['slug']}:{t.get('role') or 'member'}" for t in actor.get("teams") or [] if t.get("slug")
+                ),
+                "actor_admin": "1" if actor.get("is_admin") else "0",
+            }
+        suffix = f"?{urlencode(params)}" if params else ""
+        return self._request("GET", self._program_path(program_id, "access-level") + suffix)
+
+    def list_program_access(self, program_id: str) -> dict[str, Any]:
+        return self._request("GET", self._program_path(program_id, "access"))
+
+    def grant_program_access(
+        self, program_id: str, *, principal_type: str, principal_id: str, level: str, actor: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            self._program_path(program_id, "access"),
+            {"principal_type": principal_type, "principal_id": principal_id, "level": level, "actor": actor},
+        )
+
+    def revoke_program_access(self, program_id: str, *, principal_type: str, principal_id: str, actor: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        path = self._program_path(program_id, f"access/{quote(principal_type, safe='')}/{quote(principal_id, safe='')}")
+        return self._request("DELETE", path, {"actor": actor})
+
+    def set_program_visibility(self, program_id: str, *, visibility: str, actor: str) -> dict[str, Any]:
+        return self._request("PATCH", self._program_path(program_id, "visibility"), {"visibility": visibility, "actor": actor})
+
+    def record_program_admin_access(self, program_id: str, *, actor: str, route: str = "", need: str = "") -> dict[str, Any]:
+        return self._request(
+            "POST", self._program_path(program_id, "admin-access"), {"actor": actor, "route": route, "need": need}
+        )
+
+    def task_program(self, task_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/workflow/tasks/{quote(str(task_id), safe='')}/program")
+
+    def directory_search(self, *, tenant_id: str, q: str = "", limit: int = 20) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        return self._request("GET", f"/directory/search?{urlencode({'tenant_id': tenant_id, 'q': q, 'limit': limit})}")
+
+    def directory_user(self, *, tenant_id: str, subject: str = "", email: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, "subject": subject, "email": email}
+        return self._request("GET", f"/directory/user?{urlencode(params)}")
+
+    def directory_snapshot(
+        self,
+        *,
+        tenant_id: str,
+        source: str,
+        match: str,
+        complete: bool,
+        users: list[dict[str, Any]],
+        max_disable_fraction: float | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "source": source,
+            "match": match,
+            "complete": complete,
+            "users": users,
+        }
+        if max_disable_fraction is not None:
+            body["max_disable_fraction"] = max_disable_fraction
+        return self._request("POST", "/directory/snapshot", body)
+
+    def create_coding_job(
+        self,
+        *,
+        spec: dict[str, Any],
+        workflow_id: str | None = None,
+        task_id: str | None = None,
+        program_id: str | None = None,
+        tenant_id: str = "default",
+        team_slug: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/create",
+            {
+                "spec": spec,
+                "workflow_id": workflow_id,
+                "task_id": task_id,
+                "program_id": program_id,
+                "tenant_id": tenant_id,
+                "team_slug": team_slug,
+                "project_id": project_id,
+            },
+        )
+
+    def list_coding_jobs(
+        self,
+        *,
+        workflow_id: str | None = None,
+        task_id: str | None = None,
+        status: str | None = None,
+        unconsumed: bool = False,
+        finished_within: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        params: dict[str, Any] = {"limit": limit}
+        for key, value in (
+            ("workflow_id", workflow_id),
+            ("task_id", task_id),
+            ("status", status),
+            ("finished_within", finished_within),
+        ):
+            if value:
+                params[key] = value
+        if unconsumed:
+            params["unconsumed"] = "true"
+        return list(self._request("GET", f"/coding-jobs?{urlencode(params)}").get("jobs") or [])
+
+    def claim_coding_jobs(
+        self,
+        *,
+        launcher: str,
+        max_running: int,
+        limit: int | None = None,
+        quotas: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"launcher": launcher, "max_running": max_running}
+        if limit is not None:
+            body["limit"] = limit
+        if quotas:
+            body["quotas"] = dict(quotas)
+        return self._request("POST", "/coding-jobs/claim", body)
+
+    def record_coding_job_launch(
+        self, job_id: str, *, runner_ref: str = "", error: str = "", retryable: bool = False
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"runner_ref": runner_ref, "error": error}
+        if retryable:
+            body["retryable"] = True
+        return self._request("POST", f"/coding-jobs/{job_id}/launched", body)
+
+    def list_team_budgets(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/budgets?tenant_id={quote(tenant_id)}")
+
+    def put_budget_settings(self, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", "/budgets/settings", body)
+
+    def raise_team_budget(self, team_id: str, **body: Any) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("POST", f"/budgets/{quote(team_id, safe='')}/raise", body)
+
+    def get_program_budget(self, program_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/budgets/programs/{quote(program_id, safe='')}")
+
+    def claim_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        return self._request("POST", "/budgets/alerts", {"tenant_id": tenant_id})
+
+    def list_projects(self, *, tenant_id: str = "default", key: str = "", team: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        query = {k: v for k, v in {"tenant_id": tenant_id, "key": key, "team": team}.items() if v}
+        return self._request("GET", f"/projects?{urlencode(query)}")
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}")
+
+    def create_project(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/projects", body)
+
+    def update_project(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}", body)
+
+    def list_project_registries(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}/registries")
+
+    def create_project_registry(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project_id}/registries", body)
+
+    def update_project_registry(self, project_id: str, registry_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}/registries/{registry_id}", body)
+
+    def delete_project_registry(self, project_id: str, registry_id: str, *, actor: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/projects/{project_id}/registries/{registry_id}", {"actor": actor})
+
+    def list_project_repositories(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}/repositories")
+
+    def create_project_repository(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project_id}/repositories", body)
+
+    def update_project_repository(self, project_id: str, repository_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}/repositories/{repository_id}", body)
+
+    def delete_project_repository(self, project_id: str, repository_id: str, *, actor: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/projects/{project_id}/repositories/{repository_id}", {"actor": actor})
+
+    def record_project_registry_test(
+        self, project_id: str, registry_id: str, *, ok: bool, error: str = "", actor: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/registries/{registry_id}/tested",
+            {"ok": ok, "error": error, "actor": actor},
+        )
+
+    def registry_hosts(self) -> list[str]:
+        return list(self._request("GET", "/registry-hosts").get("hosts") or [])
+
+    def get_coding_job(self, job_id: str) -> dict[str, Any] | None:
+        from urllib.parse import urlencode
+
+        jobs = self._request("GET", f"/coding-jobs?{urlencode({'id': job_id, 'limit': 1})}").get("jobs") or []
+        return jobs[0] if jobs else None
+
+    def get_github_registration(self, host: str) -> dict[str, Any] | None:
+        from urllib.parse import quote
+
+        try:
+            return self._request("GET", f"/github/registrations/{quote(host, safe='')}")
+        except ProgramNotFound:
+            return None
+
+    def list_github_registrations(self) -> list[dict[str, Any]]:
+        return list(self._request("GET", "/github/registrations").get("registrations") or [])
+
+    def put_github_registration(self, host: str, **body: Any) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("PUT", f"/github/registrations/{quote(host, safe='')}", body)
+
+    def list_github_installations(self, *, host: str = "") -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        query = f"?{urlencode({'host': host})}" if host else ""
+        return list(self._request("GET", f"/github/installations{query}").get("installations") or [])
+
+    def upsert_github_installation(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/github/installations", body)
+
+    def record_github_rate_limits(self, limits: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._request("POST", "/github/rate-limits", {"limits": limits})
+
+    def get_scale_metrics(self, *, window_seconds: int = 120) -> dict[str, Any]:
+        return self._request("GET", f"/metrics/scale-out?window_seconds={int(window_seconds)}")
+
+    def change_github_installation_repositories(
+        self, host: str, installation_id: int, *, added: list[str], removed: list[str]
+    ) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request(
+            "POST",
+            f"/github/installations/{quote(host, safe='')}/{int(installation_id)}/repositories",
+            {"added": added, "removed": removed},
+        )
+
+    def delete_github_installation(self, host: str, installation_id: int) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("DELETE", f"/github/installations/{quote(host, safe='')}/{int(installation_id)}", {})
+
+    def record_github_delivery(self, delivery_id: str, *, host: str, event: str) -> bool:
+        """True when this delivery was already processed."""
+        out = self._request(
+            "POST", "/github/webhook-deliveries", {"delivery_id": delivery_id, "host": host, "event": event}
+        )
+        return bool(out.get("duplicate"))
+
+    def github_delivery_seen(self, delivery_id: str) -> bool:
+        from urllib.parse import quote
+
+        return bool(self._request("GET", f"/github/webhook-deliveries/{quote(delivery_id, safe='')}").get("seen"))
+
+    def github_webhook_status(self) -> list[dict[str, Any]]:
+        return list(self._request("GET", "/github/webhook-status").get("hosts") or [])
+
+    def consume_coding_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
+
+    def cancel_coding_jobs(
+        self,
+        *,
+        job_ids: list[str] | None = None,
+        workflow_ids: list[str] | None = None,
+        reason: str = "cancelled",
+        actor: str = "orchestrator",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/cancel",
+            {"job_ids": job_ids or [], "workflow_ids": workflow_ids or [], "reason": reason, "actor": actor},
+        )
+
+    def sweep_stale_coding_jobs(self, *, heartbeat_seconds: int, max_runtime_seconds: int) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/coding-jobs/stale",
+            {"heartbeat_seconds": heartbeat_seconds, "max_runtime_seconds": max_runtime_seconds},
+        )
+
+    def acquire_service_lease(self, name: str, *, holder: str, ttl_seconds: int = 30) -> dict[str, Any]:
+        return self._request("POST", "/leases/acquire", {"name": name, "holder": holder, "ttl_seconds": ttl_seconds})
+
+    def shared_files_generation(self, namespace: str) -> int:
+        return int(self._request("GET", f"/shared-files/{namespace}/generation").get("generation") or 0)
+
+    def pull_shared_files(self, namespace: str, *, since: int = 0) -> dict[str, Any]:
+        return self._request("GET", f"/shared-files/{namespace}?since={int(since)}")
+
+    def commit_shared_files(
+        self,
+        namespace: str,
+        *,
+        base_generation: int | None,
+        puts: list[dict[str, str]],
+        deletes: list[str],
+        actor: str = "",
+        scope: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/shared-files/{namespace}/commit",
+            {"base_generation": base_generation, "puts": puts, "deletes": deletes, "actor": actor, "scope": scope or []},
+        )
+
+    def acquire_shared_lock(self, namespace: str, name: str, *, holder: str, ttl_seconds: int = 60) -> bool:
+        from urllib.parse import quote
+
+        out = self._request(
+            "POST",
+            f"/shared-files/{namespace}/locks/{quote(name, safe='')}",
+            {"holder": holder, "ttl_seconds": ttl_seconds},
+        )
+        return bool(out.get("locked"))
+
+    def release_shared_lock(self, namespace: str, name: str, *, holder: str) -> bool:
+        from urllib.parse import quote
+
+        out = self._request("DELETE", f"/shared-files/{namespace}/locks/{quote(name, safe='')}", {"holder": holder})
+        return bool(out.get("released"))
+
+    def list_skill_index(self, *, statuses: tuple[str, ...] = ("active", "draft"), skill_id: str = "") -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        params = {"status": ",".join(statuses), **({"skill_id": skill_id} if skill_id else {})}
+        return self._request("GET", f"/skill-index?{urlencode(params)}")
+
+    def upsert_skill_draft(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/skill-index/drafts", body)
+
+    def approve_skill_draft(self, draft_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/skill-index/drafts/{draft_id}/approve", body)
+
+    def reject_skill_draft(self, draft_id: str, *, reviewer: str, reason: str = "") -> dict[str, Any]:
+        return self._request("POST", f"/skill-index/drafts/{draft_id}/reject", {"reviewer": reviewer, "reason": reason})
+
+    def kv_get(self, namespace: str, key: str) -> dict[str, Any]:
+        """``{"value": ..., "version": n}``; version 0 and value None when absent."""
+        return self._request("GET", f"/runtime-kv/{namespace}/{key}")
+
+    def kv_put(self, namespace: str, key: str, value: Any, *, expected_version: int | None = None) -> int:
+        """Store ``value``; raises ``MemoryApiConflict`` when ``expected_version`` is stale."""
+        body: dict[str, Any] = {"value": value}
+        if expected_version is not None:
+            body["expected_version"] = int(expected_version)
+        return int(self._request("PUT", f"/runtime-kv/{namespace}/{key}", body).get("version") or 0)
+
+    def append_audit_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._request("POST", "/audit-events", {"events": events})
+
+    def list_audit_events(
+        self, *, tenant_id: str = "", since: str = "", until: str = "", limit: int = 0
+    ) -> list[dict[str, Any]]:
+        """Events in sequence order; the server returns at most ``limit`` (default 10,000, max 50,000)."""
+        from urllib.parse import urlencode
+
+        params = {k: v for k, v in {"tenant_id": tenant_id, "since": since, "until": until, "limit": limit}.items() if v}
+        return list(self._request("GET", f"/audit-events?{urlencode(params)}").get("events") or [])
+
+    def mark_channel_event(self, key: str) -> bool:
+        """True the first time ``key`` is seen across all replicas."""
+        return bool(self._request("POST", "/channel-dedup", {"key": key}).get("new"))
+
+    def sweep_channel_dedup(self, *, retention_days: int = 7) -> dict[str, Any]:
+        return self._request("POST", "/channel-dedup/sweep", {"retention_days": retention_days})
+
+    def directory_disable(
+        self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/directory/disable",
+            {"tenant_id": tenant_id, "subjects": subjects or [], "emails": emails or []},
+        )
+
+    def scim_request(
+        self,
+        method: str,
+        resource_path: str,
+        *,
+        tenant_id: str,
+        query: dict[str, str] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, Any]:
+        """Forward a SCIM call; returns ``(status, document)`` including SCIM error documents."""
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, **{k: v for k, v in (query or {}).items() if v not in (None, "")}}
+        path = f"/scim/{resource_path.lstrip('/')}?{urlencode(params)}"
+        data = None if body is None else json.dumps(body).encode()
+        headers = {"Content-Type": "application/json"}
+        if os.environ.get("MEMORY_API_TOKEN"):
+            headers["Authorization"] = f"Bearer {os.environ['MEMORY_API_TOKEN']}"
+        request = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            status = exc.code
+        try:
+            return status, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return status, {"detail": raw.decode(errors="replace")}
 
 
 _default_client: MemoryClient | None = None

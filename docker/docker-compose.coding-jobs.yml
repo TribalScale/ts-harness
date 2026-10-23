@@ -1,0 +1,54 @@
+services:
+  # Builds the worker image; the launcher starts one container from it per job.
+  coding-worker:
+    image: ${CODING_WORKER_IMAGE:-ts-harness-coding-worker:latest}
+    build:
+      context: ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}
+      dockerfile: docker/Dockerfile.coding-worker
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-latest}
+    command: ["true"]
+    restart: "no"
+    depends_on:
+      - agent-runtime
+
+  coding-launcher:
+    image: ts-harness-agent-runtime:latest
+    # Shares agent-runtime netns; workers join it too (CODING_WORKER_NETWORK=auto) to reach memory-api.
+    network_mode: "service:agent-runtime"
+    environment:
+      # Blank follows DEPLOYMENT_PROFILE: local on single_host, ecs on scale_out.
+      CODING_LAUNCHER: ${CODING_LAUNCHER:-}
+      DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}
+      CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}
+      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them.
+      TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
+      CODING_ECS_CLUSTER: ${CODING_ECS_CLUSTER:-}
+      CODING_ECS_TASK_DEFINITION: ${CODING_ECS_TASK_DEFINITION:-}
+      CODING_ECS_CONTAINER: ${CODING_ECS_CONTAINER:-coding-worker}
+      CODING_ECS_SUBNETS: ${CODING_ECS_SUBNETS:-}
+      CODING_ECS_SECURITY_GROUPS: ${CODING_ECS_SECURITY_GROUPS:-}
+      CODING_ECS_CAPACITY_PROVIDER: ${CODING_ECS_CAPACITY_PROVIDER:-FARGATE}
+      CLOUD_REGION: ${CLOUD_REGION:-}
+      CODING_WORKER_IMAGE: ${CODING_WORKER_IMAGE:-ts-harness-coding-worker:latest}
+      CODING_WORKER_NETWORK: auto
+      CODING_WORKER_CPUS: ${CODING_WORKER_CPUS:-2}
+      CODING_WORKER_MEMORY: ${CODING_WORKER_MEMORY:-4g}
+      CODING_WORKER_CONFIG_HOST_PATH: ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://127.0.0.1:18792}
+      MEMORY_API_TOKEN: ${MEMORY_API_TOKEN:-}
+      # With the LLM proxy on, each worker gets a job-scoped proxy token instead of provider keys.
+      LLM_PROXY_URL: ${LLM_PROXY_RUNTIME_URL:-}
+      CODING_WORKER_LLM_PROXY_URL: ${CODING_WORKER_LLM_PROXY_URL:-}
+    # Worker secrets (GITHUB_TOKEN, provider keys, CODING_BACKEND_*) pass through by name only.
+    env_file:
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
+    command: ["python3", "/app/scripts/coding-launcher.py"]
+    restart: unless-stopped
+    depends_on:
+      - agent-runtime
+      - memory-api
+      - coding-worker

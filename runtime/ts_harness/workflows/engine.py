@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import json
+import functools
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ts_harness.agent.sessions import SessionRecord
 from ts_harness.memory.client import MemoryClient, get_memory_client
 from ts_harness.repo_paths import workflows_dir
+from ts_harness.storage.shared_tree import sync_definitions
 from ts_harness.workflows.hooks import build_default_registry
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.materialize import (
     list_skeleton_types,
     load_skeleton,
 )
+from ts_harness.workflows.pr_rejection import PR_CHANGES_REQUESTED_REASON, PR_CLOSED_REASON
 from ts_harness.workflows.presentation import (
     should_present_specialist_output,
 )
@@ -27,6 +30,7 @@ from ts_harness.workflows.definition_paths import (
 )
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.registry import HookContext, HookRegistry
+from ts_harness.workflows.workflow_locks import workflow_lock
 from ts_harness.workflows.session_compat import (
     read_source_workflow_id,
     read_workflow_phase,
@@ -49,6 +53,32 @@ def hook_engine_enabled() -> bool:
     return enabled in {"1", "true", "yes"}
 
 
+def _locked(workflow_of: Callable[..., Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Hold the workflow's write lock for the call; ``workflow_of`` picks the workflow id from the arguments."""
+
+    def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(method)
+        def wrapper(self: "WorkflowEngine", *args: Any, **kwargs: Any) -> Any:
+            with workflow_lock(self.client, workflow_of(*args, **kwargs)):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def _task_workflow(task: dict[str, Any], *_: Any, **__: Any) -> Any:
+    return (task or {}).get("workflow_id")
+
+
+def _first_workflow(workflow_id: str, *_: Any, **__: Any) -> str:
+    return workflow_id
+
+
+def _keyword_workflow(*_: Any, workflow_id: str = "", **__: Any) -> str:
+    return workflow_id
+
+
 class WorkflowEngine:
     def __init__(
         self,
@@ -63,6 +93,7 @@ class WorkflowEngine:
         self._versioned_skeletons: dict[tuple[str, str], Any] = {}
         self._skeleton_dir = skeleton_dir or workflows_dir()
         self._definition_manifest_generation: int | None = None
+        sync_definitions(force=True)
         root = self._skeleton_dir
         if root.exists():
             for workflow_type in list_skeleton_types(root):
@@ -153,6 +184,7 @@ class WorkflowEngine:
 
     def reload_if_changed(self) -> bool:
         workflow_ok = True
+        sync_definitions()
         try:
             generation = self._read_manifest_generation()
         except Exception:
@@ -382,6 +414,7 @@ class WorkflowEngine:
         ctx.skeleton = skeleton
         return self.registry.invoke("promote", ctx)
 
+    @_locked(_keyword_workflow)
     def handle_reject(
         self,
         *,
@@ -430,6 +463,7 @@ class WorkflowEngine:
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
         return result
 
+    @_locked(_keyword_workflow)
     def handle_approve(
         self,
         *,
@@ -453,6 +487,7 @@ class WorkflowEngine:
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
         return result
 
+    @_locked(_task_workflow)
     def on_task_transition(
         self,
         task: dict[str, Any],
@@ -564,14 +599,35 @@ class WorkflowEngine:
                         f"{revise_result.get('max_revisions')})."
                     )
                 elif revise_result.get("status") == "revision_limit":
+                    from ts_harness.workflows import human_decisions
+
                     ctx.extras["error"] = (
                         f"{error or failed}\n"
                         "Automatic OpenCode revision limit reached; a human "
                         "must decide next steps."
                     )
+                    tasks = list(self._workflow_payload(workflow_id).get("tasks") or [])
+                    human_decisions.mark_awaiting_human_decision(
+                        self.client, str(task.get("id") or ""), tasks, reason="revision_limit"
+                    )
+                    ctx.extras["channel_text"] = human_decisions.revision_limit_text(
+                        label=human_decisions.work_order_label(tasks, ctx.workflow),
+                        cause=cause,
+                        feedback=ctx.reject_comments,
+                        max_revisions=int(revise_result.get("max_revisions") or 0),
+                        decisions=human_decisions.available_decisions(ctx.stage),
+                    )
+                elif revise_result.get("status") == "stopped":
+                    ctx.extras["error"] = f"{cause}; the work order is stopped."
                 notify_result = self._maybe_notify(ctx, "blocked")
                 self._sync_session(workflow_id, workflow_type, tenant_id, task=task)
-                return {**revise_result, "notify": notify_result}
+                phase_result = None
+                if revise_result.get("status") != "revising":
+                    phase_result = self._maybe_complete_program_phase(ctx)
+                result = {**revise_result, "notify": notify_result}
+                if phase_result:
+                    result["program_phase"] = phase_result
+                return result
 
         if event == "ready" and ctx.stage is not None and ctx.stage.wait_external:
             wait_result = self.registry.invoke("wait_external", ctx)
@@ -580,6 +636,12 @@ class WorkflowEngine:
 
         notify_result = self._maybe_notify(ctx, event)
         self._sync_session(workflow_id, workflow_type, tenant_id, task=task)
+        if event == "blocked":
+            # A child blocked for good must wake join_wave. Waits stay pending
+            # inside child_state, so this does not finish a merge or approval wait.
+            phase_result = self._maybe_complete_program_phase(ctx)
+            if isinstance(notify_result, dict) and phase_result:
+                notify_result = {**notify_result, "program_phase": phase_result}
         # Program-phase completion needs persisted task status/output. The runner
         # calls after_task_succeeded() after complete_task(); resume/recovery
         # paths pass an already-succeeded task and complete here.
@@ -620,6 +682,7 @@ class WorkflowEngine:
         )
         return self._maybe_notify(ctx, "awaiting_approval")
 
+    @_locked(_task_workflow)
     def after_task_succeeded(
         self,
         task: dict[str, Any],
@@ -684,6 +747,7 @@ class WorkflowEngine:
             )
             return None
 
+    @_locked(_first_workflow)
     def cancel(self, workflow_id: str, *, actor: str, tenant_id: str = "default", reason: str = "") -> dict[str, Any]:
         payload = self.client.get_workflow(workflow_id)
         workflow_type = str((payload.get("workflow") or {}).get("workflow_type") or "generic")
@@ -698,6 +762,25 @@ class WorkflowEngine:
         self._maybe_notify(ctx, "cancelled")
         return result
 
+    @_locked(_first_workflow)
+    def decide_blocked_step(
+        self,
+        workflow_id: str,
+        task_id: str,
+        action: str,
+        *,
+        actor: str,
+        guidance: str = "",
+        tenant_id: str = "default",
+    ) -> dict[str, Any]:
+        """Revise again, accept, or stop a step parked for a human decision."""
+        from ts_harness.workflows import human_decisions
+
+        return human_decisions.decide(
+            self, workflow_id, task_id, action, actor=actor, guidance=guidance, tenant_id=tenant_id
+        )
+
+    @_locked(_first_workflow)
     def resume_external(
         self,
         workflow_id: str,
@@ -751,6 +834,7 @@ class WorkflowEngine:
                 }
         return result
 
+    @_locked(_first_workflow)
     def block_wait(
         self,
         workflow_id: str,
@@ -771,6 +855,20 @@ class WorkflowEngine:
             dispatch_result={"output": output or task.get("output") or {}},
             error=reason,
         )
+
+    def block_case_prefixes(self, workflow_id: str, task_id: str) -> list[str]:
+        """``error_prefix`` of each ``on_block`` case on the task's stage, from its pinned definition."""
+        payload = self._workflow_payload(workflow_id)
+        task = next((item for item in payload.get("tasks") or [] if str(item.get("id")) == task_id), None)
+        workflow_type = str((task or {}).get("workflow_type") or (payload.get("workflow") or {}).get("workflow_type") or "")
+        if task is None or not workflow_type:
+            return []
+        try:
+            stage = self._skeleton_for_state(workflow_type, task=task, payload=payload).stage(str(task.get("step_name") or ""))
+        except (KeyError, LookupError):
+            return []
+        cases = (getattr(stage, "on_block", None) or {}).get("cases") or []
+        return [str(case.get("error_prefix")) for case in cases if isinstance(case, dict) and case.get("error_prefix")]
 
     def _find_task(self, workflow_id: str, task_id: str) -> dict[str, Any] | None:
         workflow_payload = self.client.get_workflow(workflow_id)
@@ -887,6 +985,10 @@ _default_engine: WorkflowEngine | None = None
 def _revision_cause(error: str | None) -> tuple[str, str]:
     """(message for a started revision, fallback text when the limit is hit)."""
     text = str(error or "")
+    for reason, verb in ((PR_CLOSED_REASON, "closed the PR without merging"), (PR_CHANGES_REQUESTED_REASON, "requested changes")):
+        if text.startswith(reason):
+            who = text[len(reason):].strip().removeprefix("by ").strip() or "A reviewer"
+            return f"{who} {verb}", "Human-requested revision failed"
     if "stale_base" in text or "base_advanced" in text:
         return "The base branch moved; refreshing the PR", "Base branch refresh failed"
     if "code_review" in text:

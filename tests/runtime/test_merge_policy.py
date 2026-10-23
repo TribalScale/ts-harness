@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from ts_harness.integrations.github_client import summarize_checks
+from ts_harness.integrations.github_client import GitHubError, summarize_checks
 from ts_harness.workflows import merge_policy, merge_readiness
 
 PR = "https://github.com/o/r/pull/7"
@@ -283,6 +283,12 @@ class SecurityStatusTests(unittest.TestCase):
         prepared, _github = self._prepare({"secret_scan": {"findings": []}}, github=github)
         self.assertTrue(any("harness/security-scan" in w for w in prepared["options"]["warnings"]))
 
+    def test_transient_publish_error_fails_setup_so_the_runner_retries(self):
+        github = github_mock({"state": "pending", "checks": {}, "failed": [], "pending": [], "missing": []})
+        github.create_status.side_effect = GitHubError(500, "")
+        with self.assertRaises(GitHubError):
+            self._prepare({"secret_scan": {"findings": []}}, github=github)
+
 
 class MissingGraceTests(unittest.TestCase):
     def _head(self, pinned_at=1000):
@@ -368,9 +374,8 @@ class MissingGraceTests(unittest.TestCase):
         with (
             patch.object(system_jobs, "get_memory_client", return_value=memory),
             patch.object(system_jobs, "get_workflow_engine", return_value=engine),
-            patch.object(system_jobs, "GitHubClient", return_value=github),
         ):
-            result = system_jobs.poll_github_checks(tenant_id="acme", token="t")
+            result = system_jobs.poll_github_checks(tenant_id="acme", github=github)
         self.assertEqual(result["resumed"], 1)
         payload = engine.resume_external.call_args.kwargs["payload"]
         self.assertEqual(payload["checks_state"], "failure")

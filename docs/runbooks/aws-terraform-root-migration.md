@@ -11,8 +11,17 @@ only — do not apply from both roots.
 
 - Terraform `>= 1.5`
 - AWS credentials for the target account/region
-- Copy of `infra/aws/backend.tf` (from `backend.tf` / example) pointing at the
-  existing state bucket/key
+- `infra/aws/` initialised against the existing state bucket/key. The committed
+  `backend.tf` is partial, so initialise it with the values from your install
+  config before running the script (the script skips `init` when
+  `.terraform/` exists):
+
+  ```bash
+  terraform -chdir=infra/aws init \
+    -backend-config=bucket=<bucket> -backend-config=key=<key> \
+    -backend-config=region=<region> -backend-config=encrypt=true \
+    -backend-config=use_lockfile=true   # or dynamodb_table=<table>
+  ```
 - Non-production rehearsal of real state before production cutover
 
 Optional environment gates for the migration script:
@@ -41,7 +50,8 @@ See also [`aws-install.md`](aws-install.md).
 ## Cutover steps
 
 1. Confirm no one is applying from the old `terraform/` directory.
-2. Ensure `infra/aws/backend.tf` matches the existing remote state location.
+2. Ensure `infra/aws/` is initialised against the existing remote state
+   location (see Prerequisites).
 3. From a clean checkout on the migrated branch:
 
    ```bash

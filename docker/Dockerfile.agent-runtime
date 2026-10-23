@@ -1,9 +1,12 @@
 FROM golang:1.27.2-bookworm AS go-tools
 
 # gh, gitleaks and osv-scanner are built from pinned release commits with a current Go
-# toolchain and patched golang.org/x modules, so the image does not ship the stale
-# stdlib and x/ dependencies baked into upstream release binaries.
+# toolchain and patched modules, so the image does not ship the stale stdlib and
+# dependency versions baked into upstream release binaries.
 # Bump a tool's version together with the commit its tag points to.
+# gitleaks 8.30.1 still requires klauspost/compress v1.17.11 (CVE-2026-63209,
+# fixed in v1.18.7). Patch it on this build only: gh and osv-scanner already
+# select newer releases, and a shared go get would downgrade them.
 ARG GH_VERSION=2.102.0
 ARG GH_COMMIT=fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd
 ARG GITLEAKS_VERSION=8.30.1
@@ -26,25 +29,85 @@ RUN set -eu; \
     fetch cli/cli "$GH_VERSION" "$GH_COMMIT" gh; \
     go build -ldflags "-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION}" -o /out/gh ./cmd/gh; \
     fetch gitleaks/gitleaks "$GITLEAKS_VERSION" "$GITLEAKS_COMMIT" gitleaks; \
+    go get github.com/klauspost/compress@v1.18.7; \
+    go mod tidy; \
     go build -ldflags "-s -w -X github.com/zricethezav/gitleaks/v8/version.Version=${GITLEAKS_VERSION}" -o /out/gitleaks .; \
     fetch google/osv-scanner "$OSV_SCANNER_VERSION" "$OSV_SCANNER_COMMIT" osv-scanner; \
     go build -ldflags "-s -w" -o /out/osv-scanner ./cmd/osv-scanner
 
-FROM python:3.11-slim
+FROM python:3.11-slim-trixie
 
 WORKDIR /app
 
-RUN apt-get update \
+# make/gcc/libc6-dev: Makefile repos, cgo and Rust linking. The JDK backs Maven and Gradle
+# (trixie packages JDK 21, not 17).
+RUN mkdir -p /usr/share/man/man1 \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         docker.io \
+        gcc \
         git \
         gnupg \
+        libc6-dev \
+        make \
+        openjdk-21-jdk-headless \
+        unzip \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # gh for repo automation; gitleaks + osv-scanner for coding-backend verify (secret scan + dependency audit).
 COPY --from=go-tools /out/gh /out/gitleaks /out/osv-scanner /usr/local/bin/
+
+# Toolchains for host verification of target repos (see implementation/test_env.py).
+# Bump a version together with its checksums.
+COPY --from=go-tools /usr/local/go /usr/local/go
+
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256_AMD64=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+ARG NODE_SHA256_ARM64=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
+ARG MAVEN_VERSION=3.9.16
+ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
+ARG GRADLE_VERSION=9.8.2
+ARG GRADLE_SHA256=21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607
+ARG RUSTUP_VERSION=1.29.2
+ARG RUSTUP_SHA256_AMD64=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4
+ARG RUSTUP_SHA256_ARM64=a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697
+ARG RUST_TOOLCHAIN=1.99.1
+ARG TARGETARCH
+ENV RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/go/bin:/usr/local/cargo/bin:/opt/node/bin:/opt/maven/bin:/opt/gradle/bin:$PATH
+
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$arch" in \
+      amd64) node_arch=x64; node_sha="$NODE_SHA256_AMD64"; rust_triple=x86_64-unknown-linux-gnu; rustup_sha="$RUSTUP_SHA256_AMD64" ;; \
+      arm64) node_arch=arm64; node_sha="$NODE_SHA256_ARM64"; rust_triple=aarch64-unknown-linux-gnu; rustup_sha="$RUSTUP_SHA256_ARM64" ;; \
+      *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+    esac; \
+    cd /tmp; \
+    curl -fsSLo node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"; \
+    echo "${node_sha}  node.tar.xz" | sha256sum -c -; \
+    mkdir -p /opt/node && tar -xJf node.tar.xz -C /opt/node --strip-components=1; \
+    curl -fsSLo maven.tar.gz "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz"; \
+    echo "${MAVEN_SHA512}  maven.tar.gz" | sha512sum -c -; \
+    mkdir -p /opt/maven && tar -xzf maven.tar.gz -C /opt/maven --strip-components=1; \
+    curl -fsSLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"; \
+    echo "${GRADLE_SHA256}  gradle.zip" | sha256sum -c -; \
+    unzip -q gradle.zip -d /opt && mv "/opt/gradle-${GRADLE_VERSION}" /opt/gradle; \
+    curl -fsSLo rustup-init "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rust_triple}/rustup-init"; \
+    echo "${rustup_sha}  rustup-init" | sha256sum -c -; \
+    chmod +x rustup-init; \
+    CARGO_HOME=/usr/local/cargo ./rustup-init -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"; \
+    rm -f node.tar.xz maven.tar.gz gradle.zip rustup-init; \
+    chmod -R a+rX /usr/local/rustup /usr/local/cargo; \
+    go version && node --version && npm --version && java -version && mvn -v && gradle --version && cargo --version
+
+COPY docker/test-runner-requirements.txt /opt/ts-harness/test-runner-requirements.txt
+RUN pip download --no-cache-dir --only-binary=:all: -d /opt/ts-harness/wheels \
+        -r /opt/ts-harness/test-runner-requirements.txt \
+    && chmod -R a+rX /opt/ts-harness
 
 COPY docker/agent-runtime-constraints.txt /tmp/constraints.txt
 RUN pip install --no-cache-dir -c /tmp/constraints.txt uv \
@@ -58,11 +121,12 @@ COPY scripts ./scripts
 COPY config ./config
 COPY skills ./skills
 COPY workspace ./workspace
+COPY evals ./evals
 
 COPY scripts/mcporter /usr/local/bin/mcporter
 RUN chmod +x /usr/local/bin/mcporter
 
-RUN pip install --no-cache-dir -c /tmp/constraints.txt ".[google]" "psycopg[binary]" \
+RUN pip install --no-cache-dir -c /tmp/constraints.txt ".[google,aws,gcp]" "psycopg[binary]" \
     && pip uninstall -y setuptools wheel \
     && rm /tmp/constraints.txt
 

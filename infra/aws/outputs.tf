@@ -83,7 +83,7 @@ output "data_disk_device_hint" {
 
 output "secret_prefix" {
   description = "Secrets Manager name prefix"
-  value       = var.project_name
+  value       = local.secret_prefix_effective
 }
 
 output "managed_db_host" {
@@ -134,4 +134,38 @@ output "monitoring_namespace" {
 output "notification_channel_id" {
   description = "SNS topic ARN for operational alerts"
   value       = aws_sns_topic.alerts.arn
+}
+
+# ---------------------------------------------------------------------------
+# Scale-out (deployment_profile = scale_out)
+# ---------------------------------------------------------------------------
+
+output "coding_worker_repository_url" {
+  description = "ECR repository for the coding-worker image (scale_out)"
+  value       = try(aws_ecr_repository.coding_worker[0].repository_url, "")
+}
+
+output "coding_ecs_cluster" {
+  description = "ECS cluster that runs coding workers (scale_out)"
+  value       = try(aws_ecs_cluster.coding[0].name, "")
+}
+
+output "coding_worker_task_family" {
+  description = "Task definition family for coding workers (scale_out)"
+  value       = local.ecs_enabled ? local.coding_worker_family : ""
+}
+
+output "memory_api_internal_url" {
+  description = "Memory API URL that coding workers use through the internal load balancer (scale_out)"
+  value       = local.memory_api_worker_url
+}
+
+output "skills_bucket" {
+  description = "S3 bucket for managed skill files (object_backend=s3)"
+  value       = try(aws_s3_bucket.skills[0].id, "")
+}
+
+output "workspaces_bucket" {
+  description = "S3 bucket for agent workspaces (object_backend=s3)"
+  value       = try(aws_s3_bucket.workspaces[0].id, "")
 }

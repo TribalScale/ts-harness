@@ -78,7 +78,7 @@ and barrier stages, plus declarative contracts (`contracts` / `contract_ref`).
 enforce `qa_gate` before `await_human_merge`. Compensation can be declared via
 `on_failure.compensate_on_failure`.
 
-The `verified_merge` fragment (1.5.0) runs `await_pr_checks` → `review_precheck`
+The `verified_merge` fragment (1.6.0) runs `await_pr_checks` → `review_precheck`
 → `code_review` → `finalize_code_review` → `qa_gate` → `ensure_fresh` →
 `await_human_merge`. `review_precheck`, `finalize_code_review` and
 `ensure_fresh` are system steps (barrier stages run by the runner, no agent);
@@ -88,7 +88,56 @@ both run the stage's `on_block`, so a stale base (`stale_base`) or a sibling
 merge (`base_advanced`) sends the PR back to the implement stage as a refresh
 revision. `revise_on_reject` supports a named `revise.budget`, counted
 separately from the default budget, and `revise.static_input` merged into the
-revision input.
+revision input. `on_block.cases` overrides that config per block reason: the
+first case whose `error_prefix` matches the block error is applied over it, and
+`action: "stop"` leaves the stage blocked without a revision. `await_human_merge`
+uses this for human rejection (a "Request changes" review or `/revise` comment
+revises with `budget: "human"`; a closed PR stops).
+
+A task stage may set `"execution": "coding_job"` (`deliver_work_order` 1.5.0
+does). With `CODING_JOBS_ENABLED=true` the runner does not dispatch it to an
+agent: it queues a row in `coding_jobs`, parks the task on
+`awaiting_external:coding.finished` and moves on. `coding-launcher` starts a
+worker container per job; the worker reports to the memory API with a
+per-job token, and completion (or the `sweep_coding_jobs` watchdog marking it
+lost) puts the task back to pending in the same transaction. On that dispatch
+the runner reads the unconsumed job result, maps it to the stage output and
+runs the stage contract (including `validate_coding_backend_pr_url`) before the
+normal success or blocked handling, then marks the job consumed. A coding_job
+stage must have a `contract_ref`.
+
+Every task has a claim lane: `fast` for barriers, waits and approval gates,
+`coding` for `execution: coding_job` stages, and `agent` otherwise. A stage may
+override it with `"lane"`. Tasks also carry the `team_id` and `requested_by` of
+their program (a trigger copies them at insert, following parent workflows).
+`POST /workflow/claim-batch` (`claim_ready_workflow_tasks`, migration 037)
+claims up to N ready tasks of one lane with `FOR UPDATE SKIP LOCKED`, at most
+one per workflow and none for a workflow that already has a running task.
+Approved gates and resumed or retried tasks go first, then the requester and
+team with the fewest running tasks, then the oldest. Runners extend a running
+task's lease with `POST /workflow/tasks/{id}/renew-lease`.
+
+Several runners can share one database. Each claims per lane up to its free
+slots from `lane_caps` (`WORKFLOW_RUNNER_LANE_CAPS`, set it to `off` for the old
+list-then-claim loop) and renews its tasks' leases every third of the lease.
+Only the leader (`runner_leader_lease`) sweeps stale tasks. Give each replica its
+own `WORKFLOW_RUNNER_ID`; the default includes the hostname.
+
+Writes to one workflow are serialized by its row in `workflow_locks` (migration
+038, `POST /workflow/{id}/lock` and `/unlock`). The runner holds it while
+recording a task's outcome, and the engine's entry points (transitions, approve,
+reject, cancel, external resume, blocked-step decisions) take it too. The lock
+is reentrant per thread and released during the agent turn. A holder that dies
+loses it after `WORKFLOW_LOCK_TTL_SECONDS` (300); a writer that waits 30 seconds
+gives up with `WorkflowLockTimeout` and the task is retried. If the memory API
+cannot lock, writers run unlocked for five minutes and log a warning.
+`WORKFLOW_LOCKS_ENABLED=false` turns locking off.
+
+Coding jobs are claimed within the global limit and per-requester, per-program
+and per-team quotas from `scheduling.coding` in the runtime config (defaults 2,
+3 and 8; 0 means no limit). `CODING_QUOTA_PER_USER`, `CODING_QUOTA_PER_PROGRAM`
+and `CODING_QUOTA_PER_TEAM` override them, and `scheduling.coding.global`
+replaces `CODING_MAX_RUNNING` when set. A job over a quota stays queued.
 
 **Implemented today:** first-class workflow records, delivery programs, stage
 contracts, QA gates, compensation hooks, external wait/`match_all`, merge poller
