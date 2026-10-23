@@ -1319,10 +1319,13 @@ class MemoryClient:
     def append_audit_events(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         return self._request("POST", "/audit-events", {"events": events})
 
-    def list_audit_events(self, *, tenant_id: str = "", since: str = "", until: str = "") -> list[dict[str, Any]]:
+    def list_audit_events(
+        self, *, tenant_id: str = "", since: str = "", until: str = "", limit: int = 0
+    ) -> list[dict[str, Any]]:
+        """Events in sequence order; the server returns at most ``limit`` (default 10,000, max 50,000)."""
         from urllib.parse import urlencode
 
-        params = {k: v for k, v in {"tenant_id": tenant_id, "since": since, "until": until}.items() if v}
+        params = {k: v for k, v in {"tenant_id": tenant_id, "since": since, "until": until, "limit": limit}.items() if v}
         return list(self._request("GET", f"/audit-events?{urlencode(params)}").get("events") or [])
 
     def mark_channel_event(self, key: str) -> bool:

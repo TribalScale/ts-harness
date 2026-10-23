@@ -31,6 +31,8 @@ services:
       TS_HARNESS_PROGRAM_DEFINITION_STORE: /workflow-definitions/programs
       TS_HARNESS_FRAGMENT_DEFINITION_STORE: /workflow-definitions/fragments
       TS_HARNESS_FRAGMENTS_DIR: /config/fragments
+      TS_HARNESS_STATE_BACKEND: ${TS_HARNESS_STATE_BACKEND:-local}
+      TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       # Needed so complete_program_phase / advance_program materialize implement
       # tasks with the real repo_url + base_branch (not ImplementationRepoConfig defaults).
       TS_HARNESS_ROOT: /app

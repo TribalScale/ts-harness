@@ -117,9 +117,20 @@ session database. Replicas keep shared state in that database (migration 039):
   reloads the cron file when another replica edits it.
 
 `recreate_ts_harness_services` and `restart_agent_runtime` include the second
-pair automatically. Running several hosts behind the ALB is not supported yet:
-workflow definitions, managed skills and the cron file live on per-host
-volumes.
+pair automatically.
+
+## Shared state
+
+`scale_out` defaults `TS_HARNESS_STATE_BACKEND` to `postgres` and
+`TS_HARNESS_OBJECT_BACKEND` to `s3`: definitions, cron, scheduler and
+delegation state and audit go to Postgres, and managed skills and agent
+workspaces go to two S3 buckets. Phases 10a and 12 pass the flags through, and
+the old volumes are mounted read-only for one release. `single_host` keeps
+files on the host unless the flags are set. Existing installs switch with an
+import first: see [shared-state.md](shared-state.md).
+
+Running several hosts behind the ALB is still not supported: phase scripts,
+the sandbox worker and host cron are per host.
 
 ## Switching from single_host to scale_out
 
@@ -127,7 +138,9 @@ Moving an existing install into the dedicated VPC replaces the host, its
 security group and the RDS subnet group. Snapshot RDS and the data volume
 first and plan a maintenance window.
 
-1. Set `deployment_profile: scale_out` in the install config.
+1. Set `deployment_profile: scale_out` in the install config. Pin
+   `runtime.state_backend` and `runtime.object_backend` to `local` until the
+   state is imported ([shared-state.md](shared-state.md)).
 2. Run the installer plan and review the new VPC, ECR and ECS resources.
 3. Apply, then re-run bootstrap phases 11 and 12 so the runtime config and
    compose overlay pick up the new profile.

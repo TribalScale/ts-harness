@@ -225,6 +225,7 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         ):
             if key in runtime and runtime[key] is not None:
                 tfvars[key] = runtime[key]
+        _storage_backend_tfvars(tfvars, runtime)
         return {k: v for k, v in tfvars.items() if v is not None}
 
     # GCP root uses install-contract variable names.
@@ -294,7 +295,16 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
     ):
         if key in runtime and runtime[key] is not None:
             tfvars[key] = runtime[key]
+    _storage_backend_tfvars(tfvars, runtime)
     return {k: v for k, v in tfvars.items() if v is not None}
+
+
+def _storage_backend_tfvars(tfvars: dict[str, Any], runtime: Mapping[str, Any]) -> None:
+    """Pass state_backend and object_backend only when set; blank keeps the provider root's default."""
+    for key in ("state_backend", "object_backend"):
+        value = str(runtime.get(key) or "").strip()
+        if value:
+            tfvars[key] = value
 
 
 def write_tfvars(path: Path, tfvars: Mapping[str, Any]) -> Path:

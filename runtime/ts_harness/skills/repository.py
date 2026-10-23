@@ -252,10 +252,21 @@ class IndexedSkillRepository(SkillRepository):
         return self.objects.get(key, expected_sha256=sha)
 
     def _materialize(self, rows: list[dict[str, Any]], generation: int) -> None:
+        from ts_harness.storage.objects import ObjectNotFound
+
         wanted: dict[str, bytes] = {}
         for row in rows:
-            for rel, sha, key in self._row_files(row):
-                wanted[rel] = self._fetch(rel, sha, key)
+            files: dict[str, bytes] = {}
+            try:
+                for rel, sha, key in self._row_files(row):
+                    files[rel] = self._fetch(rel, sha, key)
+            except ObjectNotFound:
+                if row.get("status") != "draft":
+                    raise
+                # The bucket expires skills/drafts/ after 30 days; one stale draft must not block every sync.
+                logger.warning("skipping draft %s: its files are gone from %s", row.get("skill_id"), row.get("object_prefix"))
+                continue
+            wanted.update(files)
         if self._swap_mode():
             self._swap_in(wanted, generation)
         else:

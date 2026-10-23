@@ -1,4 +1,6 @@
 import glob
+import os
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -114,7 +116,7 @@ class OpsHardeningContractTests(unittest.TestCase):
         self.assertGreaterEqual(
             compose.count(
                 "ts-harness-workflow-definitions:"
-                "/workflow-definitions:rw"
+                "/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}"
             ),
             2,
         )
@@ -353,6 +355,95 @@ class LlmProxyContractTests(unittest.TestCase):
         self.assertIn("printf '%s\\n' llm-proxy", common)
         fetch = (REPO_ROOT / "scripts" / "phases" / "10-fetch-secrets.sh").read_text()
         self.assertIn('write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"', fetch)
+
+
+STORAGE_FLAGS = ("TS_HARNESS_STATE_BACKEND", "TS_HARNESS_OBJECT_BACKEND", "TS_HARNESS_SKILLS_BUCKET", "TS_HARNESS_WORKSPACE_BUCKET")
+
+
+def _resolve_storage(**env: str) -> dict[str, str]:
+    script = (
+        f'set -euo pipefail; source "{COMMON}"; resolve_storage_backends; '
+        'for k in TS_HARNESS_STATE_BACKEND TS_HARNESS_OBJECT_BACKEND TS_HARNESS_STATE_VOLUME_MODE TS_HARNESS_OBJECT_VOLUME_MODE; '
+        'do echo "$k=${!k}"; done'
+    )
+    out = subprocess.run(
+        ["bash", "-c", script], env={"PATH": os.environ["PATH"], **env}, capture_output=True, text=True, check=True
+    )
+    return dict(line.split("=", 1) for line in out.stdout.splitlines())
+
+
+class SharedStateContractTests(unittest.TestCase):
+    """Storage flags flow runtime-config -> instance-env (10a) -> compose (12); docs/runbooks/shared-state.md."""
+
+    def test_flags_are_persisted_and_passed_to_compose(self):
+        common = COMMON.read_text()
+        keys = common[common.index("INSTANCE_ENV_KEYS=("):common.index("instance_env_path()")]
+        compose_env = common[common.index("run_docker_compose_as_admin()"):common.index("with_runtime_replicas()")]
+        for flag in STORAGE_FLAGS:
+            self.assertIn(f"    {flag}\n", keys)
+            self.assertIn(f'{flag}="${{{flag}:-', compose_env)
+        for mode in ("TS_HARNESS_STATE_VOLUME_MODE", "TS_HARNESS_OBJECT_VOLUME_MODE"):
+            self.assertIn(f'{mode}="${{{mode}:-rw}}"', compose_env)
+        phase12 = (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text()
+        self.assertLess(phase12.index("resolve_storage_backends"), phase12.index("PHASE_FINGERPRINT="))
+        self.assertIn('"$STORAGE_FINGERPRINT")"', phase12)
+        for name in (*STORAGE_FLAGS, "TS_HARNESS_STATE_VOLUME_MODE", "TS_HARNESS_OBJECT_VOLUME_MODE"):
+            self.assertIn(f'echo "export {name}=', phase12)
+        phase10b = (REPO_ROOT / "scripts" / "phases" / "10b-render-workspace.sh").read_text()
+        self.assertLess(phase10b.index("load_instance_env"), phase10b.index("resolve_storage_backends"))
+
+    def test_profile_defaults(self):
+        self.assertEqual(
+            _resolve_storage(),
+            {"TS_HARNESS_STATE_BACKEND": "local", "TS_HARNESS_OBJECT_BACKEND": "local",
+             "TS_HARNESS_STATE_VOLUME_MODE": "rw", "TS_HARNESS_OBJECT_VOLUME_MODE": "rw"},
+        )
+        both = {"TS_HARNESS_SKILLS_BUCKET": "s", "TS_HARNESS_WORKSPACE_BUCKET": "w"}
+        self.assertEqual(
+            _resolve_storage(DEPLOYMENT_PROFILE="scale_out", **both),
+            {"TS_HARNESS_STATE_BACKEND": "postgres", "TS_HARNESS_OBJECT_BACKEND": "s3",
+             "TS_HARNESS_STATE_VOLUME_MODE": "ro", "TS_HARNESS_OBJECT_VOLUME_MODE": "ro"},
+        )
+        gcp = _resolve_storage(DEPLOYMENT_PROFILE="scale_out", CLOUD_PROVIDER="gcp", **both)
+        self.assertEqual(gcp["TS_HARNESS_OBJECT_BACKEND"], "gcs")
+        no_buckets = _resolve_storage(DEPLOYMENT_PROFILE="scale_out")
+        self.assertEqual((no_buckets["TS_HARNESS_STATE_BACKEND"], no_buckets["TS_HARNESS_OBJECT_BACKEND"]), ("postgres", "local"))
+        pinned = _resolve_storage(DEPLOYMENT_PROFILE="scale_out", TS_HARNESS_STATE_BACKEND="local",
+                                  TS_HARNESS_OBJECT_BACKEND="local", **both)
+        self.assertEqual(set(pinned.values()), {"local", "rw"})
+
+    def test_compose_mirror_paths_and_read_only_old_volumes(self):
+        services = _compose("docker-compose.agent-runtime.yml")["services"]
+        for name in ("agent-runtime", "agent-runtime-prod"):
+            service = services[name]
+            env = service["environment"]
+            for flag in STORAGE_FLAGS:
+                self.assertTrue(env[flag].startswith(f"${{{flag}:-"), (name, flag))
+            self.assertEqual(env["TS_HARNESS_MIRROR_DIR"], "/var/lib/ts-harness/mirror")
+            self.assertEqual(env["TS_HARNESS_SCRATCH_DIR"], "/var/tmp/ts-harness")
+            volumes = service["volumes"]
+            self.assertIn("ts-harness-workflow-definitions:/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}", volumes)
+            self.assertIn("ts-harness-skills-managed:/skills-managed:${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}", volumes)
+            self.assertTrue(any(v.endswith("/config/runtime-cron-jobs.json:${TS_HARNESS_STATE_VOLUME_MODE:-rw}") for v in volumes))
+            self.assertIn("ts-harness-state:/state", volumes)
+            self.assertTrue(any(v.endswith("/workspace:/workspace:rw") for v in volumes))
+        runner = _compose("docker-compose.workflow-runner.yml")["services"]["workflow-runner"]["environment"]
+        self.assertEqual(runner["TS_HARNESS_STATE_BACKEND"], "${TS_HARNESS_STATE_BACKEND:-local}")
+        self.assertEqual(runner["TS_HARNESS_MIRROR_DIR"], "/var/lib/ts-harness/mirror")
+
+    def test_import_script_and_modes(self):
+        script = REPO_ROOT / "scripts" / "ops" / "migrate-host-state.py"
+        wrapper = REPO_ROOT / "scripts" / "ops" / "migrate-host-state.sh"
+        self.assertTrue(script.is_file() and wrapper.is_file())
+        text = script.read_text()
+        for flag in ('"--import"', '"--verify"', '"--export"', '"--only"', '"--force"', '"--object-backend"'):
+            self.assertIn(flag, text)
+        self.assertIn('SECTIONS = ("definitions", "cron", "skills", "kv", "audit", "workspace")', text)
+        self.assertIn('WORKSPACE_SKIP_PARTS = {"coding-backend", ".git"}', text)
+        self.assertIn("python3 \"$SCRIPT_PATH\" \"$@\"", wrapper.read_text())
+        runbook = (REPO_ROOT / "docs" / "runbooks" / "shared-state.md").read_text()
+        for step in ("--import", "--verify", "--export"):
+            self.assertIn(f"migrate-host-state.sh {step}", runbook)
 
 
 if __name__ == "__main__":

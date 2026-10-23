@@ -54,6 +54,16 @@ First public release.
   - Monitoring: a scale-out CloudWatch dashboard and alarms for coding jobs
     queued over 15 minutes, lost-job rate and GitHub quota under 10%, with the
     same numbers as Prometheus gauges (migration 042).
+  - Shared state ([runbook](docs/runbooks/shared-state.md)):
+    `TS_HARNESS_STATE_BACKEND=postgres` keeps workflow definitions, the cron
+    file, scheduler and delegation state, audit events and Slack dedup in
+    Postgres, and `TS_HARNESS_OBJECT_BACKEND=s3|gcs` keeps managed skills
+    (indexed in Postgres, immutable approved versions) and agent workspaces in
+    buckets that Terraform creates on AWS and GCP (migration 043). Replicas read
+    local mirrors and write under Postgres locks. `scale_out` turns both on;
+    `single_host` keeps files on the host. `scripts/ops/migrate-host-state.sh`
+    imports, verifies and exports for rollback; existing `scale_out` installs
+    should pin both flags to `local` until they import.
 
 ### Changed
 

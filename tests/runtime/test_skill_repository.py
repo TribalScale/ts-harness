@@ -203,6 +203,23 @@ class IndexedRepositoryTests(unittest.TestCase):
             other.sync(force=True)
         self.assertFalse(other.root.exists())
 
+    def test_expired_draft_objects_skip_the_draft_but_not_the_sync(self):
+        repo = self.replica()
+        repo.propose_markdown(agent_id="ops-agent", tenant_id="default", markdown=DRAFT_MD)
+        repo.approve(skill_id="team-runbook", reviewer="admin-1")
+        repo.propose_markdown(agent_id="ops-agent", tenant_id="default", markdown=REVISED_MD, revision_of="team-runbook")
+        self.objects.delete_prefix("skills/drafts/")
+        other = self.replica("b")
+        with self.assertLogs("ts_harness.skills.repository", "WARNING") as logs:
+            self.assertTrue(other.sync(force=True))
+        self.assertIn("skipping draft team-runbook", logs.output[0])
+        self.assertTrue((other.root / "ops" / "team-runbook.md").is_file())
+        self.assertFalse((other.root / "drafts").exists())
+
+        self.objects.delete_prefix("skills/team-runbook/")
+        with self.assertRaises(Exception):
+            self.replica("c").sync(force=True)
+
     def test_rebuild_downloads_only_what_changed(self):
         repo = self.replica()
         repo.propose_markdown(agent_id="ops-agent", tenant_id="default", markdown=DRAFT_MD)

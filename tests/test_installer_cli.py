@@ -103,6 +103,19 @@ class InstallerCliTests(unittest.TestCase):
         cfg["deployment_profile"] = "scale_out"
         self.assertEqual(install_mod.generate_tfvars(cfg, cloud="aws")["deployment_profile"], "scale_out")
 
+    def test_generate_tfvars_passes_storage_backends_only_when_set(self):
+        cfg = load_install_config(AWS_EXAMPLE)
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertNotIn("state_backend", tfvars)
+        self.assertNotIn("object_backend", tfvars)
+        cfg["runtime"] = {**cfg["runtime"], "state_backend": "local", "object_backend": "local"}
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual((tfvars["state_backend"], tfvars["object_backend"]), ("local", "local"))
+        gcp = load_install_config(GCP_EXAMPLE)
+        gcp["runtime"] = {**gcp["runtime"], "state_backend": "postgres", "object_backend": "gcs"}
+        tfvars = install_mod.generate_tfvars(gcp, cloud="gcp")
+        self.assertEqual((tfvars["state_backend"], tfvars["object_backend"]), ("postgres", "gcs"))
+
     def test_generate_tfvars_maps_oidc_runtime_fields(self):
         cfg = load_install_config(AWS_EXAMPLE)
         tfvars = install_mod.generate_tfvars(cfg, cloud="aws")

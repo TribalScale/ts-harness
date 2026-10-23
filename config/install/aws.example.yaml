@@ -68,6 +68,10 @@ runtime:
   workflow_runner_batch_size: 5
   workflow_runner_lease_seconds: 1800
   workflow_runner_stale_policy: block
+  # Blank follows deployment_profile (scale_out: postgres and s3). To switch an
+  # existing install, follow docs/runbooks/shared-state.md (import first).
+  state_backend: ""
+  object_backend: ""
   # OpenCode runs as queued jobs in worker containers; turn on after one supervised run.
   coding_jobs_enabled: false
   coding_max_running: 3

@@ -40,6 +40,8 @@ if [[ ! -f "$RENDERER" ]]; then
     exit 1
 fi
 
+load_instance_env
+resolve_storage_backends
 OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}"
 # A path that does not exist is hashed by name, so this re-runs the phase when the backend or bucket changes.
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "$CONFIG" "$SOURCE_WORKSPACE" "$RENDERER" \

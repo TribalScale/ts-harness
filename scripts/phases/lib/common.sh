@@ -441,7 +441,44 @@ INSTANCE_ENV_KEYS=(
     LLM_PROXY_ENABLED
     CODING_WORKER_LLM_PROXY_URL
     LLM_PROXY_HOST_PORT
+    TS_HARNESS_STATE_BACKEND
+    TS_HARNESS_OBJECT_BACKEND
+    TS_HARNESS_SKILLS_BUCKET
+    TS_HARNESS_WORKSPACE_BUCKET
 )
+
+# Storage flags (docs/runbooks/shared-state.md). Unset flags follow the profile:
+# scale_out uses Postgres for state and the cloud's object store when both
+# buckets are known; everything else keeps files on the host. Once a backend is
+# on, the old volumes it replaces are mounted read-only.
+resolve_storage_backends() {
+    local profile="${DEPLOYMENT_PROFILE:-single_host}"
+    local cloud_object=s3
+    [[ "${CLOUD_PROVIDER:-aws}" == "gcp" ]] && cloud_object=gcs
+    if is_blank_or_placeholder "${TS_HARNESS_STATE_BACKEND:-}"; then
+        if [[ "$profile" == "scale_out" ]]; then
+            TS_HARNESS_STATE_BACKEND=postgres
+        else
+            TS_HARNESS_STATE_BACKEND=local
+        fi
+    fi
+    if is_blank_or_placeholder "${TS_HARNESS_OBJECT_BACKEND:-}"; then
+        TS_HARNESS_OBJECT_BACKEND=local
+        if [[ "$profile" == "scale_out" ]]; then
+            if ! is_blank_or_placeholder "${TS_HARNESS_SKILLS_BUCKET:-}" && ! is_blank_or_placeholder "${TS_HARNESS_WORKSPACE_BUCKET:-}"; then
+                TS_HARNESS_OBJECT_BACKEND="$cloud_object"
+            else
+                echo "WARNING: scale_out without TS_HARNESS_SKILLS_BUCKET and TS_HARNESS_WORKSPACE_BUCKET; skills and workspaces stay on the host" >&2
+            fi
+        fi
+    fi
+    TS_HARNESS_STATE_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_STATE_BACKEND" == "postgres" ]] && TS_HARNESS_STATE_VOLUME_MODE=ro
+    TS_HARNESS_OBJECT_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_OBJECT_BACKEND" != "local" ]] && TS_HARNESS_OBJECT_VOLUME_MODE=ro
+    export TS_HARNESS_STATE_BACKEND TS_HARNESS_OBJECT_BACKEND TS_HARNESS_STATE_VOLUME_MODE TS_HARNESS_OBJECT_VOLUME_MODE
+    export TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}"
+}
 
 instance_env_path() {
     echo "${DATA_DIR:?DATA_DIR must be set}/.setup/instance-env.sh"
@@ -699,6 +736,12 @@ run_docker_compose_as_admin() {
             LLM_PROXY_REPLICA_URL="${LLM_PROXY_REPLICA_URL:-}" \
             LLM_PROXY_HOST_PORT="${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}" \
             CODING_WORKER_LLM_PROXY_URL="${CODING_WORKER_LLM_PROXY_URL:-}" \
+            TS_HARNESS_STATE_BACKEND="${TS_HARNESS_STATE_BACKEND:-local}" \
+            TS_HARNESS_OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}" \
+            TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" \
+            TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}" \
+            TS_HARNESS_STATE_VOLUME_MODE="${TS_HARNESS_STATE_VOLUME_MODE:-rw}" \
+            TS_HARNESS_OBJECT_VOLUME_MODE="${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}" \
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 

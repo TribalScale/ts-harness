@@ -44,6 +44,8 @@ export TS_HARNESS_CONFIG_DIR="${TS_HARNESS_CONFIG_DIR:-$DATA_DIR/.ts-harness}"
 echo "[phase:${PHASE_NAME}] Starting containers (memory_backend=${MEMORY_BACKEND:-unset})..."
 
 resolve_cloud_neutral_env
+resolve_storage_backends
+echo "[phase:${PHASE_NAME}] Storage: state=${TS_HARNESS_STATE_BACKEND} objects=${TS_HARNESS_OBJECT_BACKEND}"
 
 # Build COMPOSE_FILES and resolve DB connection vars. TS Harness owns the
 # full compose stack after cutover; no upstream runtime compose is required.
@@ -177,7 +179,9 @@ if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
     echo "[phase:${PHASE_NAME}] LLM proxy enabled: model calls are metered through llm-proxy"
 fi
 
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh")"
+# A path that does not exist is hashed by name, so a storage flag change re-runs compose up.
+STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}"
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -254,6 +258,12 @@ fi
     echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
     echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER:-}")"
     echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"
+    echo "export TS_HARNESS_STATE_BACKEND=$(printf '%q' "${TS_HARNESS_STATE_BACKEND}")"
+    echo "export TS_HARNESS_OBJECT_BACKEND=$(printf '%q' "${TS_HARNESS_OBJECT_BACKEND}")"
+    echo "export TS_HARNESS_SKILLS_BUCKET=$(printf '%q' "${TS_HARNESS_SKILLS_BUCKET:-}")"
+    echo "export TS_HARNESS_WORKSPACE_BUCKET=$(printf '%q' "${TS_HARNESS_WORKSPACE_BUCKET:-}")"
+    echo "export TS_HARNESS_STATE_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_STATE_VOLUME_MODE}")"
+    echo "export TS_HARNESS_OBJECT_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_OBJECT_VOLUME_MODE}")"
     echo "export CODING_ECS_CLUSTER=$(printf '%q' "${CODING_ECS_CLUSTER:-}")"
     echo "export CODING_ECS_TASK_DEFINITION=$(printf '%q' "${CODING_ECS_TASK_DEFINITION:-}")"
     echo "export CODING_ECS_CONTAINER=$(printf '%q' "${CODING_ECS_CONTAINER:-coding-worker}")"

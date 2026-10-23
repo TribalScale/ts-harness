@@ -249,6 +249,16 @@
           "type": "string",
           "enum": ["block", "fail"]
         },
+        "state_backend": {
+          "type": "string",
+          "enum": ["", "local", "postgres"],
+          "description": "Where definitions, cron, scheduler state and audit live. Blank follows deployment_profile (scale_out: postgres). See docs/runbooks/shared-state.md before switching an existing install."
+        },
+        "object_backend": {
+          "type": "string",
+          "enum": ["", "local", "s3", "gcs"],
+          "description": "Where skill files and agent workspaces live. Blank follows deployment_profile (scale_out: s3 on AWS). gcs is GCP only and must be set explicitly."
+        },
         "embeddings_provider": {
           "type": "string",
           "enum": ["openai", "voyage", "gemini", "mistral", "bedrock", "local"]

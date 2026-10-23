@@ -742,6 +742,34 @@ RETURNING t.*;
   in the runtime, a deploy only interrupts in-progress chat or agent turns, and
   those are retried by the runner as today.
 
+### Durable state off the host
+
+Replicas on several hosts, and later Fargate, need every piece of durable state
+off the host's disk. Two flags move it, defaulting to today's files
+(runbook: `docs/runbooks/shared-state.md`):
+
+- `TS_HARNESS_STATE_BACKEND=postgres` puts the definition tree and the cron
+  file in `shared_files` (whole-file rows with a per-namespace generation),
+  scheduler and delegation state in `runtime_kv` (compare-and-set),
+  audit events in `runtime_audit_events` and Slack dedup in
+  `channel_event_dedup` (migration 043). The memory API stays the only
+  database client.
+- `TS_HARNESS_OBJECT_BACKEND=s3|gcs` puts managed skill files in a bucket
+  (drafts under `skills/drafts/`, approved versions under immutable
+  `skills/{id}/{version}-{sha12}/` prefixes, indexed in `skill_versions`) and
+  agent workspaces under `workspaces/{agent}/` in a second bucket.
+- Readers keep reading plain files: each process keeps a local mirror of the
+  trees and of the active skills and rebuilds it when the generation moves.
+  Writers take a lease lock in `shared_file_locks`, pull, edit the mirror and
+  push the changed files in one commit that fails on a stale generation.
+- Checkouts and sandbox working directories use container scratch; they are
+  regenerable and need a real file system, not a shared one.
+- No EFS: nothing durable needs a shared POSIX file system. The one later case
+  is a persistent shell workspace per agent.
+
+`scripts/ops/migrate-host-state.py` imports the volumes, verifies by hash and
+exports back for rollback. `scale_out` turns both flags on by default.
+
 ### Memory API
 
 - Several copies behind an internal load balancer. It holds no in-process state
