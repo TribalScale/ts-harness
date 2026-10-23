@@ -68,7 +68,8 @@ runtime:
   slack_marketing_channel: ""
   slack_sales_channel: ""
   approved_slack_channels: []
-  # Admin identity (Auth0/OIDC). Leave static unless you set all oidc_* fields.
+  # Admin identity (Auth0/OIDC). oidc needs issuer, audience and client id; the
+  # JWKS URL and endpoints come from discovery when empty (docs/runbooks/auth0-setup.md).
   identity_provider: static
   oidc_issuer: ""
   oidc_audience: ""

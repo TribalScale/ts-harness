@@ -236,6 +236,23 @@ class InstallContractTests(unittest.TestCase):
         )
         validate_install_config(cfg)
 
+    def test_oidc_endpoints_may_come_from_discovery(self):
+        cfg = _load_yaml(AWS_EXAMPLE)
+        cfg["runtime"].update(
+            {
+                "identity_provider": "oidc",
+                "oidc_preset": "auth0",
+                "oidc_issuer": "https://tenant.us.auth0.com/",
+                "oidc_audience": "https://ts-harness/api",
+                "oidc_client_id": "spa-client-id",
+            }
+        )
+        validate_install_config(cfg)
+        cfg["runtime"]["oidc_client_id"] = ""
+        with self.assertRaises(InstallContractError) as ctx:
+            validate_install_config(cfg)
+        self.assertIn("oidc_client_id", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

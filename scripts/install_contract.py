@@ -160,14 +160,8 @@ def validate_install_config(
 
     runtime = config.get("runtime") or {}
     if isinstance(runtime, Mapping) and str(runtime.get("identity_provider") or "static") == "oidc":
-        for key in (
-            "oidc_issuer",
-            "oidc_audience",
-            "oidc_jwks_url",
-            "oidc_client_id",
-            "oidc_authorization_endpoint",
-            "oidc_token_endpoint",
-        ):
+        # The JWKS URL and login endpoints come from the issuer's discovery document when empty.
+        for key in ("oidc_issuer", "oidc_audience", "oidc_client_id"):
             if not str(runtime.get(key) or "").strip():
                 raise InstallContractError(
                     f"{key} is required when runtime.identity_provider=oidc"
