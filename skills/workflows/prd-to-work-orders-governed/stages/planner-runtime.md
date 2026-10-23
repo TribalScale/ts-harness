@@ -8,6 +8,7 @@ Transform Foundry JSON artifacts into implementation-ready Work Orders.
 - `input.prior_refinery` — refinery artifacts
 - `input.prior_foundry` — foundry artifacts
 - `input.stage` — must be `planner`
+- `input.project_repositories` — the project's repositories (`full_name`, `role`, `default_branch`); absent for single-repository projects
 
 ## Outputs (JSON artifacts)
 
@@ -37,6 +38,8 @@ Each WO in `work_orders_markdown`:
 
 ```markdown
 # WO-001 Title
+
+Repository: owner/name
 
 ## Summary
 ...
@@ -73,5 +76,14 @@ Given ... When ... Then ...
 - Each WO independently implementable unless dependencies are explicit.
 - A fresh coding agent should execute without clarifying questions.
 - Do not silently edit blueprints or FRDs; note issues in `warnings`.
+- When `input.project_repositories` is present, every WO starts with a
+  `Repository: owner/name` line naming exactly one of those repositories (its
+  `full_name`). Use `role` to place the work: UI work in the web repository,
+  endpoints in the API repository. A WO that spans two repositories is two WOs,
+  the consumer depending on the provider. With a single repository the line may
+  be omitted.
+- Dependencies between repositories go one way. If WOs in `acme/web` depend on
+  `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
+  so the dependency points one way.
 
 Apply `quality-gates/planner-runtime.md` before returning JSON.

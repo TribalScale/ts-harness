@@ -342,6 +342,120 @@ def delete_registry(conn, project_id: str, registry_id: str, body: dict[str, Any
     return _registry_json(row)
 
 
+_REPO_PART_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_HOST_RE = re.compile(r"^[a-z0-9.-]+(:[0-9]+)?$")
+
+
+def _repository_json(row: dict[str, Any]) -> dict[str, Any]:
+    host = row.get("github_host") or "github.com"
+    full_name = f"{row['owner']}/{row['repo']}"
+    return {
+        "id": str(row["id"]),
+        "project_id": str(row["project_id"]),
+        "github_host": host,
+        "owner": row["owner"],
+        "repo": row["repo"],
+        "full_name": full_name,
+        "repo_url": f"https://{host}/{full_name}",
+        "installation_id": row.get("installation_id"),
+        "default_branch": row.get("default_branch"),
+        "role": row.get("role"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _repository_parts(body: dict[str, Any]) -> tuple[str, str, str]:
+    host = str(body.get("github_host") or "github.com").strip().lower()
+    owner = str(body.get("owner") or "").strip()
+    repo = str(body.get("repo") or "").strip()
+    full_name = str(body.get("full_name") or "").strip()
+    if full_name and not (owner and repo):
+        owner, _, repo = full_name.partition("/")
+    repo = repo.removesuffix(".git")
+    if not _HOST_RE.fullmatch(host):
+        raise ValueError("github_host must be a hostname")
+    if not (_REPO_PART_RE.fullmatch(owner) and _REPO_PART_RE.fullmatch(repo)):
+        raise ValueError("repository must be owner/name")
+    return host, owner, repo
+
+
+def list_repositories(conn, project_id: str) -> dict[str, Any]:
+    pid = get_project(conn, project_id)["id"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM project_repositories WHERE project_id = %s ORDER BY github_host, lower(owner), lower(repo)",
+            (pid,),
+        )
+        rows = cur.fetchall()
+    return {"repositories": [_repository_json(r) for r in rows]}
+
+
+def create_repository(conn, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    pid = get_project(conn, project_id)["id"]
+    host, owner, repo = _repository_parts(body)
+    actor = str(body.get("actor") or "admin")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO project_repositories (project_id, github_host, owner, repo, installation_id, default_branch, role, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            RETURNING *
+            """,
+            (pid, host, owner, repo, _optional_int(body.get("installation_id"), "installation_id"),
+             _clean(body.get("default_branch")), _clean(body.get("role")), actor),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"{owner}/{repo} is already in this project")
+        _audit(cur, "project_updated", f"Repository {owner}/{repo} added",
+               {"project_id": pid, "repository": f"{host}/{owner}/{repo}", "change": "repository_added"}, actor)
+    conn.commit()
+    return _repository_json(row)
+
+
+def update_repository(conn, project_id: str, repository_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    pid = get_project(conn, project_id)["id"]
+    actor = str(body.get("actor") or "admin")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE project_repositories
+               SET default_branch = CASE WHEN %s THEN %s ELSE default_branch END,
+                   role = CASE WHEN %s THEN %s ELSE role END,
+                   updated_at = now()
+             WHERE id = %s AND project_id = %s
+            RETURNING *
+            """,
+            ("default_branch" in body, _clean(body.get("default_branch")), "role" in body, _clean(body.get("role")),
+             _uuid(repository_id, "repository_id"), pid),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise LookupError("repository not found")
+        _audit(cur, "project_updated", f"Repository {row['owner']}/{row['repo']} updated",
+               {"project_id": pid, "repository_id": str(row["id"]), "change": "repository_updated"}, actor)
+    conn.commit()
+    return _repository_json(row)
+
+
+def delete_repository(conn, project_id: str, repository_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    pid = get_project(conn, project_id)["id"]
+    actor = str(body.get("actor") or "admin")
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM project_repositories WHERE id = %s AND project_id = %s RETURNING *",
+            (_uuid(repository_id, "repository_id"), pid),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise LookupError("repository not found")
+        _audit(cur, "project_updated", f"Repository {row['owner']}/{row['repo']} removed",
+               {"project_id": pid, "repository_id": str(row["id"]), "change": "repository_removed"}, actor)
+    conn.commit()
+    return _repository_json(row)
+
+
 def record_registry_test(conn, project_id: str, registry_id: str, body: dict[str, Any]) -> dict[str, Any]:
     pid = get_project(conn, project_id)["id"]
     ok = body.get("ok") is True

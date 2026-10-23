@@ -4618,6 +4618,14 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     result = project_routes.get_project(conn, parts[1])
                 elif len(parts) == 2 and method == "PUT":
                     result = project_routes.update_project(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "repositories" and method == "GET":
+                    result = project_routes.list_repositories(conn, parts[1])
+                elif len(parts) == 3 and parts[2] == "repositories" and method == "POST":
+                    result = project_routes.create_repository(conn, parts[1], body)
+                elif len(parts) == 4 and parts[2] == "repositories" and method == "PUT":
+                    result = project_routes.update_repository(conn, parts[1], parts[3], body)
+                elif len(parts) == 4 and parts[2] == "repositories" and method == "DELETE":
+                    result = project_routes.delete_repository(conn, parts[1], parts[3], body)
                 elif len(parts) == 3 and parts[2] == "registries" and method == "GET":
                     result = project_routes.list_registries(conn, parts[1])
                 elif len(parts) == 3 and parts[2] == "registries" and method == "POST":

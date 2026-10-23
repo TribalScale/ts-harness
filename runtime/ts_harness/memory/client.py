@@ -1070,6 +1070,18 @@ class MemoryClient:
     def delete_project_registry(self, project_id: str, registry_id: str, *, actor: str) -> dict[str, Any]:
         return self._request("DELETE", f"/projects/{project_id}/registries/{registry_id}", {"actor": actor})
 
+    def list_project_repositories(self, project_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project_id}/repositories")
+
+    def create_project_repository(self, project_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project_id}/repositories", body)
+
+    def update_project_repository(self, project_id: str, repository_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PUT", f"/projects/{project_id}/repositories/{repository_id}", body)
+
+    def delete_project_repository(self, project_id: str, repository_id: str, *, actor: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/projects/{project_id}/repositories/{repository_id}", {"actor": actor})
+
     def record_project_registry_test(
         self, project_id: str, registry_id: str, *, ok: bool, error: str = "", actor: str
     ) -> dict[str, Any]:

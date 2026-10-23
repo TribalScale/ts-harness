@@ -2724,6 +2724,25 @@ async def admin_project_registry(request: Request) -> Response:
     return await _admin_projects_call(request, lambda m, a, c, b: bff.update_registry_admin(m, a, c, pid, rid, b))
 
 
+async def admin_project_repositories(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    if request.method == "POST":
+        return await _admin_projects_call(request, lambda m, a, c, b: bff.create_repository_admin(m, a, c, pid, b))
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_repositories_admin(m, a, c, pid))
+
+
+async def admin_project_repository(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    rid = request.path_params["repository_id"]
+    if request.method == "DELETE":
+        return await _admin_projects_call(request, lambda m, a, c, _b: bff.delete_repository_admin(m, a, c, pid, rid))
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.update_repository_admin(m, a, c, pid, rid, b))
+
+
 async def admin_project_registry_test(request: Request) -> Response:
     from ts_harness.gateway import projects_bff as bff
 
@@ -4120,6 +4139,12 @@ routes = [
     Route("/admin/github/sync", endpoint=admin_github_sync, methods=["POST"]),
     Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
+    Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),
+    Route(
+        "/admin/projects/{project_id}/repositories/{repository_id}",
+        endpoint=admin_project_repository,
+        methods=["PUT", "DELETE"],
+    ),
     Route(
         "/admin/projects/{project_id}/registries",
         endpoint=admin_project_registries,

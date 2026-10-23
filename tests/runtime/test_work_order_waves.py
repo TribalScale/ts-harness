@@ -120,6 +120,27 @@ class ForkWaveTests(unittest.TestCase):
         qa = next(body for body in memory.tasks_created if body["step_name"] == "qa_gate")
         self.assertTrue(qa["depends_on"])
 
+    def test_item_repository_overrides_the_shared_one(self):
+        task = {
+            "id": "t-wave",
+            "workflow_id": "wf-parent",
+            "input": {
+                "work_orders": [
+                    {"work_order_id": "WO-1", "repo_url": "https://github.com/acme/api", "base_branch": "main"},
+                    {"work_order_id": "WO-2"},
+                ],
+                "repo_url": "https://github.com/acme/web",
+                "base_branch": "dev",
+            },
+        }
+        memory = FakeMemory()
+        work_order_waves.fork_wave(task, {}, memory=memory)
+        intakes = [body["input"] for body in memory.tasks_created if body["step_name"] == "deliver_work_order"]
+        self.assertEqual(
+            [(i["repo_url"], i["base_branch"]) for i in intakes],
+            [("https://github.com/acme/api", "main"), ("https://github.com/acme/web", "dev")],
+        )
+
     def test_legacy_single_work_order_input_still_forks(self):
         memory = FakeMemory()
         task = {"id": "t", "workflow_id": "wf-parent", "input": {"work_order_id": "WO-7"}}

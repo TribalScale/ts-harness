@@ -109,6 +109,16 @@ The `sweep-coding-jobs` scheduler job runs every 60 seconds. A job with no heart
 
 Turn it off by setting the flag back to `false` and re-running phase 12. Jobs already queued still finish; new deliveries run in agent-runtime again.
 
+## Projects with several repositories
+
+Add the repositories under **System → Projects → (project) → Repositories**. With the GitHub App installed, only repositories an installation covers can be added.
+
+- One repository: every work order goes there, ahead of `IMPLEMENT_WORK_ORDERS_REPO_URL`.
+- Several: the planner writes `Repository: owner/name` under each `# WO-NNN` heading. The planner contract rejects a missing or unknown repository, and dependencies that run both ways between two repositories.
+- Each work order's coding run clones its own repository and opens its PR there, using the repository's base branch when one is set.
+
+A program reads the project's repositories when each phase starts, so a repository added mid-program applies from the next phase.
+
 ## Host verification test stacks
 
 After OpenCode finishes, the host installs the repo's declared dependencies and runs its own test command (`runtime/ts_harness/implementation/test_env.py`). The first matching stack wins:

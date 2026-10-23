@@ -4,6 +4,7 @@ import type { Project } from "../api/types";
 import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { RegistriesPanel } from "./RegistriesPanel";
+import { RepositoriesPanel } from "./RepositoriesPanel";
 
 // Fargate CPU units and the memory range (MiB) each allows.
 const SIZES: Record<number, [number, number]> = {
@@ -339,6 +340,11 @@ export function ProjectSettingsPage({ selectedId }: { selectedId?: string }) {
                   (all || []).map((p) => (p.id === saved.id ? saved : p)),
                 )
               }
+            />
+            <RepositoriesPanel
+              key={`repos-${selected.id}`}
+              projectId={selected.id}
+              canManage={Boolean(selected.can_manage)}
             />
             {selected.can_manage ? (
               <RegistriesPanel projectId={selected.id} />

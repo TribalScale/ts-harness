@@ -7,6 +7,7 @@ Transform Refinery JSON artifacts into technical Blueprints returned as JSON mar
 - `input.approved_prd` — source PRD
 - `input.prior_refinery` — refinery `output.artifacts` from `refine_requirements`
 - `input.stage` — must be `foundry`
+- `input.project_repositories` — the project's repositories, when it has several; name the repository each blueprint belongs to
 
 ## Outputs (JSON artifacts) — ALL keys required
 

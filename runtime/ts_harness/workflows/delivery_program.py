@@ -14,6 +14,7 @@ from ts_harness.repo_paths import ensure_scripts_importable
 from ts_harness.workflows.continuity import write_stage_snapshot
 from ts_harness.workflows.materialize import load_skeleton, materialize_skeleton_tasks
 from ts_harness.workflows.program_adapters import build_default_adapter_registry
+from ts_harness.workflows.project_repos import with_project_repositories
 from ts_harness.workflows.program_materialize import (
     automatic_edges_from,
     build_intake_for_node,
@@ -276,6 +277,9 @@ class DeliveryProgramService:
 
         effective_snapshot = snapshot if snapshot is not None else _compat_snapshot()
         artifact_bag = seed_list_reentry(effective_snapshot, resolved_entry, artifact_bag)
+        artifact_bag = with_project_repositories(
+            self.client, artifact_bag, tenant_id=tenant_id, project_key=project_id
+        )
         errors = validate_entry_against_snapshot(
             effective_snapshot,
             resolved_entry,
@@ -437,7 +441,12 @@ class DeliveryProgramService:
                 target_phase = phase_for_workflow_type(target_workflow_type)
 
         existing_artifacts = _program_artifacts(program)
-        merged_artifacts = {**existing_artifacts, **(artifacts or {})}
+        merged_artifacts = with_project_repositories(
+            self.client,
+            {**existing_artifacts, **(artifacts or {})},
+            tenant_id=str(program.get("tenant_id") or "default"),
+            project_key=program.get("project_id"),
+        )
 
         reentry = node_reentry(effective_snapshot, current_phase)
         allow_reentry = (

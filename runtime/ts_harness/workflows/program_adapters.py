@@ -187,6 +187,8 @@ def _build_work_orders_inputs(
         intake["approved_prd"] = artifacts["approved_prd"]
     if artifacts.get("completed_work_order_ids") is not None:
         intake["completed_work_order_ids"] = artifacts.get("completed_work_order_ids")
+    if artifacts.get("project_repositories"):
+        intake["project_repositories"] = artifacts["project_repositories"]
     return intake
 
 
@@ -322,7 +324,13 @@ def _build_implement_inputs(
                 intake["work_order_body"] = body
         except Exception:  # noqa: BLE001
             pass
-    if workflow_type:
+    repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
+    project_default = repositories[0] if len(repositories) == 1 else None
+    if project_default:
+        intake["repo_url"] = project_default["repo_url"]
+        if project_default.get("default_branch"):
+            intake["base_branch"] = project_default["default_branch"]
+    elif workflow_type:
         try:
             from ts_harness.implementation.config import repo_for_workflow
 
@@ -340,7 +348,31 @@ def _build_implement_inputs(
         "main",
     }:
         intake["base_branch"] = "dev"
+    if repositories and artifacts.get("work_orders_markdown"):
+        _route_work_orders_to_repositories(intake, str(artifacts["work_orders_markdown"]), repositories)
     return intake
+
+
+def _route_work_orders_to_repositories(
+    intake: dict[str, Any], markdown: str, repositories: list[dict[str, Any]]
+) -> None:
+    """Give each work order the repo_url and base_branch of the repository it names."""
+    from ts_harness.implementation.work_order_context import parse_work_order_repositories, resolve_repository
+
+    named = parse_work_order_repositories(markdown)
+
+    def target(work_order_id: Any) -> dict[str, Any]:
+        repository = resolve_repository(named.get(str(work_order_id or "").upper()), repositories)
+        if repository is None:
+            return {}
+        out = {"repo_url": repository["repo_url"]}
+        if repository.get("default_branch"):
+            out["base_branch"] = repository["default_branch"]
+        return out
+
+    for item in intake.get("work_orders") or []:
+        item.update(target(item.get("work_order_id")))
+    intake.update(target(intake.get("work_order_id")))
 
 
 def _extract_implement_outputs(

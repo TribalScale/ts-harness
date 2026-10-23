@@ -50,6 +50,7 @@ ORDER=(
   033_coding_jobs.sql
   034_projects_registries.sql
   035_github_app.sql
+  036_project_repositories.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

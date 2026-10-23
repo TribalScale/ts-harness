@@ -435,3 +435,16 @@ export interface GitHubOverview {
   pat_fallback: boolean;
   can_sync: boolean;
 }
+
+export interface ProjectRepository {
+  id: string;
+  project_id: string;
+  github_host: string;
+  owner: string;
+  repo: string;
+  full_name: string;
+  repo_url: string;
+  installation_id: number | null;
+  default_branch: string | null;
+  role: string | null;
+}

@@ -282,6 +282,61 @@ def delete_registry_admin(
     return {**_public_registry(registry), "deleted": True, "egress": allowlist}
 
 
+def list_repositories_admin(memory: Any, auth: AuthContext, config: Any, project_id: str) -> dict[str, Any]:
+    project = _project(memory, auth, project_id)
+    return {"repositories": list(memory.list_project_repositories(project["id"]).get("repositories") or [])}
+
+
+def _installation_for(memory: Any, host: str, full_name: str) -> int | None:
+    """The App installation that covers ``full_name``; ``ValueError`` when installations exist but none does."""
+    try:
+        installations = memory.list_github_installations(host=host)
+    except Exception:  # noqa: BLE001
+        return None
+    if not installations:
+        return None
+    wanted = full_name.lower()
+    for installation in installations:
+        if wanted in {str(r).lower() for r in installation.get("repositories") or []}:
+            return int(installation["installation_id"])
+    raise ValueError(f"the GitHub App is not installed on {full_name}; install it from System > GitHub first")
+
+
+def create_repository_admin(
+    memory: Any, auth: AuthContext, config: Any, project_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    project = _project(memory, auth, project_id)
+    _require_manage(auth, project, config)
+    host = str(body.get("github_host") or "github.com").strip().lower()
+    full_name = str(body.get("full_name") or f"{body.get('owner') or ''}/{body.get('repo') or ''}").strip()
+    return memory.create_project_repository(
+        project["id"],
+        github_host=host,
+        full_name=full_name,
+        installation_id=_installation_for(memory, host, full_name),
+        default_branch=body.get("default_branch"),
+        role=body.get("role"),
+        actor=_actor(auth),
+    )
+
+
+def update_repository_admin(
+    memory: Any, auth: AuthContext, config: Any, project_id: str, repository_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    project = _project(memory, auth, project_id)
+    _require_manage(auth, project, config)
+    fields = {k: body[k] for k in ("default_branch", "role") if k in body}
+    return memory.update_project_repository(project["id"], repository_id, actor=_actor(auth), **fields)
+
+
+def delete_repository_admin(
+    memory: Any, auth: AuthContext, config: Any, project_id: str, repository_id: str
+) -> dict[str, Any]:
+    project = _project(memory, auth, project_id)
+    _require_manage(auth, project, config)
+    return {**memory.delete_project_repository(project["id"], repository_id, actor=_actor(auth)), "deleted": True}
+
+
 # ---------------------------------------------------------------------------
 # Registry test: one authenticated request through the egress proxy
 # ---------------------------------------------------------------------------

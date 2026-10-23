@@ -40,6 +40,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 34 | `033_coding_jobs.sql` | Queued coding jobs run by worker containers; coding job audit actions |
 | 35 | `034_projects_registries.sql` | Projects with team ownership and worker sizing; per-project package registries; project and registry audit actions |
 | 36 | `035_github_app.sql` | GitHub App registrations per host, installations, processed webhook deliveries; directory_users.github_login; GitHub audit actions |
+| 37 | `036_project_repositories.sql` | Repositories per project (host, owner, name, App installation, default branch, role) |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.
