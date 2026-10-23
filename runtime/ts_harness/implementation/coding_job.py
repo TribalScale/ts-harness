@@ -44,6 +44,16 @@ def _live_runtime_config():
         return None
 
 
+def _default_checkout_dir(agent_id: str, workspace_name: str) -> str:
+    """In object-workspace mode in-process checkouts go to replica scratch, never the shared tree."""
+    from ts_harness.storage.backend import object_backend, scratch_dir
+
+    in_process = os.environ.get("CODING_JOBS_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}
+    if in_process and object_backend() != "local":
+        return str(scratch_dir() / "coding-backend" / agent_id / workspace_name)
+    return f"/workspace/{agent_id}/coding-backend/{workspace_name}"
+
+
 def clean_text(value: Any) -> str | None:
     return str(value or "").replace("\x00", "").strip() or None
 
@@ -179,7 +189,7 @@ def build_coding_request(
     workspace = str(
         args.get("workspace_dir")
         or os.environ.get("CODING_BACKEND_WORKSPACE")
-        or f"/workspace/{agent_id}/coding-backend/{workspace_name}"
+        or _default_checkout_dir(agent_id, workspace_name)
     )
 
     live = _live_runtime_config() or runtime

@@ -412,8 +412,14 @@ class Scheduler:
                 self._audit({"event": "scheduler_dispatch_backgrounded", "agent_id": job.agent_id})
 
     def _heartbeat_file_empty(self, agent_id: str) -> bool:
-        path = self.workspace_root / agent_id / "HEARTBEAT.md"
-        return path.exists() and not path.read_text(encoding="utf-8").strip()
+        from ts_harness.storage.workspace import workspace_store
+
+        try:
+            text = workspace_store(agent_id, root=self.workspace_root).read_text_or_none("HEARTBEAT.md")
+        except Exception as exc:  # noqa: BLE001
+            self._audit({"event": "heartbeat_file_read_failed", "agent_id": agent_id, "error": str(exc)[:300]})
+            return False
+        return text is not None and not text.strip()
 
     def _audit(self, event: dict[str, Any]) -> None:
         if self.audit_sink:

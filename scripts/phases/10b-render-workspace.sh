@@ -40,7 +40,10 @@ if [[ ! -f "$RENDERER" ]]; then
     exit 1
 fi
 
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "$CONFIG" "$SOURCE_WORKSPACE" "$RENDERER")"
+OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}"
+# A path that does not exist is hashed by name, so this re-runs the phase when the backend or bucket changes.
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "$CONFIG" "$SOURCE_WORKSPACE" "$RENDERER" \
+    "object-backend:${OBJECT_BACKEND}:${TS_HARNESS_WORKSPACE_BUCKET:-}")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -54,6 +57,18 @@ python3 "$RENDERER" \
     --strict
 
 chown -R "$ADMIN_USER:$ADMIN_USER" "$RENDERED_WORKSPACE_DIR"
+
+if [[ "$OBJECT_BACKEND" == "s3" || "$OBJECT_BACKEND" == "gcs" ]]; then
+    if [[ -z "${TS_HARNESS_WORKSPACE_BUCKET:-}" ]]; then
+        echo "[phase:${PHASE_NAME}] ERROR: TS_HARNESS_OBJECT_BACKEND=$OBJECT_BACKEND but TS_HARNESS_WORKSPACE_BUCKET is empty" >&2
+        exit 1
+    fi
+    echo "[phase:${PHASE_NAME}] Uploading missing workspace files to $OBJECT_BACKEND (existing objects are kept)"
+    python3 "$ENTERPRISE_ASSETS_DIR/scripts/ops/seed-workspace-objects.py" \
+        --src "$RENDERED_WORKSPACE_DIR" \
+        --backend "$OBJECT_BACKEND" \
+        --bucket "$TS_HARNESS_WORKSPACE_BUCKET"
+fi
 
 mkdir -p "$DATA_DIR/.setup"
 write_phase_marker "$PHASE_DONE" "$PHASE_FINGERPRINT"
