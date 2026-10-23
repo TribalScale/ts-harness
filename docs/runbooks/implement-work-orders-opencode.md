@@ -79,6 +79,36 @@ Each delivery workflow gets its own workspace and branch: `coding-backend/<WO>-<
 
 `POST /workflow/dispatch` uses `TS_HARNESS_DISPATCH_REQUEST_TIMEOUT` (default **7200s**) so long OpenCode runs are not cut by the general 300s API timeout.
 
+## Coding jobs (OpenCode outside agent-runtime)
+
+With `coding_jobs_enabled: true` (env `CODING_JOBS_ENABLED=true`), `deliver_work_order` 1.5.0 no longer runs OpenCode inside an agent turn. The stage has `"execution": "coding_job"`:
+
+1. The runner builds the job spec from the task input (repo, branch, PR, feedback, refresh) and queues a coding job.
+2. The task parks as `blocked` with `awaiting_external:coding.finished`, and the runner thread is free. The console shows "OpenCode queued" until a worker starts, then "OpenCode implementing" with run time and the latest log line.
+3. `coding-launcher` claims queued jobs, up to `coding_max_running` (default 3) starting or running at once, and starts one `ts-harness-coding-worker` container per job with `docker run --rm` and CPU, memory and pids limits.
+4. The worker fetches its spec with a job token that only opens that job's spec, heartbeat and complete endpoints. It heartbeats every 30 seconds with the last line of the OpenCode log, then posts the result and exits.
+5. Completing the job puts the task back to pending. The runner checks the result against the stage contract exactly as it checks an agent's output; a failed run blocks with `deliver_work_order cannot succeed when run_coding_backend failed: ...` and revision and retry policy apply as before.
+
+Restarting `agent-runtime` or `workflow-runner` mid-run does not interrupt a job; the worker keeps running and its result is picked up when the task is next dispatched.
+
+Turn it on:
+
+1. Deploy with `coding_jobs_enabled: false` and confirm a normal delivery.
+2. Set `coding_jobs_enabled: true` (install config, or `CODING_JOBS_ENABLED=true` in the instance env) and re-run phase 12. It builds the worker image from the agent-runtime image plus OpenCode (`OPENCODE_VERSION`) and starts `coding-launcher`.
+3. Run one work order end to end and watch it:
+
+```bash
+docker logs -f docker-coding-launcher-1 2>&1 | grep coding_job
+docker ps --filter label=ts-harness.coding-job
+docker logs -f <worker container>
+```
+
+Worker secrets pass by name from the runtime `.env`: `GITHUB_TOKEN`, `GH_TOKEN`, provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `MODEL_*`), and every `CODING_BACKEND_*` and `OPENCODE_*` variable. Add others with `CODING_WORKER_ENV=NAME1,NAME2` on the launcher. Job tokens are signed with `CODING_JOB_SECRET` on memory-api, or a key derived from `MEMORY_API_TOKEN` when it is unset.
+
+The `sweep-coding-jobs` scheduler job runs every 60 seconds. A job with no heartbeat for 5 minutes (`CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS`) or running over 60 minutes (`CODING_JOB_MAX_RUNTIME_SECONDS`) is marked `lost`; the launcher stops its container and the task blocks with `transport_error: coding job lost: ...`, which the retry policy retries. Cancelling a workflow or program cancels its jobs and the launcher stops their workers.
+
+Turn it off by setting the flag back to `false` and re-running phase 12. Jobs already queued still finish; new deliveries run in agent-runtime again.
+
 ## Host verification test stacks
 
 After OpenCode finishes, the host installs the repo's declared dependencies and runs its own test command (`runtime/ts_harness/implementation/test_env.py`). The first matching stack wins:
@@ -133,6 +163,9 @@ OpenCode runs with the same `PATH` and venv, so its own test runs match host ver
 | `no_test_runner` on a non-Python repo | No manifest or test script the table above recognizes; add the standard runner to the repo's manifest |
 | `opencode stalled: no output within the stall window` | OpenCode went silent (hung model call or tool) for `CODING_BACKEND_STALL_SECONDS`; it was killed. Check the end of the OpenCode log for the last action |
 | Inbox shows a **Stuck step** after `barrier_blocked: code_review_blocked` or a QA block | The revision budget ran out. Choose revise again (fresh budget of `max_revisions`), accept as is, or stop; see "Code review" in `governed-delivery-flow.md` |
+| Stuck at "OpenCode queued" | `coding-launcher` is not running, the worker image is missing, or `coding_max_running` jobs are already running. Check `docker logs` of the launcher for `coding_job_launch_failed` |
+| `coding job could not start: ...` | The launcher failed to start a worker three times (image missing, Docker socket not mounted) and the work order blocked. Fix the launcher, then start the work order again |
+| `transport_error: coding job lost: no heartbeat ...` | The worker died or lost the memory API. The runner retries; check the worker's logs if it repeats |
 | `test runner install failed` / `pip install ... failed` in `log_tail` | Wheels missing from the image or a broken requirement; the tests then fail with the import error |
 
 ## Related

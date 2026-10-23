@@ -94,6 +94,18 @@ first case whose `error_prefix` matches the block error is applied over it, and
 uses this for human rejection (a "Request changes" review or `/revise` comment
 revises with `budget: "human"`; a closed PR stops).
 
+A task stage may set `"execution": "coding_job"` (`deliver_work_order` 1.5.0
+does). With `CODING_JOBS_ENABLED=true` the runner does not dispatch it to an
+agent: it queues a row in `coding_jobs`, parks the task on
+`awaiting_external:coding.finished` and moves on. `coding-launcher` starts a
+worker container per job; the worker reports to the memory API with a
+per-job token, and completion (or the `sweep_coding_jobs` watchdog marking it
+lost) puts the task back to pending in the same transaction. On that dispatch
+the runner reads the unconsumed job result, maps it to the stage output and
+runs the stage contract (including `validate_coding_backend_pr_url`) before the
+normal success or blocked handling, then marks the job consumed. A coding_job
+stage must have a `contract_ref`.
+
 **Implemented today:** first-class workflow records, delivery programs, stage
 contracts, QA gates, compensation hooks, external wait/`match_all`, merge poller
 host materialization (`scripts/phases/15-automation-cron.sh`), and stuck-status
