@@ -1,6 +1,6 @@
 {
   "workflow_type": "deliver_work_order",
-  "definition_version": "1.4.0",
+  "definition_version": "1.5.0",
   "display_name": "Deliver one work order",
   "contracts": {
     "deliver_work_order": {
@@ -45,6 +45,7 @@
         "dev-agent"
       ],
       "contract_ref": "deliver_work_order",
+      "execution": "coding_job",
       "skill_hints": [
         "verified-merge-governed"
       ],

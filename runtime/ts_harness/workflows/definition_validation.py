@@ -241,6 +241,16 @@ def _validate_hook_payloads(
         if not isinstance(stage, dict):
             continue
 
+        if stage.get("execution") == "coding_job" and not str(stage.get("contract_ref") or "").strip():
+            issues.append(
+                _issue(
+                    "error",
+                    "coding_job_without_contract",
+                    _stage_path(index, ".contract_ref"),
+                    "a coding_job stage needs a contract_ref so its result can be checked",
+                )
+            )
+
         wait_external = stage.get("wait_external")
         if isinstance(wait_external, dict) and wait_external:
             event_type = str(wait_external.get("event_type") or "").strip()

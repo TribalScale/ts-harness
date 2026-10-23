@@ -2419,3 +2419,19 @@ form {
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
+
+.workflow-coding-job {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 4px 0 0 22px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.workflow-coding-job code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

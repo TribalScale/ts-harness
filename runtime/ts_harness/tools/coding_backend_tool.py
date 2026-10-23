@@ -6,17 +6,14 @@ from typing import Any
 
 from ts_harness.implementation.coding_job import (
     CodingRequestError,
+    binding_from_task_input,
     build_coding_request,
     record_coding_refs,
-    revision_files,
     run_coding_request,
 )
 from ts_harness.tools.policy import ToolPolicyContext
 
 __all__ = ["delivery_binding", "handle_run_coding_backend", "record_coding_refs"]
-
-
-_BOUND_TEXT_KEYS = ("work_order_body", "review_feedback", "qa_feedback")
 
 
 def delivery_binding(ctx: ToolPolicyContext, *, client: Any = None) -> dict[str, Any]:
@@ -47,18 +44,7 @@ def delivery_binding(ctx: ToolPolicyContext, *, client: Any = None) -> dict[str,
         task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
         if str(task_input.get("repo_url") or "").strip():
             chosen = task_input
-    binding: dict[str, Any] = {}
-    for key in ("repo_url", "base_branch", "pr_url", *_BOUND_TEXT_KEYS):
-        value = str(chosen.get(key) or "").strip()
-        if value:
-            binding[key] = value
-    for key in ("revision_files", "human_change_requests"):
-        items = revision_files(chosen.get(key))
-        if items:
-            binding[key] = items
-    if chosen.get("refresh") is True:
-        binding["refresh"] = True
-    return binding
+    return binding_from_task_input(chosen)
 
 
 def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

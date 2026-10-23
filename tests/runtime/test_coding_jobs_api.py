@@ -229,6 +229,19 @@ class CodingJobsPostgresTests(PgTestCase):
             self.assertFalse(lost[0]["result"]["ok"])
             self.assertEqual(self.task(conn, task_id)["status"], "pending")
 
+    def test_sweep_resumes_a_task_parked_after_its_job_ended(self):
+        with self.db.connect() as conn:
+            workflow_id, task_id = self.parked_task(conn)
+            conn.execute("UPDATE workflow_tasks SET status = 'running', error = NULL WHERE id = %s", (task_id,))
+            conn.commit()
+            job = self.create(conn, workflow_id, task_id)
+            coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+            self.assertFalse(coding_jobs.complete_coding_job(conn, job["id"], {"result": {"ok": True}})["task_resumed"])
+            conn.execute("UPDATE workflow_tasks SET status = 'blocked', error = %s WHERE id = %s", (coding_jobs.WAIT_ERROR, task_id))
+            conn.commit()
+            self.assertEqual(coding_jobs.sweep_stale_coding_jobs(conn, {})["resumed_tasks"], [task_id])
+            self.assertEqual(self.task(conn, task_id)["status"], "pending")
+
     def test_overtime_jobs_are_lost(self):
         with self.db.connect() as conn:
             job = self.create(conn)

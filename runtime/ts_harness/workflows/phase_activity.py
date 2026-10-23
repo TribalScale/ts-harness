@@ -22,7 +22,9 @@ EVENT_WAITS = {
     "github.merge": ("Ready to merge", "waiting"),
     "github.pr_checks": ("Waiting for PR checks", "waiting"),
     "workflow.child_terminal": ("Waiting for the workflows it started", "waiting"),
+    "coding.finished": ("OpenCode implementing", "running"),
 }
+CODING_WAIT = "awaiting_external:coding.finished"
 
 
 def _humanize(value: str) -> str:
@@ -122,7 +124,7 @@ def _state(
         return f"Stuck at {label}: waiting for your decision", "stuck"
     if _approval_pending(current):
         return f"Waiting for approval: {label}", "waiting"
-    if status in ACTIVE:
+    if status in ACTIVE or (status == "blocked" and error == CODING_WAIT):
         if step == coding_step:
             if _input(current).get("refresh"):
                 return "OpenCode refreshing the branch", "running"
@@ -162,6 +164,7 @@ def summarize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
         "revisions": revisions,
         "stuck_task_id": str(current.get("id")) if current and kind == "stuck" else "",
         "updated_at": max((str(t.get("updated_at") or "") for t in tasks), default=str(workflow.get("updated_at") or "")),
+        "coding_job": None,
         "steps": [
             {
                 "task_id": str(t.get("id") or ""),
@@ -186,6 +189,30 @@ def _workflow_record(memory: Any, workflow_id: str) -> dict[str, Any]:
     return workflow
 
 
+def _with_coding_job(memory: Any, summary: dict[str, Any]) -> dict[str, Any]:
+    """Attach the running coding job's latest output line and start time to a parked step."""
+    current = next((s for s in summary["steps"] if s["step_name"] == summary["current_step"]), None)
+    if not current or current["status"] != "blocked" or current["error"] != CODING_WAIT:
+        return summary
+    try:
+        jobs = memory.list_coding_jobs(task_id=current["task_id"], status="queued,starting,running", limit=1)
+    except Exception:
+        return summary
+    if jobs:
+        job = jobs[0]
+        summary["coding_job"] = {
+            "id": str(job.get("id") or ""),
+            "status": str(job.get("status") or ""),
+            "last_output": str(job.get("last_output") or "")[-300:],
+            "started_at": str(job.get("started_at") or ""),
+            "created_at": str(job.get("created_at") or ""),
+        }
+        if job.get("status") == "queued":
+            summary["state"] = "OpenCode queued"
+            summary["kind"] = "waiting"
+    return summary
+
+
 def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
     """The stage's workflow summary and the workflows it started, sorted by label."""
     status = memory.get_program_status(program_id) or {}
@@ -201,7 +228,7 @@ def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
     }
     if not workflow_id:
         return result
-    result["workflow"] = summarize_workflow(_workflow_record(memory, workflow_id))
+    result["workflow"] = _with_coding_job(memory, summarize_workflow(_workflow_record(memory, workflow_id)))
     stage_workflows = {
         str(other.get("workflow_id") or "")
         for other in (status.get("phases") or {}).values()
@@ -211,6 +238,6 @@ def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
     for child in memory.get_workflow_children(workflow_id) or []:
         child_id = str(child.get("id") or "")
         if child_id and child_id not in stage_workflows and child.get("status") != "superseded":
-            children.append(summarize_workflow(_workflow_record(memory, child_id)))
+            children.append(_with_coding_job(memory, summarize_workflow(_workflow_record(memory, child_id))))
     result["children"] = sorted(children, key=lambda item: (item["label"], item["workflow_id"]))
     return result

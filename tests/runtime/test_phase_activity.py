@@ -260,6 +260,33 @@ class PhaseActivityTests(unittest.TestCase):
         self.assertEqual((result["workflow"]["state"], result["workflow"]["kind"]), ("Done", "done"))
         self.assertEqual(result["children"], [])
 
+    def test_a_parked_coding_job_reads_as_opencode_running_with_its_output(self):
+        memory = _Memory()
+        memory.workflows["wf-3"]["tasks"] = _round(
+            "t1", ["blocked"] + ["pending"] * 7, errors={"deliver_work_order": "awaiting_external:coding.finished"}
+        )
+        memory.list_coding_jobs = lambda **kw: [
+            {"id": "job-1", "status": "running", "last_output": "running tests", "started_at": "2026-10-22T18:00:00Z"}
+        ] if kw.get("task_id") == "deliver_work_order-t1" else []
+
+        child = phase_activity(memory, "program-1", "implement")["children"][1]
+
+        self.assertEqual((child["state"], child["kind"]), ("OpenCode implementing", "running"))
+        self.assertEqual(child["coding_job"]["last_output"], "running tests")
+        self.assertEqual(child["coding_job"]["started_at"], "2026-10-22T18:00:00Z")
+        self.assertIsNone(phase_activity(memory, "program-1", "implement")["children"][0]["coding_job"])
+
+    def test_a_queued_coding_job_waits_for_a_worker(self):
+        memory = _Memory()
+        memory.workflows["wf-3"]["tasks"] = _round(
+            "t1", ["blocked"] + ["pending"] * 7, errors={"deliver_work_order": "awaiting_external:coding.finished"}
+        )
+        memory.list_coding_jobs = lambda **kw: [{"id": "job-1", "status": "queued", "created_at": "2026-10-22T18:00:00Z"}]
+
+        child = phase_activity(memory, "program-1", "implement")["children"][1]
+
+        self.assertEqual((child["state"], child["kind"]), ("OpenCode queued", "waiting"))
+
     def test_a_stage_that_has_not_started_has_no_workflow(self):
         result = phase_activity(_Memory(), "program-1", "release")
         self.assertEqual(result, {"phase": "release", "state": "not_started", "workflow_id": "", "workflow": None, "children": []})

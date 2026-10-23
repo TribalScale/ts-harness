@@ -1112,6 +1112,13 @@ class WorkflowRunner:
 
         contract = self._contract_for_task(task, stage)
         task_input = dict(task.get("input") or {})
+
+        from ts_harness.workflows import coding_job_stage
+
+        if stage is not None and stage.execution == "coding_job" and coding_job_stage.enabled():
+            self._dispatch_coding_job(task, stage, task_input, contract, dispatch_started)
+            return
+
         if task.get("step_name") == "qa_gate" and not task_input.get("files"):
             try:
                 record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
@@ -1142,6 +1149,69 @@ class WorkflowRunner:
         log_event("dispatched", workflow_id=payload["workflow_id"], task_id=payload["task_id"])
         if is_qa:
             self._publish_qa_status(task, "qa_finished", task_input, result)
+        self._apply_dispatch_result(task, stage, result, dispatch_started)
+
+    def _dispatch_coding_job(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage,
+        task_input: dict[str, Any],
+        contract: dict[str, Any] | None,
+        dispatch_started: float,
+    ) -> None:
+        """Use the task's finished coding job, or queue one and park the task until it ends."""
+        from ts_harness.implementation.coding_job import CodingRequestError
+        from ts_harness.workflows import coding_job_stage
+
+        task_id = str(task["id"])
+        jobs = self.memory.list_coding_jobs(task_id=task_id, unconsumed=True, limit=10)
+        finished = next((j for j in jobs if j.get("status") in coding_job_stage.TERMINAL), None)
+        if finished is not None:
+            result = coding_job_stage.dispatch_result(finished, contract, task_input)
+            job_id = result.pop("coding_job_id", "")
+            log_event("coding_job_result", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job_id, status=result["status"])
+            try:
+                self._apply_dispatch_result(task, stage, result, dispatch_started)
+            finally:
+                try:
+                    self.memory.consume_coding_job(job_id)
+                except Exception as exc:
+                    log_event("coding_job_consume_error", task_id=task_id, job_id=job_id, error=str(exc))
+            return
+
+        job = next((j for j in jobs if j.get("status") in coding_job_stage.ACTIVE), None)
+        if job is None:
+            try:
+                program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+            except Exception:
+                program_id = None
+            try:
+                spec = coding_job_stage.stage_spec(task, task_input, program_id=program_id)
+            except CodingRequestError as exc:
+                self._apply_dispatch_result(task, stage, {"status": "blocked", "error": str(exc), "output": {}}, dispatch_started)
+                return
+            job = self.memory.create_coding_job(
+                spec=spec,
+                workflow_id=str(task.get("workflow_id") or "") or None,
+                task_id=task_id,
+                program_id=program_id,
+                tenant_id=str(task.get("tenant_id") or "default"),
+            )
+        self.memory.set_task_wait(
+            task_id,
+            wait_token=str(job["id"]),
+            expected_event_type=coding_job_stage.EVENT_TYPE,
+        )
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _apply_dispatch_result(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage | None,
+        result: dict[str, Any],
+        dispatch_started: float,
+    ) -> None:
         runtime_task_id = result.get("runtime_task_id")
         if runtime_task_id:
             self.memory.record_runtime_task(task["id"], runtime_task_id)

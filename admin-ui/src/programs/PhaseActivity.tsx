@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { PhaseActivity, WorkflowProgress, WorkflowStep } from "../api/types";
+import type { CodingJobProgress, PhaseActivity, WorkflowProgress, WorkflowStep } from "../api/types";
 import { hasPermission } from "../auth/session";
 import { Button } from "../components/Button";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
@@ -28,6 +28,14 @@ function prLabel(url: string): string {
 function updatedLabel(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : `Updated ${date.toLocaleTimeString()}`;
+}
+
+export function codingJobLabel(job: CodingJobProgress, now: number = Date.now()): string {
+  if (job.status === "queued") return "Waiting for a coding worker";
+  const started = new Date(job.started_at || job.created_at).getTime();
+  if (Number.isNaN(started)) return "Coding worker starting";
+  const minutes = Math.max(0, Math.floor((now - started) / 60000));
+  return `Running for ${minutes} min`;
 }
 
 export function usePhaseActivity(programId: string | undefined, phase: string | undefined, poll: boolean) {
@@ -123,6 +131,12 @@ export function WorkflowRows({ items }: { items: WorkflowProgress[] }) {
               )}
               <span className="muted workflow-updated">{updatedLabel(item.updated_at)}</span>
             </div>
+            {item.coding_job && (
+              <div className="workflow-coding-job muted">
+                <span>{codingJobLabel(item.coding_job)}</span>
+                {item.coding_job.last_output && <code>{item.coding_job.last_output}</code>}
+              </div>
+            )}
             {expanded && <StepList steps={item.steps} label={`${item.label} steps`} />}
           </li>
         );

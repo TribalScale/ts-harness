@@ -58,6 +58,25 @@ def _as_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+_BOUND_TEXT_KEYS = ("work_order_body", "review_feedback", "qa_feedback")
+
+
+def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
+    """The repo, branch, PR, work order and feedback a deliver task was created with."""
+    binding: dict[str, Any] = {}
+    for key in ("repo_url", "base_branch", "pr_url", *_BOUND_TEXT_KEYS):
+        value = str(task_input.get(key) or "").strip()
+        if value:
+            binding[key] = value
+    for key in ("revision_files", "human_change_requests"):
+        items = revision_files(task_input.get(key))
+        if items:
+            binding[key] = items
+    if task_input.get("refresh") is True:
+        binding["refresh"] = True
+    return binding
+
+
 def build_coding_request(
     task_input: dict[str, Any],
     *,

@@ -395,8 +395,20 @@ def sweep_stale_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             else:
                 reason = f"no heartbeat for {heartbeat_seconds // 60} minutes"
             lost.append(_mark_lost(cur, row, reason, actor))
+        # A job can end before the runner has parked its task; pick those up here.
+        cur.execute(
+            """
+            SELECT DISTINCT j.task_id, j.id
+            FROM coding_jobs j
+            JOIN workflow_tasks t ON t.id = j.task_id
+            WHERE j.status = ANY(%s) AND j.consumed_at IS NULL
+              AND t.status = 'blocked' AND t.error = %s
+            """,
+            (list(TERMINAL), WAIT_ERROR),
+        )
+        resumed = [str(r["task_id"]) for r in cur.fetchall() if _resume_task(cur, r["task_id"], str(r["id"]), actor)]
     conn.commit()
-    return {"lost": lost}
+    return {"lost": lost, "resumed_tasks": resumed}
 
 
 def cancel_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:

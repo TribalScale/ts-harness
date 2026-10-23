@@ -95,6 +95,23 @@ class WorkflowDefinitionValidationTests(unittest.TestCase):
     def issue_codes(self, issues):
         return {issue.code for issue in issues}
 
+    def test_coding_job_execution_needs_a_contract_and_a_plain_task(self):
+        payload = self.valid_payload()
+        payload["stages"][0]["execution"] = "coding_job"
+        skeleton, issues = self.validate(payload)
+        self.assertEqual(skeleton.stage("start").execution, "coding_job")
+        self.assertNotIn("coding_job_without_contract", self.issue_codes(issues))
+
+        payload["stages"][1]["execution"] = "coding_job"
+        _skeleton, issues = self.validate(payload)
+        self.assertIn("coding_job_without_contract", self.issue_codes(issues))
+
+        payload = self.valid_payload()
+        payload["stages"][0]["execution"] = "robot"
+        skeleton, issues = self.validate(payload)
+        self.assertIsNone(skeleton)
+        self.assertIn("schema_load_error", self.issue_codes(issues))
+
     def test_valid_definition_returns_skeleton_without_errors(self):
         skeleton, issues = self.validate(self.valid_payload())
 

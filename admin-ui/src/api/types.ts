@@ -13,6 +13,14 @@ export interface WorkflowStep {
   updated_at: string;
 }
 
+export interface CodingJobProgress {
+  id: string;
+  status: "queued" | "starting" | "running";
+  last_output: string;
+  started_at: string;
+  created_at: string;
+}
+
 export interface WorkflowProgress {
   workflow_id: string;
   workflow_type: string;
@@ -25,6 +33,7 @@ export interface WorkflowProgress {
   revisions: number;
   stuck_task_id: string;
   updated_at: string;
+  coding_job?: CodingJobProgress | null;
   steps: WorkflowStep[];
 }
 

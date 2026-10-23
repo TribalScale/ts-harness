@@ -4,7 +4,7 @@ import { beforeEach, expect, it } from "vitest";
 import type { PhaseActivity, WorkflowProgress, WorkflowStep } from "../api/types";
 import { setPermissions } from "../auth/session";
 import { jsonResponse, mockFetch } from "../test/render";
-import { PhaseActivityPanel } from "./PhaseActivity";
+import { codingJobLabel, PhaseActivityPanel } from "./PhaseActivity";
 
 function step(step_name: string, label: string, status: string, extra: Partial<WorkflowStep> = {}): WorkflowStep {
   return { task_id: step_name, step_name, label, agent_id: "orchestrator", status, approval_pending: false, error: "", updated_at: "", ...extra };
@@ -131,4 +131,24 @@ it("says when a stage has not started", () => {
     />
   );
   expect(screen.getByText("This stage has not started.")).toBeInTheDocument();
+});
+
+it("shows a running coding job's time and latest output", () => {
+  const activity: PhaseActivity = {
+    ...implement,
+    children: [
+      delivery("WO-004", {
+        state: "OpenCode implementing",
+        coding_job: { id: "job-1", status: "running", last_output: "npm test", started_at: new Date(Date.now() - 5 * 60000).toISOString(), created_at: "" },
+      }),
+    ],
+  };
+  render(<PhaseActivityPanel phase="implement" activity={activity} />);
+  expect(screen.getByText("Running for 5 min")).toBeInTheDocument();
+  expect(screen.getByText("npm test")).toBeInTheDocument();
+});
+
+it("labels a queued coding job", () => {
+  expect(codingJobLabel({ id: "j", status: "queued", last_output: "", started_at: "", created_at: "" })).toBe("Waiting for a coding worker");
+  expect(codingJobLabel({ id: "j", status: "starting", last_output: "", started_at: "", created_at: "" })).toBe("Coding worker starting");
 });

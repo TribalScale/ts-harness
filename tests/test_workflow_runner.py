@@ -2220,5 +2220,119 @@ class LeaderLeaseTests(unittest.TestCase):
         self.assertIn("runner_shutdown", captured.getvalue())
 
 
+class CodingJobMemoryClient(FakeMemoryClient):
+    def __init__(self, ready=None, jobs=None):
+        super().__init__(ready)
+        self.jobs = list(jobs or [])
+        self.created_jobs = []
+        self.consumed = []
+
+    def list_coding_jobs(self, *, task_id=None, unconsumed=False, limit=50, **_):
+        return [j for j in self.jobs if j.get("task_id") == task_id]
+
+    def create_coding_job(self, **kwargs):
+        self.created_jobs.append(kwargs)
+        return {"id": "job-new", "status": "queued", "created": True}
+
+    def consume_coding_job(self, job_id):
+        self.consumed.append(job_id)
+
+    def task_program(self, task_id):
+        return {"task_id": task_id, "program_id": "prog-1"}
+
+
+class CodingJobDispatchTests(unittest.TestCase):
+    PR = "https://github.com/acme/app/pull/7"
+
+    def setUp(self):
+        env = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false", "CODING_JOBS_ENABLED": "true"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner_module = load_runner()
+        self.skeletons = self.runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+
+    def task(self, **extra):
+        return {
+            "id": "task-1",
+            "workflow_id": "wf-1",
+            "workflow_type": "deliver_work_order",
+            "step_name": "deliver_work_order",
+            "agent_id": "dev-agent",
+            "input": {"work_order_id": "WO-1", "work_order_body": "Do it", "repo_url": "https://github.com/acme/app"},
+            "attempt": 0,
+            "max_retries": 2,
+            **extra,
+        }
+
+    def run_tick(self, memory, adapter=None):
+        adapter = adapter or FakeAdapter({"status": "succeeded", "output": {"summary": "agent ran"}})
+        runner = self.runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-1", skeletons={"deliver_work_order": self.skeletons["deliver_work_order"]}
+        )
+        runner.tick()
+        return adapter
+
+    def test_flag_off_keeps_the_agent_path(self):
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch.dict("os.environ", {"CODING_JOBS_ENABLED": "false"}):
+            adapter = self.run_tick(memory)
+        self.assertEqual(len(adapter.payloads), 1)
+        self.assertEqual(memory.created_jobs, [])
+
+    def test_queues_a_job_and_parks_the_task_without_dispatching(self):
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}) as spec:
+            adapter = self.run_tick(memory)
+        self.assertEqual(adapter.payloads, [])
+        self.assertEqual(spec.call_args.kwargs["program_id"], "prog-1")
+        self.assertEqual(memory.created_jobs[0]["task_id"], "task-1")
+        self.assertEqual(memory.created_jobs[0]["program_id"], "prog-1")
+        self.assertEqual(memory.waits, [("task-1", "job-new", "coding.finished")])
+        self.assertEqual(memory.blocked, [("task-1", "awaiting_external:coding.finished")])
+
+    def test_an_active_job_is_reparked_not_duplicated(self):
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "running"}])
+        self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.waits, [("task-1", "job-1", "coding.finished")])
+
+    def test_bad_request_blocks_with_the_reason(self):
+        from ts_harness.implementation.coding_job import CodingRequestError
+
+        memory = CodingJobMemoryClient(ready=[self.task()])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", side_effect=CodingRequestError("repo not allowed")):
+            self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.blocked[0], ("task-1", "repo not allowed"))
+
+    def test_succeeded_job_completes_the_task_and_is_consumed(self):
+        result = {"ok": True, "work_order_id": "WO-1", "pr_url": self.PR, "branch": "wo-1", "head_sha": "abc", "security": {"secret_scan": {}}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "succeeded", "result": result}])
+        adapter = self.run_tick(memory)
+        self.assertEqual(adapter.payloads, [])
+        (task_id, output), = memory.completed
+        self.assertEqual((task_id, output["pr_url"], output["head_sha"], output["branch"]), ("task-1", self.PR, "abc", "wo-1"))
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_failed_job_blocks_with_the_contract_error_and_is_consumed(self):
+        result = {"ok": False, "work_order_id": "WO-1", "error": "tests failed"}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[{"id": "job-1", "task_id": "task-1", "status": "failed", "result": result}])
+        self.run_tick(memory)
+        self.assertEqual(memory.completed, [])
+        self.assertIn("run_coding_backend failed: tests failed", memory.blocked[0][1])
+        self.assertEqual(memory.retried, [])
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_lost_job_is_retried(self):
+        memory = CodingJobMemoryClient(
+            ready=[self.task()],
+            jobs=[{"id": "job-1", "task_id": "task-1", "status": "lost", "result": {"ok": False, "error": "coding job lost: no heartbeat for 5 minutes"}}],
+        )
+        self.run_tick(memory)
+        self.assertEqual(memory.retried[0][0], "task-1")
+        self.assertIn("coding job lost: no heartbeat", memory.retried[0][1])
+        self.assertEqual(memory.consumed, ["job-1"])
+
+
 if __name__ == "__main__":
     unittest.main()
