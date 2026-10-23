@@ -162,6 +162,15 @@ class MemoryClient:
     def create_tasks_bulk(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/workflow/tasks", body)
 
+    def claim_ready_tasks(self, *, runner: str, lane: str, limit: int, lease_seconds: int) -> list[dict[str, Any]]:
+        """Claim up to ``limit`` ready tasks of ``lane``; at most one per workflow."""
+        body = {"runner": runner, "lane": lane, "limit": limit, "lease_seconds": lease_seconds}
+        return list(self._request("POST", "/workflow/claim-batch", body).get("tasks") or [])
+
+    def renew_task_lease(self, task_id: str, *, runner: str, lease_seconds: int) -> bool:
+        body = {"runner": runner, "lease_seconds": lease_seconds}
+        return bool(self._request("POST", f"/workflow/tasks/{task_id}/renew-lease", body).get("renewed"))
+
     def get_workflow(self, workflow_id: str) -> dict[str, Any]:
         return self._request("GET", f"/workflows/{workflow_id}")
 
@@ -1029,10 +1038,19 @@ class MemoryClient:
             params["unconsumed"] = "true"
         return list(self._request("GET", f"/coding-jobs?{urlencode(params)}").get("jobs") or [])
 
-    def claim_coding_jobs(self, *, launcher: str, max_running: int, limit: int | None = None) -> dict[str, Any]:
+    def claim_coding_jobs(
+        self,
+        *,
+        launcher: str,
+        max_running: int,
+        limit: int | None = None,
+        quotas: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {"launcher": launcher, "max_running": max_running}
         if limit is not None:
             body["limit"] = limit
+        if quotas:
+            body["quotas"] = dict(quotas)
         return self._request("POST", "/coding-jobs/claim", body)
 
     def record_coding_job_launch(

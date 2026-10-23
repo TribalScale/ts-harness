@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 LEASE_NAME = "coding-launcher"
@@ -25,6 +26,7 @@ WORKER_ENV_NAMES = (
 )
 WORKER_ENV_PREFIXES = ("CODING_BACKEND_", "OPENCODE_")
 STOP_LOOKBACK_SECONDS = 3600
+QUOTA_ENV = {"per_user": "CODING_QUOTA_PER_USER", "per_program": "CODING_QUOTA_PER_PROGRAM", "per_team": "CODING_QUOTA_PER_TEAM"}
 
 
 class LaunchError(RuntimeError):
@@ -158,12 +160,39 @@ class LocalDockerLauncher:
         return (proc.stdout or "").strip() or "missing"
 
 
-def launcher_tick(memory: Any, launcher: Launcher, *, max_running: int) -> dict[str, list[str]]:
+def coding_schedule(environ: Mapping[str, str] | None = None) -> tuple[dict[str, int], int | None]:
+    """Quotas per requester, program and team, and the global limit, from ``scheduling.coding`` in the
+    runtime config at ``TS_HARNESS_CONFIG``; ``CODING_QUOTA_PER_*`` environment variables override."""
+    import yaml
+
+    from ts_harness.config.schema import SchedulingConfig, parse_scheduling
+
+    env = environ if environ is not None else os.environ
+    scheduling = SchedulingConfig()
+    path = str(env.get("TS_HARNESS_CONFIG") or "").strip()
+    if path and Path(path).is_file():
+        try:
+            data = yaml.safe_load(Path(path).read_text()) or {}
+            scheduling = parse_scheduling(data.get("scheduling") if isinstance(data, dict) else None)
+        except Exception as exc:  # noqa: BLE001
+            _log("coding_schedule_config_unreadable", error=str(exc)[:300])
+    quotas = scheduling.quotas()
+    for key, name in QUOTA_ENV.items():
+        raw = str(env.get(name) or "").strip()
+        if raw:
+            quotas[key] = max(0, int(raw))
+    return quotas, scheduling.coding_global
+
+
+def launcher_tick(
+    memory: Any, launcher: Launcher, *, max_running: int, quotas: dict[str, int] | None = None
+) -> dict[str, list[str]]:
     """Start claimed jobs, then stop workers whose jobs were cancelled or lost."""
     started: list[str] = []
     failed: list[str] = []
     waiting: list[str] = []
-    for job in memory.claim_coding_jobs(launcher=launcher.name, max_running=max_running).get("jobs") or []:
+    claimed = memory.claim_coding_jobs(launcher=launcher.name, max_running=max_running, quotas=quotas)
+    for job in claimed.get("jobs") or []:
         token = str(job.pop("token", ""))
         if waiting:
             memory.record_coding_job_launch(job["id"], error="launcher at capacity", retryable=True)
@@ -205,11 +234,12 @@ def run_launcher_loop(
     stop: threading.Event,
     interval_seconds: float = 5,
     lease_ttl_seconds: int = 30,
+    quotas: dict[str, int] | None = None,
 ) -> None:
     while not stop.is_set():
         try:
             if memory.acquire_service_lease(LEASE_NAME, holder=holder, ttl_seconds=lease_ttl_seconds).get("leader"):
-                launcher_tick(memory, launcher, max_running=max_running)
+                launcher_tick(memory, launcher, max_running=max_running, quotas=quotas)
         except Exception as exc:  # noqa: BLE001
             _log("coding_launcher_tick_failed", error=str(exc))
         stop.wait(interval_seconds)

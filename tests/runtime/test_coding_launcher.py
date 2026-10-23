@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import unittest
+import unittest.mock
 
 from ts_harness.coding import launcher as launcher_mod
 from ts_harness.coding.launcher import LaunchError, LocalDockerConfig, LocalDockerLauncher, launcher_tick, worker_env_names
@@ -82,7 +83,7 @@ class FakeMemory:
         self.claims = []
         self.lease_calls = 0
 
-    def claim_coding_jobs(self, *, launcher, max_running):
+    def claim_coding_jobs(self, *, launcher, max_running, quotas=None):
         self.claims.append((launcher, max_running))
         jobs, self.jobs = self.jobs, []
         return {"jobs": jobs}
@@ -174,3 +175,36 @@ class LauncherTickTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodingScheduleTests(unittest.TestCase):
+    def test_defaults_without_config(self):
+        quotas, global_limit = launcher_mod.coding_schedule({})
+        self.assertEqual(quotas, {"per_user": 2, "per_program": 3, "per_team": 8})
+        self.assertIsNone(global_limit)
+
+    def test_reads_runtime_config_and_env_overrides(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.yaml"
+            path.write_text("scheduling:\n  coding:\n    per_user: 1\n    per_team: 0\n    global: 12\n")
+            quotas, global_limit = launcher_mod.coding_schedule(
+                {"TS_HARNESS_CONFIG": str(path), "CODING_QUOTA_PER_PROGRAM": "5"}
+            )
+        self.assertEqual(quotas, {"per_user": 1, "per_program": 5, "per_team": 0})
+        self.assertEqual(global_limit, 12)
+
+    def test_invalid_config_values_are_rejected(self):
+        from ts_harness.config.schema import parse_scheduling
+
+        with self.assertRaisesRegex(ValueError, "per_user"):
+            parse_scheduling({"coding": {"per_user": -1}})
+
+    def test_tick_passes_quotas_to_the_claim(self):
+        memory = unittest.mock.MagicMock()
+        memory.claim_coding_jobs.return_value = {"jobs": []}
+        memory.list_coding_jobs.return_value = []
+        launcher_tick(memory, unittest.mock.MagicMock(name="local"), max_running=4, quotas={"per_user": 2})
+        self.assertEqual(memory.claim_coding_jobs.call_args.kwargs["quotas"], {"per_user": 2})

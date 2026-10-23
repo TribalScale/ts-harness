@@ -22,6 +22,7 @@ from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
+from memory_routes import task_claims as task_claim_routes  # noqa: E402
 from memory_routes import scim as scim_routes  # noqa: E402
 from memory_routes.directory import (  # noqa: E402
     apply_directory_snapshot,
@@ -562,6 +563,13 @@ def find_workflow_by_ref(conn, external_ref: str) -> dict[str, Any]:
     return {"workflow": record, "tasks": tasks}
 
 
+def _task_lane(value: Any) -> str:
+    lane = str(value or "agent").strip()
+    if lane not in task_claim_routes.LANES:
+        raise ValueError(f"lane must be one of {sorted(task_claim_routes.LANES)}")
+    return lane
+
+
 def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
     workflow_id = parse_uuid(body.get("workflow_id"))
     task_id = str(uuid.uuid4())
@@ -582,9 +590,9 @@ def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
             INSERT INTO workflow_tasks
               (id, workflow_id, tenant_id, workflow_type, external_ref, step_name,
                agent_id, depends_on, input, approval_required,
-               approval_status, max_retries, contract, definition_version)
+               approval_status, max_retries, contract, definition_version, lane)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s)
+              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             (
                 task_id,
@@ -601,6 +609,7 @@ def create_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
                 int(body.get("max_retries", 0)),
                 json.dumps(body.get("contract") or {}),
                 body.get("definition_version"),
+                _task_lane(body.get("lane")),
             ),
         )
         audit_workflow_event(
@@ -872,9 +881,9 @@ def _insert_workflow_tasks(
             INSERT INTO workflow_tasks
               (id, workflow_id, tenant_id, workflow_type, external_ref, step_name,
                agent_id, depends_on, input, approval_required,
-               approval_status, max_retries, contract, definition_version)
+               approval_status, max_retries, contract, definition_version, lane)
             VALUES
-              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s)
+              (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             (
                 task_id,
@@ -891,6 +900,7 @@ def _insert_workflow_tasks(
                 int(task_body.get("max_retries", default_max_retries)),
                 json.dumps(task_body.get("contract") or {}),
                 task_body.get("definition_version"),
+                _task_lane(task_body.get("lane")),
             ),
         )
         created.append(task_id)
@@ -5192,6 +5202,11 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, reject_workflow_plan(conn, body))
                 elif self.path == "/workflow/claim":
                     self._send_json(200, claim_workflow_task(conn, body))
+                elif self.path == "/workflow/claim-batch":
+                    self._send_json(200, task_claim_routes.claim_batch(conn, body))
+                elif self.path.startswith("/workflow/tasks/") and self.path.endswith("/renew-lease"):
+                    task_id = self.path.removeprefix("/workflow/tasks/").removesuffix("/renew-lease")
+                    self._send_json(200, task_claim_routes.renew_lease(conn, task_id, body))
                 elif self.path == "/workflow/complete":
                     body["status"] = "succeeded"
                     self._send_json(200, transition_workflow_task(conn, body))

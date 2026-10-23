@@ -67,6 +67,24 @@ the runtime through the internal load balancer with their job token.
    `aws ecs list-tasks --cluster <project>-coding --started-by coding-job-<id prefix>`.
 5. Logs: CloudWatch group `/<project>/coding-jobs`, stream `job/coding-worker/<task id>`.
 
+## Fair share between people and teams
+
+The launcher claims the oldest queued job that keeps its requester, program
+and team under their quotas. Set them in the runtime config:
+
+```yaml
+scheduling:
+  coding:
+    per_user: 2      # running jobs per requester
+    per_program: 3   # running jobs per program
+    per_team: 8      # running jobs per team (the program's project team)
+    global: 20       # optional; replaces CODING_MAX_RUNNING
+```
+
+A value of 0 removes that limit. `CODING_QUOTA_PER_USER`,
+`CODING_QUOTA_PER_PROGRAM` and `CODING_QUOTA_PER_TEAM` override the file
+without a restart of the runtime (restart `coding-launcher`).
+
 ## Project sizing and package registries
 
 **System → Projects** in the admin console. Admins create projects and set the
@@ -97,6 +115,7 @@ owning team; admins and that team's managers change the rest.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Jobs stay "OpenCode queued", launcher logs `coding_job_launch_deferred` | Fargate vCPU quota or regional capacity | Raise the quota or lower `coding_max_running` |
+| One person's jobs stay queued while others start | That requester, program or team is at its `scheduling.coding` quota (the claim reports `deferred_by_quota`) | Expected; raise the quota if the work is urgent |
 | `coding_job_launch_failed` with `AccessDenied` | Host role lacks `ecs:RunTask` or `iam:PassRole` for the worker roles | Re-apply Terraform; check `<project>-coding-launcher` policy |
 | Task stops with `CannotPullContainerError` | Image tag not in ECR | Run the build workflow, redeploy with that tag |
 | Task stops with `ResourceInitializationError: unable to pull secrets` | Secret missing or execution role scope | Populate the secret; re-apply Terraform |

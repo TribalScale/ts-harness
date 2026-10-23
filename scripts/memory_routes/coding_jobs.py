@@ -203,50 +203,105 @@ def _project_sizing(cur, rows: list[dict[str, Any]]) -> dict[tuple[str, str], di
     return sizing
 
 
+QUOTA_KEYS = ("per_user", "per_program", "per_team")
+
+
+def _quotas(raw: Any) -> dict[str, int]:
+    """Positive per-user, per-program and per-team limits; missing or 0 means no limit."""
+    if raw in (None, ""):
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("quotas must be an object")
+    out: dict[str, int] = {}
+    for key in QUOTA_KEYS:
+        value = raw.get(key)
+        if value in (None, "", 0):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"quotas.{key} must be an integer") from exc
+        if number > 0:
+            out[key] = number
+    return out
+
+
+def _owner_keys(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "per_user": str(row.get("requester") or ""),
+        "per_program": str(row.get("program") or ""),
+        "per_team": str(row.get("team") or ""),
+    }
+
+
 def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
-    """Claim queued jobs up to ``max_running`` jobs starting or running in total."""
+    """Claim queued jobs, oldest first, within the global limit and the per-user, program and team quotas."""
     launcher = str(body.get("launcher") or "local")
     try:
         max_running = max(0, int(body.get("max_running", 3)))
         limit = max(0, int(body.get("limit", max_running)))
     except (TypeError, ValueError) as exc:
         raise ValueError("max_running and limit must be integers") from exc
+    quotas = _quotas(body.get("quotas"))
     ttl = int(body.get("token_ttl_seconds") or DEFAULT_TOKEN_TTL)
+    deferred = 0
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('coding_jobs_claim'))")
-        cur.execute("SELECT count(*) AS n FROM coding_jobs WHERE status = ANY(%s)", (list(RUNNING),))
-        running = int(cur.fetchone()["n"])
+        cur.execute(
+            """
+            SELECT j.id, j.status,
+                   COALESCE(t.requested_by, j.requested_by) AS requester,
+                   j.program_id::text AS program,
+                   COALESCE(t.team_id::text, j.team_slug) AS team
+              FROM coding_jobs j
+              LEFT JOIN workflow_tasks t ON t.id = j.task_id
+             WHERE j.status = ANY(%s)
+             ORDER BY j.created_at
+             LIMIT 1000
+            """,
+            (list(RUNNING) + ["queued"],),
+        )
+        rows = list(cur.fetchall())
+        active = [r for r in rows if r["status"] in RUNNING]
+        running = len(active)
         room = min(limit, max_running - running)
+        counts: dict[tuple[str, str], int] = {}
+        for row in active:
+            for key, owner in _owner_keys(row).items():
+                if owner:
+                    counts[(key, owner)] = counts.get((key, owner), 0) + 1
+        ids: list[Any] = []
+        for row in rows:
+            if len(ids) >= room:
+                break
+            if row["status"] != "queued":
+                continue
+            owners = {key: owner for key, owner in _owner_keys(row).items() if owner and key in quotas}
+            if any(counts.get((key, owner), 0) >= quotas[key] for key, owner in owners.items()):
+                deferred += 1
+                continue
+            for key, owner in owners.items():
+                counts[(key, owner)] = counts.get((key, owner), 0) + 1
+            ids.append(row["id"])
         claimed: list[dict[str, Any]] = []
-        if room > 0:
+        if ids:
             cur.execute(
                 """
-                SELECT id FROM coding_jobs
-                WHERE status = 'queued'
-                ORDER BY created_at
-                FOR UPDATE SKIP LOCKED
-                LIMIT %s
+                UPDATE coding_jobs
+                SET status = 'starting', claimed_at = now(), launcher = %s, attempt = attempt + 1,
+                    heartbeat_at = now()
+                WHERE id = ANY(%s) AND status = 'queued'
+                RETURNING *
                 """,
-                (room,),
+                (launcher, ids),
             )
-            ids = [r["id"] for r in cur.fetchall()]
-            if ids:
-                cur.execute(
-                    """
-                    UPDATE coding_jobs
-                    SET status = 'starting', claimed_at = now(), launcher = %s, attempt = attempt + 1,
-                        heartbeat_at = now()
-                    WHERE id = ANY(%s)
-                    RETURNING *
-                    """,
-                    (launcher, ids),
-                )
-                claimed = sorted(cur.fetchall(), key=lambda r: r["created_at"])
-                sizing = _project_sizing(cur, claimed)
-                claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {})} for r in claimed]
+            claimed = sorted(cur.fetchall(), key=lambda r: r["created_at"])
+            sizing = _project_sizing(cur, claimed)
+            claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {})} for r in claimed]
     conn.commit()
     return {
         "running": running,
+        "deferred_by_quota": deferred,
         "jobs": [{**_public(r), "token": issue_job_token(str(r["id"]), ttl_seconds=ttl)} for r in claimed],
     }
 

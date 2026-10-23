@@ -935,6 +935,7 @@ class DeliveryProgramService:
                 "external_ref": body.get("external_ref"),
                 "contract": body.get("contract") or {},
                 "definition_version": body.get("definition_version"),
+                "lane": body.get("lane"),
                 "actor": actor,
             }
             if depends_on_names:

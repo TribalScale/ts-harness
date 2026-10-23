@@ -478,6 +478,7 @@ def materialize_skeleton_tasks(
             "max_retries": int(stage.retry.get("max_retries", 0)),
             "definition_version": skeleton.definition_version,
             "contract": skeleton.resolve_stage_contract(stage) or {},
+            "lane": workflow_definitions.stage_lane(stage),
         }
         if external_ref and stage.name == skeleton.intake_stage_name():
             body["external_ref"] = external_ref

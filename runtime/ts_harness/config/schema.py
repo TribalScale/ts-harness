@@ -266,6 +266,24 @@ class DeploymentConfig:
 
 
 @dataclass
+class SchedulingConfig:
+    """Coding job quotas: running jobs per requester, program and team (0 means no limit)."""
+
+    coding_per_user: int = 2
+    coding_per_program: int = 3
+    coding_per_team: int = 8
+    # None keeps the launcher's CODING_MAX_RUNNING.
+    coding_global: int | None = None
+
+    def quotas(self) -> dict[str, int]:
+        return {
+            "per_user": self.coding_per_user,
+            "per_program": self.coding_per_program,
+            "per_team": self.coding_per_team,
+        }
+
+
+@dataclass
 class RuntimeConfig:
     tenants: list[TenantConfig]
     agents: list[AgentConfig]
@@ -283,6 +301,7 @@ class RuntimeConfig:
     program_defaults: dict[str, Any] = field(default_factory=dict)
     program_builder: ProgramBuilderConfig = field(default_factory=ProgramBuilderConfig)
     deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
+    scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
 
     @property
     def connectors_dict(self) -> dict[str, GoogleWorkspaceConnectorConfig]:
@@ -717,6 +736,7 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
             agent_id=str((data.get("program_builder") or {}).get("agent_id") or "builder-agent"),
         ),
         deployment=_parse_deployment(data.get("deployment")),
+        scheduling=parse_scheduling(data.get("scheduling")),
     )
     config.validate()
     config._last_known_good = copy.deepcopy(data)
@@ -726,6 +746,27 @@ def parse_runtime_config(data: dict[str, Any]) -> RuntimeConfig:
     fill_agent_souls(config.agents)
     _publish_sandbox_limits(config)
     return config
+
+
+def parse_scheduling(raw: Any) -> SchedulingConfig:
+    raw = raw if isinstance(raw, dict) else {}
+    coding = raw.get("coding") if isinstance(raw.get("coding"), dict) else {}
+    defaults = SchedulingConfig()
+
+    def count(key: str, default: int | None) -> int | None:
+        value = coding.get(key)
+        if value is None:
+            return default
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"scheduling.coding.{key} must be a non-negative integer")
+        return value
+
+    return SchedulingConfig(
+        coding_per_user=count("per_user", defaults.coding_per_user) or 0,
+        coding_per_program=count("per_program", defaults.coding_per_program) or 0,
+        coding_per_team=count("per_team", defaults.coding_per_team) or 0,
+        coding_global=count("global", None),
+    )
 
 
 def _parse_deployment(raw: Any) -> DeploymentConfig:

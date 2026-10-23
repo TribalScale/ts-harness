@@ -7,6 +7,7 @@ from typing import Any
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.expressions import resolve_input_map, resolve_value
 from ts_harness.workflows.hooks._helpers import create_tasks_bulk, load_workflow_payload
+from ts_harness.workflows.materialize import workflow_definitions
 from ts_harness.workflows.registry import HookContext
 
 
@@ -96,6 +97,7 @@ def _task_body_from_stage(
         "max_retries": int((stage.retry or {}).get("max_retries", 0)),
         "definition_version": skeleton.definition_version,
         "contract": skeleton.resolve_stage_contract(stage) or {},
+        "lane": workflow_definitions.stage_lane(stage),
     }
 
 

@@ -106,6 +106,23 @@ runs the stage contract (including `validate_coding_backend_pr_url`) before the
 normal success or blocked handling, then marks the job consumed. A coding_job
 stage must have a `contract_ref`.
 
+Every task has a claim lane: `fast` for barriers, waits and approval gates,
+`coding` for `execution: coding_job` stages, and `agent` otherwise. A stage may
+override it with `"lane"`. Tasks also carry the `team_id` and `requested_by` of
+their program (a trigger copies them at insert, following parent workflows).
+`POST /workflow/claim-batch` (`claim_ready_workflow_tasks`, migration 037)
+claims up to N ready tasks of one lane with `FOR UPDATE SKIP LOCKED`, at most
+one per workflow and none for a workflow that already has a running task.
+Approved gates and resumed or retried tasks go first, then the requester and
+team with the fewest running tasks, then the oldest. Runners extend a running
+task's lease with `POST /workflow/tasks/{id}/renew-lease`.
+
+Coding jobs are claimed within the global limit and per-requester, per-program
+and per-team quotas from `scheduling.coding` in the runtime config (defaults 2,
+3 and 8; 0 means no limit). `CODING_QUOTA_PER_USER`, `CODING_QUOTA_PER_PROGRAM`
+and `CODING_QUOTA_PER_TEAM` override them, and `scheduling.coding.global`
+replaces `CODING_MAX_RUNNING` when set. A job over a quota stays queued.
+
 **Implemented today:** first-class workflow records, delivery programs, stage
 contracts, QA gates, compensation hooks, external wait/`match_all`, merge poller
 host materialization (`scripts/phases/15-automation-cron.sh`), and stuck-status

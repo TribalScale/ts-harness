@@ -163,7 +163,7 @@ class _Memory:
         self.jobs = jobs
         self.launches = []
 
-    def claim_coding_jobs(self, *, launcher, max_running):
+    def claim_coding_jobs(self, *, launcher, max_running, quotas=None):
         jobs, self.jobs = self.jobs, []
         return {"jobs": jobs}
 

@@ -21,6 +21,8 @@ services:
       CODING_LAUNCHER: ${CODING_LAUNCHER:-}
       DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}
       CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}
+      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them.
+      TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
       CODING_ECS_CLUSTER: ${CODING_ECS_CLUSTER:-}
       CODING_ECS_TASK_DEFINITION: ${CODING_ECS_TASK_DEFINITION:-}
       CODING_ECS_CONTAINER: ${CODING_ECS_CONTAINER:-coding-worker}
@@ -40,6 +42,7 @@ services:
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/.env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
     command: ["python3", "/app/scripts/coding-launcher.py"]
     restart: unless-stopped
     depends_on:

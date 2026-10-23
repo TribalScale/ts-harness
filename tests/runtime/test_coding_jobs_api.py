@@ -182,6 +182,41 @@ class CodingJobsPostgresTests(PgTestCase):
             self.assertEqual(([j["id"] for j in second["jobs"]], second["running"]), (ids[2:3], 2))
             self.assertEqual(coding_jobs.claim_coding_jobs(conn, {"max_running": 3})["jobs"], [])
 
+    def test_claim_applies_user_program_and_team_quotas(self):
+        with self.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO teams (slug, display_name) VALUES ('quota-team', 'Q') RETURNING id")
+                team = str(cur.fetchone()["id"])
+            conn.commit()
+
+            def job(requester, program=None, team_id=None):
+                with conn.cursor() as cur:
+                    cur.execute("INSERT INTO workflows (workflow_type) VALUES ('deliver_work_order') RETURNING id")
+                    wf = cur.fetchone()["id"]
+                    cur.execute(
+                        "INSERT INTO workflow_tasks (workflow_id, step_name, agent_id, requested_by, team_id) VALUES (%s, 'd', 'dev-agent', %s, %s) RETURNING id",
+                        (wf, requester, team_id),
+                    )
+                    task = str(cur.fetchone()["id"])
+                conn.commit()
+                body = {"spec": SPEC, "workflow_id": str(wf), "task_id": task}
+                if program:
+                    body["program_id"] = program
+                return coding_jobs.create_coding_job(conn, body)["id"]
+
+            program = "6f1c1f9e-1111-4222-8333-000000000001"
+            alice = [job("alice"), job("alice"), job("alice")]
+            bob = [job("bob", program), job("bob", program)]
+            team_jobs = [job("carol", team_id=team), job("dave", team_id=team)]
+            quotas = {"per_user": 2, "per_program": 1, "per_team": 1}
+            claimed = coding_jobs.claim_coding_jobs(conn, {"max_running": 10, "quotas": quotas})
+            self.assertEqual({j["id"] for j in claimed["jobs"]}, {alice[0], alice[1], bob[0], team_jobs[0]})
+            self.assertEqual(claimed["deferred_by_quota"], 3)
+            again = coding_jobs.claim_coding_jobs(conn, {"max_running": 10, "quotas": quotas})
+            self.assertEqual(again["jobs"], [])
+            with self.assertRaisesRegex(ValueError, "per_user"):
+                coding_jobs.claim_coding_jobs(conn, {"quotas": {"per_user": "x"}})
+
     def test_concurrent_claims_never_exceed_the_cap(self):
         with self.db.connect() as conn:
             for _ in range(6):
