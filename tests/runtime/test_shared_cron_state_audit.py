@@ -391,6 +391,11 @@ class Phase15MergeTests(unittest.TestCase):
         self.assertIn('--file "$CRON_CONFIG"', phase)
         self.assertIn("--memory-api", phase)
         self.assertIn('TS_HARNESS_STATE_BACKEND:-local}" == "postgres"', phase)
+
+    def test_phase_15_shared_merge_runs_inside_the_runtime_network(self):
+        phase = PHASE_15.read_text()
+        self.assertIn("exec -T agent-runtime python3 /app/scripts/ops/merge-cron-jobs.py", phase)
+        self.assertIn('--jobs /dev/stdin --memory-api http://127.0.0.1:18792 < "$SYSTEM_JOBS"', phase)
         self.assertIn('python3 - "$SYSTEM_JOBS"', phase)
         self.assertNotIn('python3 - "$CRON_CONFIG"', phase)
 
