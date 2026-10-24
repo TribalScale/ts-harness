@@ -248,6 +248,19 @@ class KvAuditDedupTests(_Base):
         with self.assertRaisesRegex(ValueError, "UUID"):
             self.call(shared_state.append_audit_events, {"events": [{**event, "event_id": "nope"}]})
 
+    def test_audit_strips_nul_bytes_from_payload(self):
+        event = {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "action_type": "tool",
+            "actor_id": "a",
+            "payload": {"note": "Caf\x00e"},
+            "timestamp": "2026-01-02T03:04:05Z",
+        }
+        self.assertEqual(self.call(shared_state.append_audit_events, {"events": [event]})["inserted"], 1)
+        rows = self.call(shared_state.list_audit_events, {"tenant_id": "t1"})["events"]
+        self.assertEqual(rows[0]["payload"], {"note": "Cafe"})
+
     def test_dedup_marks_once_and_sweep_removes_old_keys(self):
         self.assertTrue(self.call(shared_state.mark_channel_event, {"key": "slack:T1:Ev1"})["new"])
         self.assertFalse(self.call(shared_state.mark_channel_event, {"key": "slack:T1:Ev1"})["new"])
