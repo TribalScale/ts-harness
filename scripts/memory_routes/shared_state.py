@@ -296,6 +296,17 @@ def kv_put(conn, namespace: Any, key: Any, body: dict[str, Any]) -> dict[str, An
     return {"namespace": ns, "key": k, "version": int(row["version"])}
 
 
+def _json_safe(value: Any) -> Any:
+    """Postgres json/jsonb rejects NUL. Drop it from text rather than failing the write."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key).replace("\x00", ""): _json_safe(item) for key, item in value.items()}
+    return value
+
+
 def append_audit_events(conn, body: dict[str, Any]) -> dict[str, Any]:
     """Insert audit events; events already stored (same event_id) are skipped."""
     events = body.get("events")
@@ -308,18 +319,21 @@ def append_audit_events(conn, body: dict[str, Any]) -> dict[str, Any]:
                 event_id = str(uuid.UUID(str(event.get("event_id"))))
             except (TypeError, ValueError) as exc:
                 raise ValueError("event_id must be a UUID") from exc
-            tenant = str(event.get("tenant_id") or "").strip()
-            action = str(event.get("action_type") or "").strip()
-            actor = str(event.get("actor_id") or "").strip()
+            tenant = _json_safe(str(event.get("tenant_id") or "")).strip()
+            action = _json_safe(str(event.get("action_type") or "")).strip()
+            actor = _json_safe(str(event.get("actor_id") or "")).strip()
             if not tenant or not action or not actor:
                 raise ValueError("tenant_id, action_type and actor_id are required")
+            correlation = event.get("correlation_id")
+            if correlation is not None:
+                correlation = _json_safe(str(correlation))
             cur.execute(
                 """
                 INSERT INTO runtime_audit_events (event_id, tenant_id, action_type, actor_id, correlation_id, payload, occurred_at)
                 VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()))
                 ON CONFLICT (event_id) DO NOTHING
                 """,
-                (event_id, tenant, action, actor, event.get("correlation_id"), Jsonb(event.get("payload") or {}),
+                (event_id, tenant, action, actor, correlation, Jsonb(_json_safe(event.get("payload") or {})),
                  event.get("timestamp") or None),
             )
             inserted += cur.rowcount
