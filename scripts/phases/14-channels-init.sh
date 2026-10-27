@@ -69,6 +69,7 @@ done
 
 echo "[phase:${PHASE_NAME}] Restarting agent-runtime to pick up channel/provider env."
 cd "$ENTERPRISE_ASSETS_DIR"
+# workflow-runner shares this network namespace; with_runtime_replicas recreates it too.
 recreate_ts_harness_services agent-runtime memory-api
 if ! wait_for_agent_runtime_health "$PHASE_NAME"; then
     exit 1

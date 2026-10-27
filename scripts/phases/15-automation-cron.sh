@@ -180,6 +180,7 @@ fi
 
 echo "[phase:${PHASE_NAME}] Restarting agent-runtime to load scheduler config."
 cd "$ENTERPRISE_ASSETS_DIR"
+# workflow-runner shares this network namespace; with_runtime_replicas recreates it too.
 recreate_ts_harness_services agent-runtime memory-api
 
 HEALTH_SCRIPT="${ENTERPRISE_ASSETS_DIR:-$HOME/enterprise-assets}/scripts/ops/gateway-health-check.sh"
