@@ -122,6 +122,10 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
             'export WORKFLOW_RUNNER_ENABLED=$(printf \'%q\' "${WORKFLOW_RUNNER_ENABLED:-false}")',
             phase,
         )
+        # Recreating agent-runtime gives it a new network namespace. The runner joins that
+        # namespace, so the recreate helper has to include it or the mirror sync gets connection refused.
+        self.assertIn("docker-compose.workflow-runner.yml", common)
+        self.assertIn("printf '%s\\n' workflow-runner", common)
 
 
 class CodingJobsComposeTests(unittest.TestCase):

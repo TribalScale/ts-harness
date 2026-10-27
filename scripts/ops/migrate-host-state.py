@@ -427,16 +427,41 @@ def import_kv(args: argparse.Namespace, client: Any, report: Report) -> None:
         report.count("kv", "imported")
 
 
+def _live_kv_covers_snapshot(namespace: str, local: Any, remote: Any) -> bool:
+    """The scheduler keeps writing Postgres after the import and leaves the host file behind.
+
+    That file is covered when every job on disk is still there with the same or an older
+    ``last_run``. A newer ``last_run`` on disk is a real miss and stays a mismatch.
+    """
+    if namespace != "scheduler" or not isinstance(local, dict) or not isinstance(remote, dict):
+        return False
+    for name, entry in local.items():
+        other = remote.get(name)
+        if not isinstance(entry, dict) or not isinstance(other, dict):
+            return False
+        if set(entry) != {"last_run"} or set(other) != {"last_run"}:
+            return False
+        try:
+            if float(entry["last_run"]) > float(other["last_run"]):
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+    return True
+
+
 def verify_kv(args: argparse.Namespace, client: Any, report: Report) -> None:
     for namespace in KV_FILES:
         path = _kv_path(args, namespace)
         if not path.is_file():
             continue
         value = json.loads(path.read_text(encoding="utf-8"))
-        if client.kv_get(namespace, KV_KEY).get("value") != value:
-            report.problem("kv", f"{namespace}/{KV_KEY} differs from {path}")
-        else:
+        remote = client.kv_get(namespace, KV_KEY).get("value")
+        if remote == value:
             report.count("kv", "matched")
+        elif _live_kv_covers_snapshot(namespace, value, remote):
+            report.count("kv", "advanced")
+        else:
+            report.problem("kv", f"{namespace}/{KV_KEY} differs from {path}")
 
 
 def export_kv(args: argparse.Namespace, client: Any, report: Report) -> None:

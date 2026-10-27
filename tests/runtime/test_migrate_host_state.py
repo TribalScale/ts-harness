@@ -146,6 +146,35 @@ class ArgumentTests(unittest.TestCase):
         self.assertFalse(printed["ok"])
         self.assertIn("unreadable line 1", printed["sections"]["audit"]["problems"][0])
 
+    def test_verify_kv_accepts_a_scheduler_file_postgres_has_moved_past(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            scheduler = base / "scheduler.json"
+            delegation = base / "delegation.json"
+            scheduler.write_text(json.dumps({"standup": {"last_run": 10.0}}))
+            delegation.write_text(json.dumps({"active_children": 0}))
+            client = mock.Mock()
+            client.kv_get.side_effect = lambda namespace, key: {
+                ("scheduler", "state"): {"value": {"standup": {"last_run": 40.0}, "metrics": {"last_run": 3.0}}},
+                ("delegation", "state"): {"value": {"active_children": 0}},
+            }[(namespace, key)]
+            args = migrate.parse_args(
+                ["--verify", "--only", "kv", "--scheduler-state", str(scheduler), "--delegation-state", str(delegation)]
+            )
+            report = migrate.run(args, client=client)
+            self.assertTrue(report.ok, report.as_dict())
+            self.assertEqual(report.as_dict()["kv"]["advanced"], 1)
+            self.assertEqual(report.as_dict()["kv"]["matched"], 1)
+
+            client.kv_get.side_effect = lambda namespace, key: {
+                ("scheduler", "state"): {"value": {"standup": {"last_run": 10.0}}},
+                ("delegation", "state"): {"value": {"active_children": 0}},
+            }[(namespace, key)]
+            scheduler.write_text(json.dumps({"standup": {"last_run": 99.0}}))
+            report = migrate.run(args, client=client)
+            self.assertFalse(report.ok)
+            self.assertIn("scheduler/state differs", report.as_dict()["kv"]["problems"][0])
+
 
 class WrapperContractTests(unittest.TestCase):
     def test_wrapper_attaches_to_the_runtime_and_cleans_up(self):

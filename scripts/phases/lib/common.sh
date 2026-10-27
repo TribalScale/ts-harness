@@ -745,8 +745,9 @@ run_docker_compose_as_admin() {
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
-# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use, and
-# llm-proxy (which lives in agent-runtime's network namespace) when it runs.
+# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use.
+# llm-proxy and workflow-runner share agent-runtime's network namespace, so a recreate
+# of the runtime leaves them attached to the old namespace unless they are recreated too.
 with_runtime_replicas() {
     local service
     for service in "$@"; do
@@ -758,6 +759,9 @@ with_runtime_replicas() {
         fi
         if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.llm-proxy.yml* ]]; then
             printf '%s\n' llm-proxy
+        fi
+        if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.workflow-runner.yml* ]]; then
+            printf '%s\n' workflow-runner
         fi
     done
 }
