@@ -68,9 +68,12 @@ ARG NODE_VERSION=24.22.1
 ARG NODE_SHA256_AMD64=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
 ARG NODE_SHA256_ARM64=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
 # Node 24.22.1 still bundles npm with brace-expansion 5.0.9 and undici 6.28.0.
-# npm 12.2.1 carries the fixed releases (brace-expansion 5.0.12, undici 6.29.0).
+# npm 12.2.1 carries brace-expansion 5.0.12.
 ARG NPM_VERSION=12.2.1
 ARG NPM_SHA512=bKCmFRVT/BB+YPEYbZwQ1XUI3N5t4xKSpU1MxOjo7z3iWzKBJ0ZXRC1xFdEN+TC7N5TdywaBzf2dMXGJq/e2PQ==
+# npm 12.2.1 is the latest release and its undici 6.29.0 has CVE-2026-109869; swap in the patch release.
+ARG UNDICI_VERSION=6.29.1
+ARG UNDICI_SHA512=EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==
 ARG MAVEN_VERSION=3.9.16
 ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
 ARG GRADLE_VERSION=9.8.2
@@ -99,6 +102,11 @@ RUN set -eu; \
     rm -rf /opt/node/lib/node_modules/npm; \
     mkdir -p /opt/node/lib/node_modules/npm; \
     tar -xzf npm.tgz -C /opt/node/lib/node_modules/npm --strip-components=1; \
+    curl -fsSLo undici.tgz "https://registry.npmjs.org/undici/-/undici-${UNDICI_VERSION}.tgz"; \
+    python3 -c "import base64,hashlib,pathlib,sys; d=base64.b64encode(hashlib.sha512(pathlib.Path('undici.tgz').read_bytes()).digest()).decode(); sys.exit(d!='${UNDICI_SHA512}')"; \
+    rm -rf /opt/node/lib/node_modules/npm/node_modules/undici; \
+    mkdir -p /opt/node/lib/node_modules/npm/node_modules/undici; \
+    tar -xzf undici.tgz -C /opt/node/lib/node_modules/npm/node_modules/undici --strip-components=1; \
     curl -fsSLo maven.tar.gz "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz"; \
     echo "${MAVEN_SHA512}  maven.tar.gz" | sha512sum -c -; \
     mkdir -p /opt/maven && tar -xzf maven.tar.gz -C /opt/maven --strip-components=1; \
@@ -109,7 +117,7 @@ RUN set -eu; \
     echo "${rustup_sha}  rustup-init" | sha256sum -c -; \
     chmod +x rustup-init; \
     CARGO_HOME=/usr/local/cargo ./rustup-init -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"; \
-    rm -f node.tar.xz npm.tgz maven.tar.gz gradle.zip rustup-init; \
+    rm -f node.tar.xz npm.tgz undici.tgz maven.tar.gz gradle.zip rustup-init; \
     chmod -R a+rX /usr/local/rustup /usr/local/cargo; \
     go version && node --version && npm --version && java -version && mvn -v && gradle --version && cargo --version
 

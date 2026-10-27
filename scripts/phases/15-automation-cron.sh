@@ -168,8 +168,10 @@ PY
 MERGE_CRON="${SCRIPT_DIR_LIB}/../ops/merge-cron-jobs.py"
 if [[ "${TS_HARNESS_STATE_BACKEND:-local}" == "postgres" ]]; then
     echo "[phase:${PHASE_NAME}] Merging system jobs into the shared cron tree (Postgres) ..."
-    MEMORY_API_TOKEN="${MEMORY_API_TOKEN:-}" python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" \
-        --memory-api "${MEMORY_API_URL:-http://127.0.0.1:18792}"
+    # memory-api listens only inside the agent-runtime network namespace, so the merge
+    # runs there; the container already has MEMORY_API_TOKEN.
+    run_docker_compose_as_admin exec -T agent-runtime python3 /app/scripts/ops/merge-cron-jobs.py \
+        --jobs /dev/stdin --memory-api http://127.0.0.1:18792 < "$SYSTEM_JOBS"
 else
     echo "[phase:${PHASE_NAME}] Merging system jobs into $CRON_CONFIG ..."
     python3 "$MERGE_CRON" --jobs "$SYSTEM_JOBS" --file "$CRON_CONFIG"
