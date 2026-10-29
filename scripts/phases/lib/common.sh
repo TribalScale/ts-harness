@@ -126,6 +126,21 @@ fetch_secret() {
     exit 1
 }
 
+# For integrations that may stay unconfigured: a secret that exists but cannot be
+# read (e.g. AccessDenied before the instance policy lists it) warns and yields
+# empty instead of exiting the caller.
+fetch_optional_secret() {
+    local secret_id="$1"
+    local result ec=0
+    ensure_cloud_adapter
+    result="$(cloud_fetch_secret "$secret_id" optional)" || ec=$?
+    if (( ec != 0 )); then
+        echo "WARNING: could not read ${SECRETS_PREFIX:-ts-harness}/${secret_id}; treating it as unset" >&2
+        return 0
+    fi
+    printf '%s' "$result"
+}
+
 # Empty/whitespace or unsubstituted Terraform token (__TF_...) — treats incomplete renders as invalid.
 is_blank_or_placeholder() {
     local v="${1:-}"

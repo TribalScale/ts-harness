@@ -547,8 +547,8 @@ def continue_delivery_smoke() -> bool:
         task_count = len(result.get("task_ids") or [])
         return (
             result.get("target_workflow_type") == "jira_from_prd"
-            and result.get("first_step") == "create_jira"
-            and task_count in {1, 5}
+            and result.get("first_step") == "review_prd"
+            and task_count in {1, 4}
         )
     except Exception:
         return False

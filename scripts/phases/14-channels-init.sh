@@ -17,7 +17,8 @@ source "${SCRIPT_DIR_LIB}/lib/common.sh"
 echo "{\"phase\":\"${PHASE_NAME}\",\"event\":\"start\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 start_ts=$(date +%s%3N)
 
-source_required_env_files "$SECRETS_ENV" "$COMPOSE_ENV"
+# secrets.env last: compose-env.sh keeps copies of secrets that go stale after a rotation.
+source_required_env_files "$COMPOSE_ENV" "$SECRETS_ENV"
 reconstruct_compose_files
 
 export TS_HARNESS_CONFIG_DIR="${TS_HARNESS_CONFIG_DIR:-$DATA_DIR/.ts-harness}"

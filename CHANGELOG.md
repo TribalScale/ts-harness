@@ -132,6 +132,20 @@ First public release.
 
 ### Fixed
 
+- The weekly RDS master password rotation left `memory-api`, sessions and the
+  workflow runner unable to open new connections until someone re-ran bootstrap.
+  New phase `12a-db-credential-watch.sh` installs a 5-minute cron job that runs
+  `sync-compose-db-env.sh` when the live secret differs from the running
+  password. The sync script now recreates `workflow-runner`, `llm-proxy` and
+  replicas as well, and phases 13 to 16 read `secrets.env` after
+  `compose-env.sh` so a re-fetched secret wins over the stale copy.
+- An unreadable optional Jira secret (for example `AccessDeniedException` before
+  the instance policy lists it) stopped phase 10 without an error message. It now
+  warns and leaves that secret unset.
+- `jira_search` and `atlassian_search` refuse JQL that is only `ORDER BY` with a
+  clear message instead of passing Jira's 400 through.
+- The Jira service account runbook's targeted apply now includes the instance's
+  secrets read policy.
 - Workflow dispatch errors returned a server error instead of a blocked result.
 - The embeddings preflight never detected a missing API key.
 - Migrations 018 and 024 now run inside a transaction.
