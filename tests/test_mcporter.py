@@ -91,6 +91,24 @@ class McporterSearchTests(McporterTestCase):
         self.assertEqual(self.text(result), "TFS-1: Fix login [To Do]")
         self.assertEqual([c[2]["Authorization"] for c in self.api_calls()], ["Bearer tok-1", "Bearer tok-2"])
 
+    def test_unbounded_jql_is_refused_before_calling_jira(self):
+        for name, arguments in (
+            ("jira_search", {"jql": "order by created DESC"}),
+            ("jira_search", {"jql": "  ORDER BY\n updated"}),
+            ("atlassian_search", {"query": "ORDER BY created DESC"}),
+        ):
+            with self.subTest(name=name, arguments=arguments):
+                result = self.call(name, arguments)
+                self.assertTrue(result["isError"])
+                self.assertIn("search restriction", self.text(result))
+        self.assertEqual(self.api_calls(), [])
+
+    def test_bounded_jql_with_order_by_is_sent(self):
+        self.call("jira_search", {"jql": "project = TFS ORDER BY created DESC"})
+        (_, url, _, _), = self.api_calls()
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        self.assertEqual(query["jql"], ["project = TFS ORDER BY created DESC"])
+
     def test_error_status_is_reported(self):
         self.responses = [(403, b"denied")]
         result = self.call("atlassian_search", {"query": "login"})

@@ -9,6 +9,7 @@ always filed unassigned.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any, Callable
 
@@ -44,7 +45,10 @@ TOOLS = [
     },
     {
         "name": "jira_search",
-        "description": "Search Jira issues with JQL.",
+        "description": (
+            "Search Jira issues with JQL. The JQL needs at least one condition, for example"
+            " `project = KEY ORDER BY created DESC`; Jira rejects a query that is only ORDER BY."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -185,17 +189,29 @@ def _created(client: JiraClient, key: str) -> str:
     return f"{key} {url}".strip()
 
 
+_ORDER_BY = re.compile(r"\border\s+by\b.*$", re.IGNORECASE | re.DOTALL)
+
+
+def _bounded_jql(jql: str) -> str:
+    if not _ORDER_BY.sub("", jql).strip():
+        raise ToolInputError(
+            "JQL needs a search restriction before ORDER BY, for example"
+            " `project = KEY ORDER BY created DESC`; Jira rejects unbounded queries"
+        )
+    return jql
+
+
 def _atlassian_search(client: JiraClient, args: dict[str, Any]) -> str:
     query = str(args.get("query", ""))
     jql = query if "=" in query or query.strip().upper().startswith("ORDER BY") else f'text ~ "{query}"'
-    issues = client.search(jql, max_results=5, fields=["summary", "status"])
+    issues = client.search(_bounded_jql(jql), max_results=5, fields=["summary", "status"])
     if not issues:
         return f"No Jira issues found for query: {query}"
     return "\n".join(_issue_line(issue) for issue in issues)
 
 
 def _jira_search(client: JiraClient, args: dict[str, Any]) -> str:
-    jql = _required(args, "jql")
+    jql = _bounded_jql(_required(args, "jql"))
     issues = client.search(jql, max_results=int(args.get("max_results") or 20))
     if not issues:
         return f"No Jira issues found for JQL: {jql}"
