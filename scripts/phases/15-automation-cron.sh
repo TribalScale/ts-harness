@@ -19,7 +19,8 @@ HEALTH_CRON_PATH="PATH=/usr/local/bin:/usr/bin:/bin"
 
 echo "{\"phase\":\"${PHASE_NAME}\",\"event\":\"start\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
-source_required_env_files "$SECRETS_ENV" "$COMPOSE_ENV"
+# secrets.env last: compose-env.sh keeps copies of secrets that go stale after a rotation.
+source_required_env_files "$COMPOSE_ENV" "$SECRETS_ENV"
 reconstruct_compose_files
 if ! require_slack_channel_env "$PHASE_NAME"; then
     exit 1

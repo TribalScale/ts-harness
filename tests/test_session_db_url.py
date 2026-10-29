@@ -80,7 +80,7 @@ run_docker_compose_as_admin up -d
     def test_ops_scripts_export_session_url_before_recreating_runtime(self):
         for name, recreate in (
             ("rotate-secrets.sh", "\nrecreate_secret_consumers\n"),
-            ("sync-compose-db-env.sh", "--force-recreate agent-runtime"),
+            ("sync-compose-db-env.sh", "\nrecreate_ts_harness_services agent-runtime memory-api\n"),
         ):
             script = (REPO_ROOT / "scripts" / "ops" / name).read_text()
             export = script.index('TS_HARNESS_SESSION_DB_URL="$(session_db_url)"')

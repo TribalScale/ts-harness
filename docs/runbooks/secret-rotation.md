@@ -67,7 +67,7 @@ docker compose logs --tail=30 memory-api | grep -iE "embed|memory|error"
 | `gateway-token` | `ts-harness/gateway-token` | Script updates the gateway auth token; existing UI sessions may need the new token |
 | `slack-bot-token` | `ts-harness/slack-bot-token` | Slack channel briefly disconnects; socket mode reconnects automatically |
 | `slack-app-token` | `ts-harness/slack-app-token` | Slack socket mode reconnects on gateway restart |
-| `db-password` | `ts-harness/db-password` | Local backend: script attempts to align Postgres before recreating services; RDS backend: rotate the RDS secret first, then run the script |
+| `db-password` | `ts-harness/db-password` | Local backend: script attempts to align Postgres before recreating services; RDS backend: see [Managed database password](#managed-database-password) |
 | `openai-api-key`, `voyage-api-key`, `gemini-api-key`, `mistral-api-key` | `ts-harness/<provider>-api-key` | Agent auth profiles, gateway env, compose env, and `memory-api` are refreshed |
 | `github-token` | `ts-harness/github-token` | Agent auth profiles are refreshed for `dev-agent` |
 | `jira-client-id`, `jira-client-secret`, `jira-cloud-id`, `jira-token`, `jira-url`, `jira-username` | `ts-harness/jira-*` | Runtime env (`ATLASSIAN_*`) and the `pm-agent` auth profile are refreshed; see [Jira service account](jira-service-account.md#rotate-the-client-secret) |
@@ -95,6 +95,22 @@ That re-runs phase 10, refreshes the compose env, and recreates `agent-runtime`,
 `memory-api`, `sandbox-worker`, and `workflow-runner` together. The fetch phase
 refuses a blank or placeholder value, and both services fail closed without the
 token. `GET /health` on the memory API does not require the bearer.
+
+## Managed database password
+
+With the RDS backend, RDS owns the master password and rotates it every 7 days.
+Open connections survive a rotation, but new ones fail until every service that
+holds the password is recreated. Phase `12a-db-credential-watch.sh` installs a
+root cron job that runs `scripts/ops/watch-db-credentials.sh` every 5 minutes. It
+compares the live secret with the password `memory-api` is running with and, when
+they differ, runs `scripts/ops/sync-compose-db-env.sh`. That script refreshes
+`secrets.env`, `compose-env.sh` and the runtime `.env`, then recreates
+`agent-runtime`, `memory-api` and the services that share their network
+(`workflow-runner`, `llm-proxy`, replicas). The job logs to
+`/var/log/ts-harness-db-credentials.log` only when it syncs or fails.
+
+To pick up a rotation by hand, run `sudo bash ~/enterprise-assets/scripts/ops/sync-compose-db-env.sh`
+with `ADMIN_USER` set to the host's admin user.
 
 ## Automating rotation (future)
 
