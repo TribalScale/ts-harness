@@ -21,6 +21,9 @@ locals {
     "jira-token"                          = { consumers = ["pm-agent"] }
     "jira-url"                            = { consumers = ["pm-agent"] }
     "jira-username"                       = { consumers = ["pm-agent"] }
+    "jira-client-id"                      = { consumers = ["gateway"] }
+    "jira-client-secret"                  = { consumers = ["gateway"] }
+    "jira-cloud-id"                       = { consumers = ["gateway"] }
     "telegram-token"                      = { consumers = ["orchestrator"] }
     "discord-token"                       = { consumers = ["orchestrator"] }
     "slack-bot-token"                     = { consumers = ["orchestrator", "comms-agent"] }

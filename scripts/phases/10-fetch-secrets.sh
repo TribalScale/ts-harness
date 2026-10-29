@@ -94,6 +94,24 @@ if is_blank_or_placeholder "$CODING_JOB_SECRET"; then CODING_JOB_SECRET=""; fi
 LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
 
+# Jira: a service account OAuth credential (client id/secret) or an email and API token.
+ATLASSIAN_SITE_URL="$(fetch_secret "jira-url" true 2>/dev/null || true)"
+ATLASSIAN_EMAIL="$(fetch_secret "jira-username" true 2>/dev/null || true)"
+ATLASSIAN_API_TOKEN="$(fetch_secret "jira-token" true 2>/dev/null || true)"
+ATLASSIAN_CLIENT_ID="$(fetch_secret "jira-client-id" true 2>/dev/null || true)"
+ATLASSIAN_CLIENT_SECRET="$(fetch_secret "jira-client-secret" true 2>/dev/null || true)"
+ATLASSIAN_CLOUD_ID="$(fetch_secret "jira-cloud-id" true 2>/dev/null || true)"
+for jira_var in ATLASSIAN_SITE_URL ATLASSIAN_EMAIL ATLASSIAN_API_TOKEN ATLASSIAN_CLIENT_ID ATLASSIAN_CLIENT_SECRET ATLASSIAN_CLOUD_ID; do
+    if is_blank_or_placeholder "${!jira_var}"; then printf -v "$jira_var" '%s' ""; fi
+done
+if [[ -n "$ATLASSIAN_CLIENT_ID" && -n "$ATLASSIAN_CLIENT_SECRET" ]]; then
+    echo "[phase:${PHASE_NAME}] Jira auth: service account (oauth)"
+elif [[ -n "$ATLASSIAN_SITE_URL" && -n "$ATLASSIAN_EMAIL" && -n "$ATLASSIAN_API_TOKEN" ]]; then
+    echo "[phase:${PHASE_NAME}] Jira auth: email and API token (basic)"
+else
+    echo "[phase:${PHASE_NAME}] WARNING: Jira credentials missing; atlassian_search and Jira compensation will be unavailable." >&2
+fi
+
 # Terraform seeds secrets as a single space; treat that as unset.
 if is_blank_or_placeholder "$CODING_BACKEND_API_KEY"; then CODING_BACKEND_API_KEY=""; fi
 if is_blank_or_placeholder "$CODING_BACKEND_PROVIDER"; then CODING_BACKEND_PROVIDER=""; fi
@@ -204,6 +222,12 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var CODING_BACKEND_PROVIDER "$CODING_BACKEND_PROVIDER"
     write_env_var CODING_BACKEND_MODEL "$CODING_BACKEND_MODEL"
     write_env_var GITHUB_TOKEN "$GITHUB_TOKEN"
+    write_env_var ATLASSIAN_SITE_URL "$ATLASSIAN_SITE_URL"
+    write_env_var ATLASSIAN_EMAIL "$ATLASSIAN_EMAIL"
+    write_env_var ATLASSIAN_API_TOKEN "$ATLASSIAN_API_TOKEN"
+    write_env_var ATLASSIAN_CLIENT_ID "$ATLASSIAN_CLIENT_ID"
+    write_env_var ATLASSIAN_CLIENT_SECRET "$ATLASSIAN_CLIENT_SECRET"
+    write_env_var ATLASSIAN_CLOUD_ID "$ATLASSIAN_CLOUD_ID"
 } > "$SECRETS_ENV"
 chmod 600 "$SECRETS_ENV"
 echo "[phase:${PHASE_NAME}] Secrets written to $SECRETS_ENV (mode 600)."
