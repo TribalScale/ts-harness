@@ -538,9 +538,16 @@ def _validate_publish_gates(
     """Flag stages that can publish before any human approval gate.
 
     A stage's own ``approval_required`` approves its output after it runs, so only
-    an upstream gate (through ``depends_on``) protects it.
+    an upstream gate (through ``depends_on``) protects it. Jira writes count only in
+    stages that declare ``jira_write``, and not in expand stages (their children run
+    after plan approval) or in workflows that start from an approved source artifact.
     """
+    from ts_harness.config.bindings import is_jira_write_tool
+    from ts_harness.tools.policy import JIRA_WRITE_EFFECT, READ_ONLY_MCP_TOOLS, is_mcp_tool
+
     stages = [stage for stage in list(payload.get("stages") or []) if isinstance(stage, dict)]
+    promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
+    source_approved = bool(promotion.get("requires_source_artifact"))
     by_name = {str(stage.get("name") or "").strip(): stage for stage in stages}
     gated_cache: dict[str, bool] = {}
 
@@ -575,6 +582,12 @@ def _validate_publish_gates(
                 effective |= set(agent_tools.get(agent_id, set()))
         else:
             continue
+        if (
+            JIRA_WRITE_EFFECT not in set(stage.get("allowed_external_effects") or [])
+            or str(stage.get("kind") or "") == "expand"
+            or source_approved
+        ):
+            effective = {tool for tool in effective if not is_jira_write_tool(tool)}
         reachable = sorted(effective & publish_tools)
         if reachable:
             issues.append(
@@ -587,7 +600,7 @@ def _validate_publish_gates(
                 )
             )
             continue
-        if not restricted and any(tool.startswith("mcp-") for tool in effective):
+        if not restricted and any(is_mcp_tool(tool) and tool not in READ_ONLY_MCP_TOOLS for tool in effective):
             issues.append(
                 _issue(
                     "warning",

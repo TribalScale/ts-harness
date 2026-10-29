@@ -19,7 +19,7 @@
 
 **Model:** `openai/gpt-4o`
 **Workspace:** `/workspace/orchestrator`
-**Toolsets:** `core-read`, `workflow`, `delegation`, `channel-chat`, `workflow-promotion`
+**Toolsets:** `core-read`, `workflow`, `delegation`, `channel-chat`, `workflow-promotion`, `jira-read`
 **Skills:** `orchestrator`, `memory-api`, `workflow`, `workflows`, `governed-workflows`, `cost-awareness`, `audit-logging`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):

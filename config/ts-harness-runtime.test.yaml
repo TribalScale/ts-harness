@@ -114,6 +114,8 @@ toolsets:
   terminal: [exec]
   coding-backend: [run_coding_backend]
   workflow: [workflow_update]
+  jira-read: [mcp-atlassian-atlassian_search, mcp-atlassian-jira_search, mcp-atlassian-jira_get_issue, mcp-atlassian-jira_get_all_projects]
+  jira-write: [mcp-atlassian-jira_create_issue, mcp-atlassian-jira_batch_create_issues, mcp-atlassian-jira_create_issue_link, mcp-atlassian-jira_add_comment]
   google-workspace: []
   google-workspace-docs:
     - google_workspace_drive_search
@@ -263,7 +265,7 @@ agents:
       workspace: /workspace/orchestrator
       model: openai/gpt-4o-mini
       skills: [orchestrator, memory-api, workflow, workflows, governed-workflows]
-      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion]
+      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion, jira-read]
       tools:
         allow:
           [
@@ -316,7 +318,7 @@ agents:
       workspace: /workspace/dev-agent
       model: openai/gpt-4o-mini
       skills: [dev, memory, workflows, integrate, governed-workflows]
-      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read]
       tools:
         allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
         deny: [delegate_task]
@@ -336,7 +338,7 @@ agents:
       skills: [pm, memory-api, workflows, governed-workflows]
       connector_bindings:
         google-workspace: pm
-      toolsets: [core-read, workflow, google-workspace-docs]
+      toolsets: [core-read, workflow, google-workspace-docs, jira-read, jira-write]
       tools:
         allow: [read_file, recall_memory, workflow_update]
         deny: [exec, delegate_task]
@@ -347,7 +349,7 @@ agents:
       skills: [comms, memory-api]
       connector_bindings:
         google-workspace: comms
-      toolsets: [core-read, channel, google-workspace]
+      toolsets: [core-read, channel, google-workspace, jira-read]
       tools:
         allow:
           - read_file

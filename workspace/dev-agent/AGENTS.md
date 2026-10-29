@@ -18,7 +18,7 @@
 
 **Model:** `openai/gpt-4o`
 **Workspace:** `/workspace/dev-agent`
-**Toolsets:** `core-read`, `core-write`, `terminal`, `coding-backend`, `skill-authoring`
+**Toolsets:** `core-read`, `core-write`, `terminal`, `coding-backend`, `skill-authoring`, `jira-read`
 **Skills:** `dev`, `memory`, `workflows`, `integrate`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
