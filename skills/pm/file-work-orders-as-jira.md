@@ -19,7 +19,11 @@ Use on `file_work_orders_as_jira`.
 2. Create an Epic when needed. Create one issue per work order.
 3. Issue type = `input.issue_type_by_project[project]`, else `input.default_issue_type`, else `Story`. If that type does not exist, stop.
 4. **Do not set assignee.**
-5. Description = the single work-order section (Summary, Requirements, Files, E2E Acceptance Tests, Out of Scope) plus the pointer block. Do not replace that section with a one-line acceptance criterion.
+5. Description, in this order (Markdown; see `jira-ticket-format`):
+   - **Bug issues** with `input.bug_report`: the approved bug report body (Steps to reproduce through Notes) under `## Bug report`. Do not rewrite it.
+   - **Other issues**: one line, `As a <persona>, I want <capability> so that <outcome>.` or `Outcome: <what the system does after this ships>.`
+   - The single work-order section (Summary, Requirements, Files, E2E Acceptance Tests, Out of Scope), unchanged. Do not replace it with a one-line acceptance criterion.
+   - The pointer block, last, as plain lines.
 
 ```text
 WO: WO-003

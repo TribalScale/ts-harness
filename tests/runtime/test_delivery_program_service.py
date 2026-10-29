@@ -212,7 +212,7 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(result.workflow_type, "jira_from_prd")
-        self.assertEqual(result.first_step, "create_jira")
+        self.assertEqual(result.first_step, "review_prd")
         create_kwargs = client.create_program.call_args.kwargs
         self.assertEqual(result.program_id, create_kwargs["program_id"])
         client.create_program.assert_called_once()
@@ -326,7 +326,7 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         self.assertEqual(result.workflow_type, "prd_request")
         create_kwargs = client.create_program.call_args.kwargs
         self.assertEqual(create_kwargs["program_type"], "software_delivery")
-        self.assertEqual(create_kwargs["program_definition_version"], "1.2.0")
+        self.assertEqual(create_kwargs["program_definition_version"], "1.3.0")
         self.assertTrue(create_kwargs["program_definition_revision"])
         snapshot = create_kwargs["program_definition_snapshot"]
         self.assertEqual(snapshot["program_type"], "software_delivery")
@@ -370,8 +370,8 @@ class DeliveryProgramServiceTests(unittest.TestCase):
                 "resolved_workflow_versions": {
                     "jira": {
                         "workflow_type": "jira_from_prd",
-                        "definition_version": "1.1.0",
-                        "pins": {"jira_from_prd": "1.1.0"},
+                        "definition_version": "2.0.0",
+                        "pins": {"jira_from_prd": "2.0.0"},
                     }
                 },
                 "metadata": {"artifacts": {"approved_prd": {"ok": True}}},
@@ -398,7 +398,7 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         self.assertEqual(result["workflow_type"], "jira_from_prd")
         self.assertEqual(
             client.create_workflow.call_args.kwargs["definition_version"],
-            "1.1.0",
+            "2.0.0",
         )
 
     def test_resolve_node_workflow_uses_variants_and_pins(self):

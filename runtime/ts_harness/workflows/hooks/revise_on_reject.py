@@ -260,13 +260,17 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         revise_depends_on = [str(source["id"])]
 
     cancelled: list[str] = []
+    resume_steps = {str(cfg.get("step_name") or "") for cfg in resume_chain} - {""}
     if block_loop:
         cancelled = _cancel_superseded(
             ctx,
             tasks,
             current_id=str(gate.get("id") or ""),
-            resume_steps={str(cfg.get("step_name") or "") for cfg in resume_chain} - {""},
+            resume_steps=resume_steps,
         )
+    elif resume_steps:
+        # The rejected gate never succeeds, so its pending dependents would wait forever.
+        cancelled = _cancel_superseded(ctx, tasks, current_id="", resume_steps=resume_steps)
 
     revise_ids = create_tasks_bulk(
         ctx.memory_client,

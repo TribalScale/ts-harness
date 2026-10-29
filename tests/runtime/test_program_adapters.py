@@ -40,6 +40,30 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
         self.assertEqual(intake["approved_rfp"], {"title": "x"})
         self.assertNotIn("other", intake)
 
+    def test_extract_jira_outputs_records_epic_and_story_keys(self):
+        patch = self.registry.extract_outputs(
+            "extract_jira_outputs",
+            workflow_type="jira_from_prd",
+            tasks=[
+                {"status": "succeeded", "step_name": "plan_stories", "output": {"plan_markdown": "# Plan"}},
+                {
+                    "status": "succeeded",
+                    "step_name": "file_jira",
+                    "output": {"jira_epic_key": "TFS-10", "jira_story_keys": ["TFS-11", "TFS-12"]},
+                },
+            ],
+        )
+        self.assertEqual(patch, {"jira_epic_key": "TFS-10", "jira_story_keys": ["TFS-11", "TFS-12"], "planning_track": "jira"})
+
+    def test_extract_jira_outputs_accepts_legacy_epic_and_child_keys(self):
+        patch = self.registry.extract_outputs(
+            "extract_jira_outputs",
+            workflow_type="jira_from_prd",
+            tasks=[{"status": "succeeded", "output": {"result": {"epic_key": "TFS-1", "child_keys": ["TFS-2"]}}}],
+        )
+        self.assertEqual(patch["jira_epic_key"], "TFS-1")
+        self.assertEqual(patch["jira_story_keys"], ["TFS-2"])
+
     def test_extract_implement_tracks_cloned_workflow_type(self):
         patch = self.registry.extract_outputs(
             "extract_implement_outputs",

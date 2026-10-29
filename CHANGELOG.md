@@ -79,8 +79,19 @@ First public release.
 - Jira descriptions and comments accept Markdown (headings, bullet, numbered and
   checkbox lists, fenced code, quotes, tables, bold, inline code and links) and
   are sent as Atlassian Document Format; issues read back as the same Markdown.
+- PM skills: `jira-ticket-format` (ticket rules plus story, epic, task and bug
+  templates), `prd-drafter`, `prd-review` and `story-writer`. PRDs carry an
+  FR index; acceptance criteria live in the Jira stories.
 
 ### Changed
+
+- `jira_from_prd` 2.0.0 reviews the PRD, plans the stories, waits for approval of
+  the plan (reject with feedback to revise it), then files the epic, stories and
+  `Blocks` links in one stage that never retries. The program records the story
+  keys. Runs pinned to 1.x keep their version. `software_delivery` is 1.3.0.
+- Rejecting a gate that has `resume_after` steps now cancels their pending tasks,
+  so only the re-gate's copies remain.
+- Bug filing receives the approved bug report, and Bug issues lead with it.
 
 - `atlassian_search` uses `GET /rest/api/3/search/jql`; Atlassian removed
   `/rest/api/3/search`.

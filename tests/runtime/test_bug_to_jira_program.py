@@ -107,6 +107,23 @@ class BugToJiraProgramTests(unittest.TestCase):
         intake = next(node for node in produces["nodes"] if node["id"] == "bug_intake")
         self.assertEqual(intake["produces_artifacts"][0], "bug_report")
 
+    def test_approved_bug_report_reaches_the_filing_stage(self):
+        bug = ProgramDefinitionRegistry().load("bug_to_jira_work_orders")
+        report = "Checkout total is wrong\n\n## Steps to reproduce\n1. Add two items"
+        intake = build_intake_for_node(
+            snapshot=bug,
+            node_id="file_jira",
+            workflow_type="file_work_orders_as_jira",
+            summary="file the bug",
+            artifacts={"work_order_ids": ["WO-001"], "work_orders_markdown": "# WO-001\n", "bug_report": report},
+        )
+        self.assertEqual(intake["bug_report"], report)
+        filing = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())
+        file_tickets = next(stage for stage in filing["stages"] if stage["name"] == "file_tickets")
+        self.assertEqual(file_tickets["input_map"]["bug_report"], "$workflow.bug_report")
+        tasks = [{"step_name": "choose_epic", "status": "pending", "created_at": "1", "input": intake}]
+        self.assertEqual(resolve_token("$workflow.bug_report", tasks=tasks), report)
+
     def test_resolved_issue_type_is_bug_and_content_stays_story(self):
         registry = ProgramDefinitionRegistry()
         bug = registry.load("bug_to_jira_work_orders")

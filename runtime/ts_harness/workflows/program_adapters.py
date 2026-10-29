@@ -19,7 +19,7 @@ ExtractOutputsFn = Callable[..., dict[str, Any]]
 # extract_declared_outputs trusts the node's produces_artifacts list (None).
 ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     "extract_prd_outputs": frozenset({"approved_prd"}),
-    "extract_jira_outputs": frozenset({"jira_epic_key", "planning_track"}),
+    "extract_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "planning_track"}),
     "extract_work_orders_outputs": frozenset(
         {
             "planner_complete",
@@ -161,11 +161,15 @@ def _extract_jira_outputs(
     del workflow_type, artifacts
     merged = dict(outputs or {})
     merged.update(_merge_task_outputs(tasks))
+    if isinstance(merged.get("result"), dict):
+        merged = {**merged["result"], **merged}
     patch: dict[str, Any] = {}
     if merged.get("epic_key") or merged.get("jira_epic_key"):
-        patch["jira_epic_key"] = merged.get("epic_key") or merged.get("jira_epic_key")
-    if "planning_track" not in patch:
-        patch["planning_track"] = "jira"
+        patch["jira_epic_key"] = merged.get("jira_epic_key") or merged.get("epic_key")
+    story_keys = merged.get("jira_story_keys") or merged.get("child_keys")
+    if isinstance(story_keys, list) and story_keys:
+        patch["jira_story_keys"] = [str(key) for key in story_keys if str(key or "").strip()]
+    patch["planning_track"] = "jira"
     return patch
 
 
@@ -612,6 +616,7 @@ def _build_file_jira_inputs(
         "approved_prd",
         "work_order_ids",
         "work_orders_markdown",
+        "bug_report",
         "jira_epic_key",
         "repo",
         "default_branch",

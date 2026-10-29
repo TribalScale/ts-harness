@@ -1,6 +1,6 @@
 {
   "program_type": "bug_to_jira_work_orders",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "display_name": "Bug to Jira work order",
   "startable_nodes": ["bug_intake", "file_jira"],
   "config": {
@@ -48,6 +48,7 @@
         { "kind": "program_summary", "target": "summary" },
         { "kind": "artifact", "name": "work_order_ids", "target": "work_order_ids" },
         { "kind": "artifact", "name": "work_orders_markdown", "target": "work_orders_markdown" },
+        { "kind": "artifact", "name": "bug_report", "target": "bug_report" },
         { "kind": "artifact", "name": "jira_epic_key", "target": "jira_epic_key" },
         { "kind": "artifact", "name": "repo", "target": "repo" },
         { "kind": "artifact", "name": "default_branch", "target": "default_branch" }

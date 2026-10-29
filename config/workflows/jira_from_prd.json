@@ -1,12 +1,64 @@
 {
   "workflow_type": "jira_from_prd",
-  "definition_version": "1.1.0",
+  "definition_version": "2.0.0",
   "display_name": "Jira filing from approved PRD",
   "contracts": {
+    "prd_review": {
+      "output_schema": {
+        "type": "object",
+        "required": ["verdict", "review_markdown"],
+        "properties": {
+          "verdict": { "type": "string", "enum": ["ready", "gaps"] },
+          "review_markdown": { "type": "string", "minLength": 1 },
+          "critical_gaps": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "jira_plan": {
+      "output_schema": {
+        "type": "object",
+        "required": ["plan_markdown", "project_key", "epic", "stories"],
+        "properties": {
+          "plan_markdown": { "type": "string", "minLength": 1 },
+          "project_key": { "type": "string", "minLength": 1 },
+          "epic": {
+            "type": "object",
+            "properties": {
+              "existing_key": { "type": "string" },
+              "summary": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "stories": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "required": ["number", "summary", "shape", "issue_type", "description"],
+              "properties": {
+                "number": { "type": "string" },
+                "summary": { "type": "string", "minLength": 1 },
+                "shape": { "type": "string", "enum": ["user-facing", "technical", "enabler"] },
+                "issue_type": { "type": "string", "minLength": 1 },
+                "fr_ids": { "type": "array", "items": { "type": "string" } },
+                "blocked_by": { "type": "array", "items": { "type": "string" } },
+                "labels": { "type": "array", "items": { "type": "string" } },
+                "description": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "open_questions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "jira_filing": {
       "output_schema": {
         "type": "object",
+        "required": ["jira_epic_key", "jira_story_keys"],
         "properties": {
+          "jira_epic_key": { "type": "string", "minLength": 1 },
+          "jira_story_keys": { "type": "array", "items": { "type": "string" } },
           "summary": { "type": "string" }
         }
       }
@@ -21,7 +73,7 @@
   },
   "promotion": {
     "confirm_required": false,
-    "intake_stage": "create_jira",
+    "intake_stage": "review_prd",
     "requires_source_artifact": true,
     "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
   },
@@ -32,18 +84,95 @@
   "on_workflow_cancel": { "hook": "cancel_workflow" },
   "stages": [
     {
-      "name": "create_jira",
+      "name": "review_prd",
       "kind": "task",
       "agent_id": "pm-agent",
       "allowed_agents": ["pm-agent"],
+      "contract_ref": "prd_review",
+      "skill_hints": ["prd-review"],
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["plan_stories"]
+      },
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "plan_stories",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["review_prd"],
+      "allowed_agents": ["pm-agent"],
+      "contract_ref": "jira_plan",
+      "skill_hints": ["story-writer"],
+      "present_prompt": "approval",
+      "input_map": {
+        "approved_prd": "$workflow.approved_prd",
+        "prd_review": "$prior.review_prd.output",
+        "jira_epic_key": "$workflow.jira_epic_key",
+        "default_issue_type": "$workflow.default_issue_type",
+        "issue_type_by_project": "$workflow.issue_type_by_project"
+      },
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "approve_plan",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["plan_stories"],
       "approval_required": true,
+      "on_reject": {
+        "hook": "revise_on_reject",
+        "revise": {
+          "step_name": "plan_stories",
+          "agent_id": "pm-agent",
+          "present_prompt": "approval",
+          "source_steps": ["plan_stories"],
+          "input_map": {
+            "prior_artifact": "$source.output",
+            "comments": "$reject.comments",
+            "revision_number": "$runtime.revision_count:plan_stories"
+          }
+        },
+        "re_gate": {
+          "step_name": "approve_plan",
+          "agent_id": "orchestrator",
+          "approval_required": true,
+          "depends_on": ["$revise.id"]
+        },
+        "resume_after": [
+          { "step_name": "file_jira", "agent_id": "pm-agent" }
+        ]
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["file_jira"]
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 86400
+      }
+    },
+    {
+      "name": "file_jira",
+      "kind": "task",
+      "agent_id": "pm-agent",
+      "depends_on": ["approve_plan"],
+      "allowed_agents": ["pm-agent"],
       "contract_ref": "jira_filing",
       "allowed_external_effects": ["jira_write"],
+      "skill_hints": ["prd-to-jira"],
       "input_map": {
+        "approved_plan": "$prior.plan_stories.output",
         "approved_prd": "$workflow.approved_prd"
       },
       "retry": {
-        "max_retries": 2,
+        "max_retries": 0,
         "timeout_seconds": 1800
       }
     }

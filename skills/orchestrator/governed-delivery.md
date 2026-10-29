@@ -63,7 +63,10 @@ Create one workflow with these canonical task names:
 | `draft_prd` | `pm-agent` | none |
 | `revise_prd` | `pm-agent` | repeats until human approval |
 | `approve_prd` | `orchestrator` | human approval (prd_request workflow) |
-| `create_jira` | `pm-agent` | requires approved PRD + human approval |
+| `review_prd` | `pm-agent` | requires approved PRD (jira_from_prd) |
+| `plan_stories` | `pm-agent` | reads Jira only; revised on plan reject |
+| `approve_plan` | `orchestrator` | human approval of the story plan |
+| `file_jira` | `pm-agent` | only stage that writes Jira; runs after `approve_plan` |
 | `implement_ticket` | `dev-agent` | one task per Jira ticket |
 | `qa_gate` | `qa-agent` | program stage; canonical QA envelope over delivered PR set (blocks on `failed`) |
 | `await_human_merge` | `orchestrator` | depends on `qa_gate`; `match_all` wait for human/GitHub merge of all QA PRs |
@@ -74,7 +77,7 @@ Before dispatching each non-human step, call `POST /workflow/claim` with the tas
 
 Represent human gates as workflow tasks with `approval_required: true`. Use `POST /workflow/approve` or `POST /workflow/reject` when the human decision arrives. The following stages should be approval-gated:
 
-- `create_jira`
+- `approve_plan`
 - `await_human_merge`
 - `deploy_staging`
 - `deploy_production`

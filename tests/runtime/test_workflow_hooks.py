@@ -54,6 +54,38 @@ class WorkflowHookTests(unittest.TestCase):
         self.assertEqual(result["revise_task_id"], "rev-1")
         ctx.memory_client.reject_task.assert_called_once()
 
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_reject_with_resume_after_replaces_the_pending_downstream_task(self, mock_bulk):
+        mock_bulk.side_effect = [["plan-2"], ["gate-2"], ["file-2"]]
+        skeleton = load_skeleton("jira_from_prd")
+        gate = {"id": "gate-1", "step_name": "approve_plan", "approval_status": "pending", "status": "pending"}
+        tasks = [
+            {"id": "plan-1", "step_name": "plan_stories", "status": "succeeded", "output": {"plan_markdown": "x"}, "created_at": "2026-01-01"},
+            gate,
+            {"id": "file-1", "step_name": "file_jira", "status": "pending", "created_at": "2026-01-01"},
+        ]
+        ctx = self._ctx(
+            workflow_type="jira_from_prd",
+            skeleton=skeleton,
+            stage=skeleton.stage("approve_plan"),
+            task=gate,
+            tasks=tasks,
+            reject_comments="split story 1.2",
+        )
+        ctx.memory_client.get_workflow.return_value = {"workflow": ctx.workflow, "tasks": tasks}
+
+        result = revise_on_reject.handle(ctx)
+
+        ctx.memory_client.reject_task.assert_called_once()
+        cancelled = [call.args[0] for call in ctx.memory_client.cancel_task.call_args_list]
+        self.assertEqual(cancelled, ["file-1"])
+        revise, re_gate, resume = (call.kwargs["tasks"][0] for call in mock_bulk.call_args_list)
+        self.assertEqual(revise["step_name"], "plan_stories")
+        self.assertEqual(revise["input"]["comments"], "split story 1.2")
+        self.assertEqual((re_gate["step_name"], re_gate["depends_on"]), ("approve_plan", ["plan-2"]))
+        self.assertEqual((resume["step_name"], resume["agent_id"], resume["depends_on"]), ("file_jira", "pm-agent", ["gate-2"]))
+        self.assertEqual(result["re_gate_task_ids"], ["gate-2"])
+
     def test_hydrate_input_skips_without_map(self):
         skeleton = load_skeleton("implement_ticket")
         ctx = self._ctx(

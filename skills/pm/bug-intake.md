@@ -18,13 +18,13 @@ Ask **one question at a time**. Use the diagnosis and the Slack report. The repo
 
 ## draft_bug
 
-Write `bug_report` as markdown. Include what broke, where, the diagnosis (unknown cause is allowed), `repo`, and `default_branch`. Stay inside the clarified scope. Do not open a PR or edit code.
+Write `bug_report` as Markdown in the bug template (`read_skill_reference skill_id=jira-ticket-format path=references/bug.md`): Steps to reproduce, Expected, Actual with a failure class, Evidence citing only files the diagnosis read, Blast radius, Regression test and Notes. Start with a one-line title for the Jira summary. An unknown cause is allowed; say so. Return `repo` and `default_branch` alongside it. Stay inside the clarified scope. Do not open a PR or edit code.
 
 ## draft_work_order
 
 Write exactly one work order from the approved bug report and its diagnosis. Return:
 
-- `work_orders_markdown` — one heading `# WO-001 …` whose body has `## Summary`, `## Requirements`, `## Files`, `## E2E Acceptance Tests`, and `## Out of Scope`
+- `work_orders_markdown` — one heading `# WO-001 …` whose body has `## Summary`, `## Requirements`, `## Files`, `## E2E Acceptance Tests`, and `## Out of Scope`. The E2E tests include the bug report's regression test and at least one negative case.
 - `work_order_ids`: `["WO-001"]`
 - `next_work_order_id`: `"WO-001"`
 

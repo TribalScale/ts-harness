@@ -36,7 +36,7 @@ class ContinueDeliveryHookTests(unittest.TestCase):
 
         client = MagicMock()
         client.create_workflow.return_value = {"id": "wf-jira"}
-        client.create_task.side_effect = [{"id": "t1"}]
+        client.create_task.side_effect = [{"id": f"t{index}"} for index in range(1, 5)]
 
         skeleton = load_skeleton("prd_request")
         ctx = HookContext(
@@ -59,8 +59,8 @@ class ContinueDeliveryHookTests(unittest.TestCase):
 
         result = continue_delivery.handle(ctx)
         self.assertEqual(result["status"], "bridge_started")
-        self.assertEqual(result["first_step"], "create_jira")
-        self.assertEqual(len(result["task_ids"]), 1)
+        self.assertEqual(result["first_step"], "review_prd")
+        self.assertEqual(len(result["task_ids"]), 4)
 
         client.complete_workflow.assert_called_once()
         complete_kwargs = client.complete_workflow.call_args.kwargs
@@ -71,7 +71,7 @@ class ContinueDeliveryHookTests(unittest.TestCase):
         self.assertEqual(create_payload["parent_workflow_id"], "wf-prd")
 
         first_task_payload = client.create_task.call_args_list[0].args[0]
-        self.assertEqual(first_task_payload["step_name"], "create_jira")
+        self.assertEqual(first_task_payload["step_name"], "review_prd")
         self.assertEqual(first_task_payload["input"]["approved_prd"], {"summary": "approved PRD"})
 
         saved = get_session_store().get("s-bridge")
