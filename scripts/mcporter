@@ -12,21 +12,19 @@ import json
 import sys
 from typing import Any, Callable
 
+from ts_harness.integrations.adf import adf_from_text, adf_to_text
 from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
 from ts_harness.integrations.github_client import _urllib_transport
-from ts_harness.integrations.jira_client import (
-    MAX_BULK_CREATE,
-    JiraClient,
-    JiraError,
-    adf_from_text,
-    adf_to_text,
-)
+from ts_harness.integrations.jira_client import MAX_BULK_CREATE, JiraClient, JiraError
 
 _ISSUE_PROPERTIES: dict[str, Any] = {
     "project_key": {"type": "string", "description": "Jira project key, for example TFS"},
     "issue_type": {"type": "string", "description": "Issue type name, for example Epic, Story, Task or Bug"},
     "summary": {"type": "string"},
-    "description": {"type": "string", "description": "Plain text; blank lines separate paragraphs"},
+    "description": {
+        "type": "string",
+        "description": "Markdown: headings, lists, - [ ] checkboxes, ``` code, > quotes, | tables |, **bold**, `code`, [links](url)",
+    },
     "labels": {"type": "array", "items": {"type": "string"}},
     "components": {"type": "array", "items": {"type": "string"}, "description": "Component names"},
     "priority": {"type": "string", "description": "Priority name"},
@@ -98,11 +96,26 @@ TOOLS = [
     },
     {
         "name": "jira_add_comment",
-        "description": "Add a plain-text comment to a Jira issue.",
+        "description": "Add a Markdown comment to a Jira issue.",
         "inputSchema": {
             "type": "object",
             "properties": {"issue_key": {"type": "string"}, "comment": {"type": "string"}},
             "required": ["issue_key", "comment"],
+        },
+    },
+    {
+        "name": "jira_update_issue",
+        "description": "Update a Jira issue's summary, description or labels. The description replaces the old one.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "issue_key": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": _ISSUE_PROPERTIES["description"],
+                "add_labels": {"type": "array", "items": {"type": "string"}},
+                "remove_labels": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["issue_key"],
         },
     },
 ]
@@ -257,6 +270,26 @@ def _jira_add_comment(client: JiraClient, args: dict[str, Any]) -> str:
     return f"Commented on {key}"
 
 
+def _labels(args: dict[str, Any], name: str) -> list[str]:
+    return [str(label).strip() for label in args.get(name) or [] if str(label).strip()]
+
+
+def _jira_update_issue(client: JiraClient, args: dict[str, Any]) -> str:
+    key = _required(args, "issue_key").upper()
+    fields: dict[str, Any] = {}
+    if str(args.get("summary") or "").strip():
+        fields["summary"] = str(args["summary"]).strip()
+    if str(args.get("description") or "").strip():
+        fields["description"] = adf_from_text(str(args["description"]))
+    label_changes = [{"add": label} for label in _labels(args, "add_labels")]
+    label_changes += [{"remove": label} for label in _labels(args, "remove_labels")]
+    if not fields and not label_changes:
+        raise ToolInputError("nothing to update; set summary, description, add_labels or remove_labels")
+    client.update_issue(key, fields=fields, update={"labels": label_changes} if label_changes else None)
+    changed = list(fields) + (["labels"] if label_changes else [])
+    return f"Updated {key}: {', '.join(changed)}"
+
+
 HANDLERS: dict[str, Callable[[JiraClient, dict[str, Any]], str]] = {
     "atlassian_search": _atlassian_search,
     "jira_search": _jira_search,
@@ -266,6 +299,7 @@ HANDLERS: dict[str, Callable[[JiraClient, dict[str, Any]], str]] = {
     "jira_batch_create_issues": _jira_batch_create_issues,
     "jira_create_issue_link": _jira_create_issue_link,
     "jira_add_comment": _jira_add_comment,
+    "jira_update_issue": _jira_update_issue,
 }
 
 

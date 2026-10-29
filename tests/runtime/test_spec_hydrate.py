@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from ts_harness.integrations.adf import adf_from_text
 from ts_harness.jira.filing import build_dependency_links, build_story_payload
 from ts_harness.jira.spec_hydrate import GOVERNED_DOCS_MISSING, hydrate_spec_pack, open_blockers
 
@@ -15,7 +16,7 @@ class MemoryStub:
         return self.payload
 
 
-def _issue(description: str, links: list | None = None) -> dict:
+def _issue(description: str | dict, links: list | None = None) -> dict:
     return {
         "key": "TFS-184",
         "fields": {
@@ -56,6 +57,13 @@ class SpecHydrateTests(unittest.TestCase):
         self.assertEqual(pack.source, "drive_library")
         self.assertEqual(pack.drive_library["root_web_view_link"], "https://drive.google.com/p")
         self.assertEqual(client.seen, "prog-9")
+
+    def test_adf_description_is_rendered_before_parsing(self):
+        body = "## Summary\nRetry the cart.\n\nWO: WO-004\nRepo: org/checkout-service@dev\nProgram: prog-2"
+        pack = hydrate_spec_pack(_issue(adf_from_text(body)))
+        self.assertEqual(pack.pointer.work_order_id, "WO-004")
+        self.assertEqual(pack.pointer.program_id, "prog-2")
+        self.assertIn("## Summary", pack.issue_body)
 
     def test_no_pointers_uses_jira_body(self):
         pack = hydrate_spec_pack(_issue("Fix the cart retry in checkout."))

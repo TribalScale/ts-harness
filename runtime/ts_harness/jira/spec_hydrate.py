@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ts_harness.integrations.adf import adf_to_text
 from ts_harness.jira.pointer_block import (
     DEFAULT_BASE_BRANCH,
     PointerBlock,
@@ -33,7 +34,7 @@ def _issue_description(issue: dict[str, Any]) -> str:
     fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
     raw = fields.get("description")
     if isinstance(raw, dict):
-        return str(raw.get("content") or raw.get("text") or "")
+        return adf_to_text(raw).strip()
     return str(raw or issue.get("description") or "")
 
 

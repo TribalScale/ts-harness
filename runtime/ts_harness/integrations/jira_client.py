@@ -12,6 +12,7 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
+from ts_harness.integrations.adf import adf_from_text
 from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
 from ts_harness.integrations.github_client import Transport, _urllib_transport
 
@@ -23,46 +24,6 @@ class JiraError(RuntimeError):
 
 
 MAX_BULK_CREATE = 50
-_BLOCK_NODES = {"paragraph", "heading", "codeBlock", "blockquote", "listItem", "tableRow", "rule", "panel"}
-
-
-def adf_from_text(text: str) -> dict[str, Any]:
-    """Plain text as an ADF document: blank lines split paragraphs, newlines become hard breaks."""
-    paragraphs = [part for part in str(text or "").replace("\r\n", "\n").split("\n\n") if part.strip()]
-    content = []
-    for paragraph in paragraphs:
-        nodes: list[dict[str, Any]] = []
-        for index, line in enumerate(paragraph.split("\n")):
-            if index:
-                nodes.append({"type": "hardBreak"})
-            if line:
-                nodes.append({"type": "text", "text": line})
-        content.append({"type": "paragraph", "content": nodes})
-    return {"type": "doc", "version": 1, "content": content}
-
-
-def adf_to_text(node: Any) -> str:
-    if isinstance(node, str):
-        return node
-    if not isinstance(node, dict):
-        return ""
-    kind = node.get("type")
-    if kind == "text":
-        return str(node.get("text") or "")
-    if kind == "hardBreak":
-        return "\n"
-    if kind in {"mention", "emoji"}:
-        return str((node.get("attrs") or {}).get("text") or "")
-    if kind == "tableCell" or kind == "tableHeader":
-        return " | ".join(adf_to_text(child).strip() for child in node.get("content") or []) + " | "
-    inner = "".join(adf_to_text(child) for child in node.get("content") or [])
-    if kind == "listItem":
-        return f"- {inner.strip()}\n"
-    if kind == "tableRow":
-        return f"| {inner.rstrip()}\n"
-    if kind in _BLOCK_NODES:
-        return f"{inner.rstrip()}\n\n"
-    return inner
 
 
 
@@ -148,6 +109,14 @@ class JiraClient:
 
     def create_issue(self, fields: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/rest/api/3/issue", body={"fields": fields}) or {}
+
+    def update_issue(self, key: str, *, fields: dict[str, Any] | None = None, update: dict[str, Any] | None = None) -> None:
+        body: dict[str, Any] = {}
+        if fields:
+            body["fields"] = fields
+        if update:
+            body["update"] = update
+        self.request("PUT", self._issue_path(key), body=body)
 
     def bulk_create_issues(self, issues: list[dict[str, Any]]) -> dict[str, Any]:
         if len(issues) > MAX_BULK_CREATE:
