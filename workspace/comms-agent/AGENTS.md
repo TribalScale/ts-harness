@@ -18,7 +18,7 @@
 
 **Model:** `openai/gpt-4o-mini`
 **Workspace:** `/workspace/comms-agent`
-**Toolsets:** `core-read`, `channel`, `google-workspace`
+**Toolsets:** `core-read`, `channel`, `google-workspace`, `jira-read`
 **Skills:** `comms`, `memory-api`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):

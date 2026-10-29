@@ -73,11 +73,13 @@ class ToolRegistry:
         config: RuntimeConfig,
     ) -> list[dict[str, Any]]:
         stage_tools = None if ctx.stage_tool_allow is None else frozenset(ctx.stage_tool_allow)
+        stage_effects = None if ctx.stage_external_effects is None else frozenset(ctx.stage_external_effects)
         cache_key = (
             agent.id,
             ctx.source,
             ctx.is_subagent,
             stage_tools,
+            stage_effects,
             ctx.approval_resumable,
             self._generation,
         )

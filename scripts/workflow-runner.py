@@ -1300,6 +1300,9 @@ class WorkflowRunner:
         }
         if stage is not None and stage.tool_allow is not None:
             payload["tool_allow"] = list(stage.tool_allow)
+        if stage is not None:
+            # An expand stage's planning call proposes tasks; its effects belong to the children.
+            payload["external_effects"] = [] if stage.kind == "expand" else list(stage.allowed_external_effects)
         is_qa = task.get("step_name") == "qa_gate"
         if is_qa:
             self._publish_qa_status(task, "qa_started", task_input)

@@ -249,7 +249,7 @@ For non-user-facing work surfaced by decomposition (migrations, infra prep, spik
 
 Linking rules:
 - Every child ticket must be linked to the epic via `Epic Link` / `parent_key`.
-- Cross-dependencies between stories use `jira_create_issue_link` with link types `blocks` / `is blocked by`.
+- Cross-dependencies between stories use `jira_create_issue_link` with `link_type: Blocks`: `outward_issue_key` blocks `inward_issue_key`.
 - External dependencies (e.g., waiting on a vendor) get a `relates to` link and a label `external-dependency`.
 
 ### 11. Post the Traceability Comment

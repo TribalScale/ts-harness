@@ -1,94 +1,332 @@
 #!/usr/bin/env python3
-"""TS Harness MCP stdio adapter for Atlassian integrations."""
+"""TS Harness MCP stdio adapter for Atlassian integrations.
+
+Write tools take ``project_key`` or ``issue_key`` style arguments so the runtime
+policy can hold them to the tenant's ``jira_filing.allowed_projects``. Issues are
+always filed unassigned.
+"""
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
+from typing import Any, Callable
 
+from ts_harness.integrations.adf import adf_from_text, adf_to_text
+from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
+from ts_harness.integrations.github_client import _urllib_transport
+from ts_harness.integrations.jira_client import MAX_BULK_CREATE, JiraClient, JiraError
+
+_ISSUE_PROPERTIES: dict[str, Any] = {
+    "project_key": {"type": "string", "description": "Jira project key, for example TFS"},
+    "issue_type": {"type": "string", "description": "Issue type name, for example Epic, Story, Task or Bug"},
+    "summary": {"type": "string"},
+    "description": {
+        "type": "string",
+        "description": "Markdown: headings, lists, - [ ] checkboxes, ``` code, > quotes, | tables |, **bold**, `code`, [links](url)",
+    },
+    "labels": {"type": "array", "items": {"type": "string"}},
+    "components": {"type": "array", "items": {"type": "string"}, "description": "Component names"},
+    "priority": {"type": "string", "description": "Priority name"},
+    "parent_key": {"type": "string", "description": "Parent issue key, for example the epic"},
+}
+_ISSUE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": _ISSUE_PROPERTIES,
+    "required": ["project_key", "issue_type", "summary"],
+}
 
 TOOLS = [
     {
         "name": "atlassian_search",
-        "description": "Search Jira issues through the configured Atlassian MCP bridge.",
+        "description": "Search Jira issues by text or JQL. Returns up to five matches.",
+        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+    {
+        "name": "jira_search",
+        "description": "Search Jira issues with JQL.",
         "inputSchema": {
             "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
+            "properties": {
+                "jql": {"type": "string"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
+            "required": ["jql"],
         },
-    }
+    },
+    {
+        "name": "jira_get_issue",
+        "description": "Read one Jira issue: summary, type, status, parent, labels, links and description.",
+        "inputSchema": {"type": "object", "properties": {"issue_key": {"type": "string"}}, "required": ["issue_key"]},
+    },
+    {
+        "name": "jira_get_all_projects",
+        "description": "List Jira projects the service account can browse, or create issues in with action=create.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["browse", "create"], "default": "browse"}},
+        },
+    },
+    {
+        "name": "jira_create_issue",
+        "description": "Create one unassigned Jira issue.",
+        "inputSchema": _ISSUE_SCHEMA,
+    },
+    {
+        "name": "jira_batch_create_issues",
+        "description": f"Create up to {MAX_BULK_CREATE} unassigned Jira issues in one call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"issues": {"type": "array", "items": _ISSUE_SCHEMA, "minItems": 1, "maxItems": MAX_BULK_CREATE}},
+            "required": ["issues"],
+        },
+    },
+    {
+        "name": "jira_create_issue_link",
+        "description": "Link two Jira issues. For link_type Blocks, outward_issue_key blocks inward_issue_key.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "link_type": {"type": "string", "description": "Link type name, for example Blocks or Relates"},
+                "inward_issue_key": {"type": "string"},
+                "outward_issue_key": {"type": "string"},
+            },
+            "required": ["link_type", "inward_issue_key", "outward_issue_key"],
+        },
+    },
+    {
+        "name": "jira_add_comment",
+        "description": "Add a Markdown comment to a Jira issue.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"issue_key": {"type": "string"}, "comment": {"type": "string"}},
+            "required": ["issue_key", "comment"],
+        },
+    },
+    {
+        "name": "jira_update_issue",
+        "description": "Update a Jira issue's summary, description or labels. The description replaces the old one.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "issue_key": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": _ISSUE_PROPERTIES["description"],
+                "add_labels": {"type": "array", "items": {"type": "string"}},
+                "remove_labels": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["issue_key"],
+        },
+    },
 ]
 
+NOT_CONFIGURED = (
+    "Atlassian credentials are not configured. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET "
+    "(service account), or ATLASSIAN_SITE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN."
+)
 
-def _atlassian_site() -> str | None:
-    site = os.environ.get("ATLASSIAN_SITE_URL") or os.environ.get("JIRA_URL") or ""
-    site = site.strip().rstrip("/")
-    if not site:
-        return None
-    if site.startswith("http://") or site.startswith("https://"):
-        return site
-    return f"https://{site}"
+_client: JiraClient | None = None
+transport = _urllib_transport
 
 
-def _atlassian_auth_header() -> str | None:
-    token = os.environ.get("ATLASSIAN_API_TOKEN") or os.environ.get("JIRA_API_TOKEN") or ""
-    email = os.environ.get("ATLASSIAN_EMAIL") or os.environ.get("JIRA_USERNAME") or ""
-    token = token.strip()
-    if not token:
-        return None
-    if email:
-        raw = f"{email}:{token}".encode()
-        return "Basic " + base64.b64encode(raw).decode()
-    return f"Bearer {token}"
+class ToolInputError(ValueError):
+    pass
 
 
-def _atlassian_search(query: str) -> str:
-    site = _atlassian_site()
-    auth = _atlassian_auth_header()
-    if not site or not auth:
-        return (
-            "Atlassian credentials are not configured. "
-            "Set ATLASSIAN_SITE_URL and ATLASSIAN_API_TOKEN (or JIRA_URL/JIRA_API_TOKEN)."
-        )
+def _get_client() -> JiraClient | None:
+    global _client
+    if _client is None:
+        try:
+            auth = AtlassianAuth.from_env(transport=transport)
+        except AtlassianAuthError:
+            return None
+        _client = JiraClient(auth=auth, transport=transport)
+    return _client
+
+
+def _required(args: dict[str, Any], name: str) -> str:
+    value = str(args.get(name) or "").strip()
+    if not value:
+        raise ToolInputError(f"{name} is required")
+    return value
+
+
+def _issue_fields(args: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "project": {"key": _required(args, "project_key").upper()},
+        "issuetype": {"name": _required(args, "issue_type")},
+        "summary": _required(args, "summary"),
+    }
+    if str(args.get("description") or "").strip():
+        fields["description"] = adf_from_text(str(args["description"]))
+    labels = [str(label).strip() for label in args.get("labels") or [] if str(label).strip()]
+    if labels:
+        fields["labels"] = labels
+    components = [str(name).strip() for name in args.get("components") or [] if str(name).strip()]
+    if components:
+        fields["components"] = [{"name": name} for name in components]
+    if str(args.get("priority") or "").strip():
+        fields["priority"] = {"name": str(args["priority"]).strip()}
+    if str(args.get("parent_key") or "").strip():
+        fields["parent"] = {"key": str(args["parent_key"]).strip().upper()}
+    return fields
+
+
+def _issue_line(issue: dict[str, Any]) -> str:
+    fields = issue.get("fields") or {}
+    status = (fields.get("status") or {}).get("name", "unknown")
+    kind = (fields.get("issuetype") or {}).get("name")
+    suffix = f" ({kind})" if kind else ""
+    return f"{issue.get('key')}: {fields.get('summary', '')} [{status}]{suffix}"
+
+
+def _created(client: JiraClient, key: str) -> str:
+    url = client.browse_url(key)
+    return f"{key} {url}".strip()
+
+
+def _atlassian_search(client: JiraClient, args: dict[str, Any]) -> str:
+    query = str(args.get("query", ""))
     jql = query if "=" in query or query.strip().upper().startswith("ORDER BY") else f'text ~ "{query}"'
-    params = urllib.parse.urlencode({"jql": jql, "maxResults": "5", "fields": "summary,status,key"})
-    request = urllib.request.Request(
-        f"{site}/rest/api/3/search?{params}",
-        headers={"Authorization": auth, "Accept": "application/json"},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:300]
-        return f"Atlassian search failed ({exc.code}): {body}"
-    except urllib.error.URLError as exc:
-        return f"Atlassian search failed: {exc.reason}"
-
-    issues = payload.get("issues") or []
+    issues = client.search(jql, max_results=5, fields=["summary", "status"])
     if not issues:
         return f"No Jira issues found for query: {query}"
-    lines = []
-    for issue in issues:
-        fields = issue.get("fields") or {}
-        status = (fields.get("status") or {}).get("name", "unknown")
-        lines.append(f"{issue.get('key')}: {fields.get('summary', '')} [{status}]")
+    return "\n".join(_issue_line(issue) for issue in issues)
+
+
+def _jira_search(client: JiraClient, args: dict[str, Any]) -> str:
+    jql = _required(args, "jql")
+    issues = client.search(jql, max_results=int(args.get("max_results") or 20))
+    if not issues:
+        return f"No Jira issues found for JQL: {jql}"
+    return "\n".join(_issue_line(issue) for issue in issues)
+
+
+def _jira_get_issue(client: JiraClient, args: dict[str, Any]) -> str:
+    issue = client.get_issue(_required(args, "issue_key").upper())
+    fields = issue.get("fields") or {}
+    lines = [_issue_line(issue)]
+    parent = fields.get("parent") or {}
+    if parent.get("key"):
+        lines.append(f"Parent: {parent['key']}")
+    if fields.get("labels"):
+        lines.append("Labels: " + ", ".join(fields["labels"]))
+    if fields.get("priority"):
+        lines.append(f"Priority: {fields['priority'].get('name', '')}")
+    assignee = fields.get("assignee") or {}
+    lines.append(f"Assignee: {assignee.get('displayName') or 'unassigned'}")
+    for link in fields.get("issuelinks") or []:
+        kind = link.get("type") or {}
+        if link.get("outwardIssue"):
+            lines.append(f"Link: {kind.get('outward', '')} {link['outwardIssue'].get('key')}")
+        elif link.get("inwardIssue"):
+            lines.append(f"Link: {kind.get('inward', '')} {link['inwardIssue'].get('key')}")
+    description = adf_to_text(fields.get("description")).strip()
+    lines.append("")
+    lines.append(description or "(no description)")
     return "\n".join(lines)
 
 
+def _jira_get_all_projects(client: JiraClient, args: dict[str, Any]) -> str:
+    action = str(args.get("action") or "browse").strip().lower()
+    if action not in {"browse", "create"}:
+        raise ToolInputError("action must be browse or create")
+    projects = client.list_projects(action=action)
+    if not projects:
+        return "No Jira projects found."
+    return "\n".join(f"{project.get('key')}: {project.get('name', '')}" for project in projects)
+
+
+def _jira_create_issue(client: JiraClient, args: dict[str, Any]) -> str:
+    created = client.create_issue(_issue_fields(args))
+    return "Created " + _created(client, str(created.get("key") or ""))
+
+
+def _jira_batch_create_issues(client: JiraClient, args: dict[str, Any]) -> str:
+    issues = args.get("issues")
+    if not isinstance(issues, list) or not issues:
+        raise ToolInputError("issues must be a non-empty array")
+    if len(issues) > MAX_BULK_CREATE:
+        raise ToolInputError(f"at most {MAX_BULK_CREATE} issues per call")
+    payload = client.bulk_create_issues([_issue_fields(dict(item or {})) for item in issues])
+    lines = ["Created " + _created(client, str(item.get("key") or "")) for item in payload.get("issues") or []]
+    for error in payload.get("errors") or []:
+        detail = (error.get("elementErrors") or {}).get("errors") or (error.get("elementErrors") or {}).get("errorMessages")
+        lines.append(f"Failed item {error.get('failedElementNumber')}: {json.dumps(detail)[:300]}")
+    return "\n".join(lines) or "No issues created."
+
+
+def _jira_create_issue_link(client: JiraClient, args: dict[str, Any]) -> str:
+    link_type = _required(args, "link_type")
+    inward = _required(args, "inward_issue_key").upper()
+    outward = _required(args, "outward_issue_key").upper()
+    client.link_issues(link_type, inward_key=inward, outward_key=outward)
+    return f"Linked {outward} -> {inward} ({link_type})"
+
+
+def _jira_add_comment(client: JiraClient, args: dict[str, Any]) -> str:
+    key = _required(args, "issue_key").upper()
+    client.comment(key, _required(args, "comment"))
+    return f"Commented on {key}"
+
+
+def _labels(args: dict[str, Any], name: str) -> list[str]:
+    return [str(label).strip() for label in args.get(name) or [] if str(label).strip()]
+
+
+def _jira_update_issue(client: JiraClient, args: dict[str, Any]) -> str:
+    key = _required(args, "issue_key").upper()
+    fields: dict[str, Any] = {}
+    if str(args.get("summary") or "").strip():
+        fields["summary"] = str(args["summary"]).strip()
+    if str(args.get("description") or "").strip():
+        fields["description"] = adf_from_text(str(args["description"]))
+    label_changes = [{"add": label} for label in _labels(args, "add_labels")]
+    label_changes += [{"remove": label} for label in _labels(args, "remove_labels")]
+    if not fields and not label_changes:
+        raise ToolInputError("nothing to update; set summary, description, add_labels or remove_labels")
+    client.update_issue(key, fields=fields, update={"labels": label_changes} if label_changes else None)
+    changed = list(fields) + (["labels"] if label_changes else [])
+    return f"Updated {key}: {', '.join(changed)}"
+
+
+HANDLERS: dict[str, Callable[[JiraClient, dict[str, Any]], str]] = {
+    "atlassian_search": _atlassian_search,
+    "jira_search": _jira_search,
+    "jira_get_issue": _jira_get_issue,
+    "jira_get_all_projects": _jira_get_all_projects,
+    "jira_create_issue": _jira_create_issue,
+    "jira_batch_create_issues": _jira_batch_create_issues,
+    "jira_create_issue_link": _jira_create_issue_link,
+    "jira_add_comment": _jira_add_comment,
+    "jira_update_issue": _jira_update_issue,
+}
+
+
+def _text(text: str, *, error: bool = False) -> dict:
+    result: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+    if error:
+        result["isError"] = True
+    return result
+
+
 def _handle_call(params: dict) -> dict:
-    name = params.get("name")
-    arguments = params.get("arguments") or {}
-    if name == "atlassian_search":
-        text = _atlassian_search(str(arguments.get("query", "")))
-        return {"content": [{"type": "text", "text": text}]}
-    return {"content": [{"type": "text", "text": f"Unknown MCP tool: {name}"}]}
+    name = str(params.get("name") or "")
+    handler = HANDLERS.get(name)
+    if handler is None:
+        return _text(f"Unknown MCP tool: {name}", error=True)
+    client = _get_client()
+    if client is None:
+        return _text(NOT_CONFIGURED, error=True)
+    label = "Atlassian search" if name == "atlassian_search" else name
+    try:
+        return _text(handler(client, dict(params.get("arguments") or {})))
+    except ToolInputError as exc:
+        return _text(f"{label}: {exc}", error=True)
+    except JiraError as exc:
+        return _text(f"{label} failed ({exc.status}): {str(exc).split(': ', 1)[-1]}", error=True)
+    except (OSError, ValueError) as exc:
+        return _text(f"{label} failed: {exc}", error=True)
 
 
 def main() -> None:

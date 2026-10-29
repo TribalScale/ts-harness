@@ -17,7 +17,7 @@
 
 **Model:** `openai/gpt-4o`
 **Workspace:** `/workspace/pm-agent`
-**Toolsets:** `core-read`, `workflow`, `google-workspace-docs`
+**Toolsets:** `core-read`, `workflow`, `google-workspace-docs`, `jira-read`, `jira-write`
 **Skills:** `pm`, `memory-api`, `workflows`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):

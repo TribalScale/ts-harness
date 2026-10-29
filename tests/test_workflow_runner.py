@@ -175,6 +175,44 @@ class WorkflowRunnerTests(unittest.TestCase):
             ["google_workspace_docs_append"],
         )
 
+    def test_dispatch_payload_carries_stage_external_effects(self):
+        runner_module = load_runner()
+        wd = runner_module.workflow_definitions
+
+        def dispatched(stage):
+            skeleton = wd.load_skeleton_payload(
+                {"workflow_type": "filing", "definition_version": "1.0.0", "stages": [stage]}
+            )
+            task = {
+                "id": "task-1",
+                "workflow_id": "workflow-1",
+                "workflow_type": "filing",
+                "step_name": stage["name"],
+                "agent_id": "pm-agent",
+                "input": {},
+            }
+            adapter = FakeAdapter({"status": "succeeded", "output": {"summary": "done"}})
+            runner_module.WorkflowRunner(
+                FakeMemoryClient(ready=[task]),
+                adapter,
+                runner_id="runner-1",
+                skeletons={"filing": skeleton},
+            ).tick()
+            return adapter.payloads[0]
+
+        filing = {"name": "file", "kind": "task", "agent_id": "pm-agent", "allowed_external_effects": ["jira_write"]}
+        self.assertEqual(dispatched(filing)["external_effects"], ["jira_write"])
+        draft = {"name": "draft", "kind": "task", "agent_id": "pm-agent"}
+        self.assertEqual(dispatched(draft)["external_effects"], [])
+        plan = {
+            "name": "plan",
+            "kind": "expand",
+            "agent_id": "pm-agent",
+            "allowed_agents": ["pm-agent"],
+            "allowed_external_effects": ["jira_write"],
+        }
+        self.assertEqual(dispatched(plan)["external_effects"], [])
+
     def test_memory_api_client_sends_bearer_token_when_configured(self):
         runner_module = load_runner()
         captured = {}

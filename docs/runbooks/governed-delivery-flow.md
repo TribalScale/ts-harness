@@ -41,7 +41,7 @@ Two PRD/delivery programs stay isolated when they have different `project_id`s (
 
 **Jira track additionally requires:**
 
-- Jira secrets in Secrets Manager: `jira-url`, `jira-token`, and `jira-username`.
+- Jira secrets in Secrets Manager: `jira-url`, plus either `jira-client-id` and `jira-client-secret` for a service account, or `jira-username` and `jira-token`. See [`jira-service-account.md`](jira-service-account.md).
 - Target Jira project `TFS`.
 
 **Work-orders track additionally requires:**

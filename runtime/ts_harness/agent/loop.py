@@ -93,6 +93,12 @@ def _stage_tool_allow(payload: dict[str, Any]) -> set[str] | None:
     return {str(name) for name in payload["tool_allow"] if str(name or "").strip()}
 
 
+def _stage_external_effects(payload: dict[str, Any]) -> set[str] | None:
+    if "external_effects" not in payload or payload["external_effects"] is None:
+        return None
+    return {str(name) for name in payload["external_effects"] if str(name or "").strip()}
+
+
 class EnterpriseAgent:
     def __init__(
         self,
@@ -200,6 +206,7 @@ class EnterpriseAgent:
             model_id=agent.model,
             linked_workflow_id=str(payload.get("workflow_id") or "") or None,
             stage_tool_allow=_stage_tool_allow(payload),
+            stage_external_effects=_stage_external_effects(payload),
             approval_resumable=(
                 source == "workflow"
                 and not is_subagent

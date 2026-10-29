@@ -434,6 +434,41 @@ class WorkflowDefinitionValidationTests(unittest.TestCase):
             [("unrestricted_mcp_before_gate", "warning", "$.stages[0]")],
         )
 
+    def jira_codes(self, stage_overrides, payload_overrides=None):
+        write = "mcp-atlassian-jira_create_issue"
+        stage = {"name": "file", "kind": "task", "agent_id": "pm-agent", **stage_overrides}
+        payload = {
+            "workflow_type": "filing",
+            "definition_version": "1.0.0",
+            "stages": [stage],
+            **(payload_overrides or {}),
+        }
+        return [
+            code
+            for code, _sev, _path in self.publish_codes(
+                payload,
+                agent_tools={"pm-agent": {write, "mcp-atlassian-jira_get_issue"}},
+                publish_tools={write},
+            )
+        ]
+
+    def test_jira_write_counts_only_where_stage_declares_it(self):
+        self.assertEqual(self.jira_codes({}), [])
+        self.assertEqual(self.jira_codes({"allowed_external_effects": ["jira_write"]}), ["ungated_publish_stage"])
+
+    def test_jira_write_gated_by_approved_source_artifact(self):
+        codes = self.jira_codes(
+            {"allowed_external_effects": ["jira_write"]},
+            {"promotion": {"requires_source_artifact": True}},
+        )
+        self.assertEqual(codes, [])
+
+    def test_jira_write_in_expand_stage_runs_after_plan_approval(self):
+        codes = self.jira_codes(
+            {"kind": "expand", "allowed_agents": ["pm-agent"], "allowed_external_effects": ["jira_write"]}
+        )
+        self.assertEqual(codes, [])
+
     def test_publish_tools_none_skips_publish_checks(self):
         payload = self.publish_payload()
         payload["stages"][1]["approval_required"] = False

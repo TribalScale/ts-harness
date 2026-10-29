@@ -97,9 +97,12 @@ configured. Scope the token to the bound repos as well.
 
 ## Jira account
 
-Cancel cleanup and Jira filing use `ATLASSIAN_SITE_URL`, `ATLASSIAN_EMAIL`, and
-`ATLASSIAN_API_TOKEN`. The account needs these project permissions on each
-project in `jira_filing.allowed_projects`:
+Cancel cleanup and Jira filing use an Atlassian service account with an OAuth
+client credential (`ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET`), or
+`ATLASSIAN_SITE_URL`, `ATLASSIAN_EMAIL`, and `ATLASSIAN_API_TOKEN` as a
+fallback. See [Jira service account](jira-service-account.md) for setup. The
+account needs these project permissions on each project in
+`jira_filing.allowed_projects`:
 
 | Permission | Used for |
 |---|---|
@@ -107,6 +110,7 @@ project in `jira_filing.allowed_projects`:
 | Create issues | Filing tickets from the PRD |
 | Edit issues | Adding the `harness-cancelled` label |
 | Add comments | The cancellation comment |
+| Link issues | Dependency links between work-order issues |
 | Transition issues | Closing issues when `compensation.jira: close` |
 
 Issues outside `jira_filing.allowed_projects` are skipped during cleanup.

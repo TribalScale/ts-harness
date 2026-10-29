@@ -230,6 +230,12 @@ write_runtime_env_file() {
         CODING_BACKEND_PROVIDER \
         CODING_BACKEND_MODEL \
         GITHUB_TOKEN \
+        ATLASSIAN_SITE_URL \
+        ATLASSIAN_EMAIL \
+        ATLASSIAN_API_TOKEN \
+        ATLASSIAN_CLIENT_ID \
+        ATLASSIAN_CLIENT_SECRET \
+        ATLASSIAN_CLOUD_ID \
         TS_HARNESS_TOOLS_ROOT \
         TS_HARNESS_DB_HOST \
         TS_HARNESS_DB_PORT \

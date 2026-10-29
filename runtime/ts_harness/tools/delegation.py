@@ -10,8 +10,9 @@ import os
 from ts_harness.agent.loop import EnterpriseAgent
 from ts_harness.agent.sessions import get_session_store
 from ts_harness.config.schema import RuntimeConfig
+from ts_harness.config.bindings import is_jira_write_tool
 from ts_harness.memory.client import get_memory_client
-from ts_harness.tools.policy import STAGE_ALWAYS_ALLOWED_TOOLS, ToolPolicyContext
+from ts_harness.tools.policy import JIRA_WRITE_EFFECT, STAGE_ALWAYS_ALLOWED_TOOLS, ToolPolicyContext
 from ts_harness.state import get_state_store
 from ts_harness.tools.toolsets import agent_effective_tools
 from ts_harness.workflows.continuity import write_stage_snapshot
@@ -171,6 +172,8 @@ def handle_delegate_task(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[s
     parent_tools = agent_effective_tools(parent_agent, _runtime_config)
     if ctx.stage_tool_allow is not None:
         parent_tools &= set(ctx.stage_tool_allow) | STAGE_ALWAYS_ALLOWED_TOOLS
+    if ctx.stage_external_effects is not None and JIRA_WRITE_EFFECT not in ctx.stage_external_effects:
+        parent_tools = {name for name in parent_tools if not is_jira_write_tool(name)}
 
     payload = {
         "workflow_id": args.get("workflow_id"),

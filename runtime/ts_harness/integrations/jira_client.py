@@ -1,20 +1,19 @@
 """Jira Cloud REST client used by cancel compensation.
 
-Authenticates with the same Atlassian env vars as the MCP bridge
-(``ATLASSIAN_SITE_URL``/``JIRA_URL``, ``ATLASSIAN_EMAIL``/``JIRA_USERNAME``,
-``ATLASSIAN_API_TOKEN``/``JIRA_API_TOKEN``). The transport is injectable so tests
-never touch the network.
+Authenticates through ``AtlassianAuth``, the same credentials as the MCP bridge:
+a service account OAuth credential, or an email and API token. The transport is
+injectable so tests never touch the network.
 """
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
+from ts_harness.integrations.adf import adf_from_text
+from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
 from ts_harness.integrations.github_client import Transport, _urllib_transport
 
 
@@ -24,47 +23,49 @@ class JiraError(RuntimeError):
         self.status = status
 
 
-def _adf(text: str) -> dict[str, Any]:
-    return {
-        "type": "doc",
-        "version": 1,
-        "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
-    }
+MAX_BULK_CREATE = 50
+
 
 
 @dataclass
 class JiraClient:
-    site_url: str
-    email: str
-    token: str
+    auth: AtlassianAuth
     transport: Transport = _urllib_transport
 
     @classmethod
     def from_env(cls, *, transport: Transport | None = None) -> "JiraClient":
-        site = (os.environ.get("ATLASSIAN_SITE_URL") or os.environ.get("JIRA_URL") or "").strip().rstrip("/")
-        email = (os.environ.get("ATLASSIAN_EMAIL") or os.environ.get("JIRA_USERNAME") or "").strip()
-        token = (os.environ.get("ATLASSIAN_API_TOKEN") or os.environ.get("JIRA_API_TOKEN") or "").strip()
-        if not (site and email and token):
-            raise JiraError(401, "ATLASSIAN_SITE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN are required")
-        return cls(site_url=site, email=email, token=token, transport=transport or _urllib_transport)
+        try:
+            auth = AtlassianAuth.from_env(transport=transport)
+        except AtlassianAuthError as exc:
+            raise JiraError(exc.status, str(exc)) from exc
+        return cls(auth=auth, transport=transport or _urllib_transport)
 
     def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> Any:
-        credentials = base64.b64encode(f"{self.email}:{self.token}".encode()).decode()
-        headers = {
-            "Authorization": f"Basic {credentials}",
-            "Accept": "application/json",
-            "User-Agent": "ts-harness",
-        }
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-        status, raw = self.transport(method, f"{self.site_url}{path}", headers, data)
+        data = json.dumps(body).encode() if body is not None else None
+        status, raw = self._send(method, path, data)
+        if status == 401 and self.auth.mode == "oauth":
+            self.auth.invalidate()
+            status, raw = self._send(method, path, data)
         if status >= 400:
             raise JiraError(status, raw.decode(errors="replace") if raw else "")
         if not raw:
             return {}
         return json.loads(raw.decode())
+
+    def _send(self, method: str, path: str, data: bytes | None) -> tuple[int, bytes]:
+        try:
+            headers = {
+                "Authorization": self.auth.authorization(),
+                "Accept": "application/json",
+                "User-Agent": "ts-harness",
+            }
+            url = f"{self.auth.base_url()}{path}"
+        except AtlassianAuthError as exc:
+            raise JiraError(exc.status, str(exc)) from exc
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        response = self.transport(method, url, headers, data)
+        return response[0], response[1]
 
     def _issue_path(self, key: str) -> str:
         return f"/rest/api/3/issue/{urllib.parse.quote(key, safe='')}"
@@ -73,7 +74,7 @@ class JiraClient:
         self.request("PUT", self._issue_path(key), body={"update": {"labels": [{"add": label}]}})
 
     def comment(self, key: str, text: str) -> None:
-        self.request("POST", f"{self._issue_path(key)}/comment", body={"body": _adf(text)})
+        self.request("POST", f"{self._issue_path(key)}/comment", body={"body": adf_from_text(text)})
 
     def transition(self, key: str, name: str) -> bool:
         """Apply the transition named ``name``; ``False`` when the issue has no such transition."""
@@ -85,3 +86,48 @@ class JiraClient:
                 self.request("POST", f"{self._issue_path(key)}/transitions", body={"transition": {"id": option["id"]}})
                 return True
         return False
+
+    def search(self, jql: str, *, max_results: int = 10, fields: list[str] | None = None) -> list[dict[str, Any]]:
+        params = urllib.parse.urlencode(
+            {
+                "jql": jql,
+                "maxResults": str(max(1, min(int(max_results), 100))),
+                "fields": ",".join(fields or ["summary", "status", "issuetype", "assignee"]),
+            }
+        )
+        payload = self.request("GET", f"/rest/api/3/search/jql?{params}") or {}
+        return list(payload.get("issues") or [])
+
+    def get_issue(self, key: str) -> dict[str, Any]:
+        fields = "summary,status,issuetype,description,parent,labels,priority,assignee,issuelinks"
+        return self.request("GET", f"{self._issue_path(key)}?fields={fields}") or {}
+
+    def list_projects(self, *, action: str = "browse") -> list[dict[str, Any]]:
+        params = urllib.parse.urlencode({"action": action, "maxResults": "50", "orderBy": "key"})
+        payload = self.request("GET", f"/rest/api/3/project/search?{params}") or {}
+        return list(payload.get("values") or [])
+
+    def create_issue(self, fields: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/rest/api/3/issue", body={"fields": fields}) or {}
+
+    def update_issue(self, key: str, *, fields: dict[str, Any] | None = None, update: dict[str, Any] | None = None) -> None:
+        body: dict[str, Any] = {}
+        if fields:
+            body["fields"] = fields
+        if update:
+            body["update"] = update
+        self.request("PUT", self._issue_path(key), body=body)
+
+    def bulk_create_issues(self, issues: list[dict[str, Any]]) -> dict[str, Any]:
+        if len(issues) > MAX_BULK_CREATE:
+            raise JiraError(400, f"at most {MAX_BULK_CREATE} issues per bulk create")
+        body = {"issueUpdates": [{"fields": fields} for fields in issues]}
+        return self.request("POST", "/rest/api/3/issue/bulk", body=body) or {}
+
+    def link_issues(self, link_type: str, *, inward_key: str, outward_key: str) -> None:
+        body = {"type": {"name": link_type}, "inwardIssue": {"key": inward_key}, "outwardIssue": {"key": outward_key}}
+        self.request("POST", "/rest/api/3/issueLink", body=body)
+
+    def browse_url(self, key: str) -> str:
+        site = self.auth.site_url
+        return f"{site}/browse/{key}" if site else ""

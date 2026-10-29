@@ -67,6 +67,7 @@ class BindingsTests(unittest.TestCase):
     def test_jira_write_tool_detection(self):
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_create_issue"))
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_transition_issue"))
+        self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_update_issue"))
         self.assertFalse(is_jira_write_tool("mcp-atlassian-jira_search"))
 
     def test_story_payload_rejects_unbound_project(self):
@@ -183,6 +184,68 @@ class PolicyEnforcementTests(unittest.TestCase):
             tool_args={"project_key": "ACME", "summary": "x"},
         )
         self.assertNotEqual(decision.policy_id, "tenant_jira_binding")
+
+    def test_jira_write_advertised_without_args_when_bound(self):
+        config = self._config()
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue", config.get_agent("pm-agent"), config, self._ctx()
+        )
+        self.assertNotEqual(decision.policy_id, "tenant_jira_binding")
+
+    def test_jira_write_denied_in_stage_without_jira_write_effect(self):
+        config = self._config()
+        ctx = ToolPolicyContext(tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects=set())
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue",
+            config.get_agent("pm-agent"),
+            config,
+            ctx,
+            tool_args={"project_key": "ACME", "summary": "x"},
+        )
+        self.assertEqual((decision.decision, decision.policy_id), ("deny", "stage_external_effects"))
+
+    def test_jira_write_allowed_in_stage_with_jira_write_effect(self):
+        config = self._config()
+        ctx = ToolPolicyContext(
+            tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects={"jira_write"}
+        )
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue",
+            config.get_agent("pm-agent"),
+            config,
+            ctx,
+            tool_args={"project_key": "ACME", "summary": "x"},
+        )
+        self.assertEqual(decision.decision, "allow")
+
+    def test_jira_read_not_limited_by_stage_effects(self):
+        config = self._config()
+        ctx = ToolPolicyContext(tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects=set())
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_get_issue", config.get_agent("pm-agent"), config, ctx, tool_args={"issue_key": "TFS-1"}
+        )
+        self.assertEqual(decision.decision, "allow")
+
+    def test_jira_reads_are_not_publish_tools(self):
+        from ts_harness.tools.policy import publish_tool_names
+
+        config = self._config()
+        published = publish_tool_names(
+            {"mcp-atlassian-jira_search", "mcp-atlassian-jira_get_issue", "mcp-atlassian-jira_create_issue"}, config
+        )
+        self.assertEqual(published, {"mcp-atlassian-jira_create_issue"})
+
+    def test_agents_get_jira_toolsets(self):
+        from ts_harness.tools.toolsets import agent_effective_tools
+
+        config = self._config()
+        pm = agent_effective_tools(config.get_agent("pm-agent"), config)
+        self.assertIn("mcp-atlassian-jira_create_issue", pm)
+        self.assertIn("mcp-atlassian-jira_get_issue", pm)
+        for agent_id in ("orchestrator", "dev-agent", "comms-agent"):
+            tools = agent_effective_tools(config.get_agent(agent_id), config)
+            self.assertIn("mcp-atlassian-jira_get_issue", tools, agent_id)
+            self.assertNotIn("mcp-atlassian-jira_create_issue", tools, agent_id)
 
 
 class CodingBackendBindingTests(unittest.TestCase):

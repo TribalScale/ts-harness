@@ -12,6 +12,14 @@ USER_DATA = REPO_ROOT / "scripts" / "user-data.sh"
 CLONE_ENTERPRISE = REPO_ROOT / "scripts" / "phases" / "09-clone-enterprise.sh"
 ROTATE_SECRETS = REPO_ROOT / "scripts" / "ops" / "rotate-secrets.sh"
 SYNC_COMPOSE_DB = REPO_ROOT / "scripts" / "ops" / "sync-compose-db-env.sh"
+JIRA_SECRET_ENV = {
+    "jira-url": "ATLASSIAN_SITE_URL",
+    "jira-cloud-id": "ATLASSIAN_CLOUD_ID",
+    "jira-client-id": "ATLASSIAN_CLIENT_ID",
+    "jira-client-secret": "ATLASSIAN_CLIENT_SECRET",
+    "jira-username": "ATLASSIAN_EMAIL",
+    "jira-token": "ATLASSIAN_API_TOKEN",
+}
 
 
 class SecretBootstrapContractTests(unittest.TestCase):
@@ -167,6 +175,38 @@ class SecretBootstrapContractTests(unittest.TestCase):
         self.assertIn("coding-backend-api-key", phase)
         self.assertIn("coding-backend-provider", phase)
         self.assertIn("will omit CODING_BACKEND_API_KEY from runtime .env", phase)
+
+    def test_fetch_secrets_maps_jira_secrets_to_atlassian_env(self):
+        phase = FETCH_SECRETS.read_text()
+        for secret, key in JIRA_SECRET_ENV.items():
+            self.assertIn(f'{key}="$(fetch_secret "{secret}" true', phase)
+            self.assertIn(f'write_env_var {key} "${key}"', phase)
+
+    def test_runtime_env_file_carries_atlassian_credentials(self):
+        values = {key: f"value-{index}" for index, key in enumerate(JIRA_SECRET_ENV.values())}
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "runtime.env"
+            exports = " ".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
+            script = f"set -euo pipefail; source {COMMON_SH}; export {exports}; write_runtime_env_file {env_file}"
+            result = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT, text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            written = env_file.read_text()
+        for key in values:
+            self.assertIn(f"{key}=", written)
+
+    def test_secrets_tf_declares_jira_service_account_secrets(self):
+        for cloud in ("aws", "gcp"):
+            secrets_tf = (REPO_ROOT / "infra" / cloud / "secrets.tf").read_text()
+            for secret in JIRA_SECRET_ENV:
+                self.assertIn(f'"{secret}"', secrets_tf, f"{cloud} is missing {secret}")
+
+    def test_atlassian_mcp_server_gets_secret_env_refs(self):
+        import yaml
+
+        for name in ("ts-harness-runtime.yaml.tmpl", "ts-harness-runtime.test.yaml"):
+            config = yaml.safe_load((REPO_ROOT / "config" / name).read_text())
+            env = config["mcp_servers"]["atlassian"]["env"]
+            self.assertEqual(env, {key: f"secret:{key}" for key in JIRA_SECRET_ENV.values()}, name)
 
     def test_secrets_tf_preserves_manual_secret_values(self):
         secrets_tf = (REPO_ROOT / "infra" / "aws" / "secrets.tf").read_text()
