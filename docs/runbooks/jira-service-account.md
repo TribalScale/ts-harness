@@ -5,7 +5,20 @@ TS Harness calls Jira as an Atlassian service account with an OAuth 2.0 client c
 Two callers use these credentials:
 
 - Cancel cleanup (`JiraClient`): labels, comments and transitions issues.
-- The `atlassian` MCP server (`mcporter`): the `atlassian_search` tool.
+- The `atlassian` MCP server (`mcporter`), which gives agents these tools:
+
+  | Toolset | Tools | Granted to |
+  |---|---|---|
+  | `jira-read` | `atlassian_search`, `jira_search`, `jira_get_issue`, `jira_get_all_projects` | orchestrator, pm-agent, dev-agent, comms-agent |
+  | `jira-write` | `jira_create_issue`, `jira_batch_create_issues` (up to 50), `jira_create_issue_link`, `jira_add_comment` | pm-agent |
+
+  Agents see them as `mcp-atlassian-<tool>`. Issues are always filed unassigned.
+
+Jira writes are held to three rules in code:
+
+- Every write must name a project or issue key inside `jira_filing.allowed_projects`, when that list is set.
+- Inside a workflow, only stages that declare `allowed_external_effects: ["jira_write"]` can write. The planning call of an expand stage cannot; its approved child tasks can.
+- The workflow validator flags stages that can write before a human approval gate. A stage in a workflow that starts from an approved source artifact (for example the approved PRD) counts as gated.
 
 ## Create the service account
 
@@ -17,7 +30,8 @@ Two callers use these credentials:
    | Browse projects | Reading issues and available transitions |
    | Create issues | Filing tickets from the PRD |
    | Edit issues | Adding the `harness-cancelled` label |
-   | Add comments | The cancellation comment |
+   | Add comments | The cancellation comment and traceability comments |
+   | Link issues | Dependency links between work-order issues |
    | Transition issues | Closing issues when `compensation.jira: close` |
 
 3. On the service account, create an **OAuth 2.0** credential for Jira with these scopes: `read:jira-work`, `write:jira-work` and `read:jira-user`. `write:jira-work` covers creating and editing issues, comments and transitions. Copy the client secret; it is shown once.
@@ -73,7 +87,7 @@ print(client.auth.mode, me.get("accountType"), bool(me.get("accountId")))
 '
 ```
 
-Expect `oauth app True`. Then run `atlassian_search` from the console or an agent with a simple query such as `project = TFS ORDER BY created DESC`.
+Expect `oauth app True`. Then ask an agent to run `jira_search` with a simple query such as `project = TFS ORDER BY created DESC`. To check writes, file a test issue with `jira_create_issue` in an allowed project and delete it in Jira afterwards.
 
 ## Fall back to the API token
 

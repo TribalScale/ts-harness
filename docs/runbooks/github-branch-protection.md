@@ -110,6 +110,7 @@ account needs these project permissions on each project in
 | Create issues | Filing tickets from the PRD |
 | Edit issues | Adding the `harness-cancelled` label |
 | Add comments | The cancellation comment |
+| Link issues | Dependency links between work-order issues |
 | Transition issues | Closing issues when `compensation.jira: close` |
 
 Issues outside `jira_filing.allowed_projects` are skipped during cleanup.

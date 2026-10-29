@@ -70,11 +70,20 @@ First public release.
   `jira-cloud-id`) through `api.atlassian.com`, and fall back to the email and
   API token. Phase 10 now passes the Jira secrets to the runtime as
   `ATLASSIAN_*`, and the MCP server gets them through `secret:` env references.
+- Jira tools on the `atlassian` MCP server: `jira_search`, `jira_get_issue`,
+  `jira_get_all_projects`, `jira_create_issue`, `jira_batch_create_issues`,
+  `jira_create_issue_link` and `jira_add_comment`, granted through the new
+  `jira-read` (orchestrator, pm-agent, dev-agent, comms-agent) and `jira-write`
+  (pm-agent) toolsets. Inside a workflow, Jira writes need a stage that declares
+  `jira_write`.
 
 ### Changed
 
 - `atlassian_search` uses `GET /rest/api/3/search/jql`; Atlassian removed
   `/rest/api/3/search`.
+- Jira write tools are offered to agents again when `jira_filing.allowed_projects`
+  is set; the project check now runs on the call's arguments at dispatch.
+- Read-only Jira MCP tools no longer count as publish tools in workflow validation.
 
 - Licensed under the Apache License, Version 2.0.
 - Skills are vendored in `skills/`; the `ts-skills-library` dependency and the
