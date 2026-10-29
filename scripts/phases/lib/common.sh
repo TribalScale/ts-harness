@@ -645,6 +645,7 @@ sync_compose_db_password() {
     python3 - "$compose_env_file" "$password" <<'PY'
 import pathlib
 import re
+import shlex
 import sys
 
 path = pathlib.Path(sys.argv[1])
@@ -652,8 +653,8 @@ password = sys.argv[2]
 text = path.read_text()
 for key in ("TS_HARNESS_DB_PASSWORD",):
     pattern = rf"^export {key}=.*$"
-    replacement = f"export {key}={password!r}"
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
+    replacement = f"export {key}={shlex.quote(password)}"
+    text, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=re.M)
     if count == 0:
         text = text.rstrip() + f"\nexport {key}={password!r}\n"
 path.write_text(text)
@@ -793,6 +794,7 @@ restart_agent_runtime() {
     run_docker_compose_as_admin restart "${services[@]}"
 }
 
+# secrets.env is sourced by bash, so values are shell-quoted like phase 10 writes them.
 persist_env_key() {
     local env_file="$1" key="$2" value="$3"
 
@@ -802,8 +804,9 @@ persist_env_key() {
 
     mkdir -p "$(dirname "$env_file")"
     touch "$env_file"
-    grep -q "^${key}=" "$env_file" 2>/dev/null && sed -i "/^${key}=/d" "$env_file"
-    write_dotenv_var "$key" "$value" >> "$env_file"
+    (umask 077; grep -v "^${key}=" "$env_file" > "${env_file}.tmp") || true
+    mv "${env_file}.tmp" "$env_file"
+    write_env_var "$key" "$value" >> "$env_file"
     chmod 600 "$env_file"
 }
 

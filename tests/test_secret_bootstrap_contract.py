@@ -140,6 +140,29 @@ class SecretBootstrapContractTests(unittest.TestCase):
         self.assertLess(source_index, fetch_index)
         self.assertLess(fetch_index, writer_index)
 
+    def test_rotated_db_password_round_trips_through_host_env_files(self):
+        password = "a'b$x9 \"c\\1d`e`"
+        with tempfile.TemporaryDirectory() as tmp:
+            secrets_env = Path(tmp) / "secrets.env"
+            compose_env = Path(tmp) / "compose-env.sh"
+            secrets_env.write_text("TS_HARNESS_DB_PASSWORD=old\n")
+            compose_env.write_text("export TS_HARNESS_DB_PASSWORD='old'\nexport OTHER=kept\n")
+            script = f"""
+set -euo pipefail
+source {COMMON_SH}
+persist_env_key {secrets_env} TS_HARNESS_DB_PASSWORD {shlex.quote(password)}
+sync_compose_db_password {compose_env} {shlex.quote(password)}
+unset TS_HARNESS_DB_PASSWORD
+source {secrets_env}
+from_secrets="$TS_HARNESS_DB_PASSWORD"
+source {compose_env}
+[[ "$from_secrets" == {shlex.quote(password)} ]]
+[[ "$TS_HARNESS_DB_PASSWORD" == {shlex.quote(password)} ]]
+[[ "$OTHER" == kept ]]
+"""
+            result = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_rotate_secrets_uses_shared_runtime_env_writer(self):
         script = ROTATE_SECRETS.read_text()
 
