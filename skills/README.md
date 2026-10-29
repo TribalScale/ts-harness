@@ -14,6 +14,11 @@ Decoupled Jira programs:
 
 | Skill | Path | Used by |
 |-------|------|---------|
+| prd-drafter | `skills/pm/prd-drafter/SKILL.md` | pm-agent (`prd_request` draft and revise) |
+| prd-review | `skills/pm/prd-review/SKILL.md` | pm-agent (`jira_from_prd` review_prd) |
+| story-writer | `skills/pm/story-writer/SKILL.md` | pm-agent (`jira_from_prd` plan_stories) |
+| prd-to-jira | `skills/pm/prd-to-jira.md` | pm-agent (`jira_from_prd` file_jira) |
+| jira-ticket-format | `skills/pm/jira-ticket-format/` | pm-agent (ticket rules; story, epic, task and bug templates in `references/`) |
 | content-to-plan | `skills/pm/content-to-plan.md` | pm-agent / orchestrator (`content_to_plan`) |
 | bug-intake | `skills/pm/bug-intake.md` | pm-agent / orchestrator (`bug_to_plan`, `bug_work_order`) |
 | investigate-bug | `skills/review/investigate-bug/SKILL.md` | review-agent (`bug_to_plan` investigate) |
