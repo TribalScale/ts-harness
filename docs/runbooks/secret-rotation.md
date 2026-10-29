@@ -70,7 +70,7 @@ docker compose logs --tail=30 memory-api | grep -iE "embed|memory|error"
 | `db-password` | `ts-harness/db-password` | Local backend: script attempts to align Postgres before recreating services; RDS backend: rotate the RDS secret first, then run the script |
 | `openai-api-key`, `voyage-api-key`, `gemini-api-key`, `mistral-api-key` | `ts-harness/<provider>-api-key` | Agent auth profiles, gateway env, compose env, and `memory-api` are refreshed |
 | `github-token` | `ts-harness/github-token` | Agent auth profiles are refreshed for `dev-agent` |
-| `jira-token`, `jira-url`, `jira-username` | `ts-harness/jira-*` | Agent auth profiles are refreshed for `pm-agent` |
+| `jira-client-id`, `jira-client-secret`, `jira-cloud-id`, `jira-token`, `jira-url`, `jira-username` | `ts-harness/jira-*` | Runtime env (`ATLASSIAN_*`) and the `pm-agent` auth profile are refreshed; see [Jira service account](jira-service-account.md#rotate-the-client-secret) |
 | `telegram-token`, `discord-token` | `ts-harness/<provider>-token` | Agent auth profiles are refreshed for `orchestrator` |
 
 ---

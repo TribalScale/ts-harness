@@ -64,8 +64,17 @@ First public release.
     `single_host` keeps files on the host. `scripts/ops/migrate-host-state.sh`
     imports, verifies and exports for rollback; existing `scale_out` installs
     should pin both flags to `local` until they import.
+- Jira service account ([runbook](docs/runbooks/jira-service-account.md)):
+  cancel cleanup and the `atlassian` MCP server authenticate with an OAuth 2.0
+  client credential (`jira-client-id`, `jira-client-secret`, optional
+  `jira-cloud-id`) through `api.atlassian.com`, and fall back to the email and
+  API token. Phase 10 now passes the Jira secrets to the runtime as
+  `ATLASSIAN_*`, and the MCP server gets them through `secret:` env references.
 
 ### Changed
+
+- `atlassian_search` uses `GET /rest/api/3/search/jql`; Atlassian removed
+  `/rest/api/3/search`.
 
 - Licensed under the Apache License, Version 2.0.
 - Skills are vendored in `skills/`; the `ts-skills-library` dependency and the
