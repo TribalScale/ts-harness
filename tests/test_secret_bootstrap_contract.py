@@ -179,8 +179,28 @@ class SecretBootstrapContractTests(unittest.TestCase):
     def test_fetch_secrets_maps_jira_secrets_to_atlassian_env(self):
         phase = FETCH_SECRETS.read_text()
         for secret, key in JIRA_SECRET_ENV.items():
-            self.assertIn(f'{key}="$(fetch_secret "{secret}" true', phase)
+            self.assertIn(f'{key}="$(fetch_optional_secret "{secret}")"', phase)
             self.assertIn(f'write_env_var {key} "${key}"', phase)
+
+    def test_unreadable_optional_secret_warns_instead_of_exiting(self):
+        script = f"""
+set -euo pipefail
+source {COMMON_SH}
+CLOUD_ADAPTER_LOADED=1
+_cloud_aws_bin() {{ :; }}
+cloud_fetch_secret() {{
+    [[ "$1" == readable ]] && {{ printf 'value'; return 0; }}
+    echo "ERROR: AccessDeniedException" >&2
+    return 1
+}}
+denied="$(fetch_optional_secret denied)"
+readable="$(fetch_optional_secret readable)"
+printf 'denied=[%s] readable=[%s]\\n' "$denied" "$readable"
+"""
+        result = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "denied=[] readable=[value]")
+        self.assertIn("WARNING: could not read ts-harness/denied", result.stderr)
 
     def test_runtime_env_file_carries_atlassian_credentials(self):
         values = {key: f"value-{index}" for index, key in enumerate(JIRA_SECRET_ENV.values())}

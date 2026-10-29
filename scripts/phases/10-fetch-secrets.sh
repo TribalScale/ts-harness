@@ -95,12 +95,12 @@ LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
 
 # Jira: a service account OAuth credential (client id/secret) or an email and API token.
-ATLASSIAN_SITE_URL="$(fetch_secret "jira-url" true 2>/dev/null || true)"
-ATLASSIAN_EMAIL="$(fetch_secret "jira-username" true 2>/dev/null || true)"
-ATLASSIAN_API_TOKEN="$(fetch_secret "jira-token" true 2>/dev/null || true)"
-ATLASSIAN_CLIENT_ID="$(fetch_secret "jira-client-id" true 2>/dev/null || true)"
-ATLASSIAN_CLIENT_SECRET="$(fetch_secret "jira-client-secret" true 2>/dev/null || true)"
-ATLASSIAN_CLOUD_ID="$(fetch_secret "jira-cloud-id" true 2>/dev/null || true)"
+ATLASSIAN_SITE_URL="$(fetch_optional_secret "jira-url")"
+ATLASSIAN_EMAIL="$(fetch_optional_secret "jira-username")"
+ATLASSIAN_API_TOKEN="$(fetch_optional_secret "jira-token")"
+ATLASSIAN_CLIENT_ID="$(fetch_optional_secret "jira-client-id")"
+ATLASSIAN_CLIENT_SECRET="$(fetch_optional_secret "jira-client-secret")"
+ATLASSIAN_CLOUD_ID="$(fetch_optional_secret "jira-cloud-id")"
 for jira_var in ATLASSIAN_SITE_URL ATLASSIAN_EMAIL ATLASSIAN_API_TOKEN ATLASSIAN_CLIENT_ID ATLASSIAN_CLIENT_SECRET ATLASSIAN_CLOUD_ID; do
     if is_blank_or_placeholder "${!jira_var}"; then printf -v "$jira_var" '%s' ""; fi
 done
