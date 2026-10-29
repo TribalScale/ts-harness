@@ -47,7 +47,7 @@ aws secretsmanager put-secret-value --secret-id "$PREFIX/jira-client-secret" --s
 
 Keep `jira-url` set to the site, for example `https://acme.atlassian.net`. The runtime reads the cloud ID from `<site>/_edge/tenant_info` once at first use. To skip that lookup, store it in `jira-cloud-id`.
 
-The secrets are created by Terraform with a placeholder value. On an existing install, apply only the new secrets:
+The secrets are created by Terraform with a placeholder value. On an existing AWS install, apply only the new secrets and the instance's read policy, which lists each secret by ARN:
 
 ```bash
 terraform -chdir=infra/aws apply \
@@ -56,8 +56,11 @@ terraform -chdir=infra/aws apply \
   -target='aws_secretsmanager_secret.harness["jira-client-secret"]' \
   -target='aws_secretsmanager_secret_version.harness["jira-client-secret"]' \
   -target='aws_secretsmanager_secret.harness["jira-cloud-id"]' \
-  -target='aws_secretsmanager_secret_version.harness["jira-cloud-id"]'
+  -target='aws_secretsmanager_secret_version.harness["jira-cloud-id"]' \
+  -target='aws_iam_role_policy.secrets_read'
 ```
+
+Without the policy target the host gets `AccessDeniedException` for the new secrets, and phase 10 warns that it could not read them. IAM can take a couple of minutes to apply the change. On GCP the runtime service account reads every secret in the project, so no policy change is needed.
 
 ## Load it on the host
 
