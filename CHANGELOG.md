@@ -72,10 +72,13 @@ First public release.
   `ATLASSIAN_*`, and the MCP server gets them through `secret:` env references.
 - Jira tools on the `atlassian` MCP server: `jira_search`, `jira_get_issue`,
   `jira_get_all_projects`, `jira_create_issue`, `jira_batch_create_issues`,
-  `jira_create_issue_link` and `jira_add_comment`, granted through the new
-  `jira-read` (orchestrator, pm-agent, dev-agent, comms-agent) and `jira-write`
-  (pm-agent) toolsets. Inside a workflow, Jira writes need a stage that declares
-  `jira_write`.
+  `jira_create_issue_link`, `jira_add_comment` and `jira_update_issue`, granted
+  through the new `jira-read` (orchestrator, pm-agent, dev-agent, comms-agent)
+  and `jira-write` (pm-agent) toolsets. Inside a workflow, Jira writes need a
+  stage that declares `jira_write`.
+- Jira descriptions and comments accept Markdown (headings, bullet, numbered and
+  checkbox lists, fenced code, quotes, tables, bold, inline code and links) and
+  are sent as Atlassian Document Format; issues read back as the same Markdown.
 
 ### Changed
 

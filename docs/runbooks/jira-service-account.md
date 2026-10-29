@@ -10,7 +10,7 @@ Two callers use these credentials:
   | Toolset | Tools | Granted to |
   |---|---|---|
   | `jira-read` | `atlassian_search`, `jira_search`, `jira_get_issue`, `jira_get_all_projects` | orchestrator, pm-agent, dev-agent, comms-agent |
-  | `jira-write` | `jira_create_issue`, `jira_batch_create_issues` (up to 50), `jira_create_issue_link`, `jira_add_comment` | pm-agent |
+  | `jira-write` | `jira_create_issue`, `jira_batch_create_issues` (up to 50), `jira_create_issue_link`, `jira_add_comment`, `jira_update_issue` | pm-agent |
 
   Agents see them as `mcp-atlassian-<tool>`. Issues are always filed unassigned.
 
@@ -29,7 +29,7 @@ Jira writes are held to three rules in code:
    |---|---|
    | Browse projects | Reading issues and available transitions |
    | Create issues | Filing tickets from the PRD |
-   | Edit issues | Adding the `harness-cancelled` label |
+   | Edit issues | Adding the `harness-cancelled` label; `jira_update_issue` |
    | Add comments | The cancellation comment and traceability comments |
    | Link issues | Dependency links between work-order issues |
    | Transition issues | Closing issues when `compensation.jira: close` |

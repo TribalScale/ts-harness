@@ -212,6 +212,36 @@ class McporterWriteToolTests(McporterTestCase):
         self.assertTrue(url.endswith("/rest/api/3/issue/TFS-2/comment"))
         self.assertEqual(body["body"]["type"], "doc")
 
+    def test_update_issue_sets_fields_and_label_changes(self):
+        self.responses = [(204, b"")]
+        args = {
+            "issue_key": "tfs-2",
+            "summary": "New title",
+            "description": "## Story\n- [ ] task",
+            "add_labels": ["enabler"],
+            "remove_labels": ["draft"],
+        }
+        self.assertEqual(self.text(self.call("jira_update_issue", args)), "Updated TFS-2: summary, description, labels")
+        method, url, _, body = self.api_calls()[0]
+        self.assertEqual(method, "PUT")
+        self.assertTrue(url.endswith("/rest/api/3/issue/TFS-2"))
+        self.assertEqual(body["fields"]["summary"], "New title")
+        self.assertEqual([block["type"] for block in body["fields"]["description"]["content"]], ["heading", "taskList"])
+        self.assertEqual(body["update"], {"labels": [{"add": "enabler"}, {"remove": "draft"}]})
+        self.assertNotIn("assignee", body["fields"])
+
+    def test_update_issue_ignores_assignee(self):
+        self.responses = [(204, b"")]
+        self.call("jira_update_issue", {"issue_key": "TFS-2", "summary": "x", "assignee": "someone"})
+        _, _, _, body = self.api_calls()[0]
+        self.assertEqual(body, {"fields": {"summary": "x"}})
+
+    def test_update_issue_needs_a_change(self):
+        result = self.call("jira_update_issue", {"issue_key": "TFS-2"})
+        self.assertTrue(result["isError"])
+        self.assertIn("nothing to update", self.text(result))
+        self.assertEqual(self.calls, [])
+
     def test_unknown_tool(self):
         result = self.call("jira_delete_issue", {"issue_key": "TFS-1"})
         self.assertTrue(result["isError"])
@@ -248,6 +278,7 @@ class McporterStdioTests(unittest.TestCase):
                 "jira_batch_create_issues",
                 "jira_create_issue_link",
                 "jira_add_comment",
+                "jira_update_issue",
             },
         )
         self.assertIn("not configured", called["result"]["content"][0]["text"])

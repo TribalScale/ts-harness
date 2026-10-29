@@ -67,6 +67,7 @@ class BindingsTests(unittest.TestCase):
     def test_jira_write_tool_detection(self):
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_create_issue"))
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_transition_issue"))
+        self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_update_issue"))
         self.assertFalse(is_jira_write_tool("mcp-atlassian-jira_search"))
 
     def test_story_payload_rejects_unbound_project(self):
