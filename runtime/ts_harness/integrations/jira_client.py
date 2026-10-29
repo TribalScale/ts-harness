@@ -1,20 +1,18 @@
 """Jira Cloud REST client used by cancel compensation.
 
-Authenticates with the same Atlassian env vars as the MCP bridge
-(``ATLASSIAN_SITE_URL``/``JIRA_URL``, ``ATLASSIAN_EMAIL``/``JIRA_USERNAME``,
-``ATLASSIAN_API_TOKEN``/``JIRA_API_TOKEN``). The transport is injectable so tests
-never touch the network.
+Authenticates through ``AtlassianAuth``, the same credentials as the MCP bridge:
+a service account OAuth credential, or an email and API token. The transport is
+injectable so tests never touch the network.
 """
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
+from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
 from ts_harness.integrations.github_client import Transport, _urllib_transport
 
 
@@ -34,37 +32,43 @@ def _adf(text: str) -> dict[str, Any]:
 
 @dataclass
 class JiraClient:
-    site_url: str
-    email: str
-    token: str
+    auth: AtlassianAuth
     transport: Transport = _urllib_transport
 
     @classmethod
     def from_env(cls, *, transport: Transport | None = None) -> "JiraClient":
-        site = (os.environ.get("ATLASSIAN_SITE_URL") or os.environ.get("JIRA_URL") or "").strip().rstrip("/")
-        email = (os.environ.get("ATLASSIAN_EMAIL") or os.environ.get("JIRA_USERNAME") or "").strip()
-        token = (os.environ.get("ATLASSIAN_API_TOKEN") or os.environ.get("JIRA_API_TOKEN") or "").strip()
-        if not (site and email and token):
-            raise JiraError(401, "ATLASSIAN_SITE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN are required")
-        return cls(site_url=site, email=email, token=token, transport=transport or _urllib_transport)
+        try:
+            auth = AtlassianAuth.from_env(transport=transport)
+        except AtlassianAuthError as exc:
+            raise JiraError(exc.status, str(exc)) from exc
+        return cls(auth=auth, transport=transport or _urllib_transport)
 
     def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> Any:
-        credentials = base64.b64encode(f"{self.email}:{self.token}".encode()).decode()
-        headers = {
-            "Authorization": f"Basic {credentials}",
-            "Accept": "application/json",
-            "User-Agent": "ts-harness",
-        }
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-        status, raw = self.transport(method, f"{self.site_url}{path}", headers, data)
+        data = json.dumps(body).encode() if body is not None else None
+        status, raw = self._send(method, path, data)
+        if status == 401 and self.auth.mode == "oauth":
+            self.auth.invalidate()
+            status, raw = self._send(method, path, data)
         if status >= 400:
             raise JiraError(status, raw.decode(errors="replace") if raw else "")
         if not raw:
             return {}
         return json.loads(raw.decode())
+
+    def _send(self, method: str, path: str, data: bytes | None) -> tuple[int, bytes]:
+        try:
+            headers = {
+                "Authorization": self.auth.authorization(),
+                "Accept": "application/json",
+                "User-Agent": "ts-harness",
+            }
+            url = f"{self.auth.base_url()}{path}"
+        except AtlassianAuthError as exc:
+            raise JiraError(exc.status, str(exc)) from exc
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        response = self.transport(method, url, headers, data)
+        return response[0], response[1]
 
     def _issue_path(self, key: str) -> str:
         return f"/rest/api/3/issue/{urllib.parse.quote(key, safe='')}"

@@ -3,13 +3,12 @@
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
+
+from ts_harness.integrations.atlassian_auth import AtlassianAuth, AtlassianAuthError
+from ts_harness.integrations.github_client import _urllib_transport
 
 
 TOOLS = [
@@ -25,51 +24,50 @@ TOOLS = [
 ]
 
 
-def _atlassian_site() -> str | None:
-    site = os.environ.get("ATLASSIAN_SITE_URL") or os.environ.get("JIRA_URL") or ""
-    site = site.strip().rstrip("/")
-    if not site:
-        return None
-    if site.startswith("http://") or site.startswith("https://"):
-        return site
-    return f"https://{site}"
+NOT_CONFIGURED = (
+    "Atlassian credentials are not configured. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET "
+    "(service account), or ATLASSIAN_SITE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN."
+)
+
+_auth: AtlassianAuth | None = None
+transport = _urllib_transport
 
 
-def _atlassian_auth_header() -> str | None:
-    token = os.environ.get("ATLASSIAN_API_TOKEN") or os.environ.get("JIRA_API_TOKEN") or ""
-    email = os.environ.get("ATLASSIAN_EMAIL") or os.environ.get("JIRA_USERNAME") or ""
-    token = token.strip()
-    if not token:
-        return None
-    if email:
-        raw = f"{email}:{token}".encode()
-        return "Basic " + base64.b64encode(raw).decode()
-    return f"Bearer {token}"
+def _get_auth() -> AtlassianAuth | None:
+    global _auth
+    if _auth is None:
+        try:
+            _auth = AtlassianAuth.from_env(transport=transport)
+        except AtlassianAuthError:
+            return None
+    return _auth
+
+
+def _search(auth: AtlassianAuth, params: str) -> tuple[int, bytes]:
+    headers = {"Authorization": auth.authorization(), "Accept": "application/json", "User-Agent": "ts-harness"}
+    response = transport("GET", f"{auth.base_url()}/rest/api/3/search/jql?{params}", headers, None)
+    return response[0], response[1]
 
 
 def _atlassian_search(query: str) -> str:
-    site = _atlassian_site()
-    auth = _atlassian_auth_header()
-    if not site or not auth:
-        return (
-            "Atlassian credentials are not configured. "
-            "Set ATLASSIAN_SITE_URL and ATLASSIAN_API_TOKEN (or JIRA_URL/JIRA_API_TOKEN)."
-        )
+    auth = _get_auth()
+    if auth is None:
+        return NOT_CONFIGURED
     jql = query if "=" in query or query.strip().upper().startswith("ORDER BY") else f'text ~ "{query}"'
-    params = urllib.parse.urlencode({"jql": jql, "maxResults": "5", "fields": "summary,status,key"})
-    request = urllib.request.Request(
-        f"{site}/rest/api/3/search?{params}",
-        headers={"Authorization": auth, "Accept": "application/json"},
-        method="GET",
-    )
+    params = urllib.parse.urlencode({"jql": jql, "maxResults": "5", "fields": "summary,status"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:300]
-        return f"Atlassian search failed ({exc.code}): {body}"
-    except urllib.error.URLError as exc:
-        return f"Atlassian search failed: {exc.reason}"
+        status, raw = _search(auth, params)
+        if status == 401 and auth.mode == "oauth":
+            auth.invalidate()
+            status, raw = _search(auth, params)
+    except AtlassianAuthError as exc:
+        return f"Atlassian search failed: {exc}"
+    except OSError as exc:
+        return f"Atlassian search failed: {exc}"
+    if status >= 400:
+        body = raw.decode("utf-8", errors="replace")[:300] if raw else ""
+        return f"Atlassian search failed ({status}): {body}"
+    payload = json.loads(raw.decode()) if raw else {}
 
     issues = payload.get("issues") or []
     if not issues:

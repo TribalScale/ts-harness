@@ -15,7 +15,8 @@ from ts_harness.config.runtime_settings import _canonicalize_program_defaults
 from ts_harness.gateway import asgi_app
 from ts_harness.gateway.admin_bff import build_portfolio
 from ts_harness.integrations.github_client import GitHubError
-from ts_harness.integrations.jira_client import JiraClient
+from ts_harness.integrations.atlassian_auth import TOKEN_URL, AtlassianAuth
+from ts_harness.integrations.jira_client import JiraClient, JiraError
 from ts_harness.workflows.operability import build_operability_status
 from ts_harness.workflows.program_compensation import (
     CANCELLED_LABEL,
@@ -277,7 +278,8 @@ class JiraClientTests(unittest.TestCase):
                 return 200, json.dumps({"transitions": [{"id": "31", "name": "Close", "to": {"name": "Done"}}]}).encode()
             return 204, b""
 
-        client = JiraClient(site_url="https://acme.atlassian.net", email="bot@acme.io", token="t", transport=transport)
+        auth = AtlassianAuth(mode="basic", site_url="https://acme.atlassian.net", email="bot@acme.io", api_token="t")
+        client = JiraClient(auth=auth, transport=transport)
         client.add_label("TFS-1", CANCELLED_LABEL)
         client.comment("TFS-1", "cancelled")
         self.assertTrue(client.transition("TFS-1", "done"))
@@ -285,6 +287,50 @@ class JiraClientTests(unittest.TestCase):
         self.assertEqual(calls[0], ("PUT", "https://acme.atlassian.net/rest/api/3/issue/TFS-1", {"update": {"labels": [{"add": CANCELLED_LABEL}]}}))
         self.assertEqual(calls[1][0:2], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/comment"))
         self.assertEqual(calls[3], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/transitions", {"transition": {"id": "31"}}))
+
+    def test_accepts_three_tuple_transport(self):
+        client = JiraClient(
+            auth=AtlassianAuth(mode="basic", site_url="https://acme.atlassian.net", email="bot@acme.io", api_token="t"),
+            transport=lambda method, url, headers, body: (200, b'{"ok": true}', {}),
+        )
+        self.assertEqual(client.request("GET", "/rest/api/3/myself"), {"ok": True})
+
+    def _oauth_client(self, issue_statuses: list[int]):
+        tokens: list[str] = []
+        seen: list[tuple[str, str]] = []
+
+        def transport(method, url, headers, body):
+            if url == TOKEN_URL:
+                tokens.append(f"tok-{len(tokens) + 1}")
+                return 200, json.dumps({"access_token": tokens[-1], "expires_in": 3600}).encode(), {}
+            seen.append((url, headers["Authorization"]))
+            return issue_statuses.pop(0), b"", {}
+
+        auth = AtlassianAuth(mode="oauth", client_id="id", client_secret="secret", cloud_id="cloud-1", transport=transport)
+        return JiraClient(auth=auth, transport=transport), seen
+
+    def test_oauth_uses_gateway_url_and_bearer(self):
+        client, seen = self._oauth_client([204])
+        client.add_label("TFS-1", CANCELLED_LABEL)
+        self.assertEqual(seen, [("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/TFS-1", "Bearer tok-1")])
+
+    def test_oauth_retries_once_after_401_with_fresh_token(self):
+        client, seen = self._oauth_client([401, 204])
+        client.add_label("TFS-1", CANCELLED_LABEL)
+        self.assertEqual([auth for _, auth in seen], ["Bearer tok-1", "Bearer tok-2"])
+
+    def test_oauth_second_401_raises(self):
+        client, seen = self._oauth_client([401, 401])
+        with self.assertRaises(JiraError) as ctx:
+            client.add_label("TFS-1", CANCELLED_LABEL)
+        self.assertEqual(ctx.exception.status, 401)
+        self.assertEqual(len(seen), 2)
+
+    def test_from_env_without_credentials_raises_jira_error(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(JiraError) as ctx:
+                JiraClient.from_env()
+        self.assertEqual(ctx.exception.status, 401)
 
 
 def load_gateway():

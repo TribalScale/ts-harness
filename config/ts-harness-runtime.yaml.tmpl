@@ -306,6 +306,13 @@ mcp_servers:
     transport: stdio
     command: mcporter
     enabled: true
+    env:
+      ATLASSIAN_SITE_URL: "secret:ATLASSIAN_SITE_URL"
+      ATLASSIAN_CLOUD_ID: "secret:ATLASSIAN_CLOUD_ID"
+      ATLASSIAN_CLIENT_ID: "secret:ATLASSIAN_CLIENT_ID"
+      ATLASSIAN_CLIENT_SECRET: "secret:ATLASSIAN_CLIENT_SECRET"
+      ATLASSIAN_EMAIL: "secret:ATLASSIAN_EMAIL"
+      ATLASSIAN_API_TOKEN: "secret:ATLASSIAN_API_TOKEN"
 
 agents:
   list:
