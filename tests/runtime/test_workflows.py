@@ -26,7 +26,7 @@ class WorkflowMaterializeTests(unittest.TestCase):
     def test_jira_from_prd_skeleton_loads(self):
         skeleton = load_skeleton("jira_from_prd")
         self.assertEqual(skeleton.workflow_type, "jira_from_prd")
-        self.assertEqual(skeleton.stages[0].name, "create_jira")
+        self.assertEqual([stage.name for stage in skeleton.stages], ["review_prd", "plan_stories", "approve_plan", "file_jira"])
 
     def test_work_orders_from_prd_skeleton_loads(self):
         skeleton = load_skeleton("work_orders_from_prd")

@@ -98,7 +98,7 @@ class WorkflowContractInventoryTests(unittest.TestCase):
             "prepare_work_order_delivery",
         ],
         "deliver_work_order": ["deliver_work_order"],
-        "jira_from_prd": ["create_jira"],
+        "jira_from_prd": ["review_prd", "plan_stories", "file_jira"],
         "rfp_request": ["intake", "draft_rfp"],
     }
 

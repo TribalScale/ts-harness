@@ -5,7 +5,7 @@
 Governed product delivery uses a **delivery program** coordinator linking phase workflows:
 
 1. **`prd_request` (v1.2)** — intake → draft PRD → approve PRD (with revise loop). Program phase: `prd`.
-2. **`jira_from_prd` (v1.0)** — create Jira from approved PRD. Program phase: `jira`.
+2. **`jira_from_prd` (v2.0)** — review the approved PRD → plan stories → approve plan (with revise loop) → file the epic, stories and `Blocks` links. Only `file_jira` writes Jira. Program phase: `jira`.
 3. **`work_orders_from_prd` (v1.0)** — Refinery/Foundry/Planner + prepare handoff. Program phase: `work_orders`.
 4. **`implement_delivery` (v1.0)** — implement Jira tickets → await merge. Program phase: `implement` (Jira track).
 5. **`implement_work_orders` (v2.0)** — fork a wave of ready work orders as `deliver_work_order` child workflows, join them, and re-enter with the next wave until every WO is done. Program phase: `implement` (work-orders track).

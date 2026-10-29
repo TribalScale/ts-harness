@@ -16,7 +16,7 @@ class ProgramDefinitionRegistryTests(unittest.TestCase):
         registry = ProgramDefinitionRegistry()
         loaded = registry.load("software_delivery")
         self.assertEqual(loaded["program_type"], "software_delivery")
-        self.assertEqual(loaded["definition_version"], "1.2.0")
+        self.assertEqual(loaded["definition_version"], "1.3.0")
         self.assertIn("software_delivery", registry.list_types())
         self.assertIn("content_to_jira_work_orders", registry.list_types())
         self.assertIn("bug_to_jira_work_orders", registry.list_types())

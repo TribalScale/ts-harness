@@ -1,6 +1,6 @@
 {
   "workflow_type": "file_work_orders_as_jira",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "display_name": "File work orders as Jira tickets",
   "contracts": {
     "jira_filing": {
@@ -65,6 +65,7 @@
         "approved_prd": "$workflow.approved_prd",
         "work_order_ids": "$workflow.work_order_ids",
         "work_orders_markdown": "$workflow.work_orders_markdown",
+        "bug_report": "$workflow.bug_report",
         "jira_epic_key": "$prior.choose_epic.output.jira_epic_key",
         "jira_project_key": "$prior.choose_epic.output.jira_project_key",
         "repo": "$workflow.repo",

@@ -1,6 +1,6 @@
 {
   "program_type": "software_delivery",
-  "definition_version": "1.2.0",
+  "definition_version": "1.3.0",
   "display_name": "Software delivery",
   "startable_nodes": ["prd", "jira", "work_orders", "implement", "rollback"],
   "nodes": [
@@ -22,7 +22,7 @@
       "default_workflow_type": "jira_from_prd",
       "workflow_variants": [],
       "required_artifacts": ["approved_prd"],
-      "produces_artifacts": ["jira_epic_key", "planning_track"],
+      "produces_artifacts": ["jira_epic_key", "jira_story_keys", "planning_track"],
       "input_bindings": [
         {"kind": "program_summary", "target": "summary"},
         {"kind": "artifact", "name": "approved_prd", "target": "approved_prd"}

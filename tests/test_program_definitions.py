@@ -198,7 +198,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
     def test_builtin_file_loads(self):
         definition, payload = self.load_builtin()
         self.assertEqual(definition.program_type, "software_delivery")
-        self.assertEqual(definition.definition_version, "1.2.0")
+        self.assertEqual(definition.definition_version, "1.3.0")
         self.assertTrue(definition.display_name)
         self.assertEqual(payload["program_type"], "software_delivery")
 

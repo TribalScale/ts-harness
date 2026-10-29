@@ -184,7 +184,9 @@ Expected behavior:
 Create Jira tickets from this approved PRD.
 ```
 
-Expected: `planning_track=jira`, `jira_from_prd` materialized at `create_jira`.
+Expected: `planning_track=jira`, `jira_from_prd` materialized at `review_prd`. The story
+plan from `plan_stories` waits at `approve_plan`; reply `no` with feedback to revise it.
+Nothing is written to Jira until `file_jira` runs after approval.
 
 **Choose work-orders track:**
 
