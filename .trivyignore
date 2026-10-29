@@ -9,8 +9,16 @@
 
 # msgpack 1.1.2: out-of-bounds read on Unpacker reuse (pip only unpacks its own HTTP cache)
 GHSA-6v7p-g79w-8964 exp:2027-01-31
+# msgpack 1.1.2: memory leak during map deserialization (pip 26.2.2 still vendors 1.1.2)
+CVE-2026-114613 exp:2027-01-31
 # setuptools 70.3.0: path traversal in PackageIndex.download (pip does not use PackageIndex)
 CVE-2025-47273 exp:2027-01-31
 # urllib3 2.7.0: pip's vendored HTTP client
 CVE-2026-97687 exp:2027-01-31
 CVE-2026-97689 exp:2027-01-31
+
+# Guava 33.4.6 (/opt/gradle/lib) and 33.6.0 (/opt/maven/lib) ship inside the Gradle 9.8.2
+# and Maven 3.9.16 distributions, the latest releases of both. The DoS needs Guava to
+# deserialize attacker-supplied data, which the build tools do not do. Remove this once
+# either tool bundles Guava 33.7.2 or later.
+CVE-2026-102554 exp:2027-01-31
