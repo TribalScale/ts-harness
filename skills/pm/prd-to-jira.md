@@ -32,12 +32,12 @@ reports, or to update an existing ticket's status.
 `plan_markdown`. File it exactly. Do not re-plan, add, drop, merge or reword stories; if the plan
 cannot be filed as approved, stop and return `status: blocked` with the reason.
 
-1. **Check before writing.** `project_key` must be in the tenant's allowed Jira projects. If the plan has more than 10 tickets, or any P0/P1 priority or cross-project link, the gate approval must have said so explicitly; otherwise stop.
+1. **Check before writing.** `project_key` must be in `input.jira_allowed_projects` when that is set. If the plan has more than 10 tickets, or any P0/P1 priority or cross-project link, the gate approval must have said so explicitly; otherwise stop.
 2. **Do not file twice.** Search first: `jira_search` with `project = <KEY> AND labels = prd AND summary ~ "<epic summary>"`, and the epic's children if it exists. A story already filed from this plan (same summary under the same epic) is reused, not recreated. This stage does not retry automatically, so a partial run is resumed by this check.
 3. **Epic.** With `epic.existing_key`, use it. Otherwise `jira_create_issue` with `issue_type: Epic`, `summary`, `description` = `epic.description`, labels `prd` and the component area.
 4. **Stories.** One `jira_batch_create_issues` call (up to 50) with, for each story: `project_key`, `issue_type`, `summary`, `description` exactly as approved, `labels`, and `parent_key` = the epic. Never set an assignee. Map each plan `number` to its new key.
 5. **Order.** For each `blocked_by` entry, `jira_create_issue_link` with `link_type: Blocks`, `outward_issue_key` = the issue that must land first, `inward_issue_key` = the story that waits. An external dependency gets `link_type: Relates` and the label `external-dependency`.
-6. **Coverage.** Fill the epic's `Requirements covered` table with the new keys using `jira_update_issue` on the epic description.
+6. **Coverage.** Add a `Stories` column to the epic's existing `Requirements covered` table with the new keys for each FR, using `jira_update_issue` on the epic description. Do not add a second table.
 7. **Traceability comment** on the epic with `jira_add_comment`:
 
    ```markdown
@@ -45,7 +45,7 @@ cannot be filed as approved, stop and return `status: blocked` with the reason.
 
    | Key | Story | Shape | FRs |
    |---|---|---|---|
-   | TFS-843 | 1.1 <title> | user-facing | FR-1, FR-3 |
+   | <KEY>-843 | 1.1 <title> | user-facing | FR-1, FR-3 |
 
    Open questions carried from the plan: <list or "none">
    ```
@@ -58,10 +58,10 @@ Respect the 50 Jira writes per hour cap from `RULES.md`; a plan that would excee
 
 ```json
 {
-  "jira_epic_key": "TFS-842",
-  "jira_story_keys": ["TFS-843", "TFS-844"],
-  "summary": "Filed TFS-842 with 2 stories and 1 Blocks link.",
-  "epic_url": "https://<site>.atlassian.net/browse/TFS-842",
+  "jira_epic_key": "<KEY>-842",
+  "jira_story_keys": ["<KEY>-843", "<KEY>-844"],
+  "summary": "Filed <KEY>-842 with 2 stories and 1 Blocks link.",
+  "epic_url": "https://<site>.atlassian.net/browse/<KEY>-842",
   "warnings": []
 }
 ```

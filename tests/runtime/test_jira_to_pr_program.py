@@ -56,7 +56,7 @@ class JiraToPrProgramTests(unittest.TestCase):
             validate_entry_against_snapshot(
                 loaded,
                 "implement",
-                {"jira_issue_key": "TFS-184"},
+                {"jira_issue_key": "PROJ-184"},
                 require_startable=True,
             ),
             [],
@@ -83,11 +83,11 @@ class JiraToPrProgramTests(unittest.TestCase):
             tasks=[
                 {
                     "status": "succeeded",
-                    "output": {"jira_issue_key": "TFS-184", "jira_project_key": "TFS"},
+                    "output": {"jira_issue_key": "PROJ-184", "jira_project_key": "PROJ"},
                 }
             ],
         )
-        self.assertEqual(patch["jira_issue_key"], "TFS-184")
+        self.assertEqual(patch["jira_issue_key"], "PROJ-184")
 
     def test_routing_intent_distinct_from_dev_work(self):
         payload = {

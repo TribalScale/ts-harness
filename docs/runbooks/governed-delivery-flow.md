@@ -42,7 +42,7 @@ Two PRD/delivery programs stay isolated when they have different `project_id`s (
 **Jira track additionally requires:**
 
 - Jira secrets in Secrets Manager: `jira-url`, plus either `jira-client-id` and `jira-client-secret` for a service account, or `jira-username` and `jira-token`. See [`jira-service-account.md`](jira-service-account.md).
-- Target Jira project `TFS`.
+- The target Jira project listed in `jira_filing.allowed_projects` ([System Settings](system-settings.md)).
 
 **Work-orders track additionally requires:**
 
@@ -58,7 +58,7 @@ Users can start mid-pipeline without running earlier phases in the same thread:
 | `prd` | "Create a governed PRD" | none |
 | `jira` | "File Jira from this approved PRD" | `approved_prd` |
 | `work_orders` | "Plan work orders from this approved PRD" | `approved_prd` |
-| `implement` | "Implement TFS-100 through TFS-104" (Jira track) | `jira_epic_key` |
+| `implement` | "Implement PROJ-100 through PROJ-104" (Jira track) | `jira_epic_key` |
 | `implement` | "Deliver WO-001" (work-orders track) | `planner_complete`, `next_work_order_id`, `work_orders_handoff` |
 | `release` | "Release the merged change" | `merge_sha` |
 | `rollback` | "Roll production back" | `rollback_environment` |
@@ -110,7 +110,7 @@ Gate notifications still go to the thread that started the program. People the p
 | Refinery / Foundry / Planner (WO track) | `pm-agent` + human gates | Uses `prd-to-work-orders-governed`; Validator off critical path |
 | Work orders approved | Human (`approve_work_orders`) | Required before prepare handoff |
 | Prepare delivery (WO track) | `orchestrator` | Uses `source-work-order`; sets `next_work_order_id` |
-| Jira tickets filed | `pm-agent` | Only in `TFS` and only from approved PRD |
+| Jira tickets filed | `pm-agent` | Only in `jira_filing.allowed_projects` and only from approved PRD |
 | PR opened | `dev-agent` | No merge |
 | Code review passed | `review-agent` findings, verdict computed by `finalize_code_review` | Read-only; posts a `COMMENT` review and the `harness/code-review` status, never approves, requests changes or merges |
 | QA gate passed | `qa-agent` | No PR approval or merge |
@@ -209,7 +209,7 @@ After choosing the Jira track (or entering at `entry_phase=jira`):
 Expected behavior:
 
 - `pm-agent` checks for duplicates in Jira.
-- `pm-agent` creates one epic, stories, and tasks in `TFS`.
+- `pm-agent` creates one epic, stories, and tasks in the target project from `jira_filing.allowed_projects`.
 - Program artifact `jira_epic_key` is patched on phase completion.
 
 If the PRD would create more than 10 tickets, use P0/P1 priority, or cross project boundaries, the agent must stop and request extra approval.
@@ -217,7 +217,7 @@ If the PRD would create more than 10 tickets, use P0/P1 priority, or cross proje
 ### A2. Start Development (Jira)
 
 ```text
-Implement TFS-123. Follow the ticket acceptance criteria, open a PR, and hand it to QA.
+Implement PROJ-123. Follow the ticket acceptance criteria, open a PR, and hand it to QA.
 ```
 
 Expected behavior:
@@ -229,7 +229,7 @@ Expected behavior:
 For an epic, prefer a small controlled batch:
 
 ```text
-Start the first two implementation-ready tickets under TFS-100. Open separate PRs and hand each one to QA.
+Start the first two implementation-ready tickets under PROJ-100. Open separate PRs and hand each one to QA.
 ```
 
 ### A3. QA, Merge, Deploy (Jira track)

@@ -76,14 +76,14 @@ class ProgramToolTests(unittest.TestCase):
                 "summary": "File Jira from PRD",
                 "artifacts": {
                     "approved_prd": {"title": "PRD"},
-                    "jira_project_key": "TFS",
+                    "jira_project_key": "PROJ",
                 },
             },
             ctx,
         )
-        self.assertEqual(result["project_id"], "TFS")
+        self.assertEqual(result["project_id"], "PROJ")
         self.assertTrue(result["project_id_inferred"])
-        self.assertIn("TFS", result["message"])
+        self.assertIn("PROJ", result["message"])
         self.assertIn("link_program_ids", result["message"])
 
     def test_propose_start_program_accepts_explicit_program_type(self):
@@ -297,7 +297,7 @@ class ProgramToolTests(unittest.TestCase):
                     "summary": "File Jira",
                     "artifacts": {"approved_prd": {"title": "PRD"}},
                     "program_type": "software_delivery",
-                    "project_id": "TFS",
+                    "project_id": "PROJ",
                     "project_id_source": "user",
                     "link_program_ids": ["prog-b"],
                 },
@@ -313,7 +313,7 @@ class ProgramToolTests(unittest.TestCase):
         self.assertEqual(saved.metadata.get("program_id"), "prog-1")
         create_kwargs = service.create_program.call_args.kwargs
         self.assertEqual(create_kwargs.get("program_type"), "software_delivery")
-        self.assertEqual(create_kwargs.get("project_id"), "TFS")
+        self.assertEqual(create_kwargs.get("project_id"), "PROJ")
         self.assertEqual(create_kwargs.get("link_program_ids"), ["prog-b"])
 
     @patch("ts_harness.workflows.delivery_program.get_delivery_program_service")
@@ -486,7 +486,7 @@ class ProgramToolTests(unittest.TestCase):
     def test_exclude_hides_from_autoshare(self, client_factory):
         client = MagicMock()
         client.patch_program.return_value = {"program": {"id": "prog-a"}}
-        client.get_program.return_value = {"program": {"id": "prog-a", "project_id": "TFS"}}
+        client.get_program.return_value = {"program": {"id": "prog-a", "project_id": "PROJ"}}
         client_factory.return_value = client
         session = SessionRecord(
             session_id="s-ex",

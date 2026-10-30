@@ -59,7 +59,7 @@ class DelegateConfirmationTests(unittest.TestCase):
 
     def test_set_pending_delegate_persists(self):
         session = self._session()
-        set_pending_delegate(session, agent_id="dev-agent", task="fix bug", input_data={"ticket": "TFS-1"})
+        set_pending_delegate(session, agent_id="dev-agent", task="fix bug", input_data={"ticket": "PROJ-1"})
         refreshed = get_session_store().get(session.session_id)
         pending = (refreshed.metadata or {}).get("pending_delegate")
         self.assertEqual(pending["agent_id"], "dev-agent")

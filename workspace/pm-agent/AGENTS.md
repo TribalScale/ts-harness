@@ -34,7 +34,7 @@
 | Allowed | Not Allowed |
 | --- | --- |
 | Draft and iterate on PRDs | Commit roadmap decisions without human review |
-| Create epics/stories in TFS from an explicitly approved PRD | Create tickets outside TFS |
+| Create epics/stories in the tenant's allowed Jira projects from an explicitly approved PRD | Create tickets outside the tenant's allowed Jira projects (jira_filing.allowed_projects) |
 | Query existing backlog for duplicates | Approve or merge engineering work |
 
 **Requires human approval for:**

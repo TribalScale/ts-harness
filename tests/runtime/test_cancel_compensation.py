@@ -81,17 +81,17 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         memory.record_program_compensation.assert_called_once_with("root-1", status="skipped", actions=[], actor="orchestrator")
 
     def test_jira_is_labelled_and_commented_by_default(self):
-        memory = _memory([_ref("jira_issue", "TFS-1")])
+        memory = _memory([_ref("jira_issue", "PROJ-1")])
         jira = mock.MagicMock()
         result = compensate_cancelled_program(memory, "root-1", reason="scope dropped", github=_github(), jira=jira)
-        jira.add_label.assert_called_once_with("TFS-1", CANCELLED_LABEL)
+        jira.add_label.assert_called_once_with("PROJ-1", CANCELLED_LABEL)
         self.assertIn("scope dropped", jira.comment.call_args.args[1])
         jira.transition.assert_not_called()
         self.assertEqual(_results(result), [("jira_issue", "label_and_comment", "done")])
         self.assertEqual(memory.record_program_external_ref.call_args.kwargs["state"], "labelled")
 
     def test_jira_closes_only_when_configured(self):
-        memory = _memory([_ref("jira_issue", "TFS-1")])
+        memory = _memory([_ref("jira_issue", "PROJ-1")])
         jira = mock.MagicMock()
         jira.transition.return_value = True
         result = compensate_cancelled_program(
@@ -101,19 +101,19 @@ class CompensateCancelledProgramTests(unittest.TestCase):
             github=_github(),
             jira=jira,
         )
-        jira.transition.assert_called_once_with("TFS-1", "Cancelled")
+        jira.transition.assert_called_once_with("PROJ-1", "Cancelled")
         self.assertEqual(_results(result), [("jira_issue", "label_comment_and_close", "done")])
         self.assertEqual(memory.record_program_external_ref.call_args.kwargs["state"], "closed")
 
     def test_rerun_skips_labelled_jira_and_only_retries_the_close(self):
         jira = mock.MagicMock()
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1", state="labelled")]), "root-1", github=_github(), jira=jira
+            _memory([_ref("jira_issue", "PROJ-1", state="labelled")]), "root-1", github=_github(), jira=jira
         )
         self.assertEqual(_results(result), [("jira_issue", "none", "skipped")])
         jira.transition.return_value = True
         compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1", state="labelled")]),
+            _memory([_ref("jira_issue", "PROJ-1", state="labelled")]),
             "root-1",
             defaults={"compensation": {"jira": "close"}},
             github=_github(),
@@ -121,13 +121,13 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         )
         jira.add_label.assert_not_called()
         jira.comment.assert_not_called()
-        jira.transition.assert_called_once_with("TFS-1", "Done")
+        jira.transition.assert_called_once_with("PROJ-1", "Done")
 
     def test_jira_close_without_matching_transition_fails(self):
         jira = mock.MagicMock()
         jira.transition.return_value = False
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1")]),
+            _memory([_ref("jira_issue", "PROJ-1")]),
             "root-1",
             defaults={"compensation": {"jira": "close"}},
             github=_github(),
@@ -177,7 +177,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         result = compensate_cancelled_program(
             _memory([_ref("jira_issue", "OPS-9")]),
             "root-1",
-            defaults={"jira_filing": {"allowed_projects": ["TFS"]}},
+            defaults={"jira_filing": {"allowed_projects": ["PROJ"]}},
             github=_github(),
             jira=jira,
         )
@@ -243,7 +243,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         github = _github()
         github.close_pull.side_effect = GitHubError(403, "forbidden")
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1"), _ref("pull_request", PR_URL)]),
+            _memory([_ref("jira_issue", "PROJ-1"), _ref("pull_request", PR_URL)]),
             "root-1",
             defaults=BOUND,
             github=github,
@@ -257,7 +257,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
     def test_missing_jira_credentials_only_fail_jira_refs(self):
         with mock.patch.dict("os.environ", {}, clear=True):
             result = compensate_cancelled_program(
-                _memory([_ref("jira_issue", "TFS-1"), _ref("pull_request", PR_URL)]),
+                _memory([_ref("jira_issue", "PROJ-1"), _ref("pull_request", PR_URL)]),
                 "root-1",
                 defaults=BOUND,
                 github=_github(),
@@ -280,13 +280,13 @@ class JiraClientTests(unittest.TestCase):
 
         auth = AtlassianAuth(mode="basic", site_url="https://acme.atlassian.net", email="bot@acme.io", api_token="t")
         client = JiraClient(auth=auth, transport=transport)
-        client.add_label("TFS-1", CANCELLED_LABEL)
-        client.comment("TFS-1", "cancelled")
-        self.assertTrue(client.transition("TFS-1", "done"))
-        self.assertFalse(client.transition("TFS-1", "Won't Do"))
-        self.assertEqual(calls[0], ("PUT", "https://acme.atlassian.net/rest/api/3/issue/TFS-1", {"update": {"labels": [{"add": CANCELLED_LABEL}]}}))
-        self.assertEqual(calls[1][0:2], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/comment"))
-        self.assertEqual(calls[3], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/transitions", {"transition": {"id": "31"}}))
+        client.add_label("PROJ-1", CANCELLED_LABEL)
+        client.comment("PROJ-1", "cancelled")
+        self.assertTrue(client.transition("PROJ-1", "done"))
+        self.assertFalse(client.transition("PROJ-1", "Won't Do"))
+        self.assertEqual(calls[0], ("PUT", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1", {"update": {"labels": [{"add": CANCELLED_LABEL}]}}))
+        self.assertEqual(calls[1][0:2], ("POST", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1/comment"))
+        self.assertEqual(calls[3], ("POST", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1/transitions", {"transition": {"id": "31"}}))
 
     def test_accepts_three_tuple_transport(self):
         client = JiraClient(
@@ -311,18 +311,18 @@ class JiraClientTests(unittest.TestCase):
 
     def test_oauth_uses_gateway_url_and_bearer(self):
         client, seen = self._oauth_client([204])
-        client.add_label("TFS-1", CANCELLED_LABEL)
-        self.assertEqual(seen, [("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/TFS-1", "Bearer tok-1")])
+        client.add_label("PROJ-1", CANCELLED_LABEL)
+        self.assertEqual(seen, [("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1", "Bearer tok-1")])
 
     def test_oauth_retries_once_after_401_with_fresh_token(self):
         client, seen = self._oauth_client([401, 204])
-        client.add_label("TFS-1", CANCELLED_LABEL)
+        client.add_label("PROJ-1", CANCELLED_LABEL)
         self.assertEqual([auth for _, auth in seen], ["Bearer tok-1", "Bearer tok-2"])
 
     def test_oauth_second_401_raises(self):
         client, seen = self._oauth_client([401, 401])
         with self.assertRaises(JiraError) as ctx:
-            client.add_label("TFS-1", CANCELLED_LABEL)
+            client.add_label("PROJ-1", CANCELLED_LABEL)
         self.assertEqual(ctx.exception.status, 401)
         self.assertEqual(len(seen), 2)
 

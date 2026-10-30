@@ -93,14 +93,14 @@ class ContentToJiraProgramTests(unittest.TestCase):
                 {
                     "status": "succeeded",
                     "output": {
-                        "jira_epic_key": "TFS-100",
-                        "jira_story_keys": ["TFS-184"],
+                        "jira_epic_key": "PROJ-100",
+                        "jira_story_keys": ["PROJ-184"],
                     },
                 }
             ],
         )
-        self.assertEqual(patch["jira_epic_key"], "TFS-100")
-        self.assertEqual(patch["jira_story_keys"], ["TFS-184"])
+        self.assertEqual(patch["jira_epic_key"], "PROJ-100")
+        self.assertEqual(patch["jira_story_keys"], ["PROJ-184"])
 
     def test_routing_intent(self):
         payload = {

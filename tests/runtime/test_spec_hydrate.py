@@ -18,7 +18,7 @@ class MemoryStub:
 
 def _issue(description: str | dict, links: list | None = None) -> dict:
     return {
-        "key": "TFS-184",
+        "key": "PROJ-184",
         "fields": {
             "description": description,
             "issuelinks": links or [],
@@ -76,23 +76,23 @@ class SpecHydrateTests(unittest.TestCase):
             {
                 "type": {"inward": "is blocked by", "outward": "blocks"},
                 "inwardIssue": {
-                    "key": "TFS-188",
+                    "key": "PROJ-188",
                     "fields": {"status": {"name": "In Progress"}},
                 },
             },
             {
                 "type": {"inward": "is blocked by", "outward": "blocks"},
                 "inwardIssue": {
-                    "key": "TFS-10",
+                    "key": "PROJ-10",
                     "fields": {"status": {"name": "Done", "statusCategory": {"key": "done"}}},
                 },
             },
         ]
-        self.assertEqual(open_blockers(links), ["TFS-188"])
+        self.assertEqual(open_blockers(links), ["PROJ-188"])
 
     def test_story_payload_has_pointer_and_no_assignee(self):
         payload = build_story_payload(
-            project_key="TFS",
+            project_key="PROJ",
             summary="Add cart retry",
             acceptance="Retry failed cart writes.",
             pointer={
@@ -103,22 +103,22 @@ class SpecHydrateTests(unittest.TestCase):
                 "library_url": "https://drive.google.com/f",
                 "manifest_url": "https://docs.google.com/m",
             },
-            epic_key="TFS-100",
+            epic_key="PROJ-100",
         )
         fields = payload["fields"]
         self.assertNotIn("assignee", fields)
         self.assertIn("WO: WO-003", fields["description"])
         self.assertEqual(fields["issuetype"]["name"], "Story")
-        self.assertEqual(fields["parent"]["key"], "TFS-100")
+        self.assertEqual(fields["parent"]["key"], "PROJ-100")
 
     def test_dependency_links(self):
         links = build_dependency_links(
-            {"WO-001": "TFS-1", "WO-002": "TFS-2"},
+            {"WO-001": "PROJ-1", "WO-002": "PROJ-2"},
             {"WO-002": ["WO-001"]},
         )
         self.assertEqual(
             links,
-            [{"inward_key": "TFS-2", "outward_key": "TFS-1", "type": "Blocks"}],
+            [{"inward_key": "PROJ-2", "outward_key": "PROJ-1", "type": "Blocks"}],
         )
 
 
