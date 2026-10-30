@@ -90,6 +90,8 @@ First public release.
   `bug_to_plan` 1.1.0 presents `diagnosis` and `bug_report`.
 - Stage `retry.max_turns` (1 to 64) sets how many model turns one task attempt
   may take; without it the agent default of 8 applies.
+  `jira_from_prd` 2.2.0 gives `file_jira` 24, enough to file an epic, its
+  stories and links in one attempt.
 - `$runtime.today` input_map expression (UTC date). `prd_request` 1.4.0 passes
   it to the drafter, which stamps **Last updated** with it.
 

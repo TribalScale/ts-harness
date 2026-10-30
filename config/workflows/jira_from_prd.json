@@ -1,6 +1,6 @@
 {
   "workflow_type": "jira_from_prd",
-  "definition_version": "2.1.0",
+  "definition_version": "2.2.0",
   "display_name": "Jira filing from approved PRD",
   "contracts": {
     "prd_review": {
@@ -176,7 +176,8 @@
       },
       "retry": {
         "max_retries": 0,
-        "timeout_seconds": 1800
+        "timeout_seconds": 1800,
+        "max_turns": 24
       }
     }
   ]
