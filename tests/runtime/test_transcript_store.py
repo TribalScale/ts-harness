@@ -184,6 +184,41 @@ class TranscriptStoreTests(unittest.TestCase):
         os.environ.get("TS_HARNESS_SESSION_DB_URL"),
         "TS_HARNESS_SESSION_DB_URL not set",
     )
+    def test_postgres_round_trips_tool_calls(self):
+        try:
+            import psycopg  # noqa: F401
+        except ImportError:
+            self.skipTest("psycopg not installed")
+
+        db_url = os.environ["TS_HARNESS_SESSION_DB_URL"]
+        reset_session_store(SessionStore(db_url=db_url))
+        self.addCleanup(reset_session_store, SessionStore())
+        from ts_harness.agent.sessions import get_session_store
+
+        session_id = get_session_store().get_or_create(tenant_id="default", source="web", agent_id="orchestrator").session_id
+        transcripts = TranscriptStore(db_url=db_url)
+        self.addCleanup(transcripts.clear, session_id)
+        tool_calls = [{"id": "call-1", "type": "function", "function": {"name": "propose_start_program", "arguments": "{}"}}]
+        transcripts.append_turn(
+            session_id,
+            user_text="write a PRD",
+            assistant_messages=[
+                {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                {"role": "tool", "tool_call_id": "call-1", "content": "{\"status\": \"pending\"}"},
+                {"role": "assistant", "content": "Reply yes to start."},
+            ],
+        )
+
+        loaded = transcripts.load_messages(session_id)
+
+        self.assertEqual([msg["role"] for msg in loaded], ["user", "assistant", "tool", "assistant"])
+        self.assertEqual(loaded[1]["tool_calls"], tool_calls)
+        self.assertEqual(loaded[2]["tool_call_id"], "call-1")
+
+    @unittest.skipUnless(
+        os.environ.get("TS_HARNESS_SESSION_DB_URL"),
+        "TS_HARNESS_SESSION_DB_URL not set",
+    )
     def test_postgres_search_tenant_scoped(self):
         try:
             import psycopg  # noqa: F401

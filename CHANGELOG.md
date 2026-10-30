@@ -132,6 +132,10 @@ First public release.
 
 ### Fixed
 
+- With Postgres transcripts, any chat turn in which the agent called a tool
+  failed with HTTP 500 ("cannot adapt type 'dict'"), because `tool_calls` was
+  passed to the JSONB column without a JSON adapter. Only turns answered
+  without tools, such as start confirmations, got through.
 - `jira_create_issue_link` created Blocks links backwards: the issue that must
   land first showed as blocked by the issue waiting on it. Jira's
   `POST /issueLink` gives the outward description to `inwardIssue`, so
