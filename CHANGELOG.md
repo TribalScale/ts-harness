@@ -132,6 +132,11 @@ First public release.
 
 ### Fixed
 
+- Agents could not reach Jira: at startup the runtime passed MCP server `secret:`
+  env refs to `mcporter` unresolved, so the literal `secret:ATLASSIAN_CLIENT_ID`
+  selected OAuth and every Jira call failed to authenticate. Startup now resolves
+  refs the same way an MCP settings rebuild does. The story-writer example no
+  longer names a real project key, which the planner copied into plans.
 - With Postgres transcripts, any chat turn in which the agent called a tool
   failed with HTTP 500 ("cannot adapt type 'dict'"), because `tool_calls` was
   passed to the JSONB column without a JSON adapter. Only turns answered

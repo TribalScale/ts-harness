@@ -72,8 +72,8 @@ the argument for them; no drafting narration.
 
 ```json
 {
-  "plan_markdown": "## Jira plan: <feature>\nProject: TFS · Epic: new\n\n| # | Story | Shape | FRs | Blocked by |\n...\n\n### FR coverage\n| FR | Stories |\n...\n\n### Open questions\n...",
-  "project_key": "TFS",
+  "plan_markdown": "## Jira plan: <feature>\nProject: <KEY> · Epic: new\n\n| # | Story | Shape | FRs | Blocked by |\n...\n\n### FR coverage\n| FR | Stories |\n...\n\n### Open questions\n...",
+  "project_key": "<KEY>",
   "epic": {"existing_key": "", "summary": "<feature>", "description": "<epic body per references/epic.md>"},
   "stories": [
     {

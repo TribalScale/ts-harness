@@ -214,9 +214,11 @@ class RuntimeState:
         self._start_definitions_watcher()
         self.mcp = get_mcp_manager()
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
+        from ts_harness.config.mcp_settings import resolve_mcp_secret_refs
+
         for name, server_cfg in self.config.mcp_servers.items():
             if server_cfg.get("enabled", True):
-                self.mcp.register_server(name, server_cfg)
+                self.mcp.register_server(name, resolve_mcp_secret_refs(server_cfg, self.secret_resolver))
                 if not skip_mcp:
                     self.mcp.discover_tools(name)
         if not skip_mcp:
