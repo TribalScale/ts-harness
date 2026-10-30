@@ -1269,6 +1269,8 @@ class WorkflowRunner:
 
         contract = self._contract_for_task(task, stage)
         task_input = dict(task.get("input") or {})
+        if stage is not None and stage.input_map:
+            task_input = self._fill_stage_inputs(task, stage, task_input)
 
         from ts_harness.workflows import coding_job_stage
 
@@ -1738,6 +1740,30 @@ class WorkflowRunner:
                 task_id=task.get("id"),
                 error=str(exc),
             )
+
+    def _fill_stage_inputs(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage,
+        task_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
+
+        try:
+            client = _workflow_engine().client
+            filled = fill_missing_inputs(client, {**task, "input": task_input}, stage)
+            if filled != task_input:
+                client.patch_task_input(str(task.get("id")), filled, actor="workflow-runner")
+                log_event(
+                    "stage_inputs_filled",
+                    workflow_id=task.get("workflow_id"),
+                    task_id=task.get("id"),
+                    keys=sorted(set(filled) - set(task_input)),
+                )
+            return filled
+        except Exception as exc:
+            log_event("stage_inputs_fill_error", task_id=task.get("id"), error=str(exc))
+            return task_input
 
     def _contract_for_task(
         self,
