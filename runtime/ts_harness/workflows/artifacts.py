@@ -689,6 +689,12 @@ def artifact_body(output: dict[str, Any]) -> str:
             if isinstance(value, str) and value.strip():
                 return sanitize_prd_markdown(value)
 
+    for source in (output, result if isinstance(result, dict) else {}):
+        for key in ("plan_markdown", "review_markdown"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
     work_orders_body = _work_orders_artifacts_body(output)
     if work_orders_body:
         return work_orders_body

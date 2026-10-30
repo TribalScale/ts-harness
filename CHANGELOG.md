@@ -137,6 +137,9 @@ First public release.
   selected OAuth and every Jira call failed to authenticate. Startup now resolves
   refs the same way an MCP settings rebuild does. The story-writer example no
   longer names a real project key, which the planner copied into plans.
+- The Jira story-plan gate posted "I finished jira filing…, but the output has no
+  readable content yet" instead of the plan. Channel messages now render
+  `plan_markdown` and `review_markdown`.
 - With Postgres transcripts, any chat turn in which the agent called a tool
   failed with HTTP 500 ("cannot adapt type 'dict'"), because `tool_calls` was
   passed to the JSONB column without a JSON adapter. Only turns answered
