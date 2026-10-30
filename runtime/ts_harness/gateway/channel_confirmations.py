@@ -12,6 +12,7 @@ from ts_harness.gateway.confirmation_classifier import (
     ConfirmationClassification,
     classify_confirmation,
     confirmation_clarification_message,
+    looks_like_ready_to_draft,
     looks_like_revision_feedback,
 )
 from ts_harness.tools.policy import ToolPolicyContext
@@ -669,6 +670,19 @@ def gate_clarification_message(session: SessionRecord) -> str:
     )
 
 
+def _intake_ready_reply(session: SessionRecord, user_text: str) -> bool:
+    """Intake gates accept "ready" / "draft the bug" along with the answers."""
+    from ts_harness.workflows.repo_pick import is_repo_pick_stage
+
+    gate, stage = _pending_gate_stage(session)
+    if gate is None or stage is None or is_repo_pick_stage(stage):
+        return False
+    prompt = str(getattr(stage, "present_prompt", "") or "").strip().lower()
+    if prompt != "intake":
+        return False
+    return looks_like_ready_to_draft(user_text)
+
+
 def _repo_pick_reply(session: SessionRecord, user_text: str) -> bool:
     """True when the pending gate is a repo pick and the reply names exactly one allowlisted repo."""
     from ts_harness.workflows.repo_pick import allowlisted_repos, is_repo_pick_stage, mentioned_repos
@@ -757,7 +771,7 @@ def execute_workflow_gate_response(
     provider: ModelProvider | None = None,
     use_llm_fallback: bool = True,
 ) -> dict[str, Any]:
-    if _repo_pick_reply(session, user_text):
+    if _repo_pick_reply(session, user_text) or _intake_ready_reply(session, user_text):
         classification = ConfirmationClassification(decision="approve", source="deterministic")
     else:
         classification = classify_approval_gate_response(

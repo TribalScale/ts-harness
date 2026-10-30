@@ -57,7 +57,15 @@ def _session_for_workflow(
         if workflow and workflow in linked:
             return session
         stored_binding = str(metadata.get("binding_key") or "").strip()
-        if stored_binding and stored_binding in bindings:
+        stored_key = binding_key_from_source_channel(stored_binding)
+        candidate_keys = {
+            key
+            for item in bindings
+            if (key := binding_key_from_source_channel(item))
+        }
+        if stored_binding and (
+            stored_binding in bindings or (stored_key and stored_key in candidate_keys)
+        ):
             return session
         if program and str(metadata.get("program_id") or "").strip() == program:
             return session
@@ -101,6 +109,12 @@ def _parse_source_channel(source_channel: str) -> tuple[str, str, str] | None:
     raw = str(source_channel or "").strip()
     if not raw:
         return None
+    # Admin chat rewrites `web:<id>` to `web:web:<id>`, and a later rewrite can
+    # leave `web:web:web:<id>`. Collapse those to one thread id.
+    if raw.startswith("web:"):
+        tail = [part for part in raw.split(":") if part and part != "web"]
+        if len(tail) == 1:
+            return "web", "web", tail[0]
     parts = raw.split(":", 2)
     if len(parts) == 3 and parts[0] and parts[1]:
         return parts[0], parts[1], parts[2]
@@ -444,7 +458,12 @@ def present_workflow_artifact(
     except FileNotFoundError:
         pass
 
-    session = _session_for_workflow(workflow_id, tenant_id, source_channel)
+    session = _session_for_workflow(
+        workflow_id,
+        tenant_id,
+        source_channel,
+        program_id=program_id,
+    )
     existing_drive_library = _load_existing_drive_library(program_id)
 
     built = build_workflow_artifact_channel_message(

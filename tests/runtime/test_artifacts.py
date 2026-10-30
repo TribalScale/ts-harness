@@ -111,8 +111,9 @@ Details here.
             agent_id="pm-agent",
         )
         self.assertIn("Who is the audience?", message)
-        self.assertIn("What is in scope?", message)
+        self.assertNotIn("What is in scope?", message)
         self.assertIn("Reply in this thread with your answers.", message)
+        self.assertIn("Say ready when you want a draft.", message)
         self.assertNotIn("no readable content", message)
 
     def test_format_artifact_for_channel_renders_nested_intake_questions(self):

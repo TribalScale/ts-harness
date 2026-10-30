@@ -17,7 +17,7 @@ List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` an
 
 ## clarify
 
-Ask **one question at a time**. The PM may answer several in one message. Do **not** draft the plan until they say `ready` or `draft the plan`. You may say you have enough, but they decide.
+Ask **exactly one question** in the reply. Do not send a numbered checklist. Do not ask for anything `input.content` or an earlier answer already states. The PM may answer several questions in one message. Do **not** draft the plan until they say `ready` or `draft the plan`. You may say you have enough, but they decide.
 
 ## draft_plan
 

@@ -144,6 +144,23 @@ First public release.
 
 ### Fixed
 
+- Approving the last gate of a program phase did not save that phase's
+  outputs, so the next phase started without artifacts such as `bug_report`.
+  Gate approval now completes the phase the same way a dispatched task does.
+- Posting a specialist draft could block the task after the chat message was
+  already sent, when session sync looked up a workflow version that is not on
+  disk. Sync uses the task's own pin, falls back to the active definition when
+  the workflow record matches it, and a sync failure no longer discards the draft.
+- An intake-gate reply that answered the question and ended with "ready" or
+  "draft the bug" was sent back as a revision. Those replies approve the gate,
+  and the reply text is stored on the gate so the draft stage can read it.
+- A later program phase could not find the web chat when the session binding
+  had an extra `web:` segment or still pointed at the previous workflow.
+  Presentation matches the thread id and the program.
+- Clarify steps that listed several questions now post only the first one in
+  chat. The skill tells the agent to ask one question and skip facts the
+  report already states.
+
 - A stage's `input_map` was applied only when an upstream stage's
   `on_complete: hydrate_input` hook listed it in `downstream`, and was ignored
   otherwise. `bug_to_plan` `clarify` and `content_to_plan` `compare_codebase`
