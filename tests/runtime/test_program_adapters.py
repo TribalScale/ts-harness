@@ -49,20 +49,20 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
                 {
                     "status": "succeeded",
                     "step_name": "file_jira",
-                    "output": {"jira_epic_key": "TFS-10", "jira_story_keys": ["TFS-11", "TFS-12"]},
+                    "output": {"jira_epic_key": "PROJ-10", "jira_story_keys": ["PROJ-11", "PROJ-12"]},
                 },
             ],
         )
-        self.assertEqual(patch, {"jira_epic_key": "TFS-10", "jira_story_keys": ["TFS-11", "TFS-12"], "planning_track": "jira"})
+        self.assertEqual(patch, {"jira_epic_key": "PROJ-10", "jira_story_keys": ["PROJ-11", "PROJ-12"], "planning_track": "jira"})
 
     def test_extract_jira_outputs_accepts_legacy_epic_and_child_keys(self):
         patch = self.registry.extract_outputs(
             "extract_jira_outputs",
             workflow_type="jira_from_prd",
-            tasks=[{"status": "succeeded", "output": {"result": {"epic_key": "TFS-1", "child_keys": ["TFS-2"]}}}],
+            tasks=[{"status": "succeeded", "output": {"result": {"epic_key": "PROJ-1", "child_keys": ["PROJ-2"]}}}],
         )
-        self.assertEqual(patch["jira_epic_key"], "TFS-1")
-        self.assertEqual(patch["jira_story_keys"], ["TFS-2"])
+        self.assertEqual(patch["jira_epic_key"], "PROJ-1")
+        self.assertEqual(patch["jira_story_keys"], ["PROJ-2"])
 
     def test_extract_implement_tracks_cloned_workflow_type(self):
         patch = self.registry.extract_outputs(
@@ -114,22 +114,22 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
     def test_implement_jira_ticket_prefers_default_branch_over_generic_main(self):
         intake = self.registry.build_inputs(
             "extract_implement_outputs",
-            summary="Implement TFS-184",
+            summary="Implement PROJ-184",
             artifacts={
-                "jira_issue_key": "TFS-184",
+                "jira_issue_key": "PROJ-184",
                 "default_branch": "dev",
             },
             extra_input={"base_branch": "main"},
             workflow_type="implement_jira_ticket",
         )
-        self.assertEqual(intake["jira_issue_key"], "TFS-184")
+        self.assertEqual(intake["jira_issue_key"], "PROJ-184")
         self.assertEqual(intake["base_branch"], "dev")
 
     def test_implement_jira_ticket_rewrites_bare_main_to_dev(self):
         intake = self.registry.build_inputs(
             "extract_implement_outputs",
-            summary="Implement TFS-184",
-            artifacts={"jira_issue_key": "TFS-184"},
+            summary="Implement PROJ-184",
+            artifacts={"jira_issue_key": "PROJ-184"},
             extra_input={"base_branch": "main"},
             workflow_type="implement_jira_ticket",
         )

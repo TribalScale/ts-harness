@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MCPORTER = REPO_ROOT / "scripts" / "mcporter"
 BASIC_ENV = {"ATLASSIAN_SITE_URL": "acme.atlassian.net", "ATLASSIAN_EMAIL": "bot@acme.io", "ATLASSIAN_API_TOKEN": "t"}
 OAUTH_ENV = {"ATLASSIAN_CLIENT_ID": "id", "ATLASSIAN_CLIENT_SECRET": "secret", "ATLASSIAN_CLOUD_ID": "cloud-1"}
-ISSUES = {"issues": [{"key": "TFS-1", "fields": {"summary": "Fix login", "status": {"name": "To Do"}}}]}
+ISSUES = {"issues": [{"key": "PROJ-1", "fields": {"summary": "Fix login", "status": {"name": "To Do"}}}]}
 
 
 def load_mcporter():
@@ -69,7 +69,7 @@ class McporterSearchTests(McporterTestCase):
         self.assertEqual(self.calls, [])
 
     def test_basic_mode_hits_site_search_jql(self):
-        self.assertEqual(self.text(self.call("atlassian_search", {"query": "login"})), "TFS-1: Fix login [To Do]")
+        self.assertEqual(self.text(self.call("atlassian_search", {"query": "login"})), "PROJ-1: Fix login [To Do]")
         (method, url, headers, _), = self.api_calls()
         parsed = urllib.parse.urlparse(url)
         self.assertEqual(f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "https://acme.atlassian.net/rest/api/3/search/jql")
@@ -77,18 +77,18 @@ class McporterSearchTests(McporterTestCase):
         self.assertTrue(headers["Authorization"].startswith("Basic "))
 
     def test_oauth_mode_hits_gateway_with_bearer(self):
-        self.call("jira_search", {"jql": "project = TFS"}, env=OAUTH_ENV)
+        self.call("jira_search", {"jql": "project = PROJ"}, env=OAUTH_ENV)
         (method, url, headers, _), = self.api_calls()
         self.assertTrue(url.startswith("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/search/jql?"))
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        self.assertEqual(query["jql"], ["project = TFS"])
+        self.assertEqual(query["jql"], ["project = PROJ"])
         self.assertEqual(query["maxResults"], ["20"])
         self.assertEqual(headers["Authorization"], "Bearer tok-1")
 
     def test_oauth_retries_once_after_401(self):
         self.responses = [(401, b"expired"), (200, ISSUES)]
         result = self.call("atlassian_search", {"query": "login"}, env=OAUTH_ENV)
-        self.assertEqual(self.text(result), "TFS-1: Fix login [To Do]")
+        self.assertEqual(self.text(result), "PROJ-1: Fix login [To Do]")
         self.assertEqual([c[2]["Authorization"] for c in self.api_calls()], ["Bearer tok-1", "Bearer tok-2"])
 
     def test_unbounded_jql_is_refused_before_calling_jira(self):
@@ -104,10 +104,10 @@ class McporterSearchTests(McporterTestCase):
         self.assertEqual(self.api_calls(), [])
 
     def test_bounded_jql_with_order_by_is_sent(self):
-        self.call("jira_search", {"jql": "project = TFS ORDER BY created DESC"})
+        self.call("jira_search", {"jql": "project = PROJ ORDER BY created DESC"})
         (_, url, _, _), = self.api_calls()
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        self.assertEqual(query["jql"], ["project = TFS ORDER BY created DESC"])
+        self.assertEqual(query["jql"], ["project = PROJ ORDER BY created DESC"])
 
     def test_error_status_is_reported(self):
         self.responses = [(403, b"denied")]
@@ -122,14 +122,14 @@ class McporterReadToolTests(McporterTestCase):
             (
                 200,
                 {
-                    "key": "TFS-7",
+                    "key": "PROJ-7",
                     "fields": {
                         "summary": "Checkout",
                         "status": {"name": "Open"},
                         "issuetype": {"name": "Story"},
-                        "parent": {"key": "TFS-1"},
+                        "parent": {"key": "PROJ-1"},
                         "labels": ["prd"],
-                        "issuelinks": [{"type": {"outward": "blocks"}, "outwardIssue": {"key": "TFS-8"}}],
+                        "issuelinks": [{"type": {"outward": "blocks"}, "outwardIssue": {"key": "PROJ-8"}}],
                         "description": {
                             "type": "doc",
                             "version": 1,
@@ -139,46 +139,46 @@ class McporterReadToolTests(McporterTestCase):
                 },
             )
         ]
-        text = self.text(self.call("jira_get_issue", {"issue_key": "tfs-7"}))
-        self.assertIn("TFS-7: Checkout [Open] (Story)", text)
-        self.assertIn("Parent: TFS-1", text)
-        self.assertIn("Link: blocks TFS-8", text)
+        text = self.text(self.call("jira_get_issue", {"issue_key": "proj-7"}))
+        self.assertIn("PROJ-7: Checkout [Open] (Story)", text)
+        self.assertIn("Parent: PROJ-1", text)
+        self.assertIn("Link: blocks PROJ-8", text)
         self.assertIn("Assignee: unassigned", text)
         self.assertIn("WO: WO-003", text)
-        self.assertIn("/rest/api/3/issue/TFS-7?fields=", self.api_calls()[0][1])
+        self.assertIn("/rest/api/3/issue/PROJ-7?fields=", self.api_calls()[0][1])
 
     def test_get_all_projects_with_create_action(self):
-        self.responses = [(200, {"values": [{"key": "TFS", "name": "Foundry"}]})]
-        self.assertEqual(self.text(self.call("jira_get_all_projects", {"action": "create"})), "TFS: Foundry")
+        self.responses = [(200, {"values": [{"key": "PROJ", "name": "Foundry"}]})]
+        self.assertEqual(self.text(self.call("jira_get_all_projects", {"action": "create"})), "PROJ: Foundry")
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.api_calls()[0][1]).query)
         self.assertEqual(query["action"], ["create"])
 
 
 class McporterWriteToolTests(McporterTestCase):
     def test_create_issue_builds_fields_without_assignee(self):
-        self.responses = [(201, {"id": "1", "key": "TFS-9"})]
+        self.responses = [(201, {"id": "1", "key": "PROJ-9"})]
         result = self.call(
             "jira_create_issue",
             {
-                "project_key": "tfs",
+                "project_key": "proj",
                 "issue_type": "Epic",
                 "summary": "Checkout",
                 "description": "Line one\nLine two\n\nSecond paragraph",
                 "labels": ["prd"],
                 "components": ["web"],
                 "priority": "Medium",
-                "parent_key": "tfs-1",
+                "parent_key": "proj-1",
                 "assignee": "someone",
             },
         )
-        self.assertEqual(self.text(result), "Created TFS-9 https://acme.atlassian.net/browse/TFS-9")
+        self.assertEqual(self.text(result), "Created PROJ-9 https://acme.atlassian.net/browse/PROJ-9")
         method, url, _, body = self.api_calls()[0]
         self.assertEqual((method, url), ("POST", "https://acme.atlassian.net/rest/api/3/issue"))
         fields = body["fields"]
         self.assertNotIn("assignee", fields)
-        self.assertEqual(fields["project"], {"key": "TFS"})
+        self.assertEqual(fields["project"], {"key": "PROJ"})
         self.assertEqual(fields["issuetype"], {"name": "Epic"})
-        self.assertEqual(fields["parent"], {"key": "TFS-1"})
+        self.assertEqual(fields["parent"], {"key": "PROJ-1"})
         self.assertEqual(fields["components"], [{"name": "web"}])
         self.assertEqual(fields["priority"], {"name": "Medium"})
         paragraphs = fields["description"]["content"]
@@ -186,7 +186,7 @@ class McporterWriteToolTests(McporterTestCase):
         self.assertEqual([node["type"] for node in paragraphs[0]["content"]], ["text", "hardBreak", "text"])
 
     def test_create_issue_requires_project_type_and_summary(self):
-        result = self.call("jira_create_issue", {"project_key": "TFS", "summary": "x"})
+        result = self.call("jira_create_issue", {"project_key": "PROJ", "summary": "x"})
         self.assertTrue(result["isError"])
         self.assertIn("issue_type is required", self.text(result))
         self.assertEqual(self.calls, [])
@@ -196,54 +196,54 @@ class McporterWriteToolTests(McporterTestCase):
             (
                 201,
                 {
-                    "issues": [{"key": "TFS-10"}],
+                    "issues": [{"key": "PROJ-10"}],
                     "errors": [{"failedElementNumber": 1, "elementErrors": {"errors": {"issuetype": "invalid"}}}],
                 },
             )
         ]
-        issue = {"project_key": "TFS", "issue_type": "Story", "summary": "a", "parent_key": "TFS-1"}
+        issue = {"project_key": "PROJ", "issue_type": "Story", "summary": "a", "parent_key": "PROJ-1"}
         text = self.text(self.call("jira_batch_create_issues", {"issues": [issue, {**issue, "issue_type": "Nope"}]}))
-        self.assertIn("Created TFS-10", text)
+        self.assertIn("Created PROJ-10", text)
         self.assertIn("Failed item 1", text)
         _, url, _, body = self.api_calls()[0]
         self.assertTrue(url.endswith("/rest/api/3/issue/bulk"))
         self.assertEqual(len(body["issueUpdates"]), 2)
 
     def test_batch_create_caps_issue_count(self):
-        issue = {"project_key": "TFS", "issue_type": "Story", "summary": "a"}
+        issue = {"project_key": "PROJ", "issue_type": "Story", "summary": "a"}
         result = self.call("jira_batch_create_issues", {"issues": [issue] * 51})
         self.assertTrue(result["isError"])
         self.assertEqual(self.calls, [])
 
     def test_create_issue_link_makes_outward_issue_block_inward_issue(self):
         self.responses = [(201, b"")]
-        args = {"link_type": "Blocks", "inward_issue_key": "TFS-2", "outward_issue_key": "TFS-3"}
-        self.assertEqual(self.text(self.call("jira_create_issue_link", args)), "Linked TFS-3 -> TFS-2 (Blocks)")
+        args = {"link_type": "Blocks", "inward_issue_key": "PROJ-2", "outward_issue_key": "PROJ-3"}
+        self.assertEqual(self.text(self.call("jira_create_issue_link", args)), "Linked PROJ-3 -> PROJ-2 (Blocks)")
         _, url, _, body = self.api_calls()[0]
         self.assertTrue(url.endswith("/rest/api/3/issueLink"))
         # Jira gives the outward description ("blocks") to the POST body's inwardIssue.
-        self.assertEqual(body, {"type": {"name": "Blocks"}, "inwardIssue": {"key": "TFS-3"}, "outwardIssue": {"key": "TFS-2"}})
+        self.assertEqual(body, {"type": {"name": "Blocks"}, "inwardIssue": {"key": "PROJ-3"}, "outwardIssue": {"key": "PROJ-2"}})
 
     def test_add_comment_sends_adf(self):
         self.responses = [(201, {"id": "c1"})]
-        self.assertEqual(self.text(self.call("jira_add_comment", {"issue_key": "TFS-2", "comment": "done"})), "Commented on TFS-2")
+        self.assertEqual(self.text(self.call("jira_add_comment", {"issue_key": "PROJ-2", "comment": "done"})), "Commented on PROJ-2")
         _, url, _, body = self.api_calls()[0]
-        self.assertTrue(url.endswith("/rest/api/3/issue/TFS-2/comment"))
+        self.assertTrue(url.endswith("/rest/api/3/issue/PROJ-2/comment"))
         self.assertEqual(body["body"]["type"], "doc")
 
     def test_update_issue_sets_fields_and_label_changes(self):
         self.responses = [(204, b"")]
         args = {
-            "issue_key": "tfs-2",
+            "issue_key": "proj-2",
             "summary": "New title",
             "description": "## Story\n- [ ] task",
             "add_labels": ["enabler"],
             "remove_labels": ["draft"],
         }
-        self.assertEqual(self.text(self.call("jira_update_issue", args)), "Updated TFS-2: summary, description, labels")
+        self.assertEqual(self.text(self.call("jira_update_issue", args)), "Updated PROJ-2: summary, description, labels")
         method, url, _, body = self.api_calls()[0]
         self.assertEqual(method, "PUT")
-        self.assertTrue(url.endswith("/rest/api/3/issue/TFS-2"))
+        self.assertTrue(url.endswith("/rest/api/3/issue/PROJ-2"))
         self.assertEqual(body["fields"]["summary"], "New title")
         self.assertEqual([block["type"] for block in body["fields"]["description"]["content"]], ["heading", "taskList"])
         self.assertEqual(body["update"], {"labels": [{"add": "enabler"}, {"remove": "draft"}]})
@@ -251,18 +251,18 @@ class McporterWriteToolTests(McporterTestCase):
 
     def test_update_issue_ignores_assignee(self):
         self.responses = [(204, b"")]
-        self.call("jira_update_issue", {"issue_key": "TFS-2", "summary": "x", "assignee": "someone"})
+        self.call("jira_update_issue", {"issue_key": "PROJ-2", "summary": "x", "assignee": "someone"})
         _, _, _, body = self.api_calls()[0]
         self.assertEqual(body, {"fields": {"summary": "x"}})
 
     def test_update_issue_needs_a_change(self):
-        result = self.call("jira_update_issue", {"issue_key": "TFS-2"})
+        result = self.call("jira_update_issue", {"issue_key": "PROJ-2"})
         self.assertTrue(result["isError"])
         self.assertIn("nothing to update", self.text(result))
         self.assertEqual(self.calls, [])
 
     def test_unknown_tool(self):
-        result = self.call("jira_delete_issue", {"issue_key": "TFS-1"})
+        result = self.call("jira_delete_issue", {"issue_key": "PROJ-1"})
         self.assertTrue(result["isError"])
         self.assertEqual(self.calls, [])
 

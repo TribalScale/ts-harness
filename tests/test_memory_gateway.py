@@ -102,7 +102,7 @@ class MemoryGatewayTests(unittest.TestCase):
                 "source": "test",
                 "confidence": 0.9,
                 "tags": ["safe"],
-                "metadata": {"ticket": "TFS-1"},
+                "metadata": {"ticket": "PROJ-1"},
             },
             embed=lambda text: "[0.1,0.2]",
         )
@@ -127,7 +127,7 @@ class MemoryGatewayTests(unittest.TestCase):
             {
                 "type": "semantic",
                 "content": "Program brief summary",
-                "scope": "project:TFS",
+                "scope": "project:PROJ",
                 "tenant_id": "tenant-a",
                 "source": "test",
             },
@@ -148,7 +148,7 @@ class MemoryGatewayTests(unittest.TestCase):
             {
                 "query": "approved prd",
                 "tenant_id": "tenant-a",
-                "scope": "project:TFS",
+                "scope": "project:PROJ",
                 "limit": 5,
             },
             embed=lambda text: "[0.1,0.2]",
@@ -157,7 +157,7 @@ class MemoryGatewayTests(unittest.TestCase):
         self.assertIn("tenant_id = %s", sql)
         self.assertIn("scope = %s OR scope = 'global'", sql)
         self.assertIn("tenant-a", params)
-        self.assertIn("project:TFS", params)
+        self.assertIn("project:PROJ", params)
 
     def test_remember_rejects_global_and_department_scopes(self):
         gateway = load_gateway()

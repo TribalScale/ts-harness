@@ -12,7 +12,7 @@ class ProgramRelationTests(unittest.TestCase):
                 raise RuntimeError("down")
 
         context = resolve_related_program_context(
-            Broken(), tenant_id="default", program_id="a", project_id="TFS"
+            Broken(), tenant_id="default", program_id="a", project_id="PROJ"
         )
         self.assertEqual(context["sources"], [])
         self.assertIn("related_program_context_unavailable", context["warnings"])
@@ -22,7 +22,7 @@ class ProgramRelationTests(unittest.TestCase):
             def list_programs(self, **kwargs):
                 return {
                     "programs": [
-                        {"id": "b", "tenant_id": "default", "project_id": "TFS", "status": "running"}
+                        {"id": "b", "tenant_id": "default", "project_id": "PROJ", "status": "running"}
                     ]
                 }
 

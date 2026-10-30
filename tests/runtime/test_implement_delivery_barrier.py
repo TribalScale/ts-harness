@@ -87,14 +87,14 @@ class BarrierAggregationTests(unittest.TestCase):
                 "id": "impl-1",
                 "step_name": "implement_TFS-1",
                 "status": child_statuses[0],
-                "input": {"work_item_ref": "TFS-1"},
+                "input": {"work_item_ref": "PROJ-1"},
                 "output": {"pr_url": PR2},
             },
             {
                 "id": "impl-2",
                 "step_name": "implement_TFS-2",
                 "status": child_statuses[1],
-                "input": {"work_item_ref": "TFS-2"},
+                "input": {"work_item_ref": "PROJ-2"},
                 "output": {"pr_url": PR1},
             },
         ]
@@ -106,7 +106,7 @@ class BarrierAggregationTests(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["output"]["pr_urls"], [PR1, PR2])
         refs = {pr["work_item_ref"] for pr in result["output"]["result"]["prs"]}
-        self.assertEqual(refs, {"TFS-1", "TFS-2"})
+        self.assertEqual(refs, {"PROJ-1", "PROJ-2"})
 
     def test_failed_child_blocks_barrier(self):
         barrier, tasks = self._tasks(["succeeded", "failed"])

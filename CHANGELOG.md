@@ -132,6 +132,17 @@ First public release.
 
 ### Fixed
 
+- Agent-facing skills, agent policies and runbooks named a real Jira project
+  (`TFS`) as the place to file; agents copied it. They now refer to the
+  tenant's `jira_filing.allowed_projects`, examples use placeholders, and the
+  ticket picker's "Reply with a ticket key" hint uses a key from the list.
+- Program phases now resolve the target Jira project once, at workflow
+  creation: an explicit key, an epic or issue key, a single allowed project
+  named in the request, or the only allowed project. The intake task receives
+  `jira_project_key` and `jira_allowed_projects`; other stages map them with
+  `$input.`. `jira_from_prd` 2.1.0 passes them to `plan_stories` and
+  `file_jira`, and definition validation warns when a Jira-writing stage drops
+  them.
 - Agents could not reach Jira: at startup the runtime passed MCP server `secret:`
   env refs to `mcporter` unresolved, so the literal `secret:ATLASSIAN_CLIENT_ID`
   selected OAuth and every Jira call failed to authenticate. Startup now resolves

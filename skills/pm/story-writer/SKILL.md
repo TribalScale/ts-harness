@@ -18,13 +18,16 @@ approves the plan and `file_jira` runs. Write every issue body in the house form
 - `input.approved_prd`: the approved PRD. Its `FR-n`, `DoD-n` and Technical Constraints are the source of truth.
 - `input.prd_review`: the review. Carry each `critical_gaps` item into `open_questions` unless the PRD already answers it.
 - `input.jira_epic_key`: an existing epic to add to, if set.
+- `input.jira_project_key`: the project the runtime resolved from the request and tenant config. `input.jira_allowed_projects`: every project the tenant may file in.
 - `input.default_issue_type`, `input.issue_type_by_project`: issue types from tenant config.
 - On revision: `input.prior_artifact` is the last plan and `input.comments` the reviewer's feedback. Change what was asked; keep numbering stable unless the change requires a renumber, and say so.
 
 ## 1. Find the epic and the project
 
 - With `jira_epic_key`: `jira_get_issue` it. It must be an open Epic; inherit its project and read its child issues (`jira_search` with `parent = <key>`). Reuse existing stories; never propose a duplicate.
-- Without one: `jira_get_all_projects` with `action: create`. One project: use it. Several: pick the best match and list the others in `open_questions`. Then search for an open epic or stories on the same feature (`summary ~ "<feature>"`, `statusCategory != Done`). A match is reported in `open_questions`, not silently reused or duplicated.
+- Without one, with `input.jira_project_key`: use it.
+- Otherwise: choose from `input.jira_allowed_projects` when set, else from `jira_get_all_projects` with `action: create`. One project: use it. Several: pick the best match and list the others in `open_questions`. Never plan into a project outside `input.jira_allowed_projects`.
+- Without an epic key, search the chosen project for an open epic or stories on the same feature (`summary ~ "<feature>"`, `statusCategory != Done`). A match is reported in `open_questions`, not silently reused or duplicated.
 
 ## 2. Propose the story list
 

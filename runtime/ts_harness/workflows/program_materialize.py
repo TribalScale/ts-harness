@@ -661,8 +661,11 @@ def materialize_program_workflow(
         actor=actor,
     )
 
+    from ts_harness.jira.target_project import with_jira_target
+    from ts_harness.workflows.delivery_program import _live_program_defaults
+
     intake = skeleton.intake_stage_name()
-    stage_inputs = {intake: dict(intake_input)}
+    stage_inputs = {intake: with_jira_target(dict(intake_input), _live_program_defaults())}
     task_bodies = materialize_skeleton_tasks(
         skeleton,
         workflow_id=workflow_id,

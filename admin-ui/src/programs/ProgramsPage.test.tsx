@@ -39,7 +39,7 @@ function programList(status = "running") {
         summary: "Build checkers",
         current_phase: "implement",
         status,
-        project_id: "TFS",
+        project_id: "PROJ",
       },
       {
         id: "57249723-checkers-followup",
@@ -110,7 +110,7 @@ function programStatus(status = "running") {
       match: { task_id: "task-2", step_name: "Review implementation" },
     },
     recommended_action: "Approve the active implementation gate.",
-    project_id: "TFS",
+    project_id: "PROJ",
     project_id_source: "user",
     excluded_from_autoshare: false,
     outbound_link_count: 1,
@@ -204,7 +204,7 @@ it("shows project memory controls on overview", async () => {
 
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
   expect(await screen.findByLabelText("Project memory")).toBeInTheDocument();
-  expect(screen.getAllByText(/Project TFS/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Project PROJ/).length).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: /save project/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /exclude from auto-share/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /add link/i })).toBeInTheDocument();

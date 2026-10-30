@@ -857,10 +857,37 @@ def _validate_expanded(
     )
     _validate_contract_refs(payload, issues=issues)
     _validate_input_maps(payload, issues=issues)
+    _validate_jira_targets(payload, issues=issues)
     _validate_hook_payloads(payload, issues=issues)
     _validate_graph(payload, issues=issues)
 
     return skeleton, issues
+
+
+_JIRA_TARGET_KEYS = ("jira_project_key", "jira_allowed_projects")
+
+
+def _validate_jira_targets(payload: dict[str, Any], *, issues: list[ValidationIssue]) -> None:
+    """Warn when a Jira-writing stage's input_map drops the runtime's target project."""
+    for index, stage in enumerate(list(payload.get("stages") or [])):
+        if not isinstance(stage, dict) or not stage.get("depends_on"):
+            continue
+        if "jira_write" not in list(stage.get("allowed_external_effects") or []):
+            continue
+        input_map = stage.get("input_map")
+        if not isinstance(input_map, dict) or not input_map:
+            continue
+        if any(key in input_map or any(key in str(value) for value in input_map.values()) for key in _JIRA_TARGET_KEYS):
+            continue
+        issues.append(
+            _issue(
+                "warning",
+                "jira_target_not_passed",
+                _stage_path(index, ".input_map"),
+                "stage writes to Jira but its input_map passes neither jira_project_key nor "
+                "jira_allowed_projects; map them from $input.jira_project_key and $input.jira_allowed_projects",
+            )
+        )
 
 
 _FRAGMENT_PLACEHOLDER_AGENT = "orchestrator"

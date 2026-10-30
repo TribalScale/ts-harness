@@ -11,7 +11,7 @@ Use on `file_work_orders_as_jira`.
 
 - If `jira_epic_key` is set, fetch it. It must be an open Epic. Inherit its project. Do not create a second epic.
 - If it is not an epic or is closed, stop and ask.
-- If no epic key, list Jira projects the **mapped PM** can create issues in (`jira_get_all_projects` with `action: create`). Confirm: “File a new epic plus N issues in PROJECT?”
+- If no epic key, use `input.jira_project_key` when the runtime set it. Otherwise choose from `input.jira_allowed_projects`, or, when that is unset, the projects the **mapped PM** can create issues in (`jira_get_all_projects` with `action: create`). Return the choice as `jira_project_key`. Confirm: “File a new epic plus N issues in PROJECT?”
 
 ## file_tickets
 

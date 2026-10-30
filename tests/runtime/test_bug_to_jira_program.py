@@ -159,7 +159,7 @@ class BugToJiraProgramTests(unittest.TestCase):
                         "step_name": "choose_epic",
                         "status": "pending",
                         "created_at": "1",
-                        "input": {"default_issue_type": "Bug", "issue_type_by_project": {"TFS": "Bug"}},
+                        "input": {"default_issue_type": "Bug", "issue_type_by_project": {"PROJ": "Bug"}},
                     }
                 ],
             ),
