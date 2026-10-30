@@ -215,13 +215,14 @@ class McporterWriteToolTests(McporterTestCase):
         self.assertTrue(result["isError"])
         self.assertEqual(self.calls, [])
 
-    def test_create_issue_link(self):
+    def test_create_issue_link_makes_outward_issue_block_inward_issue(self):
         self.responses = [(201, b"")]
         args = {"link_type": "Blocks", "inward_issue_key": "TFS-2", "outward_issue_key": "TFS-3"}
         self.assertEqual(self.text(self.call("jira_create_issue_link", args)), "Linked TFS-3 -> TFS-2 (Blocks)")
         _, url, _, body = self.api_calls()[0]
         self.assertTrue(url.endswith("/rest/api/3/issueLink"))
-        self.assertEqual(body, {"type": {"name": "Blocks"}, "inwardIssue": {"key": "TFS-2"}, "outwardIssue": {"key": "TFS-3"}})
+        # Jira gives the outward description ("blocks") to the POST body's inwardIssue.
+        self.assertEqual(body, {"type": {"name": "Blocks"}, "inwardIssue": {"key": "TFS-3"}, "outwardIssue": {"key": "TFS-2"}})
 
     def test_add_comment_sends_adf(self):
         self.responses = [(201, {"id": "c1"})]

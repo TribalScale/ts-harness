@@ -132,6 +132,11 @@ First public release.
 
 ### Fixed
 
+- `jira_create_issue_link` created Blocks links backwards: the issue that must
+  land first showed as blocked by the issue waiting on it. Jira's
+  `POST /issueLink` gives the outward description to `inwardIssue`, so
+  `JiraClient.link_issues` now swaps the keys. Links filed before this fix point
+  the wrong way.
 - The weekly RDS master password rotation left `memory-api`, sessions and the
   workflow runner unable to open new connections until someone re-ran bootstrap.
   New phase `12a-db-credential-watch.sh` installs a 5-minute cron job that runs
