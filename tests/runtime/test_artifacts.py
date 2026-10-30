@@ -140,6 +140,24 @@ Details here.
         self.assertIn("# PRD: Widget", message)
         self.assertNotIn("Who is the audience?", message)
 
+    def test_format_artifact_for_channel_renders_story_plan(self):
+        plan = "## Jira plan: Widget\nProject: THD · Epic: new\n\n| # | Story |\n|---|---|\n| 1.1 | Show widget |"
+        message = format_artifact_for_channel(
+            {"plan_markdown": plan, "project_key": "THD", "stories": [{"number": "1.1"}]},
+            display_name="Jira filing from approved PRD",
+            present_prompt="approval",
+            step_name="plan_stories",
+            agent_id="pm-agent",
+        )
+        self.assertIn("## Jira plan: Widget", message)
+        self.assertIn("| 1.1 | Show widget |", message)
+        self.assertIn("Reply yes to approve", message)
+        self.assertNotIn("no readable content", message)
+
+    def test_artifact_body_renders_prd_review(self):
+        body = artifact_body({"verdict": "gaps", "review_markdown": "# PRD Review: Widget\n\n## Strengths\n1. Clear."})
+        self.assertTrue(body.startswith("# PRD Review: Widget"))
+
     def test_format_artifact_for_channel_does_not_approve_empty_json(self):
         message = format_artifact_for_channel(
             {"summary": "{}"},

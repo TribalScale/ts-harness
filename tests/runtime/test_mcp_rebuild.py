@@ -183,6 +183,33 @@ class McpRebuildTests(unittest.TestCase):
                 os.environ.pop("TS_HARNESS_SKIP_MCP_DISCOVERY", None)
                 os.environ.pop("RUNTIME_FAKE_PROVIDER", None)
 
+    def test_boot_resolves_secret_refs_before_register(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        env = {
+            "TS_HARNESS_SKIP_MCP_DISCOVERY": "true",
+            "RUNTIME_FAKE_PROVIDER": "true",
+            "SKILLS_DIR": str(repo_root / "skills"),
+            "ATLASSIAN_SITE_URL": "https://example.atlassian.net",
+        }
+        saved = {key: os.environ.get(key) for key in (*env, "ATLASSIAN_CLIENT_ID")}
+        os.environ.update(env)
+        os.environ.pop("ATLASSIAN_CLIENT_ID", None)
+        runtime = None
+        try:
+            runtime = RuntimeState(str(repo_root / "config" / "ts-harness-runtime.test.yaml"))
+            server_env = runtime.mcp.server_state("atlassian").config["env"]
+            self.assertEqual(server_env["ATLASSIAN_SITE_URL"], "https://example.atlassian.net")
+            self.assertEqual(server_env["ATLASSIAN_CLIENT_ID"], "")
+            self.assertFalse([key for key, value in server_env.items() if value.startswith("secret:")])
+        finally:
+            if runtime is not None:
+                runtime.shutdown()
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
 
 class ReloadMcpSettingsTests(unittest.TestCase):
     def tearDown(self):
