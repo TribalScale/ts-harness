@@ -136,6 +136,14 @@ First public release.
   failed with HTTP 500 ("cannot adapt type 'dict'"), because `tool_calls` was
   passed to the JSONB column without a JSON adapter. Only turns answered
   without tools, such as start confirmations, got through.
+- Bug and content intake stopped at their first step. Approving the
+  `pick_repo` gate recorded no `repo`, because gates never run an agent and
+  nothing sent the gate output, so `gather_context` failed with "resolved no
+  repo". Approval now records the repo from the program's allowlist: the one
+  the reply or request names, or the only one allowlisted. A reply that names
+  one allowlisted repo also counts as approval. Unclear replies on a repo
+  gate list the allowed repos, and other gates no longer ask to "approve
+  this PRD".
 - `jira_create_issue_link` created Blocks links backwards: the issue that must
   land first showed as blocked by the issue waiting on it. Jira's
   `POST /issueLink` gives the outward description to `inwardIssue`, so

@@ -208,10 +208,20 @@ class MemoryClient:
     def get_workflow_tasks(self, workflow_id: str) -> dict[str, Any]:
         return self._request("GET", f"/workflow/{workflow_id}")
 
-    def approve_task(self, task_id: str, *, actor: str, tenant_id: str | None = None, **decision: Any) -> dict[str, Any]:
+    def approve_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        tenant_id: str | None = None,
+        output: dict[str, Any] | None = None,
+        **decision: Any,
+    ) -> dict[str, Any]:
         body = {"id": task_id, "actor": actor, **_decision_fields(decision)}
         if tenant_id:
             body["tenant_id"] = tenant_id
+        if output:
+            body["output"] = output
         return self._request("POST", "/workflow/approve", body)
 
     def reject_task(self, task_id: str, *, actor: str, tenant_id: str | None = None, **decision: Any) -> dict[str, Any]:
