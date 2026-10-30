@@ -144,6 +144,11 @@ First public release.
 
 ### Fixed
 
+- A stage's `input_map` was applied only when an upstream stage's
+  `on_complete: hydrate_input` hook listed it in `downstream`, and was ignored
+  otherwise. `bug_to_plan` `clarify` and `content_to_plan` `compare_codebase`
+  and `clarify` ran with empty input. The runner now resolves any unset
+  `input_map` keys at dispatch; values already on the task win.
 - A request that started a program from chat was cut to 240 characters before
   it was stored, so later stages lost file paths and details. Up to 8,000
   characters are kept, both when the intent is classified and when the

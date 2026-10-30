@@ -145,6 +145,29 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     return ctx.memory_client.patch_task_input(str(ctx.task["id"]), merged, actor=ctx.actor)
 
 
+def fill_missing_inputs(memory_client: Any, task: dict[str, Any], stage: Any) -> dict[str, Any]:
+    """Task input with every unset ``input_map`` key resolved, as of dispatch.
+
+    A stage's input_map applies whether or not an upstream ``hydrate_input`` hook
+    names it; values already on the task (hydrated or set by a revision) win.
+    """
+    current = dict(task.get("input") or {})
+    input_map = dict(getattr(stage, "input_map", None) or {})
+    missing = {key: expr for key, expr in input_map.items() if current.get(key) is None}
+    if not missing:
+        return current
+    workflow, tasks = load_workflow_payload(memory_client, str(task.get("workflow_id") or ""))
+    resolved = _drop_unresolved(
+        resolve_input_map(
+            missing,
+            tasks=tasks,
+            workflow=workflow,
+            extras=_program_artifact_extras(memory_client, workflow),
+        )
+    )
+    return {**current, **resolved}
+
+
 def hydrate_downstream(ctx: HookContext, downstream: list[str]) -> list[dict[str, Any]]:
     workflow, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
     tasks = _overlay_inflight_task(ctx, tasks)

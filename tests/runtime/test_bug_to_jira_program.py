@@ -269,3 +269,24 @@ class GatherBugContextTests(unittest.TestCase):
             )
         self.assertEqual(result["status"], "blocked")
         self.assertIn("unavailable", result["reason"])
+
+
+class FillStageInputsTests(unittest.TestCase):
+    def test_unhydrated_stage_gets_its_input_map_at_dispatch(self):
+        from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton("bug_to_plan")
+        report = "Settings previews the oldest draft; see runtime/app/settings_bff.py"
+        tasks = [
+            {"id": "p", "step_name": "pick_repo", "status": "succeeded", "created_at": "1",
+             "input": {"summary": report}, "output": {"summary": "Approved pick_repo", "repo": "acme/app", "default_branch": "dev"}},
+            {"id": "i", "step_name": "investigate", "status": "succeeded", "created_at": "2",
+             "input": {}, "output": {"diagnosis": "drafts[0] wins"}},
+        ]
+        clarify = {"id": "c", "workflow_id": "wf", "step_name": "clarify", "input": {"repo": "kept/override"}}
+        filled = fill_missing_inputs(_Memory(tasks), clarify, skeleton.stage("clarify"))
+        self.assertEqual(filled["report"], report)
+        self.assertEqual(filled["diagnosis"], "drafts[0] wins")
+        self.assertEqual(filled["repo"], "kept/override")
+        self.assertEqual(filled["default_branch"], "dev")
