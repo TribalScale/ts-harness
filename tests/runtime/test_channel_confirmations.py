@@ -467,6 +467,81 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "approved")
         self.assertIn("approved", format_workflow_gate_response_ack(result).lower())
 
+    def test_intake_ready_reply_approves_without_asking_the_llm(self):
+        self.session.metadata = {
+            "workflow_id": "wf-1",
+            "workflow_type": "bug_to_plan",
+            "mode": "workflow_linked",
+        }
+        provider = MagicMock()
+        provider.chat.side_effect = AssertionError("llm should not classify a ready reply")
+        reply = "Steps: the report already lists them.\nready, draft the bug."
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine = engine_cls.return_value
+            engine.get_status.return_value = {
+                "tasks": [
+                    {"id": "clarify-1", "step_name": "clarify", "status": "succeeded"},
+                    {
+                        "id": "gate-1",
+                        "workflow_id": "wf-1",
+                        "workflow_type": "bug_to_plan",
+                        "step_name": "await_ready",
+                        "status": "pending",
+                        "approval_required": True,
+                        "approval_status": "pending",
+                        "depends_on": ["clarify-1"],
+                    },
+                ],
+            }
+            engine.handle_approve.return_value = {"id": "gate-1", "approval_status": "approved"}
+            result = execute_workflow_gate_response(
+                self.session,
+                tenant_id="default",
+                agent_id="orchestrator",
+                source="web",
+                user_text=reply,
+                provider=provider,
+                use_llm_fallback=True,
+            )
+        self.assertEqual(result["status"], "approved")
+        provider.chat.assert_not_called()
+        engine.handle_approve.assert_called_once()
+        self.assertEqual(engine.handle_approve.call_args.kwargs["reply_text"], reply)
+
+    def test_intake_not_ready_is_not_an_approval(self):
+        self.session.metadata = {
+            "workflow_id": "wf-1",
+            "workflow_type": "bug_to_plan",
+            "mode": "workflow_linked",
+        }
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine = engine_cls.return_value
+            engine.get_status.return_value = {
+                "tasks": [
+                    {"id": "clarify-1", "step_name": "clarify", "status": "succeeded"},
+                    {
+                        "id": "gate-1",
+                        "workflow_id": "wf-1",
+                        "workflow_type": "bug_to_plan",
+                        "step_name": "await_ready",
+                        "status": "pending",
+                        "approval_required": True,
+                        "approval_status": "pending",
+                        "depends_on": ["clarify-1"],
+                    },
+                ],
+            }
+            result = execute_workflow_gate_response(
+                self.session,
+                tenant_id="default",
+                agent_id="orchestrator",
+                source="web",
+                user_text="not ready, I need another pass",
+                use_llm_fallback=False,
+            )
+        self.assertNotEqual(result.get("status"), "approved")
+        engine.handle_approve.assert_not_called()
+
     def test_classify_approval_gate_response_looks_good(self):
         result = classify_approval_gate_response("looks good", use_llm_fallback=False)
         self.assertEqual(result.decision, "approve")

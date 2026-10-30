@@ -16,13 +16,18 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     if not ctx.stage.approval_required:
         raise ValueError("stage does not require approval")
     output = None
+    reply = str(ctx.extras.get("reply_text") or "").strip()
     if is_repo_pick_stage(ctx.stage):
         task_input = ctx.task.get("input") if isinstance(ctx.task.get("input"), dict) else {}
         output = repo_pick_output(
             program_id=str(ctx.workflow.get("program_id") or task_input.get("program_id") or ""),
-            reply_text=str(ctx.extras.get("reply_text") or ""),
+            reply_text=reply,
             request_text=str(task_input.get("summary") or ""),
         )
+    elif str(getattr(ctx.stage, "present_prompt", "") or "").strip().lower() == "intake" and reply:
+        # Later stages read this gate via $prior.<step>.output. The default
+        # "Approved <step>" text drops the answers the user just gave.
+        output = {"reply_text": reply, "summary": reply}
     # memory-api approve completes approval-required gates (pending -> succeeded)
     # so the ready-queue never dispatches them to the orchestrator agent.
     result = ctx.memory_client.approve_task(

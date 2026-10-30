@@ -14,7 +14,7 @@ List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` an
 
 ## clarify
 
-Ask **one question at a time**. Use the diagnosis and the reporter's words in `input.report`; do not ask for anything the report already says. The reporter may answer several in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
+Ask **exactly one question** in the reply. Do not send a numbered checklist. Use the diagnosis and the reporter's words in `input.report`; do not ask for anything the report, the diagnosis, or an earlier answer already states. The reporter may answer several questions in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
 
 ## draft_bug
 

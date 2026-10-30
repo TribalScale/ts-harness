@@ -66,6 +66,14 @@ class WorkflowPresentationTests(unittest.TestCase):
             _parse_source_channel("web:web:abc-123"),
             ("web", "web", "abc-123"),
         )
+        self.assertEqual(
+            _parse_source_channel("web:web:web:live-bug-5"),
+            ("web", "web", "live-bug-5"),
+        )
+        self.assertEqual(
+            binding_key_from_source_channel("web:web:web:live-bug-5"),
+            "web:web:live-bug-5",
+        )
         self.assertIsNone(_parse_source_channel("slack-only"))
 
     def test_session_lookup_matches_admin_chat_after_the_workflow_changes(self):
@@ -96,6 +104,59 @@ class WorkflowPresentationTests(unittest.TestCase):
         self.assertEqual(by_binding.session_id, "sess-web-1")
         self.assertEqual(by_program.session_id, "sess-web-1")
         self.assertEqual(by_active.session_id, "sess-web-1")
+
+        later = SessionRecord(
+            session_id="sess-web-2",
+            routing_key="web:routing-2",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "workflow_id": "wf-bug-intake",
+                "binding_key": "web:web:web:live-bug-5",
+                "program_id": "program-2",
+            },
+        )
+        get_session_store().save(later)
+        by_thread = _session_for_workflow("wf-work-order", "default", "web:live-bug-5")
+        by_program_only = _session_for_workflow(
+            "wf-work-order",
+            "default",
+            "slack:C9:1",
+            program_id="program-2",
+        )
+        self.assertEqual(by_thread.session_id, "sess-web-2")
+        self.assertEqual(by_program_only.session_id, "sess-web-2")
+
+    def test_present_finds_the_chat_by_program_when_the_workflow_changed(self):
+        chat = SessionRecord(
+            session_id="sess-web-3",
+            routing_key="web:routing-3",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "workflow_id": "wf-old",
+                "binding_key": "slack:C1:9",
+                "program_id": "program-9",
+                "channel": "web",
+            },
+        )
+        get_session_store().save(chat)
+        get_transcript_store().append_messages(chat.session_id, [])
+        result = present_workflow_artifact(
+            workflow_id="wf-new",
+            workflow_type="bug_work_order",
+            tenant_id="default",
+            step_name="draft_work_order",
+            agent_id="pm-agent",
+            present_prompt="approval",
+            artifact={"work_orders_markdown": "# WO-001\n\nFix the settings page."},
+            source_channel="web:live-bug-5",
+            program_id="program-9",
+        )
+        self.assertEqual(result["status"], "presented")
+        self.assertNotEqual(result.get("error"), "no linked session for workflow")
 
     @patch("ts_harness.gateway.workflow_presentation.get_channel_router")
     @patch(

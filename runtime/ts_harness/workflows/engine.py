@@ -323,7 +323,26 @@ class WorkflowEngine:
             else self._workflow_payload(workflow_id)
         )
         version = self._definition_version_from_state(task=task, payload=state)
-        return self.skeleton(workflow_type, definition_version=version)
+        try:
+            return self.skeleton(workflow_type, definition_version=version)
+        except LookupError:
+            current = self._skeletons.get(workflow_type)
+            active = str(getattr(current, "definition_version", "") or "")
+            workflow = state.get("workflow") if isinstance(state.get("workflow"), dict) else {}
+            record_version = str(workflow.get("definition_version") or "")
+            task_version = str((task or {}).get("definition_version") or "")
+            # A task row can carry another workflow's version (for example the
+            # previous phase). When the workflow record itself matches the
+            # active file, that pin is the one that was materialized.
+            if active and active in {record_version, task_version}:
+                logger.warning(
+                    "workflow skeleton %s %s missing; using active %s from the workflow pin",
+                    workflow_type,
+                    version,
+                    active,
+                )
+                return current
+            raise
 
     def _context(
         self,
@@ -484,8 +503,13 @@ class WorkflowEngine:
             extras={"decision": dict(decision or {}), "reply_text": reply_text},
         )
         result = self.registry.invoke("approve_gate", ctx)
+        # Approval gates are marked succeeded in memory and never dispatched, so
+        # this is the only path that records the phase's produces_artifacts.
+        phase_result = self._maybe_complete_program_phase(ctx)
         self._maybe_notify(ctx, "succeeded")
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
+        if isinstance(result, dict) and isinstance(phase_result, dict) and phase_result.get("status"):
+            result = {**result, "phase": phase_result}
         return result
 
     @_locked(_task_workflow)
@@ -563,17 +587,28 @@ class WorkflowEngine:
                         "present_specialist_output",
                         ctx,
                     )
-                    if present_result.get("status") == "presented":
-                        self._maybe_notify(ctx, "awaiting_approval")
-                        self._sync_session(workflow_id, workflow_type, tenant_id)
-                        return present_result
-                    return present_result
                 except Exception as exc:
                     return {
                         "hook": "present_specialist_output",
                         "status": "error",
                         "error": f"specialist output presentation failed: {exc}",
                     }
+                if present_result.get("status") == "presented":
+                    self._maybe_notify(ctx, "awaiting_approval")
+                    try:
+                        self._sync_session(
+                            workflow_id,
+                            workflow_type,
+                            tenant_id,
+                            task=task,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "workflow session sync failed after presentation workflow_id=%s",
+                            workflow_id,
+                        )
+                    return present_result
+                return present_result
 
         if event == "failed":
             self._notify_parent_of_failure(workflow_id)

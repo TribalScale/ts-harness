@@ -75,9 +75,18 @@ class ApproveGateRepoPickTests(unittest.TestCase):
 
     def test_other_gates_send_no_output(self):
         ctx = self._ctx("approve")
-        ctx.stage = replace(ctx.stage, contract_ref="")
+        ctx.stage = replace(ctx.stage, contract_ref="", present_prompt="approval")
         approve_gate.handle(ctx)
         self.assertIsNone(ctx.memory_client.approve_task.call_args.kwargs["output"])
+
+    def test_intake_gate_stores_the_reply(self):
+        ctx = self._ctx("ready, draft the bug")
+        ctx.stage = replace(ctx.stage, contract_ref="", present_prompt="intake")
+        approve_gate.handle(ctx)
+        self.assertEqual(
+            ctx.memory_client.approve_task.call_args.kwargs["output"],
+            {"reply_text": "ready, draft the bug", "summary": "ready, draft the bug"},
+        )
 
 
 class MemoryClientApproveOutputTests(unittest.TestCase):

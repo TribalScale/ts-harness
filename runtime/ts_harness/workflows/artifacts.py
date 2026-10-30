@@ -959,6 +959,14 @@ def _format_doc_link_for_slack(web_view_link: str) -> str:
     return f"View full output in Google Docs: {url}"
 
 
+def _first_intake_question(text: str) -> str:
+    """Chat shows one question. The stored artifact still has the full reply."""
+    first = text.find("?")
+    if first < 0 or text.find("?", first + 1) < 0:
+        return text
+    return text[: first + 1].rstrip()
+
+
 def format_artifact_for_channel(
     artifact: dict[str, Any],
     *,
@@ -981,6 +989,8 @@ def format_artifact_for_channel(
     )
     if message.startswith("I finished ") and "no readable content" in message:
         return message
+    if (present_prompt or "inform").lower() == "intake":
+        message = _first_intake_question(message)
 
     truncated = len(message) > max_length
     should_link = bool(doc_url) and (publish_full_text or truncated or len(message) >= min_chars_for_doc)
@@ -997,7 +1007,7 @@ def format_artifact_for_channel(
     elif prompt_mode == "intake":
         message += (
             "\n\nReply in this thread with your answers. "
-            "I'll draft the PRD once you've responded."
+            "Say ready when you want a draft."
         )
     elif prompt_mode == "merge":
         message += (

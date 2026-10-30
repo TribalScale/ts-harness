@@ -48,6 +48,11 @@ _AMBIGUOUS_RE = re.compile(
     r"^(?:maybe|perhaps|hmm+|i guess|not sure|unsure|kind of|sort of)\s*\.?$",
     re.IGNORECASE,
 )
+_READY_TO_DRAFT_RE = re.compile(
+    r"(?:\bready\b|draft the bug|draft the plan|\bdraft it\b)",
+    re.IGNORECASE,
+)
+_NOT_READY_RE = re.compile(r"\bnot\s+ready\b", re.IGNORECASE)
 _REVISION_FEEDBACK_RE = re.compile(
     r"(?:"
     r"more verbose|make (?:it |the draft )?(?:more )?verbose|"
@@ -90,6 +95,21 @@ def confirmation_clarification_message(context: ConfirmationContext) -> str:
             "Reply yes to proceed, or no to cancel."
         )
     return "Do you want to start this workflow? Reply yes to start, or no to cancel."
+
+
+def looks_like_ready_to_draft(user_text: str) -> bool:
+    """True when an intake reply asks to draft, even if it also contains answers.
+
+    A leading no/reject, or "not ready", stays a rejection. The deterministic
+    result wins over the LLM fallback, which was marking long answers that
+    ended in "ready, draft the bug" as revision requests.
+    """
+    text = (user_text or "").strip()
+    if not text or _NOT_READY_RE.search(text):
+        return False
+    if _REJECT_PREFIX_RE.match(text) or _REJECT_ACTION_RE.match(text):
+        return False
+    return bool(_READY_TO_DRAFT_RE.search(text))
 
 
 def looks_like_revision_feedback(user_text: str) -> bool:
