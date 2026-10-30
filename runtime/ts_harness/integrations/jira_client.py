@@ -125,7 +125,9 @@ class JiraClient:
         return self.request("POST", "/rest/api/3/issue/bulk", body=body) or {}
 
     def link_issues(self, link_type: str, *, inward_key: str, outward_key: str) -> None:
-        body = {"type": {"name": link_type}, "inwardIssue": {"key": inward_key}, "outwardIssue": {"key": outward_key}}
+        # For Blocks, outward_key blocks inward_key. POST /issueLink gives the outward
+        # description ("blocks") to the body's inwardIssue, so the keys swap.
+        body = {"type": {"name": link_type}, "inwardIssue": {"key": outward_key}, "outwardIssue": {"key": inward_key}}
         self.request("POST", "/rest/api/3/issueLink", body=body)
 
     def browse_url(self, key: str) -> str:
