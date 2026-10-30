@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 _TOKEN = re.compile(r"^\$(.+)$")
@@ -99,6 +100,8 @@ def resolve_token(
         step_name = path[len("prior.") : -len(".output")]
         task = _task_by_step(tasks, step_name)
         return (task or {}).get("output")
+    if path == "runtime.today":
+        return datetime.now(timezone.utc).date().isoformat()
     if path.startswith("runtime.revision_count:"):
         step_name = path.split(":", 1)[1]
         return _revision_count(tasks, step_name)

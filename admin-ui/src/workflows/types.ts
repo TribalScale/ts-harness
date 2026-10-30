@@ -22,10 +22,14 @@ export interface WorkflowStage {
   tool_allow?: string[];
   present_output?: boolean;
   present_prompt?: string;
+  /** Output field shown as the gate message; overrides the contract's `presentation.body`. */
+  present_body?: string;
   input_map?: Record<string, string>;
   retry?: {
     max_retries?: number;
     timeout_seconds?: number;
+    /** Model turns per task attempt; absent uses the agent default. */
+    max_turns?: number;
     [key: string]: unknown;
   };
   on_complete?: WorkflowHook;
@@ -117,6 +121,7 @@ export interface WorkflowHook {
 
 export interface WorkflowContract {
   output_schema?: Record<string, unknown>;
+  presentation?: { body?: string; title?: string };
   required_artifacts?: Record<string, string>;
   semantic_validators?: string[];
   outcome?: {

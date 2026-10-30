@@ -396,6 +396,23 @@ def format_workflow_proposal_message(result: dict[str, Any]) -> str:
     return f"{lead}\nReply yes to start, or no to cancel."
 
 
+_CONFIRMATION_PROMPT_RE = re.compile(r"\breply\s+\W*yes\b", re.IGNORECASE)
+
+PROPOSAL_FORMATTERS = {
+    "propose_start_workflow": format_workflow_proposal_message,
+    "propose_start_program": format_program_proposal_message,
+    "propose_bridge_workflow": format_bridge_proposal_message,
+}
+
+
+def with_confirmation_prompt(text: str) -> str:
+    """A reply that leaves something awaiting confirmation must say how to confirm it."""
+    body = (text or "").rstrip()
+    if _CONFIRMATION_PROMPT_RE.search(body):
+        return body
+    return f"{body}\n\nReply **yes** to confirm, or **no** to cancel.".lstrip()
+
+
 def format_workflow_started_message(result: dict[str, Any]) -> str:
     workflow_type = str(result.get("workflow_type") or "workflow").replace("_", " ")
     first_step = str(result.get("first_step") or "intake")
@@ -1100,11 +1117,16 @@ def format_workflow_artifact_message(
         )
         return str(built.get("message") or "")
 
+    from ts_harness.workflows.presentation import workflow_step_presentation
+
     return format_artifact_for_channel(
         artifact,
         display_name=str(result.get("display_name") or "Draft"),
         present_prompt=present_prompt,
         step_name=str(result.get("artifact_step") or ""),
+        presentation=workflow_step_presentation(
+            str(result.get("workflow_type") or ""), str(result.get("artifact_step") or "")
+        ),
     )
 
 

@@ -188,6 +188,7 @@ def _maybe_publish_artifact_doc(
     share_with_email: str | None,
     max_length: int = 3900,
     skip: bool = False,
+    presentation: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if skip or runtime_config is None:
         return None
@@ -200,6 +201,7 @@ def _maybe_publish_artifact_doc(
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        presentation=presentation,
     )
     if full_text.startswith("I finished ") and "no readable content" in full_text:
         return None
@@ -282,6 +284,9 @@ def build_workflow_artifact_channel_message(
     existing_drive_library: dict[str, Any] | None = None,
     max_length: int = 3900,
 ) -> dict[str, Any]:
+    from ts_harness.workflows.presentation import workflow_step_presentation
+
+    presentation = workflow_step_presentation(workflow_type, step_name)
     resolved_share_email = _resolve_share_email(
         runtime_config=runtime_config,
         session=session,
@@ -323,6 +328,7 @@ def build_workflow_artifact_channel_message(
         share_with_email=resolved_share_email,
         max_length=max_length,
         skip=library_ok,
+        presentation=presentation,
     )
     doc_url = None
     publish_full_text = False
@@ -343,6 +349,7 @@ def build_workflow_artifact_channel_message(
         min_chars_for_doc=int(publish_cfg.min_chars if publish_cfg else 3000),
         doc_url=doc_url,
         publish_full_text=publish_full_text,
+        presentation=presentation,
     )
     share_info = doc_result.get("sharedWith") if isinstance(doc_result, dict) else None
     if isinstance(share_info, dict) and share_info.get("error"):
@@ -352,11 +359,6 @@ def build_workflow_artifact_channel_message(
         )
     elif doc_url and resolved_share_email and isinstance(share_info, dict) and share_info.get("email"):
         message += f"\n\n(Google Doc shared with {share_info['email']}.)"
-    elif doc_url and not resolved_share_email and not library_ok:
-        message += (
-            "\n\n(Google Doc created but your email could not be resolved for sharing. "
-            "Ask an admin to grant access or open with your workspace account.)"
-        )
 
     message = _append_library_links(message, library_result)
 

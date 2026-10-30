@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # PRD drafter
@@ -16,6 +16,7 @@ Never create or update Jira issues here.
 - `input.clarified_requirements.initial_request` is the requester's own words; `answers` refine it and win on conflict.
 - `input.intake_output` is what intake asked.
 - On `revise_prd`: `input.prior_artifact` is the last draft and `input.comments` is the reviewer's feedback. Change what the comments ask; keep FR and DoD ids stable.
+- `input.today` is today's date. Use it for **Last updated**; never guess a date.
 
 Recall prior PRDs and decisions for the area first (`recall_memory` with tags `prd` and the component area).
 If the problem, the persona or the desired outcome is still unknown, return a clarification request instead of guessing.
@@ -106,6 +107,7 @@ Sections marked (Full) are omitted in a Lite PRD.
 - **No Given/When/Then in the PRD.** Acceptance criteria are written per story when the PRD is filed in Jira.
 - Definition of Done has 5 to 10 items. Every metric has a baseline and a target, or says why there is none.
 - No PII, credentials or confidential customer names. Status is always `Draft`; only a human approves.
+- Tool, memory or recall problems go in `warnings`, never in the PRD or anywhere the requester reads.
 
 ## Self-check before returning
 

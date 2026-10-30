@@ -78,7 +78,7 @@ class WorkflowHookTests(unittest.TestCase):
 
         ctx.memory_client.reject_task.assert_called_once()
         cancelled = [call.args[0] for call in ctx.memory_client.cancel_task.call_args_list]
-        self.assertEqual(cancelled, ["file-1"])
+        self.assertEqual(cancelled, ["gate-1", "file-1"])
         revise, re_gate, resume = (call.kwargs["tasks"][0] for call in mock_bulk.call_args_list)
         self.assertEqual(revise["step_name"], "plan_stories")
         self.assertEqual(revise["input"]["comments"], "split story 1.2")

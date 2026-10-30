@@ -148,9 +148,53 @@ def latest_artifact_output(
     return None, None
 
 
+_HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
+_FENCE_LINE_RE = re.compile(r"^\s*```")
+
+
+def _unwrap_fenced_document(text: str) -> str:
+    """Return the body of the fenced block that holds the whole document, if one does."""
+    lines = text.splitlines()
+    fences = [index for index, line in enumerate(lines) if _FENCE_LINE_RE.match(line)]
+    best = ""
+    for open_index, close_index in zip(fences[0::2], fences[1::2]):
+        body = "\n".join(lines[open_index + 1 : close_index])
+        outside = "\n".join(lines[:open_index] + lines[close_index + 1 :])
+        if _HEADING_RE.search(body) and not _HEADING_RE.search(outside) and len(body) > len(best):
+            best = body
+    return best.strip() if best else text
+
+
+def _drop_after_stray_fence(text: str) -> str:
+    """An unmatched closing fence with no heading after it ends the document."""
+    lines = text.splitlines()
+    fences = [index for index, line in enumerate(lines) if _FENCE_LINE_RE.match(line)]
+    if len(fences) % 2 == 0:
+        return text
+    last = fences[-1]
+    if _HEADING_RE.search("\n".join(lines[last + 1 :])):
+        return text
+    return "\n".join(lines[:last]).rstrip()
+
+
+def sanitize_markdown_artifact(text: str) -> str:
+    """Keep a Markdown document and drop the agent's talk around it, by structure."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = _unwrap_fenced_document(cleaned)
+    cleaned = _drop_after_stray_fence(cleaned)
+    first_heading = _HEADING_RE.search(cleaned)
+    if first_heading and first_heading.start() > 0:
+        preamble = cleaned[: first_heading.start()].strip()
+        if "\n\n" not in preamble and len(preamble) <= 200:
+            cleaned = cleaned[first_heading.start() :]
+    return cleaned.strip()
+
+
 def sanitize_prd_markdown(text: str) -> str:
     """Strip fences, preamble, and trailing meta from PRD markdown bodies."""
-    cleaned = (text or "").strip()
+    cleaned = sanitize_markdown_artifact(text)
     if not cleaned:
         return ""
 
@@ -690,10 +734,9 @@ def artifact_body(output: dict[str, Any]) -> str:
                 return sanitize_prd_markdown(value)
 
     for source in (output, result if isinstance(result, dict) else {}):
-        for key in ("plan_markdown", "review_markdown"):
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+        for key, value in source.items():
+            if str(key).endswith("_markdown") and isinstance(value, str) and value.strip():
+                return sanitize_markdown_artifact(value)
 
     work_orders_body = _work_orders_artifacts_body(output)
     if work_orders_body:
@@ -767,8 +810,9 @@ def artifact_heading(
     display_name: str = "Draft",
     step_name: str = "",
     agent_id: str = "",
+    title: str = "",
 ) -> str:
-    title = artifact_title(artifact, fallback=display_name or "Draft")
+    title = title.strip() or artifact_title(artifact, fallback=display_name or "Draft")
     if agent_id or step_name:
         origin = " / ".join(
             part for part in (agent_id.replace("_", " "), step_name.replace("_", " ")) if part
@@ -850,7 +894,25 @@ def _pr_list_lines(artifact: dict[str, Any]) -> list[str]:
     return [f"- {ref}: {url}" if ref else f"- {url}"]
 
 
-def artifact_channel_body(artifact: dict[str, Any], *, display_name: str = "Draft") -> str:
+def artifact_value_at(artifact: dict[str, Any], path: str) -> Any:
+    """Value at a dotted path such as ``result.prd_markdown``; None when any part is missing."""
+    value: Any = artifact
+    for part in str(path or "").split("."):
+        if not part or not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def artifact_channel_body(
+    artifact: dict[str, Any],
+    *,
+    display_name: str = "Draft",
+    presentation: dict[str, str] | None = None,
+) -> str:
+    configured = artifact_value_at(artifact, (presentation or {}).get("body", ""))
+    if isinstance(configured, str) and configured.strip() and not _is_empty_json_placeholder(configured):
+        return sanitize_markdown_artifact(configured)
     body = artifact_body(artifact)
     if not body:
         summary = str(artifact.get("summary") or "").strip()
@@ -874,14 +936,17 @@ def build_artifact_channel_text(
     display_name: str = "Draft",
     step_name: str = "",
     agent_id: str = "",
+    presentation: dict[str, str] | None = None,
 ) -> str:
+    title = artifact_value_at(artifact, (presentation or {}).get("title", ""))
     heading = artifact_heading(
         artifact,
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        title=title if isinstance(title, str) else "",
     )
-    body = artifact_channel_body(artifact, display_name=display_name)
+    body = artifact_channel_body(artifact, display_name=display_name, presentation=presentation)
     if body.startswith("I finished ") and "no readable content" in body:
         return body
     return f"{heading}\n\n{body}"
@@ -905,12 +970,14 @@ def format_artifact_for_channel(
     min_chars_for_doc: int = 3000,
     doc_url: str | None = None,
     publish_full_text: bool = False,
+    presentation: dict[str, str] | None = None,
 ) -> str:
     message = build_artifact_channel_text(
         artifact,
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        presentation=presentation,
     )
     if message.startswith("I finished ") and "no readable content" in message:
         return message

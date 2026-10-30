@@ -10,7 +10,7 @@ Top level:
 - `definition_version`: `1.0.0` for a new workflow.
 - `display_name`: optional.
 - `stages`: the list of stages (required).
-- `contracts`: optional named output schemas that stages reference with `contract_ref`.
+- `contracts`: optional named output schemas that stages reference with `contract_ref`. A contract may add `presentation: {"body": "<field path>", "title": "<field path>"}` to choose what its stages post at the gate.
 
 Each stage:
 
@@ -23,6 +23,7 @@ Each stage:
 | `approval_required` | `true` makes the stage a human gate. Downstream stages wait for approval. |
 | `present_prompt` | `approval` on gates. |
 | `present_output` | `true` posts the stage output to the person's thread. |
+| `present_body` | Optional. The output field posted, such as `result.summary_text`. Name a string field in the stage's contract. Omit it when the contract sets `presentation.body` or has a `*_markdown` field. |
 | `skill_hints` | Approved skill ids (or ids you proposed) that guide the agent. |
 | `tool_allow` | The stage's whole tool set. Every tool must be one the agent has (`builder_catalog.agent_tools`). Omit it to give the stage all of the agent's tools. |
 | `input_map` | Optional. Maps input keys to `$input.<key>`, `$workflow.<key>`, or `$prior.<stage>.output.<key>`. |

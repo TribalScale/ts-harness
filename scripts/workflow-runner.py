@@ -1300,6 +1300,9 @@ class WorkflowRunner:
         }
         if stage is not None and stage.tool_allow is not None:
             payload["tool_allow"] = list(stage.tool_allow)
+        max_turns = (stage.retry or {}).get("max_turns") if stage is not None else None
+        if isinstance(max_turns, int) and not isinstance(max_turns, bool) and max_turns > 0:
+            payload["max_turns"] = max_turns
         if stage is not None:
             # An expand stage's planning call proposes tasks; its effects belong to the children.
             payload["external_effects"] = [] if stage.kind == "expand" else list(stage.allowed_external_effects)
