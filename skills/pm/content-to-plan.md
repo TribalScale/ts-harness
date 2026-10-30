@@ -13,7 +13,7 @@ List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` an
 
 ## compare_codebase
 
-Compare the pasted content to the chosen repo at `default_branch`. Note overlaps, gaps, and existing modules. Do not invent a repo.
+`input.content` is the pasted content, in the requester's words. Compare it to the chosen repo at `default_branch`. Note overlaps, gaps, and existing modules. Do not invent a repo.
 
 ## clarify
 

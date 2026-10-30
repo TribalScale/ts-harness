@@ -24,6 +24,7 @@ from ts_harness.secrets.resolver import SecretResolver
 from ts_harness.gateway.auth import AuthContext, AuthError, authenticate_request, check_allowed_origin
 from ts_harness.gateway.contracts import DispatchResult, normalize_runtime_body
 from ts_harness.gateway.health import build_health_report
+from ts_harness.gateway.channel_confirmations import REQUEST_TEXT_LIMIT
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.channels.slack_socket import SlackSocketListener
 from ts_harness.gateway.scheduler import Scheduler
@@ -1461,7 +1462,7 @@ class RuntimeState:
                     source=channel,
                     program_type=str(intent.program_type),
                     entry_phase=intent.entry_phase,
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}
@@ -1501,7 +1502,7 @@ class RuntimeState:
                     agent_id=agent_id,
                     source=channel,
                     workflow_type=str(intent.workflow_type),
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}
@@ -1570,7 +1571,7 @@ class RuntimeState:
                     tenant_id=req.tenant_id,
                     agent_id=agent_id,
                     source=channel,
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}

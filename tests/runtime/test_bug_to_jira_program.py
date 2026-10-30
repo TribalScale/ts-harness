@@ -201,8 +201,10 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertEqual(output["repo"], "acme/checkout")
         self.assertEqual(output["default_branch"], "dev")
         self.assertEqual(len(output["tree"]), TREE_PATH_LIMIT)
-        self.assertEqual(github.fetched, [])
-        self.assertEqual(output["files"], [])
+        self.assertEqual(output["tree"][0], "src/billing.py")
+        self.assertEqual(github.fetched, ["src/billing.py"])
+        self.assertEqual([item["path"] for item in output["files"]], ["src/billing.py"])
+        github.fetched.clear()
 
         github.paths = ["src/billing.py", "src/other.py", "README.md"]
         output = gather_bug_context(
@@ -215,6 +217,25 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertIn("def charge", output["files"][0]["body"])
         self.assertEqual(github.fetched, ["src/billing.py"])
         self.assertNotIn("src/missing.py", github.fetched)
+
+    def test_bug_stages_receive_the_full_report(self):
+        report = "x" * 300 + " the bug is in runtime/ts_harness/gateway/runtime_settings_bff.py"
+        tasks = [
+            {
+                "step_name": "pick_repo",
+                "status": "succeeded",
+                "created_at": "1",
+                "input": {"summary": report},
+                "output": {"summary": "Approved pick_repo", "repo": "acme/app"},
+            }
+        ]
+        self.assertEqual(resolve_token("$prior.pick_repo.input.summary", tasks=tasks), report)
+        self.assertEqual(resolve_token("$prior.pick_repo.input", tasks=tasks), {"summary": report})
+        self.assertEqual(resolve_token("$prior.pick_repo.output.repo", tasks=tasks), "acme/app")
+        plan = json.loads((WORKFLOWS / "bug_to_plan.json").read_text())
+        for stage in plan["stages"]:
+            if stage["name"] in {"investigate", "clarify", "draft_bug"}:
+                self.assertEqual(stage["input_map"]["report"], "$prior.pick_repo.input.summary", stage["name"])
 
     def test_caps_cited_files(self):
         paths = [f"pkg/m{index}.py" for index in range(FILE_LIMIT + 2)]

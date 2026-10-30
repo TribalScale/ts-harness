@@ -1,6 +1,6 @@
 {
   "workflow_type": "bug_to_plan",
-  "definition_version": "1.1.0",
+  "definition_version": "1.2.0",
   "display_name": "Bug report to approved diagnosis",
   "contracts": {
     "repo_pick": {
@@ -106,6 +106,7 @@
       "input_map": {
         "repo": "$prior.gather_context.output.repo",
         "default_branch": "$prior.gather_context.output.default_branch",
+        "report": "$prior.pick_repo.input.summary",
         "tree": "$prior.gather_context.output.tree",
         "files": "$prior.gather_context.output.files"
       },
@@ -121,6 +122,7 @@
       "present_prompt": "intake",
       "input_map": {
         "diagnosis": "$prior.investigate.output.diagnosis",
+        "report": "$prior.pick_repo.input.summary",
         "repo": "$prior.pick_repo.output.repo",
         "default_branch": "$prior.pick_repo.output.default_branch"
       },
@@ -152,6 +154,7 @@
       "input_map": {
         "clarified_requirements": "$prior.await_ready.output",
         "diagnosis": "$prior.investigate.output.diagnosis",
+        "report": "$prior.pick_repo.input.summary",
         "repo": "$prior.pick_repo.output.repo",
         "default_branch": "$prior.pick_repo.output.default_branch"
       },

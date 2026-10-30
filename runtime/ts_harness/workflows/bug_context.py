@@ -87,11 +87,8 @@ def _tree_paths(payload: dict[str, Any]) -> list[str]:
         if not isinstance(entry, dict) or entry.get("type") != "blob":
             continue
         path = str(entry.get("path") or "").strip()
-        if not path:
-            continue
-        paths.append(path)
-        if len(paths) >= TREE_PATH_LIMIT:
-            break
+        if path:
+            paths.append(path)
     return paths
 
 
@@ -134,10 +131,13 @@ def gather_bug_context(
     tree_payload = client.get_tree(owner, name, default_branch, recursive=True)
     if not isinstance(tree_payload, dict):
         raise ValueError("gather_bug_context received no tree")  # noqa: TRY004
-    paths = _tree_paths(tree_payload)
+    all_paths = _tree_paths(tree_payload)
     report = _report_text(task, tasks)
+    cited = cited_paths(report, all_paths)
+    # The agent sees a bounded listing, but always the paths the report names.
+    paths = cited + [path for path in all_paths if path not in cited][: max(TREE_PATH_LIMIT - len(cited), 0)]
     files: list[dict[str, Any]] = []
-    for path in cited_paths(report, paths):
+    for path in cited:
         payload = client.get_file(owner, name, path, ref=default_branch)
         if not isinstance(payload, dict) or payload.get("type") not in (None, "file"):
             continue
