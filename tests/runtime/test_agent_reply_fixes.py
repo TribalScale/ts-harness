@@ -10,6 +10,7 @@ from ts_harness.agent.provider import FakeProvider
 from ts_harness.config.schema import load_runtime_config
 from ts_harness.gateway.channel_confirmations import (
     PROPOSAL_FORMATTERS,
+    REQUEST_TEXT_LIMIT,
     format_program_proposal_message,
     with_confirmation_prompt,
 )
@@ -100,6 +101,13 @@ class ConfirmationPromptTests(unittest.TestCase):
             {"program_type": "feature_delivery", "entry_phase": "prd", "summary": "Revisions card"}
         )
         self.assertIn("Reply **yes** to start", message)
+
+    def test_long_request_is_shortened_only_in_the_message(self):
+        request = "The settings page shows the wrong revision. " * 20 + "See runtime/app/settings.py."
+        message = format_program_proposal_message({"program_type": "bug", "summary": request})
+        self.assertLess(len(message), 500)
+        self.assertNotIn("settings.py", message)
+        self.assertGreater(REQUEST_TEXT_LIMIT, len(request))
 
 
 class PrdFinalizeTests(unittest.TestCase):

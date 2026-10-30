@@ -144,6 +144,16 @@ First public release.
 
 ### Fixed
 
+- A request that started a program from chat was cut to 240 characters before
+  it was stored, so later stages lost file paths and details. Up to 8,000
+  characters are kept; only the confirmation message is shortened.
+- `bug_to_plan` 1.2.0 and `content_to_plan` 1.1.0 pass the request to every
+  agent stage (`report` and `content`) through the new
+  `$prior.<stage>.input.<field>` expression. Before, `investigate` and
+  `compare_codebase` saw only the repo and could not diagnose anything.
+- Bug context matched cited paths against only the first 200 files of the
+  tree, so a path deeper in a large repo was never fetched. Cited paths are now
+  found in the whole tree and listed first.
 - Agent-facing skills, agent policies and runbooks named a real Jira project
   (`TFS`) as the place to file; agents copied it. They now refer to the
   tenant's `jira_filing.allowed_projects`, examples use placeholders, and the

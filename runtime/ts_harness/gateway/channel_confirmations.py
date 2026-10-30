@@ -338,7 +338,7 @@ def execute_bridge_workflow_proposal(
 
 def format_bridge_proposal_message(result: dict[str, Any]) -> str:
     target = str(result.get("target_workflow_type") or "downstream workflow")
-    summary = str(result.get("summary") or "").strip()
+    summary = _present_proposal_summary(str(result.get("summary") or ""))
     label = target.replace("_", " ")
     if summary:
         lead = f"I've prepared the {label} continuation for: {summary}"
@@ -350,7 +350,7 @@ def format_bridge_proposal_message(result: dict[str, Any]) -> str:
 def format_program_proposal_message(result: dict[str, Any]) -> str:
     program_type = str(result.get("program_type") or "program")
     entry_phase = str(result.get("entry_phase") or "").strip()
-    summary = str(result.get("summary") or "").strip()
+    summary = _present_proposal_summary(str(result.get("summary") or ""))
     lines = [f"I can start the `{program_type}` program."]
     if entry_phase:
         lines.append(f"Entry phase: `{entry_phase}`.")
@@ -361,6 +361,8 @@ def format_program_proposal_message(result: dict[str, Any]) -> str:
 
 
 _PROPOSAL_SUMMARY_LIMIT = 280
+# The request is the workflow's input; only the confirmation message is shortened.
+REQUEST_TEXT_LIMIT = 8000
 
 
 def _present_proposal_summary(summary: str, *, limit: int = _PROPOSAL_SUMMARY_LIMIT) -> str:

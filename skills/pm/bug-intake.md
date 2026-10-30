@@ -14,11 +14,11 @@ List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` an
 
 ## clarify
 
-Ask **one question at a time**. Use the diagnosis and the Slack report. The reporter may answer several in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
+Ask **one question at a time**. Use the diagnosis and the reporter's words in `input.report`; do not ask for anything the report already says. The reporter may answer several in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
 
 ## draft_bug
 
-Write `bug_report` as Markdown in the bug template (`read_skill_reference skill_id=jira-ticket-format path=references/bug.md`): Steps to reproduce, Expected, Actual with a failure class, Evidence citing only files the diagnosis read, Blast radius, Regression test and Notes. Start with a one-line title for the Jira summary. An unknown cause is allowed; say so. Return `repo` and `default_branch` alongside it. Stay inside the clarified scope. Do not open a PR or edit code.
+Write `bug_report` as Markdown in the bug template (`read_skill_reference skill_id=jira-ticket-format path=references/bug.md`): Steps to reproduce, Expected, Actual with a failure class, Evidence citing only files the diagnosis read, Blast radius, Regression test and Notes. Start with a one-line title for the Jira summary. An unknown cause is allowed; say so. Return `repo` and `default_branch` alongside it. Build it from `input.report`, the clarified answers and the diagnosis. Stay inside the clarified scope. Do not open a PR or edit code.
 
 ## draft_work_order
 
