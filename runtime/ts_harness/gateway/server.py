@@ -24,10 +24,10 @@ from ts_harness.secrets.resolver import SecretResolver
 from ts_harness.gateway.auth import AuthContext, AuthError, authenticate_request, check_allowed_origin
 from ts_harness.gateway.contracts import DispatchResult, normalize_runtime_body
 from ts_harness.gateway.health import build_health_report
-from ts_harness.gateway.channel_confirmations import REQUEST_TEXT_LIMIT
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.channels.slack_socket import SlackSocketListener
 from ts_harness.gateway.scheduler import Scheduler
+from ts_harness.routing.intents import REQUEST_TEXT_LIMIT
 from ts_harness.memory.client import get_memory_client
 from ts_harness.observability.logging import log_event
 from ts_harness.observability.metrics import MetricsRegistry

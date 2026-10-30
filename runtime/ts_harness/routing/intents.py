@@ -6,6 +6,9 @@ from dataclasses import dataclass
 import re
 from typing import TYPE_CHECKING
 
+# The request becomes the workflow's input; only confirmation messages shorten it.
+REQUEST_TEXT_LIMIT = 8000
+
 if TYPE_CHECKING:
     from ts_harness.config.schema import RuntimeConfig
 
@@ -51,7 +54,7 @@ def classify_channel_intent(
 ) -> ChannelIntent:
     metadata = session_metadata or {}
     text = (user_text or "").strip()
-    summary = text[:240]
+    summary = text[:REQUEST_TEXT_LIMIT]
 
     bridge_intent = _match_bridge_intent(text, metadata)
     if bridge_intent is not None:
@@ -93,7 +96,7 @@ def _match_bridge_intent(text: str, metadata: dict) -> ChannelIntent | None:
     pending = read_pending_bridge(metadata)
     if pending and (_is_confirm(text) or _signals_match_text(text, _bridge_signals(metadata))):
         bridge_id = _bridge_intent_id(metadata)
-        return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:240])
+        return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:REQUEST_TEXT_LIMIT])
 
     phase = read_workflow_phase(metadata)
     workflow_type = str(metadata.get("workflow_type") or "")
@@ -101,7 +104,7 @@ def _match_bridge_intent(text: str, metadata: dict) -> ChannelIntent | None:
         signals = _bridge_signals(metadata)
         if signals and _signals_match_text(text, signals):
             bridge_id = _bridge_intent_id(metadata)
-            return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:240])
+            return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:REQUEST_TEXT_LIMIT])
     return None
 
 

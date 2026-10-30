@@ -146,7 +146,8 @@ First public release.
 
 - A request that started a program from chat was cut to 240 characters before
   it was stored, so later stages lost file paths and details. Up to 8,000
-  characters are kept; only the confirmation message is shortened.
+  characters are kept, both when the intent is classified and when the
+  proposal is stored; only the confirmation message is shortened.
 - `bug_to_plan` 1.2.0 and `content_to_plan` 1.1.0 pass the request to every
   agent stage (`report` and `content`) through the new
   `$prior.<stage>.input.<field>` expression. Before, `investigate` and
