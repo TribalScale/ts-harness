@@ -10,11 +10,11 @@ from ts_harness.agent.provider import FakeProvider
 from ts_harness.config.schema import load_runtime_config
 from ts_harness.gateway.channel_confirmations import (
     PROPOSAL_FORMATTERS,
-    REQUEST_TEXT_LIMIT,
     format_program_proposal_message,
     with_confirmation_prompt,
 )
 from ts_harness.repo_paths import ensure_scripts_importable
+from ts_harness.routing.intents import REQUEST_TEXT_LIMIT, classify_channel_intent
 from ts_harness.tools.registry import build_default_registry
 from ts_harness.workflows.expressions import resolve_value
 
@@ -108,6 +108,12 @@ class ConfirmationPromptTests(unittest.TestCase):
         self.assertLess(len(message), 500)
         self.assertNotIn("settings.py", message)
         self.assertGreater(REQUEST_TEXT_LIMIT, len(request))
+
+    def test_classified_intent_keeps_the_whole_request(self):
+        request = "File this bug. " + "The settings page previews a stale draft. " * 12 + "See runtime/app/settings_bff.py."
+        self.assertGreater(len(request), 400)
+        self.assertEqual(classify_channel_intent(request, {}).summary, request)
+        self.assertEqual(len(classify_channel_intent("x" * 9000, {}).summary), REQUEST_TEXT_LIMIT)
 
 
 class PrdFinalizeTests(unittest.TestCase):

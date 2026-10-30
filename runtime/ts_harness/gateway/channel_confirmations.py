@@ -361,8 +361,6 @@ def format_program_proposal_message(result: dict[str, Any]) -> str:
 
 
 _PROPOSAL_SUMMARY_LIMIT = 280
-# The request is the workflow's input; only the confirmation message is shortened.
-REQUEST_TEXT_LIMIT = 8000
 
 
 def _present_proposal_summary(summary: str, *, limit: int = _PROPOSAL_SUMMARY_LIMIT) -> str:

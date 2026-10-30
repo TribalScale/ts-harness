@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from ts_harness.routing.intents import ChannelIntent
+from ts_harness.routing.intents import REQUEST_TEXT_LIMIT, ChannelIntent
 
 if TYPE_CHECKING:
     from ts_harness.config.schema import RuntimeConfig, RoutingIntentRule
@@ -28,7 +28,7 @@ def match_routing_rule(text: str, config: RuntimeConfig) -> ChannelIntent | None
 
     normalized = (text or "").strip()
     lowered = normalized.lower()
-    summary = normalized[:240]
+    summary = normalized[:REQUEST_TEXT_LIMIT]
 
     for rule in routing.intents:
         if not _signals_match(lowered, rule):
