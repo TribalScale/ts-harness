@@ -19,7 +19,7 @@ from ts_harness.integrations.github_client import _urllib_transport
 from ts_harness.integrations.jira_client import MAX_BULK_CREATE, JiraClient, JiraError
 
 _ISSUE_PROPERTIES: dict[str, Any] = {
-    "project_key": {"type": "string", "description": "Jira project key, for example TFS"},
+    "project_key": {"type": "string", "description": "Jira project key from the tenant's allowed projects"},
     "issue_type": {"type": "string", "description": "Issue type name, for example Epic, Story, Task or Bug"},
     "summary": {"type": "string"},
     "description": {

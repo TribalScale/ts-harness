@@ -102,13 +102,13 @@ class WorkflowHookTests(unittest.TestCase):
             "program": {
                 "metadata": {
                     "artifacts": {
-                        "related_program_context": {"project_id": "TFS", "sources": []},
+                        "related_program_context": {"project_id": "PROJ", "sources": []},
                     }
                 }
             }
         }
         extras = hydrate_input._program_artifact_extras(client, {"program_id": "prog-1"})
-        self.assertEqual(extras["related_program_context"]["project_id"], "TFS")
+        self.assertEqual(extras["related_program_context"]["project_id"], "PROJ")
 
     def test_hydrate_downstream_uses_dispatch_output_before_db_persist(self):
         skeleton = load_skeleton("deliver_work_order")

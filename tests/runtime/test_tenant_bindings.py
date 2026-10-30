@@ -55,14 +55,14 @@ class BindingsTests(unittest.TestCase):
         args = {
             "project_key": "acme",
             "fields": {"project": {"key": "OPS"}},
-            "issues": [{"issue_key": "TFS-9"}],
+            "issues": [{"issue_key": "PROJ-9"}],
         }
-        self.assertEqual(jira_project_keys_from_args(args), {"ACME", "OPS", "TFS"})
+        self.assertEqual(jira_project_keys_from_args(args), {"ACME", "OPS", "PROJ"})
 
     def test_jira_projects_outside_binding(self):
         bindings = tenant_bindings(DEFAULTS)
         self.assertIsNone(check_jira_projects_allowed({"ACME"}, bindings))
-        self.assertIn("TFS", check_jira_projects_allowed({"ACME", "TFS"}, bindings))
+        self.assertIn("PROJ", check_jira_projects_allowed({"ACME", "PROJ"}, bindings))
 
     def test_jira_write_tool_detection(self):
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_create_issue"))
@@ -73,7 +73,7 @@ class BindingsTests(unittest.TestCase):
     def test_story_payload_rejects_unbound_project(self):
         with self.assertRaises(ValueError):
             build_story_payload(
-                project_key="TFS",
+                project_key="PROJ",
                 summary="s",
                 acceptance="a",
                 pointer={"work_order_id": "WO-1", "repo_id": "acme/checkout", "program_id": "p"},
@@ -158,7 +158,7 @@ class PolicyEnforcementTests(unittest.TestCase):
             agent,
             config,
             self._ctx(),
-            tool_args={"project_key": "TFS", "summary": "x"},
+            tool_args={"project_key": "PROJ", "summary": "x"},
         )
         self.assertEqual(decision.decision, "deny")
         self.assertEqual(decision.policy_id, "tenant_jira_binding")
@@ -222,7 +222,7 @@ class PolicyEnforcementTests(unittest.TestCase):
         config = self._config()
         ctx = ToolPolicyContext(tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects=set())
         decision = evaluate_tool_policy(
-            "mcp-atlassian-jira_get_issue", config.get_agent("pm-agent"), config, ctx, tool_args={"issue_key": "TFS-1"}
+            "mcp-atlassian-jira_get_issue", config.get_agent("pm-agent"), config, ctx, tool_args={"issue_key": "PROJ-1"}
         )
         self.assertEqual(decision.decision, "allow")
 

@@ -182,11 +182,11 @@ agents:
       - backlog_grooming — propose priority, labels, and sequencing
     allowed:
       - Draft and iterate on PRDs
-      - Create epics/stories in TFS from an explicitly approved PRD
+      - Create epics/stories in the tenant's allowed Jira projects from an explicitly approved PRD
       - Query existing backlog for duplicates
     not_allowed:
       - Commit roadmap decisions without human review
-      - Create tickets outside TFS
+      - Create tickets outside the tenant's allowed Jira projects (jira_filing.allowed_projects)
       - Approve or merge engineering work
     approvals:
       - prd_publication

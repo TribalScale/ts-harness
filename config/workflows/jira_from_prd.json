@@ -1,6 +1,6 @@
 {
   "workflow_type": "jira_from_prd",
-  "definition_version": "2.0.0",
+  "definition_version": "2.1.0",
   "display_name": "Jira filing from approved PRD",
   "contracts": {
     "prd_review": {
@@ -113,7 +113,9 @@
         "prd_review": "$prior.review_prd.output",
         "jira_epic_key": "$workflow.jira_epic_key",
         "default_issue_type": "$workflow.default_issue_type",
-        "issue_type_by_project": "$workflow.issue_type_by_project"
+        "issue_type_by_project": "$workflow.issue_type_by_project",
+        "jira_project_key": "$input.jira_project_key",
+        "jira_allowed_projects": "$input.jira_allowed_projects"
       },
       "retry": {
         "max_retries": 1,
@@ -169,7 +171,8 @@
       "skill_hints": ["prd-to-jira"],
       "input_map": {
         "approved_plan": "$prior.plan_stories.output",
-        "approved_prd": "$workflow.approved_prd"
+        "approved_prd": "$workflow.approved_prd",
+        "jira_allowed_projects": "$input.jira_allowed_projects"
       },
       "retry": {
         "max_retries": 0,

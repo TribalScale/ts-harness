@@ -100,7 +100,7 @@ class ChannelIntentTests(unittest.TestCase):
         cases = [
             "show my tickets",
             "pick up my jira for this sprint",
-            "implement TFS-184",
+            "implement PROJ-184",
             "please implement pay2-42 today",
         ]
         for text in cases:

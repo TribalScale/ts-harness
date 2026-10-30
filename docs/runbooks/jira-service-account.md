@@ -90,7 +90,7 @@ print(client.auth.mode, me.get("accountType"), bool(me.get("accountId")))
 '
 ```
 
-Expect `oauth app True`. Then ask an agent to run `jira_search` with a simple query such as `project = TFS ORDER BY created DESC`. To check writes, file a test issue with `jira_create_issue` in an allowed project and delete it in Jira afterwards.
+Expect `oauth app True`. Then ask an agent to run `jira_search` with a simple query such as `project = PROJ ORDER BY created DESC`. To check writes, file a test issue with `jira_create_issue` in an allowed project and delete it in Jira afterwards.
 
 ## Fall back to the API token
 
