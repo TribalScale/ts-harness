@@ -354,6 +354,9 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         snapshot = program_definitions.program_to_payload(
             program_definitions.load_program(programs_dir() / "software_delivery.json")
         )
+        from ts_harness.workflows.materialize import load_skeleton
+
+        jira_version = str(load_skeleton("jira_from_prd").definition_version)
         # Mutate active-looking graph would differ; instance keeps jira-only successor.
         snapshot["edges"] = [
             edge
@@ -370,8 +373,8 @@ class DeliveryProgramServiceTests(unittest.TestCase):
                 "resolved_workflow_versions": {
                     "jira": {
                         "workflow_type": "jira_from_prd",
-                        "definition_version": "2.0.0",
-                        "pins": {"jira_from_prd": "2.0.0"},
+                        "definition_version": jira_version,
+                        "pins": {"jira_from_prd": jira_version},
                     }
                 },
                 "metadata": {"artifacts": {"approved_prd": {"ok": True}}},
@@ -398,7 +401,7 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         self.assertEqual(result["workflow_type"], "jira_from_prd")
         self.assertEqual(
             client.create_workflow.call_args.kwargs["definition_version"],
-            "2.0.0",
+            jira_version,
         )
 
     def test_resolve_node_workflow_uses_variants_and_pins(self):
