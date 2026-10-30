@@ -1211,7 +1211,7 @@ class RuntimeState:
             if gate_result.get("status") == "none":
                 gate_result = {
                     "status": "ambiguous",
-                    "summary": format_approval_gate_clarification(),
+                    "summary": gate_result.get("summary") or format_approval_gate_clarification(),
                 }
             summary = format_workflow_gate_response_ack(
                 gate_result,

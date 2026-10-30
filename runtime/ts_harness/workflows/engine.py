@@ -472,6 +472,7 @@ class WorkflowEngine:
         actor: str,
         tenant_id: str = "default",
         decision: dict[str, Any] | None = None,
+        reply_text: str = "",
     ) -> dict[str, Any]:
         workflow_type = str(gate_task.get("workflow_type") or "")
         ctx = self._context(
@@ -480,7 +481,7 @@ class WorkflowEngine:
             tenant_id=tenant_id,
             task=gate_task,
             actor=actor,
-            extras={"decision": dict(decision or {})},
+            extras={"decision": dict(decision or {}), "reply_text": reply_text},
         )
         result = self.registry.invoke("approve_gate", ctx)
         self._maybe_notify(ctx, "succeeded")

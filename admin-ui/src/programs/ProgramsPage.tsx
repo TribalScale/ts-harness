@@ -197,9 +197,17 @@ export function ProgramsPage({
     setEvidence(null);
     void refreshStatus(programId);
     setBudget(null);
+    let active = true;
     apiFetch<ProgramBudget>(`/admin/budgets/programs/${encodeURIComponent(programId)}`)
-      .then((data) => setBudget(data.team))
-      .catch(() => setBudget(null));
+      .then((data) => {
+        if (active) setBudget(data.team);
+      })
+      .catch(() => {
+        if (active) setBudget(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [programId, refreshStatus]);
 
   async function mutateProgram(action: ProgramAction) {

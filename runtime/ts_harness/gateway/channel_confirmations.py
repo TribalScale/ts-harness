@@ -613,6 +613,55 @@ def should_auto_handle_workflow_gate_response(
     return classification.decision in {"approve", "reject"}
 
 
+def _pending_gate_stage(session: SessionRecord) -> tuple[dict[str, Any] | None, Any]:
+    try:
+        tasks = _workflow_tasks(session.metadata or {})
+    except Exception:  # noqa: BLE001
+        return None, None
+    actionable = _actionable_pending_approval_ids(tasks)
+    gate = next((task for task in tasks if str(task.get("id") or "") in actionable), None)
+    if gate is None:
+        return None, None
+    try:
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton(str(gate.get("workflow_type") or ""))
+        return gate, skeleton.stage(str(gate.get("step_name") or ""))
+    except Exception:  # noqa: BLE001
+        return gate, None
+
+
+def _gate_program_id(session: SessionRecord, gate: dict[str, Any]) -> str:
+    task_input = gate.get("input") if isinstance(gate.get("input"), dict) else {}
+    return str(task_input.get("program_id") or (session.metadata or {}).get("program_id") or "")
+
+
+def gate_clarification_message(session: SessionRecord) -> str:
+    from ts_harness.workflows.repo_pick import allowlisted_repos, is_repo_pick_stage, repo_pick_prompt
+
+    gate, stage = _pending_gate_stage(session)
+    if gate is None:
+        return format_approval_gate_clarification()
+    if is_repo_pick_stage(stage):
+        return repo_pick_prompt(allowlisted_repos(_gate_program_id(session, gate)))
+    if str(gate.get("step_name") or "") == "approve_prd":
+        return format_approval_gate_clarification()
+    return (
+        f"Do you want to approve `{gate.get('step_name')}`, or request changes? "
+        "Reply approve, or reply no with the changes you want."
+    )
+
+
+def _repo_pick_reply(session: SessionRecord, user_text: str) -> bool:
+    """True when the pending gate is a repo pick and the reply names exactly one allowlisted repo."""
+    from ts_harness.workflows.repo_pick import allowlisted_repos, is_repo_pick_stage, mentioned_repos
+
+    gate, stage = _pending_gate_stage(session)
+    if gate is None or not is_repo_pick_stage(stage):
+        return False
+    return len(mentioned_repos(user_text, allowlisted_repos(_gate_program_id(session, gate)))) == 1
+
+
 def execute_workflow_gate_classification(
     session: SessionRecord,
     classification: ConfirmationClassification,
@@ -620,6 +669,7 @@ def execute_workflow_gate_classification(
     tenant_id: str,
     agent_id: str,
     source: str,
+    reply_text: str = "",
 ) -> dict[str, Any]:
     del source
     metadata = session.metadata or {}
@@ -665,6 +715,7 @@ def execute_workflow_gate_classification(
             gate_task=gate,
             actor=agent_id,
             tenant_id=tenant_id,
+            reply_text=reply_text,
         )
         return {**(result or {}), "status": "approved", "task_id": str(gate.get("id"))}
 
@@ -689,15 +740,18 @@ def execute_workflow_gate_response(
     provider: ModelProvider | None = None,
     use_llm_fallback: bool = True,
 ) -> dict[str, Any]:
-    classification = classify_approval_gate_response(
-        user_text,
-        provider=provider,
-        use_llm_fallback=use_llm_fallback,
-    )
+    if _repo_pick_reply(session, user_text):
+        classification = ConfirmationClassification(decision="approve", source="deterministic")
+    else:
+        classification = classify_approval_gate_response(
+            user_text,
+            provider=provider,
+            use_llm_fallback=use_llm_fallback,
+        )
     if classification.decision == "ambiguous":
         return {
             "status": "ambiguous",
-            "summary": confirmation_clarification_message("approval_gate"),
+            "summary": gate_clarification_message(session),
         }
     if classification.decision == "none":
         if looks_like_revision_feedback(user_text):
@@ -707,13 +761,14 @@ def execute_workflow_gate_response(
                 source="deterministic",
             )
         else:
-            return {"status": "none"}
+            return {"status": "none", "summary": gate_clarification_message(session)}
     return execute_workflow_gate_classification(
         session,
         classification,
         tenant_id=tenant_id,
         agent_id=agent_id,
         source=source,
+        reply_text=user_text,
     )
 
 
