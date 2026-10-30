@@ -111,13 +111,8 @@ def _artifact_step_present_prompt(skeleton: Any, step_name: str) -> str:
         explicit = str(getattr(stage, "present_prompt", "") or "").strip().lower()
         if explicit in VALID_PRESENT_PROMPTS:
             return explicit
-    approve_stage = None
-    try:
-        approve_stage = skeleton.stage("approve_prd")
-    except (AttributeError, KeyError):
-        approve_stage = None
-    if approve_stage is not None:
-        revise_cfg = dict((approve_stage.on_reject or {}).get("revise") or {})
+    for stage in getattr(skeleton, "stages", []) or []:
+        revise_cfg = dict((getattr(stage, "on_reject", None) or {}).get("revise") or {})
         if str(revise_cfg.get("step_name") or "") == step_name:
             explicit = str(revise_cfg.get("present_prompt") or "").strip().lower()
             if explicit in VALID_PRESENT_PROMPTS:
@@ -150,3 +145,87 @@ def resolve_present_prompt(
     if getattr(stage, "approval_required", False):
         return "approval"
     return "inform"
+
+
+def infer_present_body(schema: Any, prefix: str = "") -> str:
+    """First string property ending in ``_markdown``, required properties first, searching nested objects."""
+    if not isinstance(schema, dict):
+        return ""
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    required = [str(name) for name in schema.get("required") or [] if name in properties]
+    ordered = required + [str(name) for name in properties if name not in required]
+    for name in ordered:
+        prop = properties.get(name) or {}
+        if name.endswith("_markdown") and isinstance(prop, dict) and prop.get("type") == "string":
+            return f"{prefix}{name}"
+    for name in ordered:
+        prop = properties.get(name) or {}
+        if isinstance(prop, dict) and prop.get("type") == "object":
+            nested = infer_present_body(prop, f"{prefix}{name}.")
+            if nested:
+                return nested
+    for branch in list(schema.get("anyOf") or []) + list(schema.get("oneOf") or []):
+        nested = infer_present_body(branch, prefix)
+        if nested:
+            return nested
+    return ""
+
+
+def schema_string_path_status(schema: Any, path: str) -> str:
+    """``"string"`` when ``path`` names a string field, ``"other"`` for a non-string, ``"missing"`` otherwise.
+
+    Schemas that declare no properties at that level are open, so any path counts as ``"string"``.
+    """
+    if not isinstance(schema, dict):
+        return "string"
+    head, _, rest = path.partition(".")
+    branches = list(schema.get("anyOf") or []) + list(schema.get("oneOf") or [])
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    if not properties and not branches:
+        return "string"
+    statuses: list[str] = []
+    if head in properties:
+        prop = properties[head]
+        if rest:
+            statuses.append(schema_string_path_status(prop, rest))
+        elif not isinstance(prop, dict) or prop.get("type") in (None, "string"):
+            statuses.append("string")
+        else:
+            statuses.append("other")
+    for branch in branches:
+        statuses.append(schema_string_path_status(branch, path))
+    for status in ("string", "other"):
+        if status in statuses:
+            return status
+    return "missing"
+
+
+def stage_presentation(skeleton: Any, step_name: str) -> dict[str, str]:
+    """Where a stage's channel message body and title come from, per the workflow definition."""
+    try:
+        stage = skeleton.stage(step_name)
+    except (AttributeError, KeyError, ValueError):
+        return {}
+    contract = {}
+    try:
+        contract = skeleton.resolve_stage_contract(stage) or {}
+    except (AttributeError, KeyError, ValueError):
+        contract = {}
+    configured = dict(contract.get("presentation") or {})
+    body = str(getattr(stage, "present_body", "") or configured.get("body") or "")
+    body = body or infer_present_body(contract.get("output_schema"))
+    out = {"body": body} if body else {}
+    if configured.get("title"):
+        out["title"] = str(configured["title"])
+    return out
+
+
+def workflow_step_presentation(workflow_type: str, step_name: str) -> dict[str, str]:
+    if not workflow_type or not step_name:
+        return {}
+    try:
+        from ts_harness.workflows.materialize import load_skeleton
+
+        return stage_presentation(load_skeleton(workflow_type), step_name)
+    except (FileNotFoundError, LookupError, ValueError):
+        return {}

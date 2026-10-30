@@ -33,6 +33,10 @@
     }
   },
   "definitions": {
+    "field_path": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+    },
     "contract": {
       "type": "object",
       "additionalProperties": false,
@@ -43,6 +47,14 @@
           "additionalProperties": { "type": "string" }
         },
         "semantic_validators": { "type": "array", "items": { "type": "string" } },
+        "presentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "body": { "$ref": "#/definitions/field_path" },
+            "title": { "$ref": "#/definitions/field_path" }
+          }
+        },
         "outcome": {
           "type": "object",
           "required": ["pointer", "succeeded_values"],
@@ -76,7 +88,8 @@
           "type": "object",
           "properties": {
             "max_retries": { "type": "integer", "minimum": 0 },
-            "timeout_seconds": { "type": "integer", "minimum": 0 }
+            "timeout_seconds": { "type": "integer", "minimum": 0 },
+            "max_turns": { "type": "integer", "minimum": 1, "maximum": 64 }
           }
         },
         "approval_required": { "type": "boolean" },
@@ -94,6 +107,7 @@
         "plan_approval_required": { "type": "boolean" },
         "present_output": { "type": "boolean" },
         "present_prompt": { "enum": ["approval", "inform", "intake", "merge", "none"] },
+        "present_body": { "$ref": "#/definitions/field_path" },
         "input_map": { "type": "object", "additionalProperties": { "type": "string" } },
         "on_reject": { "type": "object" },
         "on_block": { "type": "object" },

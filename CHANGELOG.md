@@ -82,6 +82,18 @@ First public release.
 - PM skills: `jira-ticket-format` (ticket rules plus story, epic, task and bug
   templates), `prd-drafter`, `prd-review` and `story-writer`. PRDs carry an
   FR index; acceptance criteria live in the Jira stories.
+- Workflow definitions choose what a stage shows at its gate. A contract's
+  `presentation: {body, title}` names output fields, a stage's `present_body`
+  overrides it, and without either the first `*_markdown` string in the
+  contract's `output_schema` is used. Validation warns when a path is not a
+  string field, and the admin console has a "Show at gate" picker.
+  `bug_to_plan` 1.1.0 presents `diagnosis` and `bug_report`.
+- Stage `retry.max_turns` (1 to 64) sets how many model turns one task attempt
+  may take; without it the agent default of 8 applies.
+  `jira_from_prd` 2.2.0 gives `file_jira` 24, enough to file an epic, its
+  stories and links in one attempt.
+- `$runtime.today` input_map expression (UTC date). `prd_request` 1.4.0 passes
+  it to the drafter, which stamps **Last updated** with it.
 
 ### Changed
 
@@ -143,6 +155,20 @@ First public release.
   `$input.`. `jira_from_prd` 2.1.0 passes them to `plan_stories` and
   `file_jira`, and definition validation warns when a Jira-writing stage drops
   them.
+- Gate messages and stored Markdown artifacts drop a wrapping code fence, a
+  one-line lead-in and anything after a stray closing fence, by structure rather
+  than phrase lists. A PRD's summary is built from its title, and its
+  **Last updated** date is the real date.
+- Every channel reply that leaves something awaiting confirmation says how to
+  confirm it. Program and bridge proposals use the same fixed message as
+  workflow proposals.
+- Intake no longer merges a question's trailing hint with the next question.
+- Rejecting a gate cancels the rejected gate as well as its pending dependents,
+  so it no longer stays pending and the workflow can complete.
+- A Google Doc published for a requester with no resolvable email is no longer
+  reported as a sharing problem.
+- A revise step's `present_prompt` is read from whichever gate revises it, not
+  only a stage named `approve_prd`.
 - Agents could not reach Jira: at startup the runtime passed MCP server `secret:`
   env refs to `mcporter` unresolved, so the literal `secret:ATLASSIAN_CLIENT_ID`
   selected OAuth and every Jira call failed to authenticate. Startup now resolves

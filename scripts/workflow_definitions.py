@@ -8,6 +8,7 @@ import copy
 from dataclasses import dataclass, field, replace
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 import warnings
@@ -70,6 +71,7 @@ KNOWN_STAGE_KEYS = frozenset(
         "barrier",
         "present_output",
         "present_prompt",
+        "present_body",
         "contract_ref",
         "allowed_contracts",
         "output_schema",
@@ -113,6 +115,7 @@ class Stage:
     barrier: dict[str, Any] = field(default_factory=dict)
     present_output: bool | None = None
     present_prompt: str = ""
+    present_body: str = ""
     contract_ref: str = ""
     allowed_contracts: list[str] = field(default_factory=list)
     output_schema: dict[str, Any] = field(default_factory=dict)
@@ -406,7 +409,43 @@ def freeze_contract(raw: dict[str, Any], *, name: str = "", context: str = "cont
     outcome = raw.get("outcome")
     resolved["outcome"] = _validate_outcome(outcome, context) if outcome is not None else None
 
+    presentation = raw.get("presentation")
+    if presentation is not None:
+        if not isinstance(presentation, dict):
+            raise ValueError(f"{context} presentation must be an object")
+        _reject_unknown_keys(presentation, frozenset({"body", "title"}), f"{context} presentation")
+        resolved["presentation"] = {
+            key: _presentation_path(presentation.get(key), f"{context} presentation.{key}")
+            for key in ("body", "title")
+            if presentation.get(key) is not None
+        }
+
     return copy.deepcopy(resolved)
+
+
+_PRESENTATION_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def _presentation_path(value: Any, context: str) -> str:
+    """A dotted path into the stage output, such as ``result.prd_markdown``."""
+    if value is None or value == "":
+        return ""
+    text = str(value).strip() if isinstance(value, str) else ""
+    if not _PRESENTATION_PATH_RE.match(text):
+        raise ValueError(f"{context} must be a dotted field path such as result.prd_markdown")
+    return text
+
+
+MAX_STAGE_TURNS = 64
+
+
+def _max_turns(value: Any, context: str) -> dict[str, int]:
+    """Model turns one task attempt may take; absent keeps the agent default."""
+    if value is None:
+        return {}
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_STAGE_TURNS:
+        raise ValueError(f"{context} must be an integer from 1 to {MAX_STAGE_TURNS}")
+    return {"max_turns": value}
 
 
 def _load_contracts(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -481,6 +520,7 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
         retry={
             "max_retries": int(retry["max_retries"]),
             "timeout_seconds": int(retry["timeout_seconds"]),
+            **_max_turns(retry.get("max_turns"), f"stage '{name}' retry.max_turns"),
         },
         approval_required=approval_required,
         plan_approval_required=plan_approval_required,
@@ -494,6 +534,7 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
         barrier=_optional_dict(raw.get("barrier")),
         present_output=_optional_bool(raw.get("present_output")),
         present_prompt=str(raw.get("present_prompt") or "").strip().lower(),
+        present_body=_presentation_path(raw.get("present_body"), f"stage '{name}' present_body"),
         contract_ref=contract_ref,
         allowed_contracts=allowed_contracts,
         output_schema=output_schema,
@@ -608,6 +649,8 @@ def _stage_to_payload(stage: Stage) -> dict[str, Any]:
         payload["approval"] = copy.deepcopy(stage.approval)
     if stage.present_output is not None:
         payload["present_output"] = stage.present_output
+    if stage.present_body:
+        payload["present_body"] = stage.present_body
     if stage.tool_allow is not None:
         payload["tool_allow"] = list(stage.tool_allow)
     if stage.execution != "agent":

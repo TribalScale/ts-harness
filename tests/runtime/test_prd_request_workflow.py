@@ -10,7 +10,7 @@ from ts_harness.workflows.materialize import load_skeleton, materialize_skeleton
 class PrdRequestWorkflowTests(unittest.TestCase):
     def test_prd_request_skeleton_v1_1(self):
         skeleton = load_skeleton("prd_request")
-        self.assertEqual(skeleton.definition_version, "1.3.0")
+        self.assertEqual(skeleton.definition_version, "1.4.0")
         stage_names = [stage.name for stage in skeleton.stages]
         self.assertEqual(
             stage_names,

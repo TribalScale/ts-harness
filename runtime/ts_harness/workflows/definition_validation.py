@@ -175,6 +175,63 @@ def _validate_contract_refs(
                 )
 
 
+def _check_presentation_path(
+    schema: Any,
+    value: Any,
+    *,
+    path: str,
+    issues: list[ValidationIssue],
+) -> None:
+    from ts_harness.workflows.presentation import schema_string_path_status
+
+    field = str(value or "").strip()
+    if not field or not isinstance(schema, dict):
+        return
+    status = schema_string_path_status(schema, field)
+    if status == "string":
+        return
+    detail = "is not a string" if status == "other" else "is not declared in the output_schema"
+    issues.append(
+        _issue(
+            "warning",
+            "presentation_path_unresolved",
+            path,
+            f"gate message field '{field}' {detail}; the message falls back to the default body",
+        )
+    )
+
+
+def _validate_presentation(
+    payload: dict[str, Any],
+    *,
+    issues: list[ValidationIssue],
+) -> None:
+    contracts = payload.get("contracts") if isinstance(payload.get("contracts"), dict) else {}
+    for name, contract in contracts.items():
+        if not isinstance(contract, dict) or not isinstance(contract.get("presentation"), dict):
+            continue
+        for key in ("body", "title"):
+            _check_presentation_path(
+                contract.get("output_schema"),
+                contract["presentation"].get(key),
+                path=f"$.contracts.{name}.presentation.{key}",
+                issues=issues,
+            )
+    for index, stage in enumerate(list(payload.get("stages") or [])):
+        if not isinstance(stage, dict) or not stage.get("present_body"):
+            continue
+        contract = contracts.get(str(stage.get("contract_ref") or "").strip())
+        schema = (
+            contract.get("output_schema") if isinstance(contract, dict) else stage.get("output_schema")
+        )
+        _check_presentation_path(
+            schema,
+            stage.get("present_body"),
+            path=_stage_path(index, ".present_body"),
+            issues=issues,
+        )
+
+
 _ALLOWED_INPUT_MAP_PREFIXES = (
     "$prior.",
     "$workflow.",
@@ -856,6 +913,7 @@ def _validate_expanded(
         agent_tools=agent_tools,
     )
     _validate_contract_refs(payload, issues=issues)
+    _validate_presentation(payload, issues=issues)
     _validate_input_maps(payload, issues=issues)
     _validate_jira_targets(payload, issues=issues)
     _validate_hook_payloads(payload, issues=issues)

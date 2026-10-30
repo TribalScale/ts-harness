@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable
 import json
 import os
@@ -67,6 +68,48 @@ def _close_tool_calls(
     _append_tool_message(messages, current, content)
     for pending in tool_calls[start + 1 :]:
         _append_tool_message(messages, pending, '{"skipped": true}')
+
+
+_LAST_UPDATED_RE = re.compile(r"(\*\*Last updated:\*\*[ \t]*)([^·\n]*?)([ \t]*(?:·|$))", re.MULTILINE)
+
+
+def _finalize_prd_output(output: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Stamp the real date and derive the summary from the PRD, not from the model's talk."""
+    result = output.get("result") if isinstance(output.get("result"), dict) else None
+    holder = result if result is not None and result.get("prd_markdown") else output
+    markdown = holder.get("prd_markdown")
+    if not isinstance(markdown, str) or not markdown.strip():
+        return output
+    today = str((payload.get("input") or {}).get("today") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", today):
+        today = datetime.now(timezone.utc).date().isoformat()
+    stamped = _LAST_UPDATED_RE.sub(lambda m: f"{m.group(1)}{today}{m.group(3)}", markdown, count=1)
+    title = str(holder.get("prd_title") or "").strip()
+    if not title:
+        heading = re.search(r"^#\s+(?:PRD:\s*)?(.+)$", stamped, re.MULTILINE)
+        title = heading.group(1).strip() if heading else "PRD"
+    profile = str(holder.get("prd_profile") or "").strip().lower()
+    verb = "Revised" if str(payload.get("step_name") or "").startswith("revise") else "Drafted"
+    summary = f"{verb} PRD: {title}" + (f" ({profile} profile)" if profile in {"lite", "full"} else "")
+    output = dict(output)
+    if holder is result:
+        output["result"] = {**result, "prd_markdown": stamped}
+    else:
+        output["prd_markdown"] = stamped
+    output["summary"] = summary
+    return output
+
+
+def _proposal_formatter(tool_name: str):
+    from ts_harness.gateway.channel_confirmations import PROPOSAL_FORMATTERS
+
+    return PROPOSAL_FORMATTERS.get(tool_name)
+
+
+def with_confirmation_prompt(text: str) -> str:
+    from ts_harness.gateway.channel_confirmations import with_confirmation_prompt as _with_prompt
+
+    return _with_prompt(text)
 
 
 @dataclass
@@ -450,8 +493,12 @@ class EnterpriseAgent:
         tool_audit: list[dict[str, Any]] = []
         output_repairs = 0
         channel_summary_repairs = 0
+        awaiting_confirmation = False
+        max_turns = parse_payload.get("max_turns")
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            max_turns = self.max_iterations
 
-        for _ in range(self.max_iterations):
+        for _ in range(max_turns):
             if self._interrupt_reason:
                 reason = self._interrupt_reason
                 self._interrupt_reason = None
@@ -504,6 +551,8 @@ class EnterpriseAgent:
                                 "Done. I completed that step but did not write a summary."
                             ),
                         }
+                    if awaiting_confirmation:
+                        output = {**output, "summary": with_confirmation_prompt(str(output.get("summary") or ""))}
                 else:
                     output = self._parse_output(content, parse_payload)
                     contract = self._contract_for_payload(parse_payload)
@@ -699,19 +748,21 @@ class EnterpriseAgent:
                             session.metadata = dict(session.metadata or {})
                             session.metadata.pop("pending_tool_approval", None)
                             get_session_store().save(session)
-                        if tool_name == "propose_start_workflow" and policy_ctx.channel_ingress:
-                            if isinstance(result, dict) and result.get("status") == "awaiting_confirmation":
-                                from ts_harness.gateway.channel_confirmations import (
-                                    format_workflow_proposal_message,
-                                )
-
+                        if (
+                            policy_ctx.channel_ingress
+                            and isinstance(result, dict)
+                            and result.get("status") == "awaiting_confirmation"
+                        ):
+                            awaiting_confirmation = True
+                            formatter = _proposal_formatter(tool_name)
+                            if formatter is not None:
                                 session.status = "completed"
                                 get_session_store().save(session)
                                 _close_tool_calls(messages, tool_calls, call, result_text)
                                 return AgentRunResult(
                                     status="succeeded",
                                     output={
-                                        "summary": format_workflow_proposal_message(result),
+                                        "summary": formatter(result),
                                         **result,
                                     },
                                     runtime_task_id=runtime_task_id,
@@ -1103,7 +1154,7 @@ class EnterpriseAgent:
                     artifact_markdown
                 )
                 output["result"] = updated
-        return output
+        return _finalize_prd_output(output, payload)
 
     def _requires_prd_output(self, payload: dict[str, Any]) -> bool:
         required_artifacts = {
@@ -1524,25 +1575,29 @@ class EnterpriseAgent:
         questions: list[str] = []
         current: list[str] = []
 
+        def flush() -> None:
+            joined = " ".join(current).strip()
+            if "?" in joined:
+                questions.append(joined)
+            current.clear()
+
         for raw_line in (text or "").splitlines():
             line = raw_line.strip()
             if not line:
                 continue
-            cleaned = re.sub(r"^(?:[-*]\s+|\d+[.)]\s+)", "", line).strip()
+            item = re.match(r"^(?:[-*]\s+|\d+[.)]\s+)", line)
+            cleaned = line[item.end() :].strip() if item else line
             if not cleaned:
                 continue
-            if current:
+            if item:
+                flush()
                 current.append(cleaned)
-                if "?" in cleaned:
-                    questions.append(" ".join(current).strip())
-                    current = []
-                continue
-            if "?" not in cleaned:
-                continue
-            prefix, _, remainder = cleaned.partition("?")
-            questions.append(f"{prefix.strip()}?")
-            if remainder.strip():
-                current = [remainder.strip()]
+            elif current and "?" not in " ".join(current):
+                current.append(cleaned)
+            elif "?" in cleaned:
+                flush()
+                current.append(cleaned[: cleaned.rindex("?") + 1])
+        flush()
 
         return [question for question in questions if len(question) > 3]
 

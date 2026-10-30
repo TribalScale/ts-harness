@@ -115,3 +115,44 @@ it("writes tool_allow when restricted and removes the key when unrestricted", as
   expect("tool_allow" in last).toBe(false);
   expect(last.agent_id).toBe("comms-agent");
 });
+
+it("offers the stage contract's string fields as the gate message", async () => {
+  const onStageChange = vi.fn();
+  const reviewStage: WorkflowStage = { name: "write_summary", kind: "task", agent_id: "pm-agent", contract_ref: "summary" };
+
+  renderPage(
+    <WorkflowInspector
+      definition={{
+        workflow_type: "summarise",
+        definition_version: "1.0.0",
+        contracts: {
+          summary: {
+            presentation: { body: "result.summary_text" },
+            output_schema: {
+              type: "object",
+              properties: {
+                result: { type: "object", properties: { summary_text: { type: "string" }, score: { type: "number" } } },
+                notes: { type: "string" },
+              },
+            },
+          },
+        },
+        stages: [reviewStage],
+      }}
+      selectedStage={reviewStage}
+      catalog={catalog}
+      readOnly={false}
+      onWorkflowChange={vi.fn()}
+      onStageChange={onStageChange}
+    />
+  );
+
+  const select = screen.getByLabelText("Show at gate") as HTMLSelectElement;
+  expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+    "Contract default (result.summary_text)",
+    "result.summary_text",
+    "notes",
+  ]);
+  await userEvent.selectOptions(select, "notes");
+  expect(onStageChange).toHaveBeenLastCalledWith(expect.objectContaining({ present_body: "notes" }));
+});
