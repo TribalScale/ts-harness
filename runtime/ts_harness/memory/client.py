@@ -782,6 +782,14 @@ class MemoryClient:
             {"actor": actor, "reason": reason, "cascade": cascade},
         )
 
+    def complete_program(self, program_id: str, *, actor: str, phase: str = "") -> dict[str, Any]:
+        """Mark a running or blocked program succeeded."""
+        return self._request(
+            "POST",
+            self._program_path(program_id, "complete"),
+            {"actor": actor, "phase": phase},
+        )
+
     def patch_program_artifacts(
         self,
         program_id: str,

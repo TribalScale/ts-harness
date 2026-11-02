@@ -105,6 +105,8 @@ class FakeMemory:
         self.patches: list[dict[str, Any]] = []
         self.cancelled: list[dict[str, Any]] = []
         self.completed: list[dict[str, Any]] = []
+        self.programs_completed: list[dict[str, Any]] = []
+        self.children: list[dict[str, Any]] = []
 
     @property
     def artifacts(self) -> dict[str, Any]:
@@ -137,6 +139,13 @@ class FakeMemory:
     def complete_workflow(self, workflow_id, **kwargs):
         self.completed.append({"workflow_id": workflow_id, **kwargs})
         return {}
+
+    def complete_program(self, program_id, *, actor, phase=""):
+        self.programs_completed.append({"program_id": program_id, "phase": phase})
+        return {"updated": True}
+
+    def get_program_status(self, program_id):
+        return {"children": self.children}
 
     def __getattr__(self, name):
         return MagicMock(return_value={})
@@ -265,6 +274,25 @@ class ListLoopHookTests(unittest.TestCase):
         self.assertEqual(memory.artifacts["program_status"], "succeeded")
         self.assertTrue(memory.artifacts["summarize_loop_complete"])
         self.assertNotIn("work_orders_delivery_complete", memory.artifacts)
+        self.assertEqual(memory.programs_completed, [{"program_id": "prog-1", "phase": "summarize"}])
+
+    def test_terminal_node_without_a_loop_marks_the_program_succeeded(self):
+        snapshot = loop_snapshot()
+        for node in snapshot["nodes"]:
+            node.pop("reentry", None)
+        memory = FakeMemory(snapshot, {})
+        result = run_hook(memory, loop_service())
+        self.assertEqual(result["status"], "phase_completed")
+        self.assertEqual(memory.artifacts["program_status"], "succeeded")
+        self.assertEqual(memory.programs_completed, [{"program_id": "prog-1", "phase": "summarize"}])
+
+    def test_program_with_unfinished_children_stays_open(self):
+        memory = FakeMemory(loop_snapshot(), {"account_ids": ["A"], "account_id": "A"})
+        memory.children = [{"id": "child-1", "status": "running"}]
+        result = run_hook(memory, loop_service())
+        self.assertEqual(result["status"], "phase_completed_loop_done")
+        self.assertEqual(memory.artifacts["program_status"], "succeeded")
+        self.assertEqual(memory.programs_completed, [])
 
     def test_completed_list_does_not_duplicate(self):
         memory = FakeMemory(

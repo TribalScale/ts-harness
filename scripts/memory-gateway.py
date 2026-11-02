@@ -4097,6 +4097,34 @@ def cancel_delivery_program(conn, program_id: str, body: dict[str, Any]) -> dict
     }
 
 
+def complete_delivery_program(conn, program_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Mark a running or blocked program succeeded; a cancelled or failed one is left alone."""
+    parsed_id = parse_uuid(program_id)
+    actor = str(body.get("actor", "orchestrator"))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE delivery_programs
+            SET status = 'succeeded', updated_at = now()
+            WHERE id = %s
+              AND status IN ('running', 'blocked')
+            RETURNING id
+            """,
+            (parsed_id,),
+        )
+        updated = cur.fetchone() is not None
+        if updated:
+            audit_workflow_event(
+                cur,
+                "delivery_program_patched",
+                "Delivery program succeeded",
+                {"program_id": parsed_id, "fields": ["status"], "status": "succeeded", "phase": body.get("phase")},
+                actor,
+            )
+    conn.commit()
+    return {"program_id": parsed_id, "updated": updated}
+
+
 VALID_COMPENSATION_STATUSES = {"pending", "completed", "partial", "failed", "skipped"}
 
 
@@ -5281,6 +5309,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 elif self.path.startswith("/programs/") and self.path.endswith("/cancel"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/cancel")
                     self._send_json(200, cancel_delivery_program(conn, program_id, body))
+                elif self.path.startswith("/programs/") and self.path.endswith("/complete"):
+                    program_id = self.path.removeprefix("/programs/").removesuffix("/complete")
+                    self._send_json(200, complete_delivery_program(conn, program_id, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/compensation"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/compensation")
                     self._send_json(200, record_program_compensation(conn, program_id, body))
