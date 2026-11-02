@@ -1,7 +1,7 @@
-"""Read-only repo context for a Slack bug report.
+"""Read-only repo context for a bug report or pasted planning content.
 
-``review-agent`` cannot clone or call GitHub. ``gather_bug_context`` fetches a
-truncated default-branch tree and the bodies of paths the report names.
+``review-agent`` and ``pm-agent`` cannot clone or call GitHub. ``gather_bug_context``
+fetches a truncated default-branch tree and the bodies of paths the text names.
 """
 
 from __future__ import annotations

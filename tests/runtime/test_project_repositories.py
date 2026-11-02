@@ -61,6 +61,13 @@ class ParsingTests(unittest.TestCase):
         single = "# WO-001 A\n| Depends on | None |\n"
         self.assertEqual(work_order_repository_problems(single, [API]), [])
 
+    def test_template_placeholder_is_a_problem_with_or_without_project_repositories(self):
+        placeholder = "# WO-001 A\n\nRepository: owner/name\n\n## Summary\n"
+        for repositories in (None, [], [API]):
+            problems = work_order_repository_problems(placeholder, repositories)
+            self.assertEqual(len(problems), 1, repositories)
+            self.assertIn("WO-001 has the template placeholder Repository: owner/name", problems[0])
+
     def test_cross_repository_cycle(self):
         self.assertIsNone(repository_dependency_cycle(MARKDOWN))
         cyclic = MARKDOWN.replace("| Depends on | WO-001 |\n\n# WO-003", "| Depends on | WO-001 |\n\n# WO-003").replace(
@@ -81,6 +88,16 @@ class PlannerContractTests(unittest.TestCase):
         self.assertEqual([v.path for v in violations], ["/artifacts/work_orders_markdown"])
         self.assertEqual(self._validate({"stage": "planner"}), [])
         self.assertEqual(self._validate({"stage": "foundry", "project_repositories": [API, WEB]}), [])
+
+    def test_template_placeholder_is_a_violation_without_project_repositories(self):
+        output = {"artifacts": {"work_orders_markdown": "# WO-001 A\n\nRepository: owner/name\n"}}
+        with mock.patch.object(stage_contracts, "work_orders_artifacts_failure_reason", return_value=None):
+            violations = stage_contracts.validate_work_order_artifacts({}, output, {"stage": "planner"}, [])
+        self.assertEqual([v.path for v in violations], ["/artifacts/work_orders_markdown"])
+
+    def test_planner_template_has_no_literal_placeholder(self):
+        stage = REPO_ROOT / "skills" / "workflows" / "prd-to-work-orders-governed" / "stages" / "planner-runtime.md"
+        self.assertNotIn("Repository: owner/name\n", stage.read_text())
 
     def test_planner_input_map_resolves_project_repositories(self):
         tasks = [{"step_name": "refine_requirements", "status": "succeeded", "input": {"project_repositories": [API]},

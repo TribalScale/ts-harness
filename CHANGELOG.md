@@ -164,6 +164,13 @@ First public release.
     them out of the output.
   - When a program starts or advances on a gate (pick repo, choose epic), the
     chat says what to reply instead of "will run shortly".
+- Content-to-plan's codebase comparison could not see the repo: `pm-agent` has
+  no GitHub access, so it fell back to Jira. A `gather_context` step now fetches
+  the repo tree and the files the content names, and the comparison works from
+  them (`content_to_plan` 1.2.0).
+- The planner copied the template's `Repository: owner/name` placeholder into
+  work orders. The template no longer carries it, and the planner contract
+  rejects the placeholder so the stage retries.
 - Session phase sync read the previous phase's workflow after a program
   advance and failed on a version lookup. It now reads the workflow being
   synced. A read-only definitions store logs one warning instead of a traceback.
