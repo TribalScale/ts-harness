@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import unittest
 import uuid
 from pathlib import Path
@@ -195,6 +196,14 @@ class CascadeCancelTests(unittest.TestCase):
         self.assertFalse(cursor.sql_matching("WITH RECURSIVE tree"))
 
 
+def allowed_audit_actions() -> set[str]:
+    """Action types allowed by the newest migration that redefines the audit log check."""
+    migrations = sorted((Path(__file__).resolve().parents[2] / "database" / "migrations").glob("*.sql"))
+    latest = [path for path in migrations if "ADD CONSTRAINT session_audit_log_action_type_check" in path.read_text()][-1]
+    check = latest.read_text().split("ADD CONSTRAINT session_audit_log_action_type_check", 1)[1].split(");", 1)[0]
+    return set(re.findall(r"'([a-z_]+)'", check))
+
+
 class CompleteProgramTests(unittest.TestCase):
     def setUp(self):
         self.gateway = load_gateway()
@@ -208,7 +217,8 @@ class CompleteProgramTests(unittest.TestCase):
         update = cursor.sql_matching("SET status = 'succeeded'")[0]
         self.assertIn("status IN ('running', 'blocked')", update[0])
         audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
-        self.assertEqual(audits, ["delivery_program_completed"])
+        self.assertEqual(audits, ["delivery_program_patched"])
+        self.assertIn(audits[0], allowed_audit_actions())
         self.assertTrue(conn.committed)
 
     def test_leaves_a_finished_program_alone(self):

@@ -172,7 +172,7 @@ First public release.
   so lists showed it as running and its chat thread still resolved to it. The
   phase hook now marks the row succeeded through a new
   `POST /programs/{id}/complete` (running or blocked programs only, audited
-  as `delivery_program_completed`). A program with unfinished children stays
+  as a `delivery_program_patched` status change). A program with unfinished children stays
   open.
 - The repo context for bug investigation and content comparison listed the
   first 200 paths alphabetically, so large repos were cut off early (this one

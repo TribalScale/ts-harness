@@ -4105,7 +4105,7 @@ def complete_delivery_program(conn, program_id: str, body: dict[str, Any]) -> di
         cur.execute(
             """
             UPDATE delivery_programs
-            SET status = 'succeeded'
+            SET status = 'succeeded', updated_at = now()
             WHERE id = %s
               AND status IN ('running', 'blocked')
             RETURNING id
@@ -4116,9 +4116,9 @@ def complete_delivery_program(conn, program_id: str, body: dict[str, Any]) -> di
         if updated:
             audit_workflow_event(
                 cur,
-                "delivery_program_completed",
+                "delivery_program_patched",
                 "Delivery program succeeded",
-                {"program_id": parsed_id, "phase": body.get("phase")},
+                {"program_id": parsed_id, "fields": ["status"], "status": "succeeded", "phase": body.get("phase")},
                 actor,
             )
     conn.commit()
