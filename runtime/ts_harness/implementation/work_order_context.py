@@ -19,6 +19,7 @@ _REPOSITORY_LINE = re.compile(
     r"`?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?`?\s*(?:\||$)",
     re.IGNORECASE | re.MULTILINE,
 )
+_PLACEHOLDER_REPOSITORY = "owner/name"
 
 
 def extract_work_order_section(markdown: str, work_order_id: str) -> str:
@@ -212,15 +213,22 @@ def work_order_repository_problems(markdown: str, repositories: list[dict[str, A
     """Why the work orders' repositories do not fit the project; empty when they do.
 
     With one project repository, a missing ``Repository:`` line means that one.
-    With several, every work order names one of them.
+    With several, every work order names one of them. The template placeholder
+    ``owner/name`` is never a repository.
     """
-    if not repositories:
-        return []
     named = parse_work_order_repositories(markdown)
+    problems = [
+        f"{wo_id} has the template placeholder Repository: {name}; name a real repository or leave the line out"
+        for wo_id, name in named.items()
+        if name.lower() == _PLACEHOLDER_REPOSITORY
+    ]
+    if not repositories:
+        return problems
     known = ", ".join(sorted(str(r.get("full_name")) for r in repositories))
-    problems: list[str] = []
     for wo_id in _sections(markdown):
         name = named.get(wo_id)
+        if name is not None and name.lower() == _PLACEHOLDER_REPOSITORY:
+            continue
         if name is None:
             if len(repositories) > 1:
                 problems.append(f"{wo_id} has no Repository line; use one of {known}")

@@ -41,6 +41,43 @@ class ContentToJiraProgramTests(unittest.TestCase):
         errors = [issue for issue in issues if issue.severity == "error"]
         self.assertEqual(errors, [], errors)
 
+    def test_compare_codebase_receives_the_fetched_repo(self):
+        plan = json.loads((WORKFLOWS / "content_to_plan.json").read_text())
+        stages = {stage["name"]: stage for stage in plan["stages"]}
+        gather = stages["gather_context"]
+        self.assertEqual(gather["depends_on"], ["pick_repo"])
+        self.assertEqual(gather["barrier"]["hook"], "gather_bug_context")
+        compare = stages["compare_codebase"]
+        self.assertEqual(compare["depends_on"], ["gather_context"])
+        self.assertEqual(compare["input_map"]["tree"], "$prior.gather_context.output.tree")
+        self.assertEqual(compare["input_map"]["files"], "$prior.gather_context.output.files")
+        self.assertNotEqual(plan["definition_version"], "1.1.0")
+
+        from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
+        from ts_harness.workflows.materialize import load_skeleton
+
+        class _Memory:
+            def __init__(self, tasks):
+                self.tasks = tasks
+
+            def get_workflow(self, workflow_id):
+                return {"workflow": {"id": workflow_id}, "tasks": self.tasks}
+
+        content = "Add a Last workflow line to admin-ui/src/settings/SystemSettings.tsx"
+        tasks = [
+            {"id": "p", "step_name": "pick_repo", "status": "succeeded", "created_at": "1",
+             "input": {"summary": content}, "output": {"repo": "acme/app", "default_branch": "dev"}},
+            {"id": "g", "step_name": "gather_context", "status": "succeeded", "created_at": "2", "input": {},
+             "output": {"repo": "acme/app", "default_branch": "dev", "tree": ["admin-ui/src/settings/SystemSettings.tsx"],
+                        "files": [{"path": "admin-ui/src/settings/SystemSettings.tsx", "body": "x", "truncated": False}]}},
+        ]
+        task = {"id": "c", "workflow_id": "wf", "step_name": "compare_codebase", "input": {}}
+        filled = fill_missing_inputs(_Memory(tasks), task, load_skeleton("content_to_plan").stage("compare_codebase"))
+        self.assertEqual(filled["content"], content)
+        self.assertEqual(filled["tree"], ["admin-ui/src/settings/SystemSettings.tsx"])
+        self.assertEqual(filled["files"][0]["path"], "admin-ui/src/settings/SystemSettings.tsx")
+        self.assertEqual(filled["repo"], "acme/app")
+
     def test_file_work_orders_as_jira_validates(self):
         payload = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())
         _, issues = validate_workflow_definition(

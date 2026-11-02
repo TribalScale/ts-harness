@@ -1,6 +1,6 @@
 {
   "workflow_type": "content_to_plan",
-  "definition_version": "1.1.0",
+  "definition_version": "1.2.0",
   "display_name": "Content to approved plan",
   "contracts": {
     "repo_pick": {
@@ -83,16 +83,34 @@
       "retry": { "max_retries": 0, "timeout_seconds": 86400 }
     },
     {
+      "name": "gather_context",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["pick_repo"],
+      "barrier": {
+        "hook": "gather_bug_context",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["compare_codebase"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
       "name": "compare_codebase",
       "kind": "task",
       "agent_id": "pm-agent",
-      "depends_on": ["pick_repo"],
+      "depends_on": ["gather_context"],
       "allowed_agents": ["pm-agent"],
       "skill_hints": ["content-to-plan"],
       "input_map": {
         "content": "$prior.pick_repo.input.summary",
-        "repo": "$prior.pick_repo.output.repo",
-        "default_branch": "$prior.pick_repo.output.default_branch"
+        "repo": "$prior.gather_context.output.repo",
+        "default_branch": "$prior.gather_context.output.default_branch",
+        "tree": "$prior.gather_context.output.tree",
+        "files": "$prior.gather_context.output.files"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     },

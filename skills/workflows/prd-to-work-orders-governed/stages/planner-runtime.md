@@ -39,8 +39,6 @@ Each WO in `work_orders_markdown`:
 ```markdown
 # WO-001 Title
 
-Repository: owner/name
-
 ## Summary
 ...
 
@@ -77,11 +75,13 @@ Given ... When ... Then ...
 - A fresh coding agent should execute without clarifying questions.
 - Do not silently edit blueprints or FRDs; note issues in `warnings`.
 - When `input.project_repositories` is present, every WO starts with a
-  `Repository: owner/name` line naming exactly one of those repositories (its
-  `full_name`). Use `role` to place the work: UI work in the web repository,
-  endpoints in the API repository. A WO that spans two repositories is two WOs,
-  the consumer depending on the provider. With a single repository the line may
-  be omitted.
+  `Repository:` line, right under its heading, naming exactly one of those
+  repositories by its `full_name` (for example `Repository: acme/web`). Use
+  `role` to place the work: UI work in the web repository, endpoints in the API
+  repository. A WO that spans two repositories is two WOs, the consumer
+  depending on the provider. With a single repository the line may be omitted.
+- Without `input.project_repositories`, leave the `Repository:` line out. Never
+  write a placeholder such as `owner/name`; the planner contract rejects it.
 - Dependencies between repositories go one way. If WOs in `acme/web` depend on
   `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
   so the dependency points one way.
