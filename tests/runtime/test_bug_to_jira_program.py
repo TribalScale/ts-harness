@@ -8,10 +8,11 @@ from unittest.mock import patch
 
 from ts_harness.integrations.github_client import GitHubError
 from ts_harness.jira.program_config import resolved_program_config
+from ts_harness.workflows import bug_context
 from ts_harness.workflows.bug_context import (
     FILE_LIMIT,
     MATCHED_FILE_LIMIT,
-    TREE_PATH_LIMIT,
+    TREE_CHAR_BUDGET,
     cited_paths,
     gather_bug_context,
 )
@@ -184,7 +185,7 @@ class BugToJiraProgramTests(unittest.TestCase):
 
 class GatherBugContextTests(unittest.TestCase):
     def test_returns_tree_and_cited_file_bodies(self):
-        paths = [f"src/f{index}.py" for index in range(TREE_PATH_LIMIT + 10)]
+        paths = [f"src/f{index}.py" for index in range(210)]
         paths.extend(["src/billing.py", "src/other.py"])
         github = _GitHub(paths, {"src/billing.py": "def charge():\n    return 1\n", "src/other.py": "x = 1\n"})
         task = {
@@ -201,7 +202,9 @@ class GatherBugContextTests(unittest.TestCase):
         )
         self.assertEqual(output["repo"], "acme/checkout")
         self.assertEqual(output["default_branch"], "dev")
-        self.assertEqual(len(output["tree"]), TREE_PATH_LIMIT)
+        self.assertEqual(sorted(output["tree"]), sorted(paths))
+        self.assertFalse(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], len(paths))
         self.assertEqual(output["tree"][0], "src/billing.py")
         self.assertEqual(github.fetched, ["src/billing.py"])
         self.assertEqual([item["path"] for item in output["files"]], ["src/billing.py"])
@@ -220,7 +223,7 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertNotIn("src/missing.py", github.fetched)
 
     def test_paths_matching_the_request_come_first(self):
-        filler = [f"aaa/ts_harness/f{index:03}.py" for index in range(TREE_PATH_LIMIT + 50)]
+        filler = [f"aaa/ts_harness/f{index:03}.py" for index in range(250)]
         relevant = [
             "runtime/ts_harness/workflows/last_workflow.py",
             "admin-ui/src/system/SettingsPage.tsx",
@@ -231,12 +234,36 @@ class GatherBugContextTests(unittest.TestCase):
             "workflow_id": "wf",
             "input": {"summary": "Add a Last workflow line to the System Settings page of TS Harness."},
         }
-        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
-        self.assertEqual(len(output["tree"]), TREE_PATH_LIMIT)
+        with patch.object(bug_context, "TREE_CHAR_BUDGET", 2_000):
+            output = gather_bug_context(
+                task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github
+            )
+        self.assertTrue(output["tree_truncated"])
+        self.assertLess(len(output["tree"]), len(filler))
         self.assertEqual(set(output["tree"][:2]), set(relevant))
         self.assertIn("runtime/ts_harness/workflows", output["directories"])
         self.assertIn("aaa", output["directories"])
         self.assertEqual(set(github.fetched), set(relevant))
+
+    def test_a_tree_within_the_budget_is_sent_whole(self):
+        paths = [f"pkg/module_{index:04}/handler.py" for index in range(1_500)]
+        github = _GitHub(paths, {})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "it broke"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(output["tree"], paths)
+        self.assertFalse(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], 1_500)
+
+    def test_a_large_tree_is_cut_at_the_budget(self):
+        paths = [f"pkg/module_{index:05}/handler.py" for index in range(10_000)]
+        github = _GitHub(paths, {})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "it broke"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertTrue(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], 10_000)
+        self.assertLess(len(output["tree"]), 10_000)
+        self.assertLessEqual(len(json.dumps(output["tree"])), TREE_CHAR_BUDGET)
+        self.assertEqual(output["tree"], paths[: len(output["tree"])])
 
     def test_best_matches_are_fetched_when_no_path_is_named(self):
         paths = [

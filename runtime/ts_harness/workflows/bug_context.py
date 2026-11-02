@@ -1,14 +1,16 @@
 """Read-only repo context for a bug report or pasted planning content.
 
 ``review-agent`` and ``pm-agent`` cannot clone or call GitHub. ``gather_bug_context``
-fetches the default-branch tree, lists the paths the text names and then the
-paths that best match its words, and fetches the bodies of the named paths (or,
-when none are named, of the closest matches).
+fetches the default-branch tree and lists it whole when it fits the character
+budget. A larger tree is cut after the paths the text names and the paths that
+best match its words. It also fetches the bodies of the named paths (or, when
+none are named, of the closest matches).
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import math
 import re
 from typing import Any, NamedTuple
@@ -17,7 +19,7 @@ from ts_harness.integrations.github_client import GitHubClient, parse_repo_slug
 from ts_harness.workflows.expressions import resolve_value
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
-TREE_PATH_LIMIT = 200
+TREE_CHAR_BUDGET = 60_000
 DIRECTORY_LIMIT = 150
 FILE_LIMIT = 8
 MATCHED_FILE_LIMIT = 4
@@ -159,6 +161,18 @@ def ranked_paths(report: str, tree_paths: list[str]) -> list[RankedPath]:
     return ranked
 
 
+def _within_budget(paths: list[str]) -> list[str]:
+    """The leading paths whose JSON listing fits in ``TREE_CHAR_BUDGET`` characters."""
+    kept: list[str] = []
+    used = 2
+    for path in paths:
+        used += len(json.dumps(path)) + (2 if kept else 0)
+        if used > TREE_CHAR_BUDGET:
+            break
+        kept.append(path)
+    return kept
+
+
 def _directories(tree_paths: list[str]) -> list[str]:
     """Directories of the tree, as deep as fits in ``DIRECTORY_LIMIT``."""
     for depth in (3, 2, 1):
@@ -228,9 +242,9 @@ def gather_bug_context(
     cited = cited_paths(report, all_paths)
     ranked = [item for item in ranked_paths(report, all_paths) if item.path not in cited]
     listed = set(cited) | {item.path for item in ranked}
-    # The agent sees a bounded listing: named paths, then the closest matches, then the rest.
+    # Named paths, then the closest matches, then the rest, so a cut drops the least relevant.
     ordered = cited + [item.path for item in ranked] + [path for path in all_paths if path not in listed]
-    paths = ordered[:TREE_PATH_LIMIT]
+    paths = _within_budget(ordered)
     matched = [
         item.path
         for item in ranked
@@ -250,6 +264,8 @@ def gather_bug_context(
         "repo": repo,
         "default_branch": default_branch,
         "tree": paths,
+        "tree_truncated": len(paths) < len(all_paths),
+        "tree_total": len(all_paths),
         "directories": _directories(all_paths),
         "files": files,
     }

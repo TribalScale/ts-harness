@@ -110,6 +110,7 @@
         "repo": "$prior.gather_context.output.repo",
         "default_branch": "$prior.gather_context.output.default_branch",
         "tree": "$prior.gather_context.output.tree",
+        "tree_truncated": "$prior.gather_context.output.tree_truncated",
         "directories": "$prior.gather_context.output.directories",
         "files": "$prior.gather_context.output.files"
       },

@@ -108,6 +108,7 @@
         "default_branch": "$prior.gather_context.output.default_branch",
         "report": "$prior.pick_repo.input.summary",
         "tree": "$prior.gather_context.output.tree",
+        "tree_truncated": "$prior.gather_context.output.tree_truncated",
         "directories": "$prior.gather_context.output.directories",
         "files": "$prior.gather_context.output.files"
       },

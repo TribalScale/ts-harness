@@ -170,10 +170,12 @@ First public release.
   them (`content_to_plan` 1.2.0).
 - The repo context for bug investigation and content comparison listed the
   first 200 paths alphabetically, so large repos were cut off early (this one
-  stopped at `database/`). Paths the request names come first, then the paths
-  that best match its words. A directory listing covers the rest of the
-  layout, and when nothing is named, the closest-matching source files are
-  fetched (`bug_to_plan` and `content_to_plan` 1.3.0).
+  stopped at `database/`). The tree is now sent whole when it fits in 60,000
+  characters. A larger tree is cut at that budget after the paths the request
+  names and the paths that best match its words, and `tree_truncated` says so.
+  A directory listing covers the rest of the layout, and when nothing is
+  named, the closest-matching source files are fetched (`bug_to_plan` and
+  `content_to_plan` 1.3.0).
 - The planner copied the template's `Repository: owner/name` placeholder into
   work orders. The template no longer carries it, and the planner contract
   rejects the placeholder so the stage retries.
