@@ -168,6 +168,12 @@ First public release.
   no GitHub access, so it fell back to Jira. A `gather_context` step now fetches
   the repo tree and the files the content names, and the comparison works from
   them (`content_to_plan` 1.2.0).
+- A program that finished its last phase kept `status = running` on its row,
+  so lists showed it as running and its chat thread still resolved to it. The
+  phase hook now marks the row succeeded through a new
+  `POST /programs/{id}/complete` (running or blocked programs only, audited
+  as `delivery_program_completed`). A program with unfinished children stays
+  open.
 - The repo context for bug investigation and content comparison listed the
   first 200 paths alphabetically, so large repos were cut off early (this one
   stopped at `database/`). The tree is now sent whole when it fits in 60,000

@@ -195,6 +195,30 @@ class CascadeCancelTests(unittest.TestCase):
         self.assertFalse(cursor.sql_matching("WITH RECURSIVE tree"))
 
 
+class CompleteProgramTests(unittest.TestCase):
+    def setUp(self):
+        self.gateway = load_gateway()
+
+    def test_marks_a_running_program_succeeded_and_audits(self):
+        program_id = str(uuid.uuid4())
+        cursor = RoutedCursor([("SET status = 'succeeded'", {"id": program_id})])
+        conn = FakeConnection(cursor)
+        result = self.gateway.complete_delivery_program(conn, program_id, {"actor": "workflow-runner", "phase": "file_jira"})
+        self.assertEqual(result, {"program_id": program_id, "updated": True})
+        update = cursor.sql_matching("SET status = 'succeeded'")[0]
+        self.assertIn("status IN ('running', 'blocked')", update[0])
+        audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
+        self.assertEqual(audits, ["delivery_program_completed"])
+        self.assertTrue(conn.committed)
+
+    def test_leaves_a_finished_program_alone(self):
+        program_id = str(uuid.uuid4())
+        cursor = RoutedCursor([])
+        result = self.gateway.complete_delivery_program(FakeConnection(cursor), program_id, {})
+        self.assertEqual(result, {"program_id": program_id, "updated": False})
+        self.assertFalse(cursor.sql_matching("INSERT INTO session_audit_log"))
+
+
 class ExternalRefTests(unittest.TestCase):
     def setUp(self):
         self.gateway = load_gateway()

@@ -178,15 +178,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             )
 
         # All reentry items delivered and nothing follows — the program is done.
-        ctx.memory_client.patch_program_artifacts(
+        _mark_program_succeeded(
+            ctx,
             str(program_id),
-            {
-                **loop_done,
-                "program_status": "succeeded",
-                "completed_at_phase": program_phase or "implement",
-            },
-            merge=True,
-            actor=ctx.actor or "workflow-runner",
+            program_phase,
+            {**loop_done, "completed_at_phase": program_phase or "implement"},
         )
         _resume_parent_pending_advance(ctx, service, program)
         try:
@@ -235,12 +231,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 ctx, service, workflow, program, snapshot, program_phase, auto_edges[0], result
             )
         if node_is_terminal(snapshot, program_phase):
-            ctx.memory_client.patch_program_artifacts(
-                str(program_id),
-                {"program_status": "succeeded"},
-                merge=True,
-                actor=ctx.actor or "workflow-runner",
-            )
+            _mark_program_succeeded(ctx, str(program_id), program_phase)
             _resume_parent_pending_advance(ctx, service, program)
             if complete_channel_text:
                 ctx.extras["channel_text"] = complete_channel_text
@@ -311,12 +302,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         )
 
     if program_cfg.get("terminal"):
-        ctx.memory_client.patch_program_artifacts(
-            str(program_id),
-            {"program_status": "succeeded"},
-            merge=True,
-            actor=ctx.actor or "workflow-runner",
-        )
+        _mark_program_succeeded(ctx, str(program_id), program_phase)
 
     return _with_brief(
         ctx,
@@ -346,6 +332,29 @@ def _unfinished_children(memory: Any, program_id: str, *, exclude: str | None = 
         if str(child.get("id")) != str(exclude or "")
         and str(child.get("status") or "") not in CHILD_DONE_STATUSES
     ]
+
+
+def _mark_program_succeeded(
+    ctx: HookContext,
+    program_id: str,
+    program_phase: str,
+    artifacts: dict[str, Any] | None = None,
+) -> None:
+    """Record success in the artifacts and on the program row.
+
+    A program with unfinished children stays open on the row (its status rolls up
+    from them), so the chat binding still finds it.
+    """
+    actor = ctx.actor or "workflow-runner"
+    ctx.memory_client.patch_program_artifacts(
+        program_id,
+        {**(artifacts or {}), "program_status": "succeeded"},
+        merge=True,
+        actor=actor,
+    )
+    if _unfinished_children(ctx.memory_client, program_id):
+        return
+    ctx.memory_client.complete_program(program_id, actor=actor, phase=program_phase)
 
 
 def _notify_channel(ctx: HookContext, workflow: dict[str, Any], text: str) -> None:
