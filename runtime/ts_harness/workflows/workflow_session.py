@@ -86,6 +86,7 @@ def sync_workflow_session_phase(
     skeleton: Any,
     *,
     tenant_id: str | None = None,
+    workflow_id: str | None = None,
 ) -> str | None:
     metadata = dict(session.metadata or {})
     if not is_workflow_linked(metadata):
@@ -100,7 +101,14 @@ def sync_workflow_session_phase(
     if current == approved:
         return approved
 
-    workflow_id = read_source_workflow_id(metadata) or str(metadata.get("workflow_id") or "")
+    # The source workflow is the previous phase after a program advance; its
+    # type and version do not match ``skeleton``.
+    workflow_id = (
+        str(workflow_id or "")
+        or str(metadata.get("active_workflow_id") or "")
+        or str(metadata.get("workflow_id") or "")
+        or read_source_workflow_id(metadata)
+    )
     if not workflow_id:
         return current
 
@@ -158,4 +166,4 @@ def sync_workflow_session_for_workflow(
         metadata = session.metadata or {}
         linked = metadata.get("workflow_id") == workflow_id or read_source_workflow_id(metadata) == workflow_id
         if linked and str(metadata.get("workflow_type") or "") in {skeleton.workflow_type, ""}:
-            sync_workflow_session_phase(session, skeleton, tenant_id=tenant_id)
+            sync_workflow_session_phase(session, skeleton, tenant_id=tenant_id, workflow_id=workflow_id)

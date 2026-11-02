@@ -788,7 +788,7 @@ class RuntimeState:
             resolve_program_confirmation,
             resolve_workflow_confirmation,
         )
-        from ts_harness.routing.intents import classify_channel_intent
+        from ts_harness.routing.intents import ChannelIntent, classify_channel_intent
 
         metadata = dict(session.metadata or {})
         metadata["channel"] = channel
@@ -873,6 +873,7 @@ class RuntimeState:
             execute_bridge_workflow_proposal,
             execute_governed_workflow_proposal,
             execute_intake_response,
+            execute_program_advance_proposal,
             execute_workflow_gate_response,
             execute_workflow_artifact_query,
             execute_workflow_artifact_provenance_query,
@@ -881,6 +882,7 @@ class RuntimeState:
             format_bridge_proposal_message,
             format_bridge_started_message,
             format_intake_response_ack,
+            format_program_advance_proposal_message,
             format_program_advanced_message,
             format_program_started_message,
             format_tool_approval_ack,
@@ -1452,6 +1454,47 @@ class RuntimeState:
         metadata["last_intent"] = intent.kind
         session.metadata = metadata
         get_session_store().save(session)
+
+        if intent.kind == "program_advance":
+            try:
+                proposal = execute_program_advance_proposal(
+                    session,
+                    intent,
+                    tenant_id=req.tenant_id,
+                    agent_id=agent_id,
+                    source=channel,
+                )
+            except Exception as exc:  # noqa: BLE001
+                proposal = {"error": str(exc)}
+            if proposal.get("status") == "not_ready":
+                intent = ChannelIntent(kind="workflow_gate", summary=intent.summary)
+            else:
+                session = get_session_store().get(session.session_id) or session
+                summary = format_program_advance_proposal_message(proposal)
+                get_transcript_store().append_turn(
+                    session.session_id,
+                    user_text=user_text,
+                    assistant_messages=[{"role": "assistant", "content": summary}],
+                )
+                self.audit.append(
+                    tenant_id=req.tenant_id,
+                    action_type="program_advance_proposed",
+                    actor_id=auth.actor_id,
+                    correlation_id=req.correlation_id,
+                    payload={
+                        "session_id": session.session_id,
+                        "program_id": proposal.get("program_id"),
+                        "target_phase": proposal.get("target_phase"),
+                        "channel": channel,
+                        "error": proposal.get("error"),
+                        "auto_proposed": True,
+                    },
+                )
+                return {
+                    "status": "succeeded",
+                    "session_id": session.session_id,
+                    "output": {**proposal, "summary": summary},
+                }
 
         if should_auto_propose_program(intent, session.metadata or {}):
             try:

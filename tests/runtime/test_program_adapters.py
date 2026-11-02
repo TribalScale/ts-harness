@@ -29,6 +29,33 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
         self.assertEqual(patch["approved_rfp"], {"body": "approved"})
         self.assertNotIn("noise", patch)
 
+    def test_extract_declared_outputs_uses_the_draft_as_the_approved_prd(self):
+        tasks = [
+            {"status": "succeeded", "step_name": "draft_plan", "output": {"prd_markdown": "# Plan\n\nBody"}},
+            {"status": "succeeded", "step_name": "approve_plan", "output": {"summary": "Approved approve_plan"}},
+        ]
+        patch = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="content_to_plan",
+            tasks=tasks,
+            produces_artifacts=["approved_prd", "repo", "default_branch"],
+        )
+        self.assertEqual(patch["approved_prd"], "# Plan\n\nBody")
+        nested = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="content_to_plan",
+            tasks=[{"status": "succeeded", "output": {"result": {"prd_markdown": "# Nested"}}}],
+            produces_artifacts=["approved_prd"],
+        )
+        self.assertEqual(nested["approved_prd"], "# Nested")
+        other = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="rfp_review",
+            tasks=tasks,
+            produces_artifacts=["approved_rfp"],
+        )
+        self.assertNotIn("approved_prd", other)
+
     def test_build_declared_inputs_copies_required_artifacts(self):
         intake = self.registry.build_inputs(
             "extract_declared_outputs",

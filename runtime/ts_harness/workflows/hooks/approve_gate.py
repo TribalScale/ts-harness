@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ts_harness.jira.target_project import jira_choice_from_reply
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.hooks import hydrate_input
 from ts_harness.workflows.registry import HookContext
@@ -27,7 +28,13 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     elif str(getattr(ctx.stage, "present_prompt", "") or "").strip().lower() == "intake" and reply:
         # Later stages read this gate via $prior.<step>.output. The default
         # "Approved <step>" text drops the answers the user just gave.
-        output = {"reply_text": reply, "summary": reply}
+        task_input = ctx.task.get("input") if isinstance(ctx.task.get("input"), dict) else {}
+        answers = [str(item) for item in task_input.get("answers") or [] if str(item).strip()]
+        combined = "\n\n".join([*answers, reply])
+        output = {"reply_text": reply, "summary": combined}
+        if answers:
+            output["answers"] = [*answers, reply]
+        output.update(jira_choice_from_reply(reply, task_input))
     # memory-api approve completes approval-required gates (pending -> succeeded)
     # so the ready-queue never dispatches them to the orchestrator agent.
     result = ctx.memory_client.approve_task(

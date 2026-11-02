@@ -72,6 +72,10 @@ def classify_channel_intent(
                 return matched
         return ChannelIntent(kind="workflow_gate", summary=summary)
 
+    advance = _match_program_advance(text, metadata)
+    if advance is not None:
+        return advance
+
     mode = str(metadata.get("mode") or "")
     linked_modes = {"workflow_linked", "bridge_linked", "prd_linked", "delivery_linked"}
     if metadata.get("workflow_id") and mode in linked_modes:
@@ -106,6 +110,42 @@ def _match_bridge_intent(text: str, metadata: dict) -> ChannelIntent | None:
             bridge_id = _bridge_intent_id(metadata)
             return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:REQUEST_TEXT_LIMIT])
     return None
+
+
+def program_advance_candidates(text: str, metadata: dict) -> list[dict]:
+    """Outgoing program edges from the session's phase whose signals match ``text``."""
+    from ts_harness.workflows.session_compat import read_program_id, read_program_phase
+
+    program_type = str(metadata.get("program_type") or "").strip()
+    source_node = str(read_program_phase(metadata) or "").strip()
+    if not read_program_id(metadata) or not program_type or not source_node or not text:
+        return []
+    from ts_harness.workflows.program_materialize import resolve_bridge_candidates_from_text
+    from ts_harness.workflows.program_registry import get_program_definition_registry
+
+    try:
+        snapshot = get_program_definition_registry().load(program_type)
+    except (FileNotFoundError, ValueError):
+        return []
+    return resolve_bridge_candidates_from_text(
+        text,
+        source_workflow_type=str(metadata.get("workflow_type") or ""),
+        snapshot=snapshot,
+        source_node=source_node,
+    )
+
+
+def _match_program_advance(text: str, metadata: dict) -> ChannelIntent | None:
+    candidates = program_advance_candidates(text, metadata)
+    if not candidates:
+        return None
+    target = str(candidates[0]["target_node"]) if len(candidates) == 1 else None
+    return ChannelIntent(
+        kind="program_advance",
+        program_type=str(metadata.get("program_type") or "") or None,
+        entry_phase=target,
+        summary=text[:REQUEST_TEXT_LIMIT],
+    )
 
 
 def _bridge_signals(metadata: dict) -> list[str]:
