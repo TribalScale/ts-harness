@@ -209,7 +209,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             "workflow": {
                 "id": "wf-bug",
                 "workflow_type": "bug_to_plan",
-                "definition_version": "1.2.0",
+                "definition_version": "1.3.0",
                 "program_id": "prog-1",
             },
             "tasks": [
@@ -218,7 +218,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
                     "workflow_id": "wf-bug",
                     "workflow_type": "bug_to_plan",
                     "step_name": "await_ready",
-                    "definition_version": "1.2.0",
+                    "definition_version": "1.3.0",
                     "status": "succeeded",
                     "approval_required": True,
                 }
@@ -233,7 +233,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             "workflow_id": "wf-bug",
             "workflow_type": "bug_to_plan",
             "step_name": "await_ready",
-            "definition_version": "1.2.0",
+            "definition_version": "1.3.0",
             "status": "pending",
             "approval_required": True,
             "input": {},
@@ -271,7 +271,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
                     {
                         "id": "draft-1",
                         "step_name": "draft_work_order",
-                        "definition_version": "1.2.0",
+                        "definition_version": "1.3.0",
                     }
                 ],
             },
@@ -281,8 +281,8 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             engine._skeleton_for_state(
                 "bug_work_order",
                 payload={
-                    "workflow": {"definition_version": "1.2.0"},
-                    "tasks": [{"definition_version": "1.2.0"}],
+                    "workflow": {"definition_version": "1.3.0"},
+                    "tasks": [{"definition_version": "1.3.0"}],
                 },
             )
 

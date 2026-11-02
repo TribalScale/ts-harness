@@ -1,6 +1,6 @@
 {
   "workflow_type": "bug_to_plan",
-  "definition_version": "1.2.0",
+  "definition_version": "1.3.0",
   "display_name": "Bug report to approved diagnosis",
   "contracts": {
     "repo_pick": {
@@ -108,6 +108,8 @@
         "default_branch": "$prior.gather_context.output.default_branch",
         "report": "$prior.pick_repo.input.summary",
         "tree": "$prior.gather_context.output.tree",
+        "tree_truncated": "$prior.gather_context.output.tree_truncated",
+        "directories": "$prior.gather_context.output.directories",
         "files": "$prior.gather_context.output.files"
       },
       "retry": { "max_retries": 1, "timeout_seconds": 1800 }
