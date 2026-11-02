@@ -13,7 +13,7 @@ List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` an
 
 ## compare_codebase
 
-`input.content` is the pasted content, in the requester's words. Compare it to the chosen repo at `default_branch` using what the workflow fetched for you: `input.tree` lists the repo's file paths (bounded), and `input.files` holds the bodies of paths the content names. You cannot clone or browse the repo yourself, so do not say you lack access; work from these. Note overlaps, gaps, and existing modules, citing paths from `input.tree`. Do not invent a repo or a path.
+`input.content` is the pasted content, in the requester's words. Compare it to the chosen repo at `default_branch` using what the workflow fetched for you: `input.tree` lists file paths (bounded) with the paths the content names first, then the ones closest to its words; `input.directories` lists the repo's directories, including areas whose files did not fit in the tree; `input.files` holds bodies of the named paths, or of the closest matches when none are named (`source` says which). You cannot clone or browse the repo yourself, so do not say you lack access; work from these. Note overlaps, gaps, and existing modules, citing paths from `input.tree`. Do not invent a repo or a path.
 
 ## clarify
 

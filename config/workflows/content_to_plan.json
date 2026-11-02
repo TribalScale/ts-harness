@@ -1,6 +1,6 @@
 {
   "workflow_type": "content_to_plan",
-  "definition_version": "1.2.0",
+  "definition_version": "1.3.0",
   "display_name": "Content to approved plan",
   "contracts": {
     "repo_pick": {
@@ -110,6 +110,7 @@
         "repo": "$prior.gather_context.output.repo",
         "default_branch": "$prior.gather_context.output.default_branch",
         "tree": "$prior.gather_context.output.tree",
+        "directories": "$prior.gather_context.output.directories",
         "files": "$prior.gather_context.output.files"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }

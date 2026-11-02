@@ -10,6 +10,7 @@ from ts_harness.integrations.github_client import GitHubError
 from ts_harness.jira.program_config import resolved_program_config
 from ts_harness.workflows.bug_context import (
     FILE_LIMIT,
+    MATCHED_FILE_LIMIT,
     TREE_PATH_LIMIT,
     cited_paths,
     gather_bug_context,
@@ -217,6 +218,48 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertIn("def charge", output["files"][0]["body"])
         self.assertEqual(github.fetched, ["src/billing.py"])
         self.assertNotIn("src/missing.py", github.fetched)
+
+    def test_paths_matching_the_request_come_first(self):
+        filler = [f"aaa/ts_harness/f{index:03}.py" for index in range(TREE_PATH_LIMIT + 50)]
+        relevant = [
+            "runtime/ts_harness/workflows/last_workflow.py",
+            "admin-ui/src/system/SettingsPage.tsx",
+        ]
+        github = _GitHub(filler + relevant, {path: "x = 1\n" for path in relevant})
+        task = {
+            "id": "gather",
+            "workflow_id": "wf",
+            "input": {"summary": "Add a Last workflow line to the System Settings page of TS Harness."},
+        }
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(len(output["tree"]), TREE_PATH_LIMIT)
+        self.assertEqual(set(output["tree"][:2]), set(relevant))
+        self.assertIn("runtime/ts_harness/workflows", output["directories"])
+        self.assertIn("aaa", output["directories"])
+        self.assertEqual(set(github.fetched), set(relevant))
+
+    def test_best_matches_are_fetched_when_no_path_is_named(self):
+        paths = [
+            "admin-ui/src/system/SettingsPage.tsx",
+            "admin-ui/src/system/SettingsPage.test.tsx",
+            "admin-ui/src/system/settings.png",
+            "admin-ui/src/projects/ProjectsPage.tsx",
+            "docs/readme.md",
+        ]
+        files = {path: f"// {path}\n" for path in paths}
+        github = _GitHub(paths, files)
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "The System Settings page shows the wrong status"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(github.fetched, ["admin-ui/src/system/SettingsPage.tsx"])
+        self.assertEqual(output["files"][0]["source"], "matched")
+        self.assertLessEqual(len(output["files"]), MATCHED_FILE_LIMIT)
+        self.assertIn("admin-ui/src/system/SettingsPage.test.tsx", output["tree"][:3])
+
+    def test_named_paths_keep_their_source(self):
+        github = _GitHub(["src/billing.py"], {"src/billing.py": "x = 1\n"})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "src/billing.py crashes"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(output["files"][0]["source"], "named")
 
     def test_bug_stages_receive_the_full_report(self):
         report = "x" * 300 + " the bug is in runtime/ts_harness/gateway/runtime_settings_bff.py"

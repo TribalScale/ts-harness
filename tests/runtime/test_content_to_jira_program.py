@@ -51,6 +51,10 @@ class ContentToJiraProgramTests(unittest.TestCase):
         self.assertEqual(compare["depends_on"], ["gather_context"])
         self.assertEqual(compare["input_map"]["tree"], "$prior.gather_context.output.tree")
         self.assertEqual(compare["input_map"]["files"], "$prior.gather_context.output.files")
+        self.assertEqual(compare["input_map"]["directories"], "$prior.gather_context.output.directories")
+        bug = json.loads((WORKFLOWS / "bug_to_plan.json").read_text())
+        investigate = next(stage for stage in bug["stages"] if stage["name"] == "investigate")
+        self.assertEqual(investigate["input_map"]["directories"], "$prior.gather_context.output.directories")
         self.assertNotEqual(plan["definition_version"], "1.1.0")
 
         from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
