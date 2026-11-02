@@ -144,6 +144,10 @@ First public release.
 
 ### Fixed
 
+- Repo context for bug and content plans ranks files by the request itself.
+  The routing phrase that started the flow ("plan work from this content",
+  "file this bug"), the repo and branch names, and section labels such as
+  `Goal:` no longer pull in unrelated workflow, skill, and test files.
 - Bug-to-Jira and content-to-Jira runs no longer need a manual push between
   steps:
   - Filing into Jira starts once the epic choice is confirmed. `file_tickets`

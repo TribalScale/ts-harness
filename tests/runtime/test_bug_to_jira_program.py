@@ -15,6 +15,7 @@ from ts_harness.workflows.bug_context import (
     TREE_CHAR_BUDGET,
     cited_paths,
     gather_bug_context,
+    ranked_paths,
 )
 from ts_harness.workflows.definition_validation import validate_workflow_definition
 from ts_harness.workflows.expressions import resolve_token
@@ -244,6 +245,35 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertIn("runtime/ts_harness/workflows", output["directories"])
         self.assertIn("aaa", output["directories"])
         self.assertEqual(set(github.fetched), set(relevant))
+
+    def test_request_boilerplate_does_not_rank_paths(self):
+        paths = [
+            "docs/content-plan-work.md",
+            "src/branch/default_dev.py",
+            "src/acme_app.py",
+            "src/goal_audience.py",
+            "src/last_workflow.py",
+        ]
+        text = (
+            "Plan work from this content.\n\nAudience: operators.\nGoal: add a Last workflow line.\n"
+            "Repo: acme/app, default branch dev."
+        )
+        with patch.object(bug_context, "_routing_phrases", return_value=("plan work from this content",)):
+            request = bug_context.request_words_text(text, repo="acme/app", default_branch="dev")
+        self.assertEqual([item.path for item in ranked_paths(request, paths)], ["src/last_workflow.py"])
+
+    def test_routing_phrases_come_from_the_runtime_config(self):
+        bug_context._routing_phrases.cache_clear()
+        try:
+            with patch.dict("os.environ", {"TS_HARNESS_CONFIG": str(ROOT / "config" / "ts-harness-runtime.test.yaml")}):
+                phrases = bug_context._routing_phrases()
+        finally:
+            bug_context._routing_phrases.cache_clear()
+        self.assertIn("plan work from this content", phrases)
+        self.assertIn("file this bug", phrases)
+        self.assertNotIn("error", phrases)
+        self.assertNotIn("bug report", phrases)
+        self.assertFalse(any("\\" in phrase for phrase in phrases))
 
     def test_a_tree_within_the_budget_is_sent_whole(self):
         paths = [f"pkg/module_{index:04}/handler.py" for index in range(1_500)]

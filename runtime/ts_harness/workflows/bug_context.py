@@ -10,8 +10,11 @@ none are named, of the closest matches).
 from __future__ import annotations
 
 import base64
+import functools
 import json
+import logging
 import math
+import os
 import re
 from typing import Any, NamedTuple
 
@@ -33,6 +36,12 @@ _STOPWORDS = frozenset(
     "should would could will can may must also only just any all each some one two add use used using "
     "new like more most other such very via per does did done make makes out yet none say says".split()
 )
+_LABEL_RE = re.compile(r"(^|(?<=[.!?])[ \t]+)[ \t]*[A-Za-z][A-Za-z \t]{0,24}:(?=\s)", re.MULTILINE)
+_REGEX_CHARS_RE = re.compile(r"[\\\[\](){}*+?|^$]")
+ROUTING_PHRASE_MIN_WORDS = 3
+
+logger = logging.getLogger(__name__)
+
 _BINARY_SUFFIXES = frozenset(
     "png jpg jpeg gif ico svg webp bmp pdf zip gz tgz tar jar woff woff2 ttf eot otf mp3 mp4 mov lock".split()
 )
@@ -96,6 +105,45 @@ def cited_paths(report: str, tree_paths: list[str]) -> list[str]:
             found.append((index, path))
     found.sort(key=lambda item: item[0])
     return [path for _index, path in found[:FILE_LIMIT]]
+
+
+@functools.lru_cache(maxsize=1)
+def _routing_phrases() -> tuple[str, ...]:
+    """Routing signals of three or more words from the runtime config; shorter ones are also real content."""
+    path = (os.environ.get("TS_HARNESS_CONFIG") or "").strip()
+    if not path:
+        return ()
+    try:
+        from ts_harness.config.schema import load_runtime_config
+
+        intents = list(getattr(load_runtime_config(path).routing, "intents", None) or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("repo context could not read routing phrases: %s", exc)
+        return ()
+    phrases = {
+        str(signal).strip().lower()
+        for intent in intents
+        for signal in intent.signals or []
+        if len(str(signal).split()) >= ROUTING_PHRASE_MIN_WORDS and not _REGEX_CHARS_RE.search(str(signal))
+    }
+    return tuple(sorted(phrases, key=len, reverse=True))
+
+
+def request_words_text(report: str, *, repo: str, default_branch: str) -> str:
+    """The report without the words that name the request rather than the change.
+
+    Drops the routing phrase that started the flow, the repo and its branch
+    (the agent already gets both), and section labels such as ``Goal:``.
+    """
+    text = str(report or "")
+    for phrase in _routing_phrases():
+        text = re.sub(r"\b" + re.escape(phrase) + r"\b", " ", text, flags=re.IGNORECASE)
+    if repo:
+        text = re.sub(r"(?:https?://[\w.-]+/)?" + re.escape(repo) + r"(?:\.git)?", " ", text, flags=re.IGNORECASE)
+    if default_branch:
+        branch = re.escape(default_branch)
+        text = re.sub(r"\b(?:default\s+|base\s+)?branch\b[\s:,]*" + branch + r"\b", " ", text, flags=re.IGNORECASE)
+    return _LABEL_RE.sub(r"\1", text)
 
 
 def _stem(word: str) -> str:
@@ -240,7 +288,8 @@ def gather_bug_context(
     all_paths = _tree_paths(tree_payload)
     report = _report_text(task, tasks)
     cited = cited_paths(report, all_paths)
-    ranked = [item for item in ranked_paths(report, all_paths) if item.path not in cited]
+    request = request_words_text(report, repo=repo, default_branch=default_branch)
+    ranked = [item for item in ranked_paths(request, all_paths) if item.path not in cited]
     listed = set(cited) | {item.path for item in ranked}
     # Named paths, then the closest matches, then the rest, so a cut drops the least relevant.
     ordered = cited + [item.path for item in ranked] + [path for path in all_paths if path not in listed]
