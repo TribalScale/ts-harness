@@ -144,6 +144,12 @@ First public release.
 
 ### Fixed
 
+- A chat thread whose program had finished (succeeded, failed, or cancelled)
+  answered a new request phrase, such as "plan work from this content", as
+  plain chat instead of offering a new program. The thread's session still
+  pointed at the old program and its last workflow. A message that matches a
+  routing rule now unlinks the finished program first (keeping its id as
+  `previous_program_id`); status and artifact questions keep it.
 - Repo context for bug and content plans ranks files by the request itself.
   The routing phrase that started the flow ("plan work from this content",
   "file this bug"), the repo and branch names, and section labels such as

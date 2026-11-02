@@ -109,6 +109,52 @@ def _channel_policy_context(
     )
 
 
+FINISHED_PROGRAM_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+
+def detach_finished_program_for_new_request(
+    session: SessionRecord,
+    user_text: str,
+    *,
+    config: Any,
+    memory: Any = None,
+) -> str | None:
+    """Unlink a thread from its finished program when the message asks for new work.
+
+    Only a message that matches a routing rule for a program or workflow
+    detaches; status and artifact questions keep the finished program.
+    Returns the detached program id.
+    """
+    from ts_harness.workflows.session_compat import clear_program_session, read_program_id
+
+    metadata = dict(session.metadata or {})
+    program_id = read_program_id(metadata)
+    if not program_id or getattr(config, "routing", None) is None:
+        return None
+    if is_workflow_status_query(user_text) or is_workflow_artifact_query(user_text):
+        return None
+    from ts_harness.routing.matcher import match_routing_rule
+
+    matched = match_routing_rule(user_text, config)
+    if matched is None or not (matched.program_type or matched.workflow_type):
+        return None
+    if memory is None:
+        from ts_harness.memory.client import get_memory_client
+
+        memory = get_memory_client()
+    try:
+        program = memory.get_program(program_id).get("program") or {}
+    except Exception:  # noqa: BLE001
+        return None
+    if str(program.get("status") or "") not in FINISHED_PROGRAM_STATUSES:
+        return None
+    from ts_harness.agent.sessions import get_session_store
+
+    session.metadata = clear_program_session(metadata)
+    get_session_store().save(session)
+    return program_id
+
+
 def should_auto_propose_workflow(intent: ChannelIntent, metadata: dict) -> bool:
     if intent.kind in _SKIP_AUTO_PROPOSE_INTENTS:
         return False
