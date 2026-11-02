@@ -1182,3 +1182,98 @@ class IntakeResponseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetachFinishedProgramTests(unittest.TestCase):
+    CONTENT_REQUEST = "Plan work from this content.\n\nGoal: add a Last workflow line."
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+
+        from ts_harness.config.schema import load_runtime_config
+
+        root = Path(__file__).resolve().parents[2]
+        cls.config = load_runtime_config(root / "config" / "ts-harness-runtime.test.yaml")
+
+    def setUp(self):
+        reset_session_store()
+        self.session = SessionRecord(
+            session_id="web:live-content-5",
+            routing_key="rk",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "channel": "web",
+                "thread_id": "web:live-content-5",
+                "binding_key": "web:web:web:live-content-5",
+                "mode": "bridge_linked",
+                "program_id": "prog-1",
+                "program_type": "content_to_jira_work_orders",
+                "program_phase": "file_jira",
+                "program_artifacts": {"program_status": "succeeded"},
+                "workflow_id": "wf-3",
+                "active_workflow_id": "wf-3",
+                "workflow_type": "file_work_orders_as_jira",
+                "workflow_phase": "approved",
+                "source_workflow_id": "wf-2",
+                "approved_artifact": {"x": 1},
+                "review_artifact": {"x": 1},
+                "specialist_handoff": {"x": 1},
+                "presentation_doc_url": "https://docs.example/d",
+            },
+        )
+        get_session_store().save(self.session)
+
+    def _memory(self, status: str) -> MagicMock:
+        memory = MagicMock()
+        memory.get_program.return_value = {"program": {"id": "prog-1", "status": status}, "workflows": []}
+        return memory
+
+    def _detach(self, text: str, memory: MagicMock):
+        from ts_harness.gateway.channel_confirmations import detach_finished_program_for_new_request
+
+        return detach_finished_program_for_new_request(self.session, text, config=self.config, memory=memory)
+
+    def test_a_new_request_detaches_a_finished_program(self):
+        from ts_harness.gateway.channel_confirmations import should_auto_propose_program
+        from ts_harness.routing.intents import classify_channel_intent
+
+        self.assertEqual(self._detach(self.CONTENT_REQUEST, self._memory("succeeded")), "prog-1")
+        saved = get_session_store().get(self.session.session_id)
+        self.assertEqual(
+            saved.metadata,
+            {
+                "channel": "web",
+                "thread_id": "web:live-content-5",
+                "binding_key": "web:web:web:live-content-5",
+                "previous_program_id": "prog-1",
+            },
+        )
+        intent = classify_channel_intent(self.CONTENT_REQUEST, saved.metadata, config=self.config)
+        self.assertEqual(intent.program_type, "content_to_jira_work_orders")
+        self.assertTrue(should_auto_propose_program(intent, saved.metadata))
+
+    def test_cancelled_and_failed_programs_also_detach(self):
+        for status in ("cancelled", "failed"):
+            self.setUp()
+            self.assertEqual(self._detach(self.CONTENT_REQUEST, self._memory(status)), "prog-1")
+
+    def test_a_running_or_blocked_program_stays_linked(self):
+        for status in ("running", "blocked"):
+            self.assertIsNone(self._detach(self.CONTENT_REQUEST, self._memory(status)))
+            self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")
+
+    def test_status_questions_and_plain_chat_keep_the_finished_program(self):
+        for text in ("what's the status?", "show me the prd", "thanks, looks good"):
+            memory = self._memory("succeeded")
+            self.assertIsNone(self._detach(text, memory))
+            memory.get_program.assert_not_called()
+        self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")
+
+    def test_an_unreachable_memory_api_keeps_the_program(self):
+        memory = MagicMock()
+        memory.get_program.side_effect = RuntimeError("connection refused")
+        self.assertIsNone(self._detach(self.CONTENT_REQUEST, memory))
+        self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")

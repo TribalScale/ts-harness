@@ -859,6 +859,7 @@ class RuntimeState:
         session = get_session_store().get(session.session_id) or session
 
         from ts_harness.gateway.channel_confirmations import (
+            detach_finished_program_for_new_request,
             execute_confirmed_bridge,
             execute_confirmed_program_advance,
             execute_confirmed_program_start,
@@ -904,6 +905,9 @@ class RuntimeState:
             should_auto_explain_workflow_artifact,
             should_intercept_tool_approval_reply,
         )
+
+        if detach_finished_program_for_new_request(session, user_text, config=self.config):
+            session = get_session_store().get(session.session_id) or session
 
         denied_reply = next(
             (
