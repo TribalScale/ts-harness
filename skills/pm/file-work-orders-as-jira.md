@@ -15,7 +15,10 @@ Use on `file_work_orders_as_jira`.
 
 ## file_tickets
 
-1. Human must approve the pack and the file action before any Jira write.
+1. The human approved the file action at `choose_epic`. Do not ask again.
+   - File into `input.jira_project_key` when it is set. The runtime resolved it from the allowlist and the human confirmed it. Do not drop it because it is missing from `jira_get_all_projects`.
+   - If `input.jira_epic_key` is set, file under that epic instead of creating one.
+   - Stop only if Jira rejects the write.
 2. Create an Epic when needed. Create one issue per work order.
 3. Issue type = `input.issue_type_by_project[project]`, else `input.default_issue_type`, else `Story`. If that type does not exist, stop.
 4. **Do not set assignee.**

@@ -144,6 +144,29 @@ First public release.
 
 ### Fixed
 
+- Bug-to-Jira and content-to-Jira runs no longer need a manual push between
+  steps:
+  - Filing into Jira starts once the epic choice is confirmed. `file_tickets`
+    is no longer a second approval gate that never ran
+    (`file_work_orders_as_jira` 1.2.0).
+  - The confirmed Jira project and any epic key named in the reply reach the
+    filing step.
+  - `jira_get_all_projects` reads every page, so projects past the first 50
+    are found.
+  - Saying "file these tickets" (or another edge signal) after a phase
+    finishes asks to continue to the next phase. "yes" advances the program
+    and moves the chat to the new workflow.
+  - Intake replies that start with "no" but say "ready" now approve. Other
+    intake replies are kept as answers instead of being rejected.
+  - A content plan's `prd_markdown` becomes the phase's `approved_prd`.
+  - A planner pack with a single work order is accepted.
+  - Filed Jira keys are read from the filing summary when the agent leaves
+    them out of the output.
+  - When a program starts or advances on a gate (pick repo, choose epic), the
+    chat says what to reply instead of "will run shortly".
+- Session phase sync read the previous phase's workflow after a program
+  advance and failed on a version lookup. It now reads the workflow being
+  synced. A read-only definitions store logs one warning instead of a traceback.
 - Approving the last gate of a program phase did not save that phase's
   outputs, so the next phase started without artifacts such as `bug_report`.
   Gate approval now completes the phase the same way a dispatched task does.

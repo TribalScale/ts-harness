@@ -147,6 +147,25 @@ class ChannelIntentTests(unittest.TestCase):
         question = classify_channel_intent("what error did we see", {}, config=self.config)
         self.assertNotEqual(question.kind, "bug_to_jira")
 
+    def test_program_edge_signal_proposes_the_next_phase(self):
+        metadata = {
+            "program_id": "prog-1",
+            "program_type": "bug_to_jira_work_orders",
+            "program_phase": "work_order",
+            "workflow_id": "wf-wo",
+            "workflow_type": "bug_work_order",
+            "mode": "bridge_linked",
+        }
+        intent = classify_channel_intent("ok, file these tickets", metadata, config=self.config)
+        self.assertEqual(intent.kind, "program_advance")
+        self.assertEqual(intent.entry_phase, "file_jira")
+        self.assertEqual(intent.program_type, "bug_to_jira_work_orders")
+
+        other = classify_channel_intent("approve", metadata, config=self.config)
+        self.assertEqual(other.kind, "workflow_gate")
+        wrong_phase = classify_channel_intent("file these tickets", {**metadata, "program_phase": "bug_intake"})
+        self.assertEqual(wrong_phase.kind, "workflow_gate")
+
     def test_direct_respond_for_status_questions(self):
         intent = classify_channel_intent("what agents do we have?", {}, config=self.config)
         self.assertEqual(intent.kind, "direct_respond")

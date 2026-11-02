@@ -24,6 +24,7 @@ class JiraError(RuntimeError):
 
 
 MAX_BULK_CREATE = 50
+MAX_PROJECT_PAGES = 20
 
 
 
@@ -103,9 +104,17 @@ class JiraClient:
         return self.request("GET", f"{self._issue_path(key)}?fields={fields}") or {}
 
     def list_projects(self, *, action: str = "browse") -> list[dict[str, Any]]:
-        params = urllib.parse.urlencode({"action": action, "maxResults": "50", "orderBy": "key"})
-        payload = self.request("GET", f"/rest/api/3/project/search?{params}") or {}
-        return list(payload.get("values") or [])
+        projects: list[dict[str, Any]] = []
+        for _ in range(MAX_PROJECT_PAGES):
+            params = urllib.parse.urlencode(
+                {"action": action, "maxResults": "50", "orderBy": "key", "startAt": str(len(projects))}
+            )
+            payload = self.request("GET", f"/rest/api/3/project/search?{params}") or {}
+            page = list(payload.get("values") or [])
+            projects.extend(page)
+            if not page or payload.get("isLast", True):
+                break
+        return projects
 
     def create_issue(self, fields: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/rest/api/3/issue", body={"fields": fields}) or {}

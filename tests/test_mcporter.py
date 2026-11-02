@@ -153,6 +153,17 @@ class McporterReadToolTests(McporterTestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.api_calls()[0][1]).query)
         self.assertEqual(query["action"], ["create"])
 
+    def test_get_all_projects_reads_every_page(self):
+        self.responses = [
+            (200, {"values": [{"key": "AAA", "name": "First"}], "isLast": False}),
+            (200, {"values": [{"key": "THD", "name": "TS-Harnes-Dev"}], "isLast": True}),
+        ]
+        text = self.text(self.call("jira_get_all_projects", {"action": "create"}))
+        self.assertIn("AAA: First", text)
+        self.assertIn("THD: TS-Harnes-Dev", text)
+        starts = [urllib.parse.parse_qs(urllib.parse.urlparse(call[1]).query)["startAt"] for call in self.api_calls()]
+        self.assertEqual(starts, [["0"], ["1"]])
+
 
 class McporterWriteToolTests(McporterTestCase):
     def test_create_issue_builds_fields_without_assignee(self):

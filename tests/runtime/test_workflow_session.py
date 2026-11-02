@@ -65,6 +65,34 @@ class WorkflowSessionPhaseTests(unittest.TestCase):
         saved = get_session_store().get("s-linked")
         self.assertEqual(saved.metadata.get("workflow_phase"), "awaiting_approval")
 
+    @patch("ts_harness.workflows.engine.get_workflow_engine")
+    def test_sync_reads_the_new_phase_workflow_not_the_source(self, mock_engine_factory):
+        mock_engine = MagicMock()
+        mock_engine.get_workflow_phase.return_value = "awaiting_approval"
+        mock_engine_factory.return_value = mock_engine
+        session = SessionRecord(
+            session_id="s-advanced",
+            routing_key="rk",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "mode": "bridge_linked",
+                "workflow_type": "prd_request",
+                "workflow_id": "wf-new",
+                "active_workflow_id": "wf-new",
+                "source_workflow_id": "wf-previous-phase",
+                "workflow_phase": "drafting",
+            },
+        )
+        get_session_store().save(session)
+
+        sync_workflow_session_phase(session, self.skeleton)
+        self.assertEqual(mock_engine.get_workflow_phase.call_args.args[0], "wf-new")
+
+        sync_workflow_session_for_workflow("wf-previous-phase", self.skeleton, tenant_id="default")
+        self.assertEqual(mock_engine.get_workflow_phase.call_args.args[0], "wf-previous-phase")
+
     def test_set_workflow_phase_for_workflow_pushes_immediately(self):
         session = SessionRecord(
             session_id="s-push",

@@ -12,6 +12,7 @@ from ts_harness.gateway.confirmation_classifier import (
     ConfirmationClassification,
     classify_confirmation,
     confirmation_clarification_message,
+    looks_like_plain_approval,
     looks_like_ready_to_draft,
     looks_like_revision_feedback,
 )
@@ -272,6 +273,59 @@ def execute_confirmed_program_advance(
     return advance_program_handler(payload, ctx)
 
 
+def _current_phase_finished(metadata: dict[str, Any]) -> bool:
+    from ts_harness.workflows.session_compat import read_source_workflow_id, read_workflow_phase
+
+    workflow_id = str(metadata.get("workflow_id") or "")
+    if not workflow_id:
+        return False
+    # "approved" can be left over from the previous phase after an advance.
+    if read_workflow_phase(metadata) == "approved" and read_source_workflow_id(metadata) == workflow_id:
+        return True
+    from ts_harness.workflows.engine import get_workflow_engine
+
+    return str(get_workflow_engine().get_status(workflow_id).get("status") or "") == "succeeded"
+
+
+def execute_program_advance_proposal(
+    session: SessionRecord,
+    intent: ChannelIntent,
+    *,
+    tenant_id: str,
+    agent_id: str,
+    source: str,
+) -> dict[str, Any]:
+    """Ask to move the program along an edge the user named, once the current phase is done."""
+    from ts_harness.routing.intents import program_advance_candidates
+    from ts_harness.tools.workflow_tools import propose_advance_program_handler
+
+    metadata = session.metadata or {}
+    if not _current_phase_finished(metadata):
+        return {"status": "not_ready"}
+    summary = str(intent.summary or "").strip()
+    if not intent.entry_phase:
+        targets = [str(item["target_node"]) for item in program_advance_candidates(summary, metadata)]
+        return {"status": "choose", "targets": targets}
+    ctx = _channel_policy_context(session, tenant_id=tenant_id, agent_id=agent_id, source=source)
+    return propose_advance_program_handler(
+        {"summary": summary, "target_phase": intent.entry_phase, "program_type": intent.program_type},
+        ctx,
+    )
+
+
+def format_program_advance_proposal_message(result: dict[str, Any]) -> str:
+    if result.get("status") == "choose":
+        targets = " or ".join(f"`{target}`" for target in result.get("targets") or [])
+        return f"That matches more than one next phase: {targets}. Which one do you want?"
+    if result.get("error"):
+        return format_auto_action_failure_message(
+            action_label="prepare the next phase",
+            error_reason=str(result["error"]),
+        )
+    target = str(result.get("target_node") or result.get("target_phase") or "the next phase").replace("_", " ")
+    return f"Continue to {target}? Reply yes to continue, or no to stay."
+
+
 def execute_confirmed_bridge(
     session: SessionRecord,
     *,
@@ -431,23 +485,36 @@ def format_auto_action_failure_message(*, action_label: str, error_reason: str) 
 def format_program_started_message(result: dict[str, Any]) -> str:
     entry_phase = str(result.get("entry_phase") or "delivery").replace("_", " ")
     workflow_type = str(result.get("workflow_type") or "workflow").replace("_", " ")
-    first_step = str(result.get("first_step") or "next step").replace("_", " ")
     return (
         f"Started the delivery program at the {entry_phase} phase ({workflow_type}). "
-        f"The first step ({first_step}) is queued and will run shortly."
+        + _first_step_sentence(result)
     )
 
 
 def format_program_advanced_message(result: dict[str, Any]) -> str:
     target_phase = str(result.get("target_phase") or "").replace("_", " ")
     workflow_type = str(result.get("workflow_type") or "downstream workflow").replace("_", " ")
-    first_step = str(result.get("first_step") or "next step").replace("_", " ")
     if target_phase:
-        return (
-            f"Advanced the delivery program to the {target_phase} phase ({workflow_type}). "
-            f"The first step ({first_step}) is queued and will run shortly."
-        )
+        lead = f"Advanced the delivery program to the {target_phase} phase ({workflow_type}). "
+        return lead + _first_step_sentence(result)
     return format_bridge_started_message(result)
+
+
+def _first_step_sentence(result: dict[str, Any]) -> str:
+    """A gate first step waits for the human; say what to reply instead of "will run shortly"."""
+    first_step = str(result.get("first_step") or "next step").replace("_", " ")
+    try:
+        from ts_harness.workflows.materialize import load_skeleton
+        from ts_harness.workflows.repo_pick import is_repo_pick_stage
+
+        stage = load_skeleton(str(result.get("workflow_type") or "")).stage(str(result.get("first_step") or ""))
+    except Exception:  # noqa: BLE001
+        stage = None
+    if stage is None or not getattr(stage, "approval_required", False):
+        return f"The first step ({first_step}) is queued and will run shortly."
+    if is_repo_pick_stage(stage):
+        return f"The first step ({first_step}) is waiting for you. Reply with the repo to use."
+    return f"The first step ({first_step}) is waiting for you. Reply ready to continue."
 
 
 def _workflow_tasks(metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -670,17 +737,36 @@ def gate_clarification_message(session: SessionRecord) -> str:
     )
 
 
-def _intake_ready_reply(session: SessionRecord, user_text: str) -> bool:
-    """Intake gates accept "ready" / "draft the bug" along with the answers."""
+def _pending_intake_gate(session: SessionRecord) -> dict[str, Any] | None:
     from ts_harness.workflows.repo_pick import is_repo_pick_stage
 
     gate, stage = _pending_gate_stage(session)
     if gate is None or stage is None or is_repo_pick_stage(stage):
-        return False
+        return None
     prompt = str(getattr(stage, "present_prompt", "") or "").strip().lower()
-    if prompt != "intake":
-        return False
-    return looks_like_ready_to_draft(user_text)
+    return gate if prompt == "intake" else None
+
+
+def _intake_go_ahead(gate: dict[str, Any], user_text: str) -> bool:
+    """Intake gates continue on "ready" / "draft the bug" (answers may come with it),
+    a plain yes, or an epic key named on a Jira filing gate."""
+    if looks_like_ready_to_draft(user_text) or looks_like_plain_approval(user_text):
+        return True
+    from ts_harness.jira.target_project import jira_choice_from_reply
+
+    task_input = gate.get("input") if isinstance(gate.get("input"), dict) else {}
+    choice = jira_choice_from_reply(user_text, task_input)
+    return bool(choice.get("jira_epic_key")) and choice["jira_epic_key"] in (user_text or "")
+
+
+def record_intake_answer(session: SessionRecord, gate: dict[str, Any], user_text: str) -> dict[str, Any]:
+    """Keep a non-ready intake reply on the gate. It is folded into the reply on approval."""
+    from ts_harness.memory.client import get_memory_client
+
+    task_input = gate.get("input") if isinstance(gate.get("input"), dict) else {}
+    answers = [*(task_input.get("answers") or []), (user_text or "").strip()]
+    get_memory_client().patch_task_input(str(gate["id"]), {**task_input, "answers": answers})
+    return {"status": "answer_recorded", "task_id": str(gate.get("id")), "answers": len(answers)}
 
 
 def _repo_pick_reply(session: SessionRecord, user_text: str) -> bool:
@@ -771,7 +857,10 @@ def execute_workflow_gate_response(
     provider: ModelProvider | None = None,
     use_llm_fallback: bool = True,
 ) -> dict[str, Any]:
-    if _repo_pick_reply(session, user_text) or _intake_ready_reply(session, user_text):
+    intake_gate = None if _repo_pick_reply(session, user_text) else _pending_intake_gate(session)
+    if intake_gate is not None and not _intake_go_ahead(intake_gate, user_text):
+        return record_intake_answer(session, intake_gate, user_text)
+    if intake_gate is not None or _repo_pick_reply(session, user_text):
         classification = ConfirmationClassification(decision="approve", source="deterministic")
     else:
         classification = classify_approval_gate_response(
@@ -816,6 +905,8 @@ def format_workflow_gate_response_ack(
         return str(result.get("summary") or format_approval_gate_clarification())
     if result.get("error"):
         return f"I couldn't update the workflow approval gate: {result['error']}"
+    if result.get("status") == "answer_recorded":
+        return "Got it. Say ready when you want a draft."
     if result.get("status") == "approved":
         message = "Approved the current workflow gate. I'll continue the workflow."
         resolved_type = workflow_type or str(result.get("workflow_type") or "")

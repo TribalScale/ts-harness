@@ -288,6 +288,22 @@ class ReaderSyncTests(_Trees):
         ensure_history_snapshot(a.root, load_skeleton(workflow_type, workflows_dir()))
         self.assertEqual(len(self.fake.commits), 1)
 
+    def test_history_snapshot_on_a_read_only_store_only_warns(self):
+        import errno
+
+        from ts_harness.workflows import definition_paths
+        from ts_harness.workflows.materialize import list_skeleton_types, load_skeleton
+        from ts_harness.repo_paths import workflows_dir
+
+        skeleton = load_skeleton(list_skeleton_types(workflows_dir())[0], workflows_dir())
+        read_only = OSError(errno.EROFS, "Read-only file system")
+        with mock.patch("ts_harness.storage.shared_tree.definitions_tree_for", return_value=None), mock.patch.object(definition_paths, "_atomic_write_json", side_effect=read_only), self.assertLogs(
+            definition_paths.logger, level="WARNING"
+        ) as logs:
+            definition_paths.ensure_history_snapshot(Path(self.tmp.name) / "ro", skeleton)
+        self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
+        self.assertIsNone(logs.records[0].exc_info)
+
     def test_reader_sync_never_raises(self):
         broken = mock.Mock()
         broken.pull_shared_files.side_effect = RuntimeError("memory api down")

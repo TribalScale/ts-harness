@@ -12,10 +12,12 @@ from ts_harness.gateway.channel_confirmations import (
     execute_confirmed_workflow_start,
     execute_governed_workflow_proposal,
     execute_intake_response,
+    execute_program_advance_proposal,
     execute_workflow_gate_response,
     execute_workflow_artifact_query,
     execute_workflow_status_query,
     format_intake_response_ack,
+    format_program_advance_proposal_message,
     format_program_advanced_message,
     format_program_started_message,
     format_workflow_gate_response_ack,
@@ -179,6 +181,60 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    def _bug_program_session(self):
+        self.session.metadata = {
+            **(self.session.metadata or {}),
+            "program_id": "prog-1",
+            "program_type": "bug_to_jira_work_orders",
+            "program_phase": "work_order",
+            "workflow_id": "wf-wo",
+            "workflow_type": "bug_work_order",
+            "mode": "bridge_linked",
+        }
+        get_session_store().save(self.session)
+        return ChannelIntent(
+            kind="program_advance",
+            program_type="bug_to_jira_work_orders",
+            entry_phase="file_jira",
+            summary="file these tickets",
+        )
+
+    def test_program_advance_proposal_waits_for_yes(self):
+        intent = self._bug_program_session()
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine_cls.return_value.get_status.return_value = {"status": "succeeded", "tasks": []}
+            result = execute_program_advance_proposal(
+                self.session, intent, tenant_id="default", agent_id="orchestrator", source="slack"
+            )
+        self.assertEqual(result["status"], "awaiting_confirmation")
+        pending = (get_session_store().get(self.session.session_id).metadata or {})["pending_program_advance"]
+        self.assertEqual(pending["target_node"], "file_jira")
+        self.assertEqual(pending["source_node"], "work_order")
+        self.assertEqual(
+            format_program_advance_proposal_message(result),
+            "Continue to file jira? Reply yes to continue, or no to stay.",
+        )
+
+    def test_program_advance_proposal_needs_a_finished_phase(self):
+        intent = self._bug_program_session()
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine_cls.return_value.get_status.return_value = {"status": "running", "tasks": []}
+            result = execute_program_advance_proposal(
+                self.session, intent, tenant_id="default", agent_id="orchestrator", source="slack"
+            )
+        self.assertEqual(result, {"status": "not_ready"})
+        self.assertNotIn("pending_program_advance", get_session_store().get(self.session.session_id).metadata or {})
+
+    def test_advanced_message_says_when_the_first_step_waits_for_a_reply(self):
+        message = format_program_advanced_message(
+            {"target_phase": "file_jira", "workflow_type": "file_work_orders_as_jira", "first_step": "choose_epic"}
+        )
+        self.assertIn("waiting for you. Reply ready to continue.", message)
+        started = format_program_started_message(
+            {"entry_phase": "bug_intake", "workflow_type": "bug_to_plan", "first_step": "pick_repo"}
+        )
+        self.assertIn("(pick repo) is waiting for you. Reply with the repo to use.", started)
+
     @patch("ts_harness.workflows.delivery_program.get_delivery_program_service")
     def test_execute_confirmed_program_advance_advances_program(self, service_factory):
         service = MagicMock()
@@ -221,6 +277,12 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(result["workflow_id"], "wf-jira")
         service.advance_program.assert_called_once()
+        self.assertEqual(service.advance_program.call_args.kwargs["source_workflow_id"], "wf-prd")
+        relinked = get_session_store().get(self.session.session_id).metadata or {}
+        self.assertEqual(relinked["workflow_id"], "wf-jira")
+        self.assertEqual(relinked["active_workflow_id"], "wf-jira")
+        self.assertEqual(relinked["program_phase"], "jira")
+        self.assertNotIn("pending_program_advance", relinked)
 
     def test_resolve_program_confirmation_proceed(self):
         set_pending_program(
@@ -508,13 +570,15 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         engine.handle_approve.assert_called_once()
         self.assertEqual(engine.handle_approve.call_args.kwargs["reply_text"], reply)
 
-    def test_intake_not_ready_is_not_an_approval(self):
+    def _intake_reply(self, text: str, gate_input: dict | None = None):
         self.session.metadata = {
             "workflow_id": "wf-1",
             "workflow_type": "bug_to_plan",
             "mode": "workflow_linked",
         }
-        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls, patch(
+            "ts_harness.memory.client.get_memory_client"
+        ) as memory_factory:
             engine = engine_cls.return_value
             engine.get_status.return_value = {
                 "tasks": [
@@ -528,19 +592,50 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
                         "approval_required": True,
                         "approval_status": "pending",
                         "depends_on": ["clarify-1"],
+                        "input": dict(gate_input or {"summary": "bug"}),
                     },
                 ],
             }
+            engine.handle_approve.return_value = {"id": "gate-1", "approval_status": "approved"}
             result = execute_workflow_gate_response(
                 self.session,
                 tenant_id="default",
                 agent_id="orchestrator",
                 source="web",
-                user_text="not ready, I need another pass",
+                user_text=text,
                 use_llm_fallback=False,
             )
+        return result, engine, memory_factory.return_value
+
+    def test_intake_not_ready_is_not_an_approval(self):
+        result, engine, _ = self._intake_reply("not ready, I need another pass")
         self.assertNotEqual(result.get("status"), "approved")
         engine.handle_approve.assert_not_called()
+
+    def test_intake_ready_after_a_leading_no_approves(self):
+        result, engine, _ = self._intake_reply("No design docs to add. Ready, draft the plan.")
+        self.assertEqual(result["status"], "approved")
+        engine.handle_reject.assert_not_called()
+
+    def test_intake_answer_is_recorded_and_never_rejected(self):
+        for text in ("No, the bug only happens on Safari", "not yet, wait for the logs", "don't draft yet"):
+            with self.subTest(text=text):
+                result, engine, memory = self._intake_reply(text, {"summary": "bug", "answers": ["first"]})
+                self.assertEqual(result["status"], "answer_recorded")
+                engine.handle_approve.assert_not_called()
+                engine.handle_reject.assert_not_called()
+                task_id, patched = memory.patch_task_input.call_args.args
+                self.assertEqual(task_id, "gate-1")
+                self.assertEqual(patched, {"summary": "bug", "answers": ["first", text]})
+                self.assertEqual(format_workflow_gate_response_ack(result), "Got it. Say ready when you want a draft.")
+
+    def test_jira_gate_approves_on_a_named_epic(self):
+        result, engine, _ = self._intake_reply(
+            "file under THD-17",
+            {"jira_allowed_projects": ["THD"], "jira_project_key": "THD"},
+        )
+        self.assertEqual(result["status"], "approved")
+        engine.handle_approve.assert_called_once()
 
     def test_classify_approval_gate_response_looks_good(self):
         result = classify_approval_gate_response("looks good", use_llm_fallback=False)

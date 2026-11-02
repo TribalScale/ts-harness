@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -172,7 +173,15 @@ def ensure_history_snapshot(
                     _atomic_write_json(path, payload)
         elif not path.exists():
             _atomic_write_json(path, payload)
-    except errors:
+    except errors as exc:
+        if isinstance(exc, OSError) and exc.errno == errno.EROFS:
+            logger.warning(
+                "workflow history snapshot skipped on read-only store "
+                "workflow_type=%s definition_version=%s",
+                skeleton.workflow_type,
+                skeleton.definition_version,
+            )
+            return path
         logger.exception(
             "workflow history snapshot write failed "
             "workflow_type=%s definition_version=%s",

@@ -596,6 +596,13 @@ Details here.
             "Given a disconnect during matchmaking, when reconnected, then resume queue.\n"
         )
         self.assertIsNone(planner_artifact_failure_reason(good_wo))
+        single_wo = good_wo.split("# WO-002")[0] + (
+            "## Notes\nThe brief is small enough for one work order; "
+            "the lobby list and join endpoints ship together behind one flag, "
+            "and the region filter reuses the existing player-profile region field. "
+            "Rate limits follow the shared gateway defaults, so no new config is needed.\n"
+        )
+        self.assertIsNone(planner_artifact_failure_reason(single_wo))
         ok = work_orders_artifacts_failure_reason(
             {
                 "work_orders_markdown": good_wo,

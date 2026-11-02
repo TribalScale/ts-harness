@@ -51,6 +51,38 @@ def resolve_jira_target(intake: dict[str, Any], allowed_projects: Iterable[Any])
     return ""
 
 
+_ISSUE_KEY_IN_TEXT = re.compile(r"(?<![A-Za-z0-9_-])([A-Z][A-Z0-9_]+-\d+)(?![A-Za-z0-9_])")
+
+
+def jira_choice_from_reply(reply: str, intake: dict[str, Any]) -> dict[str, str]:
+    """Project and epic a human named when confirming a filing gate.
+
+    An issue key in the reply is the epic to file under. Otherwise a single
+    allowed project named in the reply wins over the resolved default.
+    Returns nothing when the gate input carries no Jira target at all.
+    """
+    allowed = _normalize(intake.get("jira_allowed_projects") or [])
+    if not allowed and not intake.get("jira_project_key") and not intake.get("jira_epic_key"):
+        return {}
+    known = allowed or _normalize([resolve_jira_target(intake, allowed)])
+    text = str(reply or "")
+    for match in _ISSUE_KEY_IN_TEXT.finditer(text):
+        key = match.group(1)
+        project = _project_from_issue_key(key)
+        if project in known:
+            return {"jira_epic_key": key, "jira_project_key": project}
+    mentioned = _mentioned(text, allowed)
+    if len(mentioned) == 1:
+        return {"jira_project_key": mentioned[0]}
+    choice: dict[str, str] = {}
+    if intake.get("jira_epic_key"):
+        choice["jira_epic_key"] = str(intake["jira_epic_key"]).strip().upper()
+    target = resolve_jira_target(intake, allowed)
+    if target:
+        choice["jira_project_key"] = target
+    return choice
+
+
 def with_jira_target(intake: dict[str, Any], program_defaults: dict[str, Any] | None) -> dict[str, Any]:
     """Add ``jira_project_key`` and ``jira_allowed_projects`` to a phase intake when they can be resolved."""
     from ts_harness.config.bindings import tenant_bindings

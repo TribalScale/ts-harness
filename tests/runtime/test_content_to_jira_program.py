@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ts_harness.jira.target_project import jira_choice_from_reply
 from ts_harness.workflows.definition_validation import validate_workflow_definition
+from ts_harness.workflows.expressions import resolve_input_map
 from ts_harness.workflows.hooks import build_default_registry
 from ts_harness.workflows.program_adapters import build_default_adapter_registry
 from ts_harness.workflows.program_definition_store import ProgramDefinitionStore
@@ -101,6 +103,62 @@ class ContentToJiraProgramTests(unittest.TestCase):
         )
         self.assertEqual(patch["jira_epic_key"], "PROJ-100")
         self.assertEqual(patch["jira_story_keys"], ["PROJ-184"])
+
+    def test_file_jira_adapter_reads_keys_from_the_summary(self):
+        patch = build_default_adapter_registry().extract_outputs(
+            "extract_file_jira_outputs",
+            workflow_type="file_work_orders_as_jira",
+            tasks=[
+                {
+                    "step_name": "file_tickets",
+                    "status": "succeeded",
+                    "output": {"summary": "Filed epic THD-19 with stories THD-20 and THD-21 for WO-001."},
+                }
+            ],
+        )
+        self.assertEqual(patch["jira_epic_key"], "THD-19")
+        self.assertEqual(patch["jira_story_keys"], ["THD-20", "THD-21"])
+        lone_bug = build_default_adapter_registry().extract_outputs(
+            "extract_file_jira_outputs",
+            workflow_type="file_work_orders_as_jira",
+            tasks=[{"status": "succeeded", "output": {"summary": "Filed the bug as THD-22."}}],
+        )
+        self.assertEqual(lone_bug, {"jira_story_keys": ["THD-22"]})
+
+    def test_filing_runs_once_the_epic_choice_is_confirmed(self):
+        filing = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())
+        stages = {stage["name"]: stage for stage in filing["stages"]}
+        self.assertTrue(stages["choose_epic"]["approval_required"])
+        self.assertFalse(stages["file_tickets"].get("approval_required", False))
+        self.assertNotEqual(filing["definition_version"], "1.1.0")
+
+    def test_confirmed_project_reaches_the_filing_step(self):
+        filing = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())
+        file_tickets = next(stage for stage in filing["stages"] if stage["name"] == "file_tickets")
+        intake = {"jira_allowed_projects": ["TFS", "THD"], "jira_project_key": "THD"}
+        choice = jira_choice_from_reply("ready", intake)
+        tasks = [
+            {
+                "step_name": "choose_epic",
+                "status": "succeeded",
+                "created_at": "1",
+                "input": intake,
+                "output": {"reply_text": "ready", **choice},
+            }
+        ]
+        resolved = resolve_input_map(file_tickets["input_map"], tasks=tasks)
+        self.assertEqual(resolved["jira_project_key"], "THD")
+        self.assertEqual(resolved["jira_allowed_projects"], ["TFS", "THD"])
+
+    def test_reply_can_name_an_epic_or_another_allowed_project(self):
+        intake = {"jira_allowed_projects": ["TFS", "THD"], "jira_project_key": "THD"}
+        self.assertEqual(
+            jira_choice_from_reply("file under THD-17", intake),
+            {"jira_epic_key": "THD-17", "jira_project_key": "THD"},
+        )
+        self.assertEqual(jira_choice_from_reply("use tfs instead", intake), {"jira_project_key": "TFS"})
+        self.assertEqual(jira_choice_from_reply("ready, file WO-001", intake), {"jira_project_key": "THD"})
+        self.assertEqual(jira_choice_from_reply("ready", {"summary": "no jira here"}), {})
 
     def test_routing_intent(self):
         payload = {

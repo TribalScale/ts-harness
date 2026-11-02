@@ -88,6 +88,22 @@ class ApproveGateRepoPickTests(unittest.TestCase):
             {"reply_text": "ready, draft the bug", "summary": "ready, draft the bug"},
         )
 
+    def test_intake_gate_folds_recorded_answers_into_the_reply(self):
+        ctx = self._ctx("ready")
+        ctx.stage = replace(ctx.stage, contract_ref="", present_prompt="intake")
+        ctx.task["input"]["answers"] = ["Only on Safari", "Since the 1.4 release"]
+        approve_gate.handle(ctx)
+        output = ctx.memory_client.approve_task.call_args.kwargs["output"]
+        self.assertEqual(output["summary"], "Only on Safari\n\nSince the 1.4 release\n\nready")
+        self.assertEqual(output["answers"], ["Only on Safari", "Since the 1.4 release", "ready"])
+
+    def test_filing_gate_records_the_confirmed_project(self):
+        ctx = self._ctx("ready")
+        ctx.stage = replace(ctx.stage, contract_ref="", present_prompt="intake")
+        ctx.task["input"].update({"jira_allowed_projects": ["TFS", "THD"], "jira_project_key": "THD"})
+        approve_gate.handle(ctx)
+        self.assertEqual(ctx.memory_client.approve_task.call_args.kwargs["output"]["jira_project_key"], "THD")
+
 
 class MemoryClientApproveOutputTests(unittest.TestCase):
     def test_output_is_sent_to_memory_api(self):

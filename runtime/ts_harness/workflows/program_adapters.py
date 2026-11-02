@@ -7,6 +7,7 @@ and intake-building behavior.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 
@@ -598,6 +599,11 @@ def _extract_declared_outputs(
     if approved is not None and produces:
         first = produces[0]
         patch.setdefault(first, approved)
+    if "approved_prd" in produces and "approved_prd" not in patch:
+        result = merged.get("result") if isinstance(merged.get("result"), dict) else {}
+        markdown = merged.get("prd_markdown") or result.get("prd_markdown")
+        if isinstance(markdown, str) and markdown.strip():
+            patch["approved_prd"] = markdown
     return patch
 
 
@@ -652,7 +658,32 @@ def _extract_file_jira_outputs(
         patch["jira_epic_key"] = merged.get("epic_key") or merged.get("jira_epic_key")
     if merged.get("jira_story_keys") or merged.get("story_keys"):
         patch["jira_story_keys"] = merged.get("jira_story_keys") or merged.get("story_keys")
+    if not patch:
+        epic, keys = _filed_issue_keys(str(merged.get("summary") or ""))
+        if epic:
+            patch["jira_epic_key"] = epic
+        if keys:
+            patch["jira_story_keys"] = keys
     return patch
+
+
+_FILED_KEY_RE = re.compile(r"(?<![A-Za-z0-9_-])([A-Z][A-Z0-9_]+-\d+)(?![A-Za-z0-9_])")
+
+
+def _filed_issue_keys(summary: str) -> tuple[str, list[str]]:
+    """The epic key named in a filing summary and the other issue keys. Work-order ids are not Jira keys."""
+    keys: list[str] = []
+    for match in _FILED_KEY_RE.finditer(summary):
+        key = match.group(1)
+        if key.startswith("WO-") or key in keys:
+            continue
+        keys.append(key)
+    match = _EPIC_KEY_RE.search(summary)
+    epic = match.group(1) if match and match.group(1) in keys else ""
+    return epic, [key for key in keys if key != epic]
+
+
+_EPIC_KEY_RE = re.compile(r"\b(?:[Ee]pic|EPIC)\b[^A-Z\n]{0,20}([A-Z][A-Z0-9_]+-\d+)")
 
 
 def _build_pick_ticket_inputs(
