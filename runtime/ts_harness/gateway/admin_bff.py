@@ -202,10 +202,13 @@ def _knowledge_note_items(memory: Any, auth: AuthContext, runtime: Any) -> list[
         listed = memory.list_knowledge_notes(tenant_id=auth.tenant_id or "default", status="proposed")
     except Exception:
         return []
+    notes = listed.get("notes") if isinstance(listed, dict) else None
+    if not isinstance(notes, list):
+        return []
     config = getattr(runtime, "config", None)
     projects: dict[str, dict[str, Any]] = {}
     items = []
-    for note in listed.get("notes") or []:
+    for note in notes:
         project = None
         project_id = str(note.get("project_id") or "")
         if project_id:
