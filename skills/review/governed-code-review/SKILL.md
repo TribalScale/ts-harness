@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Governed Code Review
@@ -29,8 +29,10 @@ At invocation, announce:
 
 Then:
 
-1. Read `input.prs` (PR URL and head SHA). The PR set you report back **must
-   equal** this set exactly.
+1. Read `input.prs` (PR URL, head SHA, and title). The PR set you report back
+   **must** equal this set exactly. When the work order requires a title,
+   including a Jira-key prefix, judge that requirement from `title`. A title
+   that does not meet it is a finding.
 2. Read `input.files`: each changed file with `filename`, `status`,
    `additions`, `deletions`, `patch` (truncated at 20k characters; see
    `patch_truncated`) and `pr_url`. Lock files and generated code may already

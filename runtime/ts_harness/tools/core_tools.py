@@ -30,6 +30,7 @@ def register_core_tools(registry: ToolRegistry) -> None:
         set_program_autoshare_handler,
         set_program_project_handler,
         unlink_program_handler,
+        propose_knowledge_note_handler,
         remember_memory_handler,
         resume_external_event_handler,
         search_sessions_handler,
@@ -265,6 +266,29 @@ def register_core_tools(registry: ToolRegistry) -> None:
             },
             handler=lambda args, ctx: remember_memory_handler(args, ctx),
             toolsets=["core-read", "memory-api"],
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="propose_knowledge_note",
+            description=(
+                "Propose a short project note when this run hit a repo-specific trap "
+                "that is not already in Project notes. It waits for a person. Org notes are not accepted."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["avoid", "howto"]},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "why": {"type": "string"},
+                    "applies_to": {"type": "array", "items": {"type": "string"}},
+                    "scope": {"type": "string"},
+                },
+                "required": ["kind", "title", "body"],
+            },
+            handler=lambda args, ctx: propose_knowledge_note_handler(args, ctx),
+            toolsets=["knowledge-notes"],
         )
     )
     registry.register(

@@ -200,6 +200,8 @@ toolsets:
     - workflow_status
   skill-authoring:
     - propose_skill
+  knowledge-notes:
+    - propose_knowledge_note
   program-builder:
     - builder_catalog
     - propose_program_bundle
@@ -346,9 +348,11 @@ agents:
         - channel-chat
         - workflow-promotion
         - jira-read
+        - knowledge-notes
       tools:
         allow:
           - recall_memory
+          - propose_knowledge_note
           - read_file
           - session_status
           - remember_memory
@@ -412,9 +416,9 @@ agents:
       workspace: /workspace/dev-agent
       model: openai/gpt-4o
       skills: [dev, memory, workflows, integrate, governed-workflows]
-      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read, knowledge-notes]
       tools:
-        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill, propose_knowledge_note]
         deny: [delegate_task]
 
     - id: ops-agent

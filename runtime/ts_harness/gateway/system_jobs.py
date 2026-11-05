@@ -662,6 +662,16 @@ def github_rate_limits() -> dict[str, Any]:
     return refresh_github_rate_limits()
 
 
+def review_finished_programs() -> dict[str, Any]:
+    from ts_harness.learning.review_job import review_finished_programs as run_review
+
+    try:
+        return run_review()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("finished-program note review failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 def sweep_channel_dedup() -> dict[str, Any]:
     """Forget inbound channel event ids older than a week; platforms stop retrying long before that."""
     from ts_harness.storage.backend import state_backend
@@ -687,6 +697,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "github_rate_limits": github_rate_limits,
     "sweep_channel_dedup": sweep_channel_dedup,
     "start_program": start_scheduled_program,
+    "review_finished_programs": review_finished_programs,
 }
 
 PAYLOAD_HANDLERS = frozenset({"start_program"})

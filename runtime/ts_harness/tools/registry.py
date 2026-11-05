@@ -81,6 +81,7 @@ class ToolRegistry:
             stage_tools,
             stage_effects,
             ctx.approval_resumable,
+            bool(ctx.linked_workflow_id),
             self._generation,
         )
         if cache_key in self._defs_cache:

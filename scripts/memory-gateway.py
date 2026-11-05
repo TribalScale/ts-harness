@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
+from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
 from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import task_claims as task_claim_routes  # noqa: E402
@@ -4861,6 +4862,59 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def _is_projects_path(path: str) -> bool:
         return path == "/registry-hosts" or path == "/projects" or path.startswith(("/projects?", "/projects/"))
 
+    @staticmethod
+    def _is_notes_path(path: str) -> bool:
+        base = path.split("?", 1)[0]
+        return base == "/notes" or base.startswith("/notes/")
+
+    def _notes(self, method: str) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PATCH"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["notes"] and method == "GET":
+                    result = knowledge_note_routes.list_notes(conn, query)
+                elif parts == ["notes"] and method == "POST":
+                    result = knowledge_note_routes.create_note(conn, body)
+                elif parts == ["notes", "context"] and method == "GET":
+                    result = knowledge_note_routes.notes_context(conn, query)
+                elif parts == ["notes", "pending-programs"] and method == "GET":
+                    result = knowledge_note_routes.list_programs_pending_review(conn, query)
+                elif len(parts) == 2 and method == "GET":
+                    result = knowledge_note_routes.get_note(conn, parts[1])
+                elif len(parts) == 2 and method == "PATCH":
+                    result = knowledge_note_routes.update_note(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "versions" and method == "GET":
+                    result = knowledge_note_routes.list_versions(conn, parts[1])
+                elif len(parts) == 3 and parts[2] == "status" and method == "POST":
+                    result = knowledge_note_routes.set_note_status(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "restore" and method == "POST":
+                    result = knowledge_note_routes.restore_note(conn, parts[1], body)
+                elif len(parts) == 3 and parts[2] == "promote" and method == "POST":
+                    result = knowledge_note_routes.promote_note(conn, parts[1], body)
+                elif len(parts) == 4 and parts[1] == "programs" and parts[3] == "reviewed" and method == "POST":
+                    result = knowledge_note_routes.mark_program_reviewed(conn, parts[2], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except knowledge_note_routes.NoteConflict as exc:
+            self._send_json(409, {"error": "version conflict", "note": exc.note})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()
         if not token:
@@ -4884,6 +4938,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_projects_path(self.path):
             self._projects("GET")
+            return
+        if self._is_notes_path(self.path):
+            self._notes("GET")
             return
         if self._is_budgets_path(self.path):
             self._budgets("GET")
@@ -5255,6 +5312,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_projects_path(self.path):
             self._projects("POST")
             return
+        if self._is_notes_path(self.path):
+            self._notes("POST")
+            return
         if self._is_budgets_path(self.path):
             self._budgets("POST")
             return
@@ -5458,6 +5518,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         if not self._authorized():
             self._send_json(401, {"error": "unauthorized"})
+            return
+        if self._is_notes_path(self.path):
+            self._notes("PATCH")
             return
         if self.path.startswith("/scim/"):
             self._scim("PATCH")

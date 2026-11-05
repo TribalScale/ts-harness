@@ -650,6 +650,63 @@ def resume_external_event_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
     )
 
 
+_PROPOSE_LIMIT = 3
+
+
+def propose_knowledge_note_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
+    """A run may propose a project note. It stays proposed until a person approves it."""
+    from ts_harness.agent.sessions import get_session_store
+    from ts_harness.workflows.session_compat import read_active_workflow_id, read_program_id
+
+    if str(args.get("scope") or "project").strip() == "org":
+        return {"error": "org notes are reviewed by an admin, not proposed from a run"}
+    session = get_session_store().get(str(ctx.session_id or ""))
+    metadata = getattr(session, "metadata", None) if session is not None else None
+    program_id = read_program_id(metadata if isinstance(metadata, dict) else None)
+    if not program_id:
+        return {"error": "this run has no program"}
+    try:
+        loaded = get_memory_client().get_program(program_id)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    program = (loaded or {}).get("program") or {}
+    project_id = str(program.get("project_ref") or program.get("project_id") or "").strip()
+    if not project_id:
+        return {"error": "this program has no project"}
+    workflow_id = read_active_workflow_id(metadata if isinstance(metadata, dict) else None)
+    evidence_ref = workflow_id or program_id
+    listed = get_memory_client().list_knowledge_notes(
+        tenant_id=ctx.tenant_id or "default",
+        scope="project",
+        project_id=project_id,
+        status="proposed",
+        source="agent",
+    )
+    already = 0
+    for note in listed.get("notes") or []:
+        for item in note.get("evidence") or []:
+            if isinstance(item, dict) and str(item.get("ref") or "") == evidence_ref:
+                already += 1
+                break
+    if already >= _PROPOSE_LIMIT:
+        return {"error": "this run already proposed 3 notes"}
+    return get_memory_client().create_knowledge_note(
+        tenant_id=ctx.tenant_id or program.get("tenant_id") or "default",
+        scope="project",
+        project_id=project_id,
+        kind=str(args.get("kind") or "avoid"),
+        title=str(args.get("title") or ""),
+        body=str(args.get("body") or ""),
+        why=str(args.get("why") or ""),
+        applies_to=list(args.get("applies_to") or []),
+        source="agent",
+        status="proposed",
+        proposal_action="add",
+        actor=ctx.agent_id,
+        evidence=[{"type": "workflow" if workflow_id else "program", "ref": evidence_ref}],
+    )
+
+
 def remember_memory_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
     content = str(args.get("content") or "").strip()
     if not content:

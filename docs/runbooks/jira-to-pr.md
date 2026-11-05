@@ -12,6 +12,8 @@ propose_start_program(program_type=jira_to_pr, entry_phase=pick)
 
 With a key: `entry_phase=implement` and `artifacts.jira_issue_key=PROJ-123`.
 
+The kickoff (`hydrate_ticket`) is a human gate. Approving it starts implementation in `deliver_work_order` as the dev agent.
+
 ## Identity
 
 Requires `identity.slack_user_emails` plus `identity.jira_account_ids` (email → accountId).

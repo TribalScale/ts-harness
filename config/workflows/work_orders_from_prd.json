@@ -169,7 +169,8 @@
         "approved_prd": "$workflow.approved_prd",
         "stage": "foundry",
         "prior_refinery": "$prior.refine_requirements.output.artifacts",
-        "project_repositories": "$workflow.project_repositories"
+        "project_repositories": "$workflow.project_repositories",
+        "knowledge_notes": "$workflow.knowledge_notes"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 3600 }
     },
@@ -200,7 +201,8 @@
         "stage": "planner",
         "prior_refinery": "$prior.refine_requirements.output.artifacts",
         "prior_foundry": "$prior.design_blueprints.output.artifacts",
-        "project_repositories": "$workflow.project_repositories"
+        "project_repositories": "$workflow.project_repositories",
+        "knowledge_notes": "$workflow.knowledge_notes"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 3600 }
     },

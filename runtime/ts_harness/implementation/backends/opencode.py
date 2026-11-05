@@ -261,6 +261,7 @@ def build_implement_prompt(
     review_feedback: str | None = None,
     revision_files: list[str] | None = None,
     human_change_requests: list[str] | None = None,
+    knowledge_notes: list[dict] | None = None,
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -275,6 +276,11 @@ def build_implement_prompt(
         "(for example pytest.py or a behave/ package).\n"
         f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
     )
+    from ts_harness.knowledge.prompt import render_knowledge_notes
+
+    notes = render_knowledge_notes(knowledge_notes, headings=True)
+    if notes:
+        hard_rules += "\n" + notes
     cited = [path for path in (revision_files or []) if str(path).strip()]
     if cited:
         hard_rules += (
@@ -828,6 +834,7 @@ class OpenCodeBackend:
                 review_feedback=request.review_feedback,
                 revision_files=request.revision_files,
                 human_change_requests=request.human_change_requests,
+                knowledge_notes=request.knowledge_notes,
             )
             cmd = build_opencode_command(
                 binary=binary,

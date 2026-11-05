@@ -226,7 +226,7 @@ def review_precheck(
         owner, repo, number = parsed
         pull = github.get_pull(owner, repo, number)
         head_sha = str((pull.get("head") or {}).get("sha") or "")
-        prs.append({"pr_url": pr_url, "head_sha": head_sha})
+        prs.append({"pr_url": pr_url, "head_sha": head_sha, "title": str(pull.get("title") or "")})
         counted = []
         for item in github.list_pull_files(owner, repo, number):
             entry = {**_file_entry(item), "pr_url": pr_url}

@@ -2644,12 +2644,12 @@ async def internal_coding_job_github_token(request: Request) -> Response:
 
 
 async def _admin_projects_call(request: Request, call) -> Response:
-    from ts_harness.memory.client import ProgramNotFound
+    from ts_harness.memory.client import MemoryApiConflict, ProgramNotFound
 
     body: dict[str, Any] = {}
     try:
         _check_origin(request)
-        if request.method in {"POST", "PUT"}:
+        if request.method in {"POST", "PUT", "PATCH"}:
             body = await _json_object_body(request)
         auth = _auth(request, body)
         runtime = get_runtime()
@@ -2666,6 +2666,12 @@ async def _admin_projects_call(request: Request, call) -> Response:
         return _json({"error": str(exc)}, 403)
     except (LookupError, ProgramNotFound):
         return _json({"error": "not found"}, 404)
+    except MemoryApiConflict as exc:
+        payload: dict[str, Any] = {"error": str(exc), "code": "version_conflict"}
+        note = exc.detail.get("note") if isinstance(exc.detail, dict) else None
+        if note is not None:
+            payload["note"] = note
+        return _json(payload, 409)
     except ValueError as exc:
         return _json({"error": str(exc)}, 400)
     except RuntimeError as exc:
@@ -2762,6 +2768,59 @@ async def admin_project_repository(request: Request) -> Response:
     if request.method == "DELETE":
         return await _admin_projects_call(request, lambda m, a, c, _b: bff.delete_repository_admin(m, a, c, pid, rid))
     return await _admin_projects_call(request, lambda m, a, c, b: bff.update_repository_admin(m, a, c, pid, rid, b))
+
+
+async def admin_org_notes(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    if request.method == "POST":
+        return await _admin_projects_call(request, bff.create_org_note_admin)
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_org_notes_admin(m, a, c, _b))
+
+
+async def admin_note(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.update_note_admin(m, a, c, note_id, b))
+
+
+async def admin_note_status(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.set_note_status_admin(m, a, c, note_id, b))
+
+
+async def admin_note_versions(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.note_versions_admin(m, a, c, note_id))
+
+
+async def admin_note_restore(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.restore_note_admin(m, a, c, note_id, b))
+
+
+async def admin_project_notes(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    if request.method == "POST":
+        return await _admin_projects_call(request, lambda m, a, c, b: bff.create_project_note_admin(m, a, c, pid, b))
+    return await _admin_projects_call(request, lambda m, a, c, b: bff.list_project_notes_admin(m, a, c, b, pid))
+
+
+async def admin_project_note_promote(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.promote_project_note_admin(m, a, c, pid, note_id))
 
 
 async def admin_project_registry_test(request: Request) -> Response:
@@ -4161,7 +4220,18 @@ routes = [
     Route("/admin/budgets", endpoint=admin_budgets, methods=["GET"]),
     Route("/admin/budgets/{team_id}/raise", endpoint=admin_budget_raise, methods=["POST"]),
     Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET"]),
+    Route("/admin/notes", endpoint=admin_org_notes, methods=["GET", "POST"]),
+    Route("/admin/notes/{note_id}", endpoint=admin_note, methods=["PATCH"]),
+    Route("/admin/notes/{note_id}/status", endpoint=admin_note_status, methods=["POST"]),
+    Route("/admin/notes/{note_id}/versions", endpoint=admin_note_versions, methods=["GET"]),
+    Route("/admin/notes/{note_id}/restore", endpoint=admin_note_restore, methods=["POST"]),
     Route("/admin/projects", endpoint=admin_projects, methods=["GET", "POST"]),
+    Route("/admin/projects/{project_id}/notes", endpoint=admin_project_notes, methods=["GET", "POST"]),
+    Route(
+        "/admin/projects/{project_id}/notes/{note_id}/promote",
+        endpoint=admin_project_note_promote,
+        methods=["POST"],
+    ),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
     Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),
     Route(

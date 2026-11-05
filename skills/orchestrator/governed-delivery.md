@@ -143,7 +143,7 @@ Return the epic key, child ticket keys, Jira URLs, warnings, and unresolved open
 
 ## Stage 4 — Development
 
-For each Jira ticket selected by the user or orchestrator, delegate to `dev-agent` using `skills/dev/jira-to-pr.md`.
+Dev work for a Jira ticket runs in the `deliver_work_order` stage of `jira_to_pr` and of the other implement programs. That stage is assigned to `dev-agent`. From chat, when no program is running, delegate to `dev-agent` using `skills/dev/jira-to-pr.md`.
 
 Constraints:
 

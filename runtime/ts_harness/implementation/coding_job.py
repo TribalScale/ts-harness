@@ -85,6 +85,9 @@ def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
             binding[key] = items
     if task_input.get("refresh") is True:
         binding["refresh"] = True
+    notes = task_input.get("knowledge_notes")
+    if isinstance(notes, list) and notes:
+        binding["knowledge_notes"] = [item for item in notes if isinstance(item, dict)]
     return binding
 
 
@@ -229,6 +232,7 @@ def build_coding_request(
             text for item in revision_files(feedback_source.get("human_change_requests")) or [] if (text := clean_text(item))
         ]
         or None,
+        "knowledge_notes": _note_list(bound.get("knowledge_notes") if "knowledge_notes" in bound else args.get("knowledge_notes")),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
         # Workers on Fargate have no runtime config file; carry what the run needs.
         "backend": {
@@ -241,6 +245,13 @@ def build_coding_request(
 
 
 _SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend"}
+
+
+def _note_list(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    notes = [item for item in value if isinstance(item, dict)]
+    return notes or None
 
 
 def _backend_from_spec(backend: dict[str, Any]) -> OpenCodeBackend:

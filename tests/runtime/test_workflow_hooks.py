@@ -703,6 +703,18 @@ class WorkflowHookTests(unittest.TestCase):
         mock_notifier_cls.assert_not_called()
 
     @patch("ts_harness.notifications.slack.SlackNotifier")
+    def test_notify_bound_channel_skips_operator_label(self, mock_notifier_cls):
+        ctx = self._ctx(
+            runner_event="failed",
+            extras={"error": "boom"},
+            workflow={"source_channel": "operator:thd32:allowlist"},
+        )
+        result = notify_bound_channel.handle(ctx)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no binding")
+        mock_notifier_cls.assert_not_called()
+
+    @patch("ts_harness.notifications.slack.SlackNotifier")
     def test_notify_bound_channel(self, mock_notifier_cls):
         mock_notifier_cls.return_value.notify_workflow_event.return_value = None
         ctx = self._ctx(runner_event="failed", extras={"error": "boom"})

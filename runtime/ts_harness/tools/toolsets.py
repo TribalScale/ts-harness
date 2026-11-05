@@ -19,6 +19,7 @@ TOOLSET_DEFINITIONS = {
     "delegation": {"delegate_task", "propose_delegate_task"},
     "channel-chat": {"propose_delegate_task"},
     "program-builder": {"builder_catalog", "propose_program_bundle"},
+    "knowledge-notes": {"propose_knowledge_note"},
 }
 
 

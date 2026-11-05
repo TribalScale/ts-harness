@@ -165,8 +165,10 @@ def resolve_token(
         "workflow.work_order_ids",
         "workflow.drive_library",
         "workflow.jira_epic_key",
+        "workflow.jira_issue_key",
         "workflow.bug_report",
         "workflow.project_repositories",
+        "workflow.knowledge_notes",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):

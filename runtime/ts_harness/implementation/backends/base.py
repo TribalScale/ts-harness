@@ -32,6 +32,7 @@ class CodingRequest:
     review_feedback: str | None = None
     revision_files: list[str] | None = None
     human_change_requests: list[str] | None = None
+    knowledge_notes: list[dict[str, Any]] | None = None
 
 
 def attribution_markdown(request: CodingRequest) -> str:

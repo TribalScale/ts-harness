@@ -105,6 +105,72 @@ class ApproveGateRepoPickTests(unittest.TestCase):
         self.assertEqual(ctx.memory_client.approve_task.call_args.kwargs["output"]["jira_project_key"], "THD")
 
 
+class ImplementTicketGateTests(unittest.TestCase):
+    def test_intake_approval_carries_repo_fields_into_deliver(self):
+        skeleton = load_skeleton("implement_jira_ticket")
+        client = MagicMock()
+        client.approve_task.return_value = {"status": "succeeded"}
+        client.get_workflow.return_value = {
+            "workflow": {"id": "wf-1", "program_id": None},
+            "tasks": [
+                {
+                    "id": "gate-1",
+                    "step_name": "hydrate_ticket",
+                    "status": "pending",
+                    "input": {},
+                    "output": {},
+                    "created_at": "2026-01-01",
+                },
+                {
+                    "id": "deliver-1",
+                    "step_name": "deliver_work_order",
+                    "status": "pending",
+                    "input": {},
+                    "created_at": "2026-01-02",
+                },
+            ],
+        }
+        client.patch_task_input.side_effect = lambda task_id, merged, actor=None: {
+            "id": task_id,
+            "input": merged,
+        }
+        ctx = HookContext(
+            workflow_id="wf-1",
+            workflow_type="implement_jira_ticket",
+            tenant_id="default",
+            task={
+                "id": "gate-1",
+                "step_name": "hydrate_ticket",
+                "input": {
+                    "jira_issue_key": "THD-32",
+                    "repo_url": "https://github.com/org/thd",
+                    "base_branch": "dev",
+                    "work_order_body": "Keep the change small",
+                    "summary": "kickoff",
+                },
+            },
+            stage=skeleton.stage("hydrate_ticket"),
+            skeleton=skeleton,
+            actor="orchestrator",
+            memory_client=client,
+            extras={"decision": {}, "reply_text": "yes, branch release/2"},
+        )
+
+        approve_gate.handle(ctx)
+
+        output = client.approve_task.call_args.kwargs["output"]
+        self.assertEqual(output["repo_url"], "https://github.com/org/thd")
+        self.assertEqual(output["base_branch"], "release/2")
+        self.assertEqual(output["jira_issue_key"], "THD-32")
+        self.assertEqual(output["work_order_body"], "Keep the change small")
+        patched = client.patch_task_input.call_args.args[1]
+        self.assertEqual(client.patch_task_input.call_args.args[0], "deliver-1")
+        self.assertEqual(patched["repo_url"], "https://github.com/org/thd")
+        self.assertEqual(patched["base_branch"], "release/2")
+        self.assertEqual(patched["jira_issue_key"], "THD-32")
+        self.assertEqual(patched["work_order_body"], "Keep the change small")
+
+
 class MemoryClientApproveOutputTests(unittest.TestCase):
     def test_output_is_sent_to_memory_api(self):
         client = MemoryClient("http://memory")
