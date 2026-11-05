@@ -30,6 +30,7 @@ TS Harness workflows are declared in JSON skeletons under `config/workflows/`. T
 | `continue_delivery` | `continue_delivery` tool after confirm | Bridge to next phase (`jira_from_prd` when programs enabled) |
 | `register_program` | `promote` when programs enabled | Create/link delivery program on workflow start |
 | `complete_program_phase` | Runner when all phase tasks succeed | Merge artifacts; optional auto-advance |
+| `freeze_ticket_queue` | `pick_ticket` on_complete | Keep the confirmed ticket list equal to the list the barrier froze |
 
 ## Expression language (`input_map`)
 

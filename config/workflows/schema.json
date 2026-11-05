@@ -122,7 +122,8 @@
                 "mark_artifact_approved",
                 "mark_prd_approved",
                 "bridge_workflow",
-                "apply_review_proposals"
+                "apply_review_proposals",
+                "freeze_ticket_queue"
               ]
             },
             "downstream": { "type": "array", "items": { "type": "string" } }
