@@ -70,6 +70,7 @@ class AdminBffTests(unittest.TestCase):
             },
             "recommended_action": "approve_or_reject_pending_gate",
         }
+        memory.list_knowledge_notes.return_value = {"notes": []}
         runtime = SimpleNamespace(
             policy=SimpleNamespace(
                 evaluate_identity=mock.Mock(return_value=SimpleNamespace(decision="allow"))
@@ -156,6 +157,7 @@ class AdminBffTests(unittest.TestCase):
         memory = mock.Mock()
         memory.list_programs.return_value = {"programs": []}
         memory.list_stuck_tasks.return_value = [stuck]
+        memory.list_knowledge_notes.return_value = {"notes": []}
         payloads = {
             "wf-d": {"workflow": {"id": "wf-d", "workflow_type": "deliver_work_order", "parent_workflow_id": "wf-impl"}, "tasks": [deliver, {**stuck, "status": "blocked"}]},
             "wf-impl": {"workflow": {"id": "wf-impl", "program_id": "prog-1"}, "tasks": []},
