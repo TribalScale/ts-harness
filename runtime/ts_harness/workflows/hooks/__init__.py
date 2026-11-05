@@ -13,6 +13,7 @@ from . import (
     continue_delivery,
     expand_on_complete,
     fork_subworkflow,
+    freeze_ticket_queue,
     hydrate_input,
     mark_artifact_approved,
     mark_prd_approved,
@@ -32,6 +33,7 @@ def build_default_registry() -> HookRegistry:
     registry.register("apply_review_proposals", apply_review_proposals.handle)
     registry.register("revise_on_reject", revise_on_reject.handle)
     registry.register("hydrate_input", hydrate_input.handle)
+    registry.register("freeze_ticket_queue", freeze_ticket_queue.handle)
     registry.register("approve_gate", approve_gate.handle)
     registry.register("expand_on_complete", expand_on_complete.handle)
     registry.register("notify_bound_channel", notify_bound_channel.handle)

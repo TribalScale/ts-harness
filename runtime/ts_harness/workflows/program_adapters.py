@@ -50,7 +50,7 @@ ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     "extract_deploy_outputs": frozenset({"merge_sha", "released_environments"}),
     "extract_file_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys"}),
     "extract_pick_ticket_outputs": frozenset(
-        {"jira_issue_key", "jira_project_key", "owner_program_id"}
+        {"jira_issue_key", "jira_project_key", "owner_program_id", "jira_issue_keys"}
     ),
     "extract_declared_outputs": None,
 }
@@ -719,6 +719,9 @@ def _extract_pick_ticket_outputs(
     owner = owner_program_from_pick_output(merged)
     if owner:
         patch["owner_program_id"] = owner
+    keys = merged.get("jira_issue_keys")
+    if isinstance(keys, list) and keys and all(isinstance(item, str) and item.strip() for item in keys):
+        patch["jira_issue_keys"] = [item.strip() for item in keys]
     return patch
 
 

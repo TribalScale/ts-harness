@@ -44,6 +44,7 @@ class ChannelIntent:
     delegate_agent: str | None = None
     summary: str = ""
     rule_id: str | None = None
+    artifacts: dict | None = None
 
 
 def classify_channel_intent(
@@ -127,12 +128,48 @@ def program_advance_candidates(text: str, metadata: dict) -> list[dict]:
         snapshot = get_program_definition_registry().load(program_type)
     except (FileNotFoundError, ValueError):
         return []
-    return resolve_bridge_candidates_from_text(
+    candidates = resolve_bridge_candidates_from_text(
         text,
         source_workflow_type=str(metadata.get("workflow_type") or ""),
         snapshot=snapshot,
         source_node=source_node,
     )
+    if not any(
+        item.get("source_node") == "implement" and item.get("target_node") == "pick"
+        for item in candidates
+    ):
+        return candidates
+    from ts_harness.jira.ticket_queue import queue_is_active
+
+    if queue_is_active(_artifacts_for_queue(metadata)):
+        return [
+            item
+            for item in candidates
+            if not (item.get("source_node") == "implement" and item.get("target_node") == "pick")
+        ]
+    return candidates
+
+
+def _artifacts_for_queue(metadata: dict) -> dict:
+    """Session artifacts when they already hold the queue; otherwise the program row."""
+    from ts_harness.workflows.session_compat import read_program_artifacts, read_program_id
+
+    artifacts = read_program_artifacts(metadata)
+    if "program_artifacts" in (metadata or {}):
+        return artifacts
+    program_id = read_program_id(metadata)
+    if not program_id:
+        return artifacts
+    try:
+        from ts_harness.memory.client import get_memory_client
+
+        payload = get_memory_client().get_program(program_id) or {}
+    except Exception:
+        return artifacts
+    program = payload.get("program") if isinstance(payload.get("program"), dict) else {}
+    meta = program.get("metadata") or {}
+    live = meta.get("artifacts") if isinstance(meta, dict) else None
+    return dict(live) if isinstance(live, dict) else artifacts
 
 
 def _match_program_advance(text: str, metadata: dict) -> ChannelIntent | None:

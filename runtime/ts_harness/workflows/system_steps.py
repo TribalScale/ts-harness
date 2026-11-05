@@ -39,6 +39,12 @@ def _gather_bug_context(task: dict[str, Any], config: dict[str, Any], *, memory:
     return gather_bug_context(task, config, memory=memory)
 
 
+def _prepare_ticket_queue(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    from ts_harness.jira.prepare_ticket_queue import prepare_ticket_queue
+
+    return prepare_ticket_queue(task, config, memory=memory)
+
+
 SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     **release.SYSTEM_STEPS,
     "fork_work_order_wave": work_order_waves.fork_wave,
@@ -47,6 +53,7 @@ SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "review_precheck": _review_precheck,
     "finalize_code_review": _finalize_code_review,
     "gather_bug_context": _gather_bug_context,
+    "prepare_ticket_queue": _prepare_ticket_queue,
 }
 
 

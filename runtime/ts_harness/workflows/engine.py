@@ -79,6 +79,33 @@ def _keyword_workflow(*_: Any, workflow_id: str = "", **__: Any) -> str:
     return workflow_id
 
 
+_QUEUE_GATE_STEPS = frozenset({"hydrate_ticket", "pick_ticket"})
+
+
+def _queue_gate_rejection(client: Any, payload: dict[str, Any], gate_task: dict[str, Any]) -> bool:
+    """A queue stops when its kickoff or the ticket list is rejected."""
+    if str(gate_task.get("step_name") or "") not in _QUEUE_GATE_STEPS:
+        return False
+    workflow = payload.get("workflow") if isinstance(payload.get("workflow"), dict) else {}
+    program_id = str(workflow.get("program_id") or "").strip()
+    if not program_id or not hasattr(client, "get_program"):
+        return False
+    try:
+        program = (client.get_program(program_id) or {}).get("program") or {}
+    except Exception:
+        return False
+    metadata = program.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return False
+    artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
+    keys = artifacts.get("jira_issue_keys")
+    return (
+        isinstance(keys, list)
+        and bool(keys)
+        and all(isinstance(item, str) and item.strip() for item in keys)
+    )
+
+
 class WorkflowEngine:
     def __init__(
         self,
@@ -474,12 +501,65 @@ class WorkflowEngine:
                     tenant_id=tenant_id,
                 )
             return result
+        if _queue_gate_rejection(self.client, payload, gate_task):
+            return self._fail_queue_gate(
+                workflow_id=workflow_id,
+                workflow_type=workflow_type,
+                tenant_id=tenant_id,
+                gate_task=gate_task,
+                comments=comments,
+                actor=actor,
+                payload=payload,
+                decision=decision,
+            )
         result = self.client.reject_task(
             str(gate_task["id"]),
             actor=actor,
             **decision_request_fields(decision, payload.get("workflow")),
         )
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
+        return result
+
+    def _fail_queue_gate(
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: str,
+        tenant_id: str,
+        gate_task: dict[str, Any],
+        comments: str,
+        actor: str,
+        payload: dict[str, Any],
+        decision: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        result = self.client.reject_task(
+            str(gate_task["id"]),
+            actor=actor,
+            **decision_request_fields(decision, payload.get("workflow")),
+        )
+        gate_id = str(gate_task["id"])
+        for task in list(payload.get("tasks") or []):
+            task_id = str(task.get("id") or "")
+            if not task_id or task_id == gate_id:
+                continue
+            if str(task.get("status") or "") in {"pending", "running", "blocked"}:
+                self.client.cancel_task(task_id, actor=actor, reason="ticket queue stopped")
+        self.client.fail_task(gate_id, comments or "ticket queue rejected", actor=actor)
+        ctx = self._context(
+            workflow_id=workflow_id,
+            workflow_type=workflow_type,
+            tenant_id=tenant_id,
+            task=gate_task,
+            actor=actor,
+            reject_comments=comments,
+            extras={"decision": dict(decision or {})},
+        )
+        phase = self._maybe_complete_program_phase(ctx)
+        self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
+        if isinstance(result, dict):
+            result = {**result, "status": "failed"}
+            if isinstance(phase, dict):
+                result["phase"] = phase
         return result
 
     @_locked(_keyword_workflow)

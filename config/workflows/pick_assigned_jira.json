@@ -1,6 +1,6 @@
 {
   "workflow_type": "pick_assigned_jira",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "display_name": "Pick an assigned Jira ticket",
   "contracts": {
     "ticket_pick": {
@@ -11,7 +11,12 @@
           "jira_issue_key": { "type": "string", "minLength": 1 },
           "jira_project_key": { "type": "string" },
           "jira_issue_description": { "type": "string" },
-          "owner_program_id": { "type": "string" }
+          "owner_program_id": { "type": "string" },
+          "jira_issue_keys": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "queue_exclusions": { "type": "array" }
         }
       }
     }
@@ -49,10 +54,26 @@
       "retry": { "max_retries": 0, "timeout_seconds": 86400 }
     },
     {
-      "name": "pick_ticket",
+      "name": "prepare_ticket_queue",
       "kind": "task",
       "agent_id": "orchestrator",
       "depends_on": ["list_projects"],
+      "allowed_agents": ["orchestrator"],
+      "present_output": true,
+      "present_prompt": "inform",
+      "present_body": "summary",
+      "barrier": { "hook": "prepare_ticket_queue" },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["pick_ticket"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 120 }
+    },
+    {
+      "name": "pick_ticket",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["prepare_ticket_queue"],
       "allowed_agents": ["orchestrator"],
       "approval_required": true,
       "contract_ref": "ticket_pick",
@@ -60,8 +81,11 @@
       "present_prompt": "intake",
       "input_map": {
         "jira_project_key": "$prior.list_projects.output.jira_project_key",
-        "jira_issue_key": "$workflow.jira_issue_key"
+        "jira_issue_key": "$prior.prepare_ticket_queue.output.jira_issue_key",
+        "jira_issue_keys": "$prior.prepare_ticket_queue.output.jira_issue_keys",
+        "queue_exclusions": "$prior.prepare_ticket_queue.output.queue_exclusions"
       },
+      "on_complete": { "hook": "freeze_ticket_queue" },
       "retry": { "max_retries": 0, "timeout_seconds": 86400 }
     }
   ]

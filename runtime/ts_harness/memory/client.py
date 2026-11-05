@@ -344,6 +344,19 @@ class MemoryClient:
             {"id": task_id, "output": output, "actor": actor},
         )
 
+    def fail_task(
+        self,
+        task_id: str,
+        error: str,
+        *,
+        actor: str = "workflow-runner",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/workflow/fail",
+            {"id": task_id, "error": error, "actor": actor},
+        )
+
     def cancel_task(
         self,
         task_id: str,
