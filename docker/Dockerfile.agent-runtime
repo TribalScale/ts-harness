@@ -40,10 +40,13 @@ FROM python:3.11-slim-trixie
 WORKDIR /app
 
 # make/gcc/libc6-dev: Makefile repos, cgo and Rust linking. The JDK backs Maven and Gradle
-# (trixie packages JDK 21, not 17).
+# (trixie packages JDK 21, not 17). apt and libapt-pkg7.0 are listed so the base image's
+# 3.0.3 copies pick up trixie-security 3.0.4 (CVE-2026-109518).
 RUN mkdir -p /usr/share/man/man1 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+        apt \
+        libapt-pkg7.0 \
         ca-certificates \
         curl \
         docker.io \
