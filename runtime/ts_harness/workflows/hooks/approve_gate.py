@@ -68,6 +68,14 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 output["answers"] = [*answers, reply]
             output.update(jira_choice_from_reply(reply, task_input))
         output = _carry_gate_inputs(output, task_input, reply)
+    on_complete = dict(ctx.stage.on_complete or {})
+    if on_complete.get("hook") == "freeze_ticket_queue":
+        from ts_harness.workflows.hooks import freeze_ticket_queue
+
+        frozen = freeze_ticket_queue.handle(ctx)
+        frozen_output = frozen.get("output") if isinstance(frozen, dict) else None
+        if isinstance(frozen_output, dict) and frozen_output.get("jira_issue_keys"):
+            output = {**(output or {}), **frozen_output}
     # memory-api approve completes approval-required gates (pending -> succeeded)
     # so the ready-queue never dispatches them to the orchestrator agent.
     result = ctx.memory_client.approve_task(
@@ -84,7 +92,6 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         # written it, and the workflow payload may still show the old output.
         ctx.dispatch_result = {"output": output}
 
-    on_complete = dict(ctx.stage.on_complete or {})
     if on_complete.get("hook") == "hydrate_input":
         downstream = list(on_complete.get("downstream") or [])
         if downstream:

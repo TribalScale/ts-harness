@@ -100,14 +100,23 @@ class ChannelIntentTests(unittest.TestCase):
         cases = [
             "show my tickets",
             "pick up my jira for this sprint",
-            "implement PROJ-184",
-            "please implement pay2-42 today",
+            "implement the rest",
+            "implement all",
+            "implement all my tickets",
         ]
         for text in cases:
             intent = classify_channel_intent(text, {}, config=self.config)
             self.assertEqual(intent.kind, "jira_to_pr", msg=text)
             self.assertEqual(intent.program_type, "jira_to_pr")
-            self.assertEqual(intent.entry_phase, "pick")
+            self.assertEqual(intent.entry_phase, "pick", msg=text)
+
+        named = classify_channel_intent("implement PROJ-184", {}, config=self.config)
+        self.assertEqual(named.kind, "jira_to_pr")
+        self.assertEqual(named.entry_phase, "implement")
+        self.assertEqual(named.artifacts, {"jira_issue_key": "PROJ-184"})
+        other = classify_channel_intent("please implement pay2-42 today", {}, config=self.config)
+        self.assertEqual(other.entry_phase, "implement")
+        self.assertEqual(other.artifacts, {"jira_issue_key": "PAY2-42"})
 
         for text in ("implement retries in checkout", "implement step-by-step logging"):
             intent = classify_channel_intent(text, {}, config=self.config)

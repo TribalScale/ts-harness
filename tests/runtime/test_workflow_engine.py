@@ -97,6 +97,60 @@ class WorkflowEngineTests(unittest.TestCase):
         )
         self.assertEqual(result["approval_status"], "rejected")
 
+    def test_rejecting_a_queue_kickoff_fails_the_task(self):
+        tasks = [
+            {"id": "gate-1", "step_name": "hydrate_ticket", "status": "pending"},
+            {"id": "deliver-1", "step_name": "deliver_work_order", "status": "pending"},
+        ]
+
+        def get_workflow(workflow_id):
+            return {
+                "workflow": {
+                    "id": workflow_id,
+                    "workflow_type": "implement_jira_ticket",
+                    "program_id": "prog-1",
+                    "program_phase": "implement",
+                },
+                "tasks": tasks,
+            }
+
+        def cancel_task(task_id, *, actor, reason=""):
+            for task in tasks:
+                if task["id"] == task_id:
+                    task["status"] = "cancelled"
+            return {}
+
+        def fail_task(task_id, error, *, actor):
+            for task in tasks:
+                if task["id"] == task_id:
+                    task["status"] = "failed"
+            return {}
+
+        self.client.get_workflow.side_effect = get_workflow
+        self.client.get_program.return_value = {
+            "program": {
+                "id": "prog-1",
+                "metadata": {"artifacts": {"jira_issue_keys": ["PROJ-1", "PROJ-2"]}},
+            }
+        }
+        self.client.reject_task.return_value = {"id": "gate-1", "approval_status": "rejected"}
+        self.client.cancel_task.side_effect = cancel_task
+        self.client.fail_task.side_effect = fail_task
+        result = self.engine.handle_reject(
+            workflow_id="wf-1",
+            gate_task={
+                "id": "gate-1",
+                "workflow_type": "implement_jira_ticket",
+                "step_name": "hydrate_ticket",
+            },
+            comments="stop",
+            actor="orchestrator",
+        )
+        self.client.fail_task.assert_called_once()
+        self.client.cancel_task.assert_called_once()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["phase"]["status"], "phase_failed")
+
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
     def test_handle_reject_revise_on_reject(self, mock_bulk):
         mock_bulk.side_effect = [["rev-1"], ["gate-2"]]

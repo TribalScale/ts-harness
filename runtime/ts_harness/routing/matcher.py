@@ -35,7 +35,7 @@ def match_routing_rule(text: str, config: RuntimeConfig) -> ChannelIntent | None
             continue
         if _exclude_match(lowered, rule):
             continue
-        return _intent_from_rule(rule, summary=summary)
+        return _with_named_ticket(rule, _intent_from_rule(rule, summary=summary), normalized)
 
     default_kind = routing.default or "ad_hoc_delegate"
     if default_kind == "ad_hoc_delegate":
@@ -60,6 +60,19 @@ def _exclude_match(text: str, rule: RoutingIntentRule) -> bool:
         if phrase.lower() in text:
             return True
     return False
+
+
+def _with_named_ticket(rule: RoutingIntentRule, intent: ChannelIntent, text: str) -> ChannelIntent:
+    if rule.program_type != "jira_to_pr" and rule.id != "jira_to_pr":
+        return intent
+    from ts_harness.jira.ticket_queue import named_ticket_key
+
+    key = named_ticket_key(text)
+    if not key:
+        return intent
+    intent.entry_phase = "implement"
+    intent.artifacts = {"jira_issue_key": key}
+    return intent
 
 
 def _intent_from_rule(rule: RoutingIntentRule, *, summary: str) -> ChannelIntent:

@@ -1,6 +1,6 @@
 {
   "program_type": "jira_to_pr",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "display_name": "Jira to PR",
   "startable_nodes": ["pick", "implement"],
   "config": {
@@ -15,7 +15,7 @@
       "default_workflow_type": "pick_assigned_jira",
       "workflow_variants": [],
       "required_artifacts": [],
-      "produces_artifacts": ["jira_issue_key", "jira_project_key"],
+      "produces_artifacts": ["jira_issue_key", "jira_project_key", "jira_issue_keys"],
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
         { "kind": "artifact", "name": "jira_issue_key", "target": "jira_issue_key" }
@@ -35,7 +35,15 @@
       ],
       "completion_adapter": "extract_implement_outputs",
       "terminal": true,
-      "complete_channel_text": "This ticket is merged. Say yes if you want the remaining assigned tickets in this project."
+      "complete_channel_text": "This ticket is merged. Say yes if you want the remaining assigned tickets in this project.",
+      "reentry": {
+        "target_node": "implement",
+        "mode": "list",
+        "remaining_list_artifact": "jira_issue_keys",
+        "completed_list_artifact": "completed_jira_issue_keys",
+        "next_item_artifact": "jira_issue_key",
+        "max_iterations": 50
+      }
     }
   ],
   "edges": [

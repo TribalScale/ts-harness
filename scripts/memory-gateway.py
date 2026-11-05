@@ -58,7 +58,7 @@ VALID_MEMORY_TYPES = {
 }
 VALID_FORGET_ACTIONS = {"expire", "delete"}
 ALLOWED_TRANSITIONS = {
-    "pending": {"running", "cancelled"},
+    "pending": {"running", "cancelled", "failed"},
     "running": {"succeeded", "failed", "blocked", "cancelled"},
     # blocked -> blocked turns an armed external wait into a real block (new reason/output).
     "blocked": {"pending", "blocked", "cancelled"},

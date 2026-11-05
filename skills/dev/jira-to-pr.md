@@ -29,7 +29,8 @@ Reply with a ticket key (PROJ-184), or paste a key anytime to skip this list.
 ```
 
 5. Show all assigned tickets, including human-written ones. Hide Blocked from the list. An explicit off-list key still works; warn if status is odd.
-6. When `pick_ticket` completes, return `jira_issue_description` (the issue description text) with `jira_issue_key`. If the description has a `Program:` pointer, this program becomes a child of that program. Tickets without a pointer still run and show `owner_program: none`.
+6. When `jira_issue_keys` is present, a queue is already frozen. Show that order and `queue_exclusions` verbatim. Return `jira_issue_keys` and `jira_issue_key` (the first key) unchanged. Do not reorder, drop, or add keys.
+7. When `pick_ticket` completes, return `jira_issue_description` (the issue description text) with `jira_issue_key`. If the description has a `Program:` pointer, this program becomes a child of that program. Tickets without a pointer still run and show `owner_program: none`.
 
 ## Hydrate and implement
 
@@ -39,4 +40,4 @@ Reply with a ticket key (PROJ-184), or paste a key anytime to skip this list.
 4. If open `is blocked by` links remain, warn and require confirm.
 5. Materialize FRDs / blueprints / the WO into `docs/` for `implement-work-order`.
 6. Implement **only this ticket**. Feature branch `feat/PROJ-184-…`. Pass `repo_url` + `base_branch` into coding backend; do not let a generic `main` wipe `dev`.
-7. After merge, ask if they want the remaining list. Do not auto-start the next ticket.
+7. A confirmed queue starts the next ticket after this one merges. A named key stops after this pull request. If there is no queue, ask if they want the remaining list. Do not start a ticket they did not confirm.

@@ -1510,6 +1510,7 @@ class RuntimeState:
                     program_type=str(intent.program_type),
                     entry_phase=intent.entry_phase,
                     summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
+                    artifacts=intent.artifacts,
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}

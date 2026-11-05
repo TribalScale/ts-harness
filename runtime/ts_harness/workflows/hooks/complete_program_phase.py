@@ -45,17 +45,18 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     if not tasks:
         return {"status": "skipped", "reason": "no tasks"}
 
-    terminal_statuses = {"succeeded", "cancelled"}
+    settled_statuses = {"succeeded", "cancelled", "failed"}
     active = [
         task
         for task in tasks
-        if str(task.get("status") or "") not in terminal_statuses
+        if str(task.get("status") or "") not in settled_statuses
     ]
     if active:
         return {"status": "skipped", "reason": "workflow still has active tasks"}
 
     failed = [task for task in tasks if task.get("status") == "failed"]
     if failed:
+        _notify_queue_stopped(ctx, workflow, str(program_id))
         return {"status": "phase_failed", "program_id": str(program_id)}
 
     service = get_delivery_program_service()
@@ -355,6 +356,25 @@ def _mark_program_succeeded(
     if _unfinished_children(ctx.memory_client, program_id):
         return
     ctx.memory_client.complete_program(program_id, actor=actor, phase=program_phase)
+
+
+def _notify_queue_stopped(ctx: HookContext, workflow: dict[str, Any], program_id: str) -> None:
+    """Name every queue key that has not finished, including the one that just failed."""
+    try:
+        payload = ctx.memory_client.get_program(program_id) or {}
+    except Exception:
+        return
+    program = payload.get("program") if isinstance(payload.get("program"), dict) else {}
+    from ts_harness.jira.ticket_queue import remaining_queue_keys
+
+    remaining = remaining_queue_keys(_program_artifacts(program))
+    if not remaining:
+        return
+    _notify_channel(
+        ctx,
+        workflow,
+        "Stopped the ticket queue. Still to do: " + ", ".join(remaining) + ".",
+    )
 
 
 def _notify_channel(ctx: HookContext, workflow: dict[str, Any], text: str) -> None:

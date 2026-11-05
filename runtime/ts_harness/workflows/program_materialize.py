@@ -175,8 +175,14 @@ def seed_list_reentry(
     reentry = node_reentry(snapshot, node_id)
     if not reentry or reentry_mode(reentry) != "list":
         return artifacts
-    _, _, next_key = reentry_keys(reentry)
+    remaining_key, _, next_key = reentry_keys(reentry)
     seeded = dict(artifacts)
+    if remaining_key not in seeded:
+        # A named ticket has no queue list. Leave the key the caller already set.
+        iterations = dict(seeded.get("reentry_iterations") or {})
+        iterations[node_id] = 0
+        seeded["reentry_iterations"] = iterations
+        return seeded
     item = next_list_item(seeded, reentry)
     if item is None:
         seeded.pop(next_key, None)
