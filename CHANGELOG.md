@@ -11,6 +11,10 @@ First public release.
 
 ### Added
 
+- Knowledge notes: reviewed `avoid` and `howto` notes at org and project scope.
+  Active notes load into every run. Proposals from a finished-program review or
+  from `propose_knowledge_note` wait in the Inbox until a person approves them.
+  See [knowledge notes](docs/runbooks/knowledge-notes.md).
 - Local quickstart (`scripts/quickstart.sh`): Postgres, agent runtime, memory API,
   sandbox worker, and admin console in Docker with a fake model provider.
 - `scripts/quickstart.sh gates` runs the CI release gates against the local stack.
@@ -144,6 +148,21 @@ First public release.
 
 ### Fixed
 
+- Workflow stages hand off through the next stage's agent. `delegate_task` and
+  `propose_delegate_task` are denied while a workflow task is running, unless
+  that stage lists the tool in `tool_allow`. Approving an intake gate keeps
+  `repo_url`, `base_branch`, `work_order_body`, and `jira_issue_key` on the
+  gate output, and a branch named in the reply wins. `$workflow.jira_issue_key`
+  now resolves for the following stage.
+- A failed `run_coding_backend` call is the stage error on its own. An empty
+  `pr_url` no longer hides that error behind a schema complaint, and the tool
+  audit stores the result.
+- An operator start label such as `operator:thd32:ticket` is not a channel.
+  Presentation and the bound-channel notification skip it, and the stage stays
+  succeeded.
+- `review_precheck` keeps the GitHub pull request title on each pull request
+  record. QA and code review judge a title rule, including a Jira-key prefix,
+  from that field.
 - A chat thread whose program had finished (succeeded, failed, or cancelled)
   answered a new request phrase, such as "plan work from this content", as
   plain chat instead of offering a new program. The thread's session still

@@ -121,7 +121,8 @@
                 "hydrate_input",
                 "mark_artifact_approved",
                 "mark_prd_approved",
-                "bridge_workflow"
+                "bridge_workflow",
+                "apply_review_proposals"
               ]
             },
             "downstream": { "type": "array", "items": { "type": "string" } }

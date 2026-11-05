@@ -21,9 +21,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     workflow = ctx.workflow or {}
     source_channel = str(workflow.get("source_channel") or "")
 
-    from ts_harness.gateway.workflow_presentation import _parse_source_channel
+    from ts_harness.gateway.workflow_presentation import bound_channel
 
-    parsed = _parse_source_channel(source_channel)
+    parsed = bound_channel(source_channel)
     if parsed is None:
         return {"status": "skipped", "reason": "no binding"}
     channel, channel_id, thread_ts = parsed

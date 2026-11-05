@@ -15,6 +15,7 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "tool_approval", label: "Approvals" },
   { key: "workflow_gate", label: "Gates" },
   { key: "stuck_step", label: "Stuck" },
+  { key: "knowledge_note", label: "Notes" },
 ];
 
 const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "revise"];
@@ -34,6 +35,7 @@ function badgeClass(type: InboxType): string {
   if (type === "skill_draft") return "badge badge-skill";
   if (type === "tool_approval") return "badge badge-tool";
   if (type === "stuck_step") return "badge badge-stuck";
+  if (type === "knowledge_note") return "badge badge-skill";
   return "badge badge-gate";
 }
 
@@ -41,6 +43,7 @@ function typeLabel(type: InboxType): string {
   if (type === "skill_draft") return "Skill draft";
   if (type === "tool_approval") return "Tool approval";
   if (type === "stuck_step") return "Stuck step";
+  if (type === "knowledge_note") return "Knowledge note";
   return "Workflow gate";
 }
 
@@ -73,6 +76,44 @@ function statusFromMeta(
   const status = STATUS_SEMANTICS[raw.trim().toLowerCase()];
   if (!status) return null;
   return { status, label: raw.replace(/_/g, " ") };
+}
+
+function KnowledgeNoteReview({ meta }: { meta: Record<string, unknown> | null | undefined }) {
+  const note = (meta?.note || {}) as Record<string, unknown>;
+  const target = (meta?.target || null) as Record<string, unknown> | null;
+  const evidence = Array.isArray(meta?.evidence) ? meta.evidence : [];
+  return (
+    <section className="detail-card" aria-label="Knowledge note proposal">
+      <h3>
+        {String(note.scope || "note")} · {String(note.proposal_action || "add")} · {String(note.kind || "")}
+      </h3>
+      <p>
+        <strong>{String(note.title || "")}</strong>
+      </p>
+      <p>{String(note.body || "")}</p>
+      {note.why ? <p className="muted">{String(note.why)}</p> : null}
+      {target && (
+        <div>
+          <h4>Current note</h4>
+          <p>
+            {String(target.title || "")}: {String(target.body || "")}
+          </p>
+        </div>
+      )}
+      {evidence.length > 0 && (
+        <ul>
+          {evidence.map((item, index) => {
+            const entry = item as Record<string, unknown>;
+            return (
+              <li key={index}>
+                {String(entry.type || "evidence")} {String(entry.ref || "")} {String(entry.excerpt || "")}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function stringifyValue(value: unknown): string {
@@ -155,6 +196,7 @@ export function InboxPage({
       tool_approval: visibleItems.filter((item) => item.type === "tool_approval").length,
       workflow_gate: visibleItems.filter((item) => item.type === "workflow_gate").length,
       stuck_step: visibleItems.filter((item) => item.type === "stuck_step").length,
+      knowledge_note: visibleItems.filter((item) => item.type === "knowledge_note").length,
     }),
     [visibleItems]
   );
@@ -225,6 +267,33 @@ export function InboxPage({
     autoSelected.current = true;
     onSelect(visible[0].type, visible[0].id);
   }, [visible, selectedId, onSelect, desktop]);
+
+  async function actNote(status: "active" | "rejected") {
+    const note = (detail?.note || selectedItem?.meta?.note || {}) as { id?: string; version?: number };
+    const id = String(note.id || selectedId || "");
+    if (!id) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/admin/notes/${encodeURIComponent(id)}/status`, {
+        method: "POST",
+        body: JSON.stringify({
+          status,
+          expected_version: note.version,
+          reason: status === "rejected" ? "rejected from inbox" : "",
+        }),
+      });
+      await load();
+      setDetail(null);
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 409) {
+        setDetailError("Changed by someone else. Reload the inbox.");
+      } else {
+        setDetailError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function actSkill(approve: boolean) {
     if (!selectedId) return;
@@ -442,6 +511,7 @@ export function InboxPage({
         {type === "skill_draft" && revisionOf && (
           <SkillDraftRevisionDiffs detail={(detail || {}) as SkillDraftDetail} revisionOf={revisionOf} />
         )}
+        {type === "knowledge_note" && <KnowledgeNoteReview meta={(detail || selectedItem?.meta) as Record<string, unknown>} />}
         <details className="detail-raw">
           <summary>Raw metadata</summary>
           <pre className="mono">{JSON.stringify(raw, null, 2)}</pre>
@@ -486,6 +556,16 @@ export function InboxPage({
               {STUCK_DECISION_LABEL[decision]}
             </Button>
           ))}
+        {type === "knowledge_note" && (
+          <>
+            <Button variant="danger" busy={busy} onClick={() => void actNote("rejected")}>
+              Reject
+            </Button>
+            <Button variant="primary" busy={busy} onClick={() => void actNote("active")}>
+              Approve
+            </Button>
+          </>
+        )}
         {type === "workflow_gate" && (
           <>
             <Button variant="danger" busy={busy} onClick={() => void actGate(false)}>

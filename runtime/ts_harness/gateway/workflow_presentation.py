@@ -104,6 +104,19 @@ def _resolve_share_email(
     return None
 
 
+# Channel adapters plus the admin-console chat. An operator start label such as
+# ``operator:thd32:allowlist`` is three parts, but it is not a place to post.
+_BOUND_CHANNELS = frozenset({"slack", "discord", "telegram", "web"})
+
+
+def bound_channel(source_channel: str) -> tuple[str, str, str] | None:
+    """Return a binding that can receive a post, or None for a non-channel label."""
+    parsed = _parse_source_channel(source_channel)
+    if parsed is None or parsed[0] not in _BOUND_CHANNELS:
+        return None
+    return parsed
+
+
 def _parse_source_channel(source_channel: str) -> tuple[str, str, str] | None:
     """Return (channel, channel_id, thread_id) for a workflow binding key."""
     raw = str(source_channel or "").strip()
@@ -445,7 +458,7 @@ def present_workflow_artifact(
     if not artifact:
         return {"status": "skipped", "reason": "empty artifact"}
 
-    binding = _parse_source_channel(source_channel)
+    binding = bound_channel(source_channel)
     if binding is None:
         return {"status": "skipped", "reason": "no bound channel"}
 

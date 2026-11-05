@@ -1124,6 +1124,95 @@ class MemoryClient:
     def claim_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/alerts", {"tenant_id": tenant_id})
 
+    def list_knowledge_notes(
+        self,
+        *,
+        tenant_id: str = "default",
+        scope: str = "",
+        project_id: str = "",
+        status: str = "",
+        proposal_action: str = "",
+        source: str = "",
+        revision_of: str = "",
+    ) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        query = {
+            k: v
+            for k, v in {
+                "tenant_id": tenant_id,
+                "scope": scope,
+                "project_id": project_id,
+                "status": status,
+                "proposal_action": proposal_action,
+                "source": source,
+                "revision_of": revision_of,
+            }.items()
+            if v
+        }
+        return self._request("GET", f"/notes?{urlencode(query)}")
+
+    def create_knowledge_note(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/notes", body)
+
+    def update_knowledge_note(self, note_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("PATCH", f"/notes/{note_id}", body)
+
+    def set_knowledge_note_status(self, note_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/notes/{note_id}/status", body)
+
+    def knowledge_note_versions(self, note_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/notes/{note_id}/versions")
+
+    def restore_knowledge_note(self, note_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/notes/{note_id}/restore", body)
+
+    def promote_knowledge_note(self, note_id: str, **body: Any) -> dict[str, Any]:
+        return self._request("POST", f"/notes/{note_id}/promote", body)
+
+    def knowledge_notes_context(
+        self,
+        *,
+        tenant_id: str = "default",
+        project_id: str = "",
+        stage: str = "",
+        paths: list[str] | None = None,
+        max_chars: int | None = None,
+        max_notes: int | None = None,
+    ) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        query: dict[str, Any] = {"tenant_id": tenant_id}
+        if project_id:
+            query["project_id"] = project_id
+        if stage:
+            query["stage"] = stage
+        if paths:
+            query["paths"] = ",".join(paths)
+        if max_chars is not None:
+            query["max_chars"] = max_chars
+        if max_notes is not None:
+            query["max_notes"] = max_notes
+        return self._request("GET", f"/notes/context?{urlencode(query)}")
+
+    def list_programs_pending_note_review(
+        self, *, tenant_id: str = "default", since: str = "", limit: int = 20
+    ) -> dict[str, Any]:
+        from urllib.parse import urlencode
+
+        query = {"tenant_id": tenant_id, "limit": limit}
+        if since:
+            query["since"] = since
+        return self._request("GET", f"/notes/pending-programs?{urlencode(query)}")
+
+    def get_knowledge_note(self, note_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/notes/{note_id}")
+
+    def mark_program_notes_reviewed(
+        self, program_id: str, *, actor: str = "review", key: str = "notes_reviewed_at"
+    ) -> dict[str, Any]:
+        return self._request("POST", f"/notes/programs/{program_id}/reviewed", {"actor": actor, "key": key})
+
     def list_projects(self, *, tenant_id: str = "default", key: str = "", team: str = "") -> dict[str, Any]:
         from urllib.parse import urlencode
 

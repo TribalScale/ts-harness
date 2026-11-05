@@ -1,4 +1,4 @@
-export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate" | "stuck_step";
+export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate" | "stuck_step" | "knowledge_note";
 
 export type StuckDecision = "revise" | "accept" | "stop";
 
@@ -395,6 +395,28 @@ export interface Project {
   worker_cpu: number | null;
   worker_memory_mb: number | null;
   can_manage?: boolean;
+}
+
+export interface KnowledgeNote {
+  id: string;
+  scope: "org" | "project";
+  project_id: string | null;
+  kind: "avoid" | "howto";
+  title: string;
+  body: string;
+  why: string;
+  applies_to: string[];
+  exception_to: string | null;
+  status: "proposed" | "active" | "retired" | "rejected";
+  version: number;
+  evidence: { type?: string; ref?: string; url?: string; excerpt?: string }[];
+  source: string;
+  proposal_action: string;
+  revision_of: string | null;
+  base_version: number | null;
+  promoted_from: string | null;
+  use_count: number;
+  updated_at?: string | null;
 }
 
 export interface ProjectRegistry {

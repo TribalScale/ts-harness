@@ -31,6 +31,10 @@ def _intent_routing_enabled() -> bool:
 # Read-only access to the stage's own assigned skills; a stage tool restriction never removes it.
 STAGE_ALWAYS_ALLOWED_TOOLS = frozenset({"read_skill_reference"})
 
+# A workflow stage hands off by naming the next stage's agent. Delegation stays
+# available in channel chat, and a stage can opt back in by listing the tool.
+WORKFLOW_DELEGATION_TOOLS = frozenset({"delegate_task", "propose_delegate_task"})
+
 # Tools whose effect reaches other people (send, publish, change shared records). Every
 # ``mcp-`` tool counts too; see ``publish_tool_names``. Docs create/append are drafting
 # tools and stay out: stages draft into Docs before their approval gate.
@@ -410,6 +414,20 @@ def evaluate_tool_policy(
         and tool_name not in STAGE_ALWAYS_ALLOWED_TOOLS
     ):
         return PolicyDecision("deny", "not in workflow stage tool allow", "stage_tool_allow", "medium")
+
+    if (
+        ctx.source == "workflow"
+        and ctx.linked_workflow_id
+        and not ctx.is_subagent
+        and tool_name in WORKFLOW_DELEGATION_TOOLS
+        and (ctx.stage_tool_allow is None or tool_name not in ctx.stage_tool_allow)
+    ):
+        return PolicyDecision(
+            "deny",
+            "workflow stages hand off through the next stage",
+            "workflow_stage_delegation",
+            "medium",
+        )
 
     if ctx.is_subagent and ctx.parent_tools is not None and tool_name not in ctx.parent_tools:
         return PolicyDecision("deny", "subagent cannot exceed parent tools", "subagent_intersection", "high")

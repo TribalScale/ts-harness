@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Governed QA Gate
@@ -47,7 +47,10 @@ Then:
    order's acceptance criteria: where one conflicts with the work order or an
    earlier request, the latest request wins, and meeting it is not a defect. Each `input.files` entry is one changed file
    (`filename`, `patch`, `additions`, `deletions`). That patch is the
-   implementation. Judge each acceptance criterion from the patch. A missing
+   implementation. Judge each acceptance criterion from the patch. Each
+   `input.prs` entry includes `title`, the pull request title on GitHub.
+   Judge a title criterion, including a Jira-key prefix, from that field. A
+   title that does not meet the criterion is a defect. A missing
    `host_verify_summary` is not a defect and is not a reason to fail: host
    verify is supporting evidence only, and it never overrides a failed
    external check. When `checks_state` is `success`, cite those CI checks as

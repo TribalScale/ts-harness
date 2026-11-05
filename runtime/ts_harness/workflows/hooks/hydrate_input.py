@@ -10,15 +10,37 @@ from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.registry import HookContext
 
 
-def _program_artifact_extras(memory_client: Any, workflow: dict[str, Any]) -> dict[str, Any]:
-    program_id = workflow.get("program_id")
-    if not program_id or not hasattr(memory_client, "get_program"):
-        return {}
+def _load_knowledge_notes(memory_client: Any, program: dict[str, Any], stage: str) -> list[Any]:
+    """Active org and project notes for this dispatch. A failure leaves the run with none."""
+    if not hasattr(memory_client, "knowledge_notes_context"):
+        return []
+    project_id = ""
+    tenant_id = "default"
+    if isinstance(program, dict):
+        project_id = str(program.get("project_ref") or program.get("project_id") or "")
+        tenant_id = str(program.get("tenant_id") or "default")
     try:
-        payload = memory_client.get_program(str(program_id))
+        payload = memory_client.knowledge_notes_context(
+            tenant_id=tenant_id, project_id=project_id, stage=stage
+        )
     except Exception:
-        return {}
-    program = (payload or {}).get("program") or {}
+        return []
+    notes = payload.get("notes") if isinstance(payload, dict) else None
+    return list(notes) if isinstance(notes, list) else []
+
+
+def _program_artifact_extras(
+    memory_client: Any, workflow: dict[str, Any], *, stage: str = ""
+) -> dict[str, Any]:
+    program_id = workflow.get("program_id")
+    program: dict[str, Any] = {}
+    extras: dict[str, Any] = {}
+    if program_id and hasattr(memory_client, "get_program"):
+        try:
+            payload = memory_client.get_program(str(program_id))
+            program = (payload or {}).get("program") or {}
+        except Exception:
+            program = {}
     metadata = program.get("metadata") or {}
     if isinstance(metadata, str):
         try:
@@ -26,8 +48,13 @@ def _program_artifact_extras(memory_client: Any, workflow: dict[str, Any]) -> di
         except json.JSONDecodeError:
             metadata = {}
     artifacts = (metadata.get("artifacts") or {}) if isinstance(metadata, dict) else {}
-    if not isinstance(artifacts, dict):
-        return {}
+    if isinstance(artifacts, dict):
+        extras.update(_artifact_fields(artifacts))
+    extras["knowledge_notes"] = _load_knowledge_notes(memory_client, program, stage)
+    return extras
+
+
+def _artifact_fields(artifacts: dict[str, Any]) -> dict[str, Any]:
     extras: dict[str, Any] = {}
     for key in (
         "completed_work_order_ids",
@@ -131,7 +158,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
 
     workflow, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
     tasks = _overlay_inflight_task(ctx, tasks)
-    extras = _program_artifact_extras(ctx.memory_client, workflow)
+    extras = _program_artifact_extras(
+        ctx.memory_client, workflow, stage=str(getattr(stage, "name", "") or "")
+    )
     resolved = _drop_unresolved(
         resolve_input_map(
             dict(stage.input_map),
@@ -153,7 +182,11 @@ def fill_missing_inputs(memory_client: Any, task: dict[str, Any], stage: Any) ->
     """
     current = dict(task.get("input") or {})
     input_map = dict(getattr(stage, "input_map", None) or {})
-    missing = {key: expr for key, expr in input_map.items() if current.get(key) is None}
+    missing = {
+        key: expr
+        for key, expr in input_map.items()
+        if current.get(key) is None or key == "knowledge_notes"
+    }
     if not missing:
         return current
     workflow, tasks = load_workflow_payload(memory_client, str(task.get("workflow_id") or ""))
@@ -162,7 +195,11 @@ def fill_missing_inputs(memory_client: Any, task: dict[str, Any], stage: Any) ->
             missing,
             tasks=tasks,
             workflow=workflow,
-            extras=_program_artifact_extras(memory_client, workflow),
+            extras=_program_artifact_extras(
+                memory_client,
+                workflow,
+                stage=str(getattr(stage, "name", "") or task.get("step_name") or ""),
+            ),
         )
     )
     return {**current, **resolved}
@@ -171,7 +208,6 @@ def fill_missing_inputs(memory_client: Any, task: dict[str, Any], stage: Any) ->
 def hydrate_downstream(ctx: HookContext, downstream: list[str]) -> list[dict[str, Any]]:
     workflow, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
     tasks = _overlay_inflight_task(ctx, tasks)
-    extras = _program_artifact_extras(ctx.memory_client, workflow)
     results: list[dict[str, Any]] = []
     for step_name in downstream:
         target = _latest_hydratable_task(tasks, step_name)
@@ -180,6 +216,7 @@ def hydrate_downstream(ctx: HookContext, downstream: list[str]) -> list[dict[str
         stage = ctx.skeleton.stage(step_name)
         if not stage.input_map:
             continue
+        extras = _program_artifact_extras(ctx.memory_client, workflow, stage=step_name)
         resolved = _drop_unresolved(
             resolve_input_map(
                 dict(stage.input_map),

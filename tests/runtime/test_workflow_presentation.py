@@ -18,6 +18,7 @@ from ts_harness.gateway.workflow_presentation import (
     _parse_source_channel,
     _session_for_workflow,
     binding_key_from_source_channel,
+    bound_channel,
     _resolve_share_email,
     present_workflow_artifact,
 )
@@ -75,6 +76,40 @@ class WorkflowPresentationTests(unittest.TestCase):
             "web:web:live-bug-5",
         )
         self.assertIsNone(_parse_source_channel("slack-only"))
+
+    def test_operator_label_is_not_a_bound_channel(self):
+        self.assertIsNone(bound_channel("operator:thd32:allowlist"))
+        self.assertEqual(
+            bound_channel("slack:C123:thread-1"),
+            ("slack", "C123", "thread-1"),
+        )
+        self.assertEqual(bound_channel("web:abc-123"), ("web", "web", "abc-123"))
+        self.assertEqual(
+            bound_channel("discord:guild:thread"),
+            ("discord", "guild", "thread"),
+        )
+
+    @patch("ts_harness.gateway.workflow_presentation.get_channel_router")
+    def test_present_workflow_artifact_skips_operator_label(self, router_getter):
+        router = MagicMock()
+        router_getter.return_value = router
+
+        result = present_workflow_artifact(
+            workflow_id="wf-1",
+            workflow_type="implement_jira_ticket",
+            tenant_id="default",
+            step_name="deliver_work_order",
+            agent_id="dev-agent",
+            artifact={
+                "work_order_id": "THD-32",
+                "pr_url": "https://github.com/TribalScale/test-ts-harness-repo/pull/21",
+            },
+            source_channel="operator:thd32:allowlist",
+        )
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no bound channel")
+        router.send.assert_not_called()
 
     def test_session_lookup_matches_admin_chat_after_the_workflow_changes(self):
         chat = SessionRecord(
@@ -415,6 +450,42 @@ class PresentSpecialistHookTests(unittest.TestCase):
         self.assertEqual(result["hook"], "present_specialist_output")
         mock_present.assert_called_once()
         self.assertEqual(mock_present.call_args.kwargs["present_prompt"], "approval")
+
+    @patch(
+        "ts_harness.workflows.hooks.present_artifact_for_review."
+        "_runtime_present_specialist_output"
+    )
+    def test_present_hook_skips_operator_label(self, mock_present):
+        from ts_harness.workflows.hooks.present_artifact_for_review import handle
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton("implement_jira_ticket")
+        ctx = HookContext(
+            workflow_id="wf-1",
+            workflow_type="implement_jira_ticket",
+            tenant_id="default",
+            task={
+                "id": "deliver-1",
+                "step_name": "deliver_work_order",
+                "agent_id": "dev-agent",
+            },
+            stage=skeleton.stage("deliver_work_order"),
+            skeleton=skeleton,
+            actor="workflow-runner",
+            memory_client=MagicMock(),
+            dispatch_result={
+                "output": {
+                    "work_order_id": "THD-32",
+                    "pr_url": "https://github.com/TribalScale/test-ts-harness-repo/pull/21",
+                }
+            },
+            workflow={"source_channel": "operator:thd32:allowlist"},
+        )
+        result = handle(ctx)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no bound channel")
+        self.assertEqual(result["hook"], "present_specialist_output")
+        mock_present.assert_not_called()
 
 
 class EnginePresentSpecialistTests(unittest.TestCase):

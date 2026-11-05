@@ -161,6 +161,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Reviews finished programs for org and project notes. The first run only stores a cursor.
+    {
+        "name": "review-finished-programs",
+        "kind": "system",
+        "handler": "review_finished_programs",
+        "interval_seconds": 3600,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 PY

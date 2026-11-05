@@ -307,15 +307,6 @@ class EnterpriseAgent:
                     opa_client=get_opa_client(),
                     tool_args=args,
                 )
-                get_tool_audit_log().record(
-                    tenant_id=policy_ctx.tenant_id,
-                    agent_id=policy_ctx.agent_id,
-                    tool_name=approval.tool_name,
-                    decision=decision.decision,
-                    policy_id=decision.policy_id,
-                    correlation_id=correlation_id,
-                    args=args,
-                )
                 if decision.decision != "allow":
                     content = {
                         "error": decision.reason,
@@ -337,6 +328,17 @@ class EnterpriseAgent:
                     except Exception as exc:  # noqa: BLE001
                         detail = redact_tool_error(str(exc), level=decision.redaction_level)
                         content = {"error": "tool execution failed", "detail": detail}
+                        result = None
+                executed = content.get("result") if isinstance(content, dict) else None
+                self._record_tool_decision(
+                    policy_ctx,
+                    tool_name=approval.tool_name,
+                    decision=decision,
+                    correlation_id=correlation_id,
+                    args=args,
+                    result=executed if decision.decision == "allow" else None,
+                    result_text=json.dumps(content, default=str),
+                )
             queue.consume(approval.approval_id)
             call = {
                 "id": f"approval-{approval.approval_id}",
@@ -584,9 +586,11 @@ class EnterpriseAgent:
                     else:
                         validation_error = None
                     if validation_error:
+                        # A failed coding tool cannot be repaired by rewriting JSON.
                         if (
                             parse_mode == "workflow"
                             and output_repairs < _MAX_WORKFLOW_OUTPUT_REPAIRS
+                            and not stage_contracts.coding_tool_failure_message(tool_audit)
                         ):
                             output_repairs += 1
                             messages.append(
@@ -675,16 +679,8 @@ class EnterpriseAgent:
                     opa_client=get_opa_client(),
                     tool_args=dispatch_args,
                 )
-                get_tool_audit_log().record(
-                    tenant_id=policy_ctx.tenant_id,
-                    agent_id=policy_ctx.agent_id,
-                    tool_name=tool_name,
-                    decision=decision.decision,
-                    policy_id=decision.policy_id,
-                    correlation_id=correlation_id,
-                    args=dispatch_args,
-                )
                 result: Any = None
+                result_text = ""
                 if decision.decision == "approval_required":
                     resumable = parse_mode == "workflow" and policy_ctx.approval_resumable
                     approval = get_approval_queue().request(
@@ -713,6 +709,15 @@ class EnterpriseAgent:
                         }
                     )
                     if resumable:
+                        self._record_tool_decision(
+                            policy_ctx,
+                            tool_name=tool_name,
+                            decision=decision,
+                            correlation_id=correlation_id,
+                            args=dispatch_args,
+                            result=None,
+                            result_text=result_text,
+                        )
                         tool_audit.append(
                             {"tool": tool_name, "args": args, "decision": decision.decision}
                         )
@@ -756,6 +761,15 @@ class EnterpriseAgent:
                             awaiting_confirmation = True
                             formatter = _proposal_formatter(tool_name)
                             if formatter is not None:
+                                self._record_tool_decision(
+                                    policy_ctx,
+                                    tool_name=tool_name,
+                                    decision=decision,
+                                    correlation_id=correlation_id,
+                                    args=dispatch_args,
+                                    result=result,
+                                    result_text=result_text,
+                                )
                                 session.status = "completed"
                                 get_session_store().save(session)
                                 _close_tool_calls(messages, tool_calls, call, result_text)
@@ -776,6 +790,15 @@ class EnterpriseAgent:
                     except Exception as exc:  # noqa: BLE001
                         detail = redact_tool_error(str(exc), level=decision.redaction_level)
                         result_text = json.dumps({"error": "tool execution failed", "detail": detail})
+                self._record_tool_decision(
+                    policy_ctx,
+                    tool_name=tool_name,
+                    decision=decision,
+                    correlation_id=correlation_id,
+                    args=dispatch_args,
+                    result=result,
+                    result_text=result_text,
+                )
                 record = {
                     "tool": tool_name,
                     "args": args,
@@ -838,6 +861,12 @@ class EnterpriseAgent:
         required_artifacts = list(payload.get("required_artifacts") or [])
         hints = ", ".join(skill_hints) or "none"
         artifacts = ", ".join(required_artifacts) or "none"
+        handoff = ""
+        if agent.id == "orchestrator" and payload.get("workflow_id"):
+            handoff = (
+                "Later stages are assigned by the workflow. "
+                "Return this step's output and do not start other agents.\n"
+            )
         extra = ""
         contract = self._contract_for_payload(payload)
         if contract is not None:
@@ -851,6 +880,7 @@ class EnterpriseAgent:
                 f"{payload.get('_skill_prompt', '')}\n"
                 "Complete the assigned workflow step. Return JSON with keys "
                 "summary and artifacts when done.\n"
+                f"{handoff}"
                 f"\n{stage_contracts.summarize_stage_contract(contract)}\n"
             )
             task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
@@ -865,7 +895,7 @@ class EnterpriseAgent:
                     "open a new one.\n"
                     f"- QA feedback:\n{qa_feedback}\n"
                 )
-            return prompt
+            return self._append_knowledge_notes(prompt, payload)
         if (
             "clarify-requirements" in skill_hints
             or "clarified_requirements" in required_artifacts
@@ -912,6 +942,8 @@ class EnterpriseAgent:
                 "storage, named entities, intervals, limits) into this stage's "
                 "artifacts word for word; never drop or generalize one.\n"
                 "- Do not call recall_memory / remember_memory; the payload is complete.\n"
+                "- If you hit a repo-specific trap that is not in Project notes, "
+                "call propose_knowledge_note once.\n"
                 "- Do not summarize or restate the PRD; produce new stage artifacts.\n"
                 f"- artifacts must include distinct bodies for: {expected_keys}.\n"
                 "- Return JSON with summary, artifacts (*_markdown keys), confidence, "
@@ -957,7 +989,7 @@ class EnterpriseAgent:
                 "- Put the full PRD only in result.prd_markdown; do not add preamble, "
                 "next-step instructions, or markdown code fences outside the JSON.\n"
             )
-        return (
+        prompt = (
             f"You are {agent.id}, an enterprise specialist agent.\n"
             f"{_soul_paragraph(agent)}"
             f"Workspace: {agent.workspace}\n"
@@ -966,8 +998,19 @@ class EnterpriseAgent:
             f"{payload.get('_skill_prompt', '')}\n"
             "Complete the assigned workflow step. Return JSON with keys "
             "summary and artifacts when done.\n"
+            f"{handoff}"
             f"{extra}"
         )
+        return self._append_knowledge_notes(prompt, payload)
+
+    def _append_knowledge_notes(self, prompt: str, payload: dict[str, Any]) -> str:
+        from ts_harness.knowledge.prompt import render_knowledge_notes
+
+        task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+        block = render_knowledge_notes(task_input.get("knowledge_notes"))
+        if not block:
+            return prompt
+        return prompt.rstrip() + "\n\n" + block
 
     def _build_channel_system_prompt(
         self,
@@ -1214,6 +1257,29 @@ class EnterpriseAgent:
             and pr_url.strip().startswith("http")
         )
 
+    def _record_tool_decision(
+        self,
+        policy_ctx: ToolPolicyContext,
+        *,
+        tool_name: str,
+        decision: Any,
+        correlation_id: str | None,
+        args: dict[str, Any],
+        result: Any,
+        result_text: str,
+    ) -> None:
+        """Persist the tool decision after the call, so the result is on the row."""
+        get_tool_audit_log().record(
+            tenant_id=policy_ctx.tenant_id,
+            agent_id=policy_ctx.agent_id,
+            tool_name=tool_name,
+            decision=decision.decision,
+            policy_id=decision.policy_id,
+            correlation_id=correlation_id,
+            args=args,
+            result_preview=self._tool_audit_preview(tool_name, result, result_text),
+        )
+
     @staticmethod
     def _tool_audit_preview(tool_name: str, result: Any, result_text: str) -> str:
         """Build a short audit preview that stays valid JSON for key tools."""
@@ -1249,6 +1315,9 @@ class EnterpriseAgent:
         tool_calls: list[dict[str, Any]] | None,
     ) -> str | None:
         """Require pr_url to come from a successful run_coding_backend result."""
+        failure = stage_contracts.coding_tool_failure_message(tool_calls)
+        if failure:
+            return failure
         if not self._has_deliver_work_order_output(output):
             return (
                 "deliver_work_order output must include work_order_id and "

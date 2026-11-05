@@ -1,0 +1,35 @@
+{
+  "workflow_type": "review_program_notes",
+  "definition_version": "1.0.0",
+  "display_name": "Review a finished program for knowledge notes",
+  "promotion": {
+    "intake_stage": "propose_notes",
+    "confirm_required": false
+  },
+  "contracts": {
+    "note_proposals": {
+      "output_schema": {
+        "type": "object",
+        "required": ["proposals"],
+        "properties": {
+          "proposals": { "type": "array" }
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "name": "propose_notes",
+      "kind": "task",
+      "agent_id": "ops-agent",
+      "allowed_agents": ["ops-agent"],
+      "contract_ref": "note_proposals",
+      "skill_hints": ["review-program-notes"],
+      "present_prompt": "none",
+      "on_complete": {
+        "hook": "apply_review_proposals"
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 900 }
+    }
+  ]
+}

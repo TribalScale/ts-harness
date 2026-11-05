@@ -186,11 +186,57 @@ def build_inbox(
         )
 
     items.extend(_stuck_step_items(memory, auth, approvable))
+    items.extend(_knowledge_note_items(memory, auth, runtime))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
 
 
 _STUCK_REASONS = {"revision_limit": "Revision limit reached"}
+
+
+def _knowledge_note_items(memory: Any, auth: AuthContext, runtime: Any) -> list[dict[str, Any]]:
+    """Proposed notes the actor can approve. Org, promotion and exception notes are admin-only."""
+    from ts_harness.gateway.knowledge_access import can_see_proposal
+
+    try:
+        listed = memory.list_knowledge_notes(tenant_id=auth.tenant_id or "default", status="proposed")
+    except Exception:
+        return []
+    config = getattr(runtime, "config", None)
+    projects: dict[str, dict[str, Any]] = {}
+    items = []
+    for note in listed.get("notes") or []:
+        project = None
+        project_id = str(note.get("project_id") or "")
+        if project_id:
+            if project_id not in projects:
+                try:
+                    projects[project_id] = memory.get_project(project_id)
+                except Exception:
+                    projects[project_id] = {}
+            project = projects[project_id] or None
+        if not can_see_proposal(auth, config, note, project):
+            continue
+        meta: dict[str, Any] = {"note": note, "evidence": note.get("evidence") or []}
+        revision_of = str(note.get("revision_of") or "")
+        if revision_of and hasattr(memory, "get_knowledge_note"):
+            try:
+                meta["target"] = memory.get_knowledge_note(revision_of)
+            except Exception:
+                meta["target"] = None
+        action = str(note.get("proposal_action") or "add")
+        items.append(
+            {
+                "type": "knowledge_note",
+                "id": str(note.get("id") or ""),
+                "title": str(note.get("title") or "Knowledge note"),
+                "subtitle": f"{note.get('scope') or 'note'} · {action}",
+                "created_at": note.get("updated_at") or note.get("created_at"),
+                "href": f"/#/inbox/knowledge_note/{quote(str(note.get('id') or ''), safe='')}",
+                "meta": meta,
+            }
+        )
+    return items
 
 
 def _approvable_program_filter(memory: Any, auth: AuthContext, need: str = "approve") -> Any:

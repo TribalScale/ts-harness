@@ -62,11 +62,26 @@ class PrecheckTests(unittest.TestCase):
         output = code_review.review_precheck(
             TASK, PRECHECK_CONFIG, memory=_memory(), github=_github([_file("src/a.py", 5, 2)]), program_defaults={}
         )
-        self.assertEqual(output["prs"], [{"pr_url": PR, "head_sha": "h1"}])
+        self.assertEqual(output["prs"], [{"pr_url": PR, "head_sha": "h1", "title": ""}])
         self.assertEqual(output["diff_stats"]["additions"], 5)
         self.assertEqual(output["files"][0]["pr_url"], PR)
         self.assertEqual(output["scope_findings"], [])
         self.assertFalse(output["refresh"])
+
+    def test_precheck_keeps_the_pull_request_title(self):
+        github = _github([_file("README.md", 1, 0)])
+        github.get_pull.return_value = {
+            "title": "THD-32 Add knowledge notes proof to README",
+            "head": {"sha": "h1"},
+            "base": {"ref": "dev"},
+        }
+        output = code_review.review_precheck(
+            TASK, PRECHECK_CONFIG, memory=_memory(), github=github, program_defaults={}
+        )
+        self.assertEqual(
+            output["prs"],
+            [{"pr_url": PR, "head_sha": "h1", "title": "THD-32 Add knowledge notes proof to README"}],
+        )
 
     def test_excludes_do_not_count_toward_limits(self):
         files = [_file("src/a.py", 10), _file("package-lock.json", 5000), _file("web/yarn.lock", 900), _file("x/generated/y.ts", 900)]

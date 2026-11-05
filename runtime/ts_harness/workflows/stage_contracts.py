@@ -127,6 +127,19 @@ SemanticValidator = Callable[
 ]
 
 
+def coding_tool_failure_message(tool_audit: list[dict[str, Any]] | None) -> str | None:
+    """Stage error when the last allowed ``run_coding_backend`` call failed.
+
+    An empty ``pr_url`` is how the model reports that failure. The tool error
+    is the stage error, including when the model left the URL blank.
+    """
+    last = _last_successful_coding_backend(tool_audit)
+    if last is None or last.get("ok") is True:
+        return None
+    err = str(last.get("error") or "run_coding_backend failed").strip()
+    return f"deliver_work_order cannot succeed when run_coding_backend failed: {err}"
+
+
 def _last_successful_coding_backend(
     tool_audit: list[dict[str, Any]] | None,
 ) -> dict[str, Any] | None:
@@ -181,6 +194,9 @@ def validate_coding_backend_pr_url(
 
     Ported from ``loop._deliver_work_order_tool_failure_reason``.
     """
+    failure = coding_tool_failure_message(tool_audit)
+    if failure:
+        return [ContractViolation("/pr_url", failure)]
     work_order_id = output.get("work_order_id")
     pr_url = output.get("pr_url")
     if not (
@@ -502,13 +518,18 @@ def validate_stage_output(
 ) -> list[ContractViolation]:
     """Validate an agent output against a stage contract.
 
-    Runs, in order: JSON-schema structural checks, required-artifact pointer
+    A failed ``run_coding_backend`` call is the stage error on its own. Otherwise
+    runs, in order: JSON-schema structural checks, required-artifact pointer
     resolution, and registered semantic validators. Returns an empty list when
     the output satisfies the contract.
     """
     contract = _as_contract(contract_or_stage)
     stage_input = stage_input or {}
     tool_audit = tool_audit or []
+    if "validate_coding_backend_pr_url" in (contract.get("semantic_validators") or []):
+        failure = coding_tool_failure_message(tool_audit)
+        if failure:
+            return [ContractViolation("/pr_url", failure)]
     violations: list[ContractViolation] = []
 
     output_schema = contract.get("output_schema")

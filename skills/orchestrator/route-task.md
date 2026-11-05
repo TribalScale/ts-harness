@@ -8,6 +8,10 @@ Apply **Step 0** first (below). If Step 0 passes, respond directly without this 
 
 The orchestrator **never executes tasks directly**. It classifies intent, prepares context, delegates to specialists, and synthesizes outcomes.
 
+## Workflow runs
+
+When this session is inside a workflow stage, return that step's output. The workflow starts the next stage's agent. Do not call `delegate_task` or `propose_delegate_task` from a workflow stage.
+
 ## Step 0 — Direct-respond guard
 
 Run this check **before** the routing table. Respond directly (no `sessions_spawn`) when **ALL** of the following hold:

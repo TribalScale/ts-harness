@@ -127,6 +127,7 @@ toolsets:
   delegation: [delegate_task, propose_delegate_task]
   channel-chat: [propose_delegate_task, propose_start_workflow, propose_start_program, propose_continue_delivery, propose_bridge_workflow, propose_advance_program, propose_set_program_project, propose_link_program, unlink_program, set_program_autoshare, workflow_status, program_status]
   skill-authoring: [propose_skill]
+  knowledge-notes: [propose_knowledge_note]
   program-builder: [builder_catalog, propose_program_bundle]
   workflow-promotion: [propose_start_workflow, start_workflow, propose_start_program, start_program, propose_continue_delivery, continue_delivery, propose_bridge_workflow, bridge_workflow, propose_advance_program, advance_program, propose_set_program_project, set_program_project, propose_link_program, link_program, unlink_program, set_program_autoshare, workflow_status, program_status, workflow_approve, workflow_reject, workflow_reject_with_feedback, cancel_workflow, resume_external_event]
 
@@ -265,7 +266,7 @@ agents:
       workspace: /workspace/orchestrator
       model: openai/gpt-4o-mini
       skills: [orchestrator, memory-api, workflow, workflows, governed-workflows]
-      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion, jira-read]
+      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion, jira-read, knowledge-notes]
       tools:
         allow:
           [
@@ -297,6 +298,7 @@ agents:
             advance_program,
             workflow_status,
             program_status,
+            propose_knowledge_note,
             workflow_approve,
             workflow_reject,
             workflow_reject_with_feedback,
@@ -318,9 +320,9 @@ agents:
       workspace: /workspace/dev-agent
       model: openai/gpt-4o-mini
       skills: [dev, memory, workflows, integrate, governed-workflows]
-      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read, knowledge-notes]
       tools:
-        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill, propose_knowledge_note]
         deny: [delegate_task]
 
     - id: ops-agent

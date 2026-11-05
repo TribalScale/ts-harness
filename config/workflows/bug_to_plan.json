@@ -89,6 +89,9 @@
         "repo": "$prior.pick_repo.output.repo",
         "default_branch": "$prior.pick_repo.output.default_branch"
       },
+      "input_map": {
+        "knowledge_notes": "$workflow.knowledge_notes"
+      },
       "on_complete": {
         "hook": "hydrate_input",
         "downstream": ["investigate"]
@@ -110,7 +113,8 @@
         "tree": "$prior.gather_context.output.tree",
         "tree_truncated": "$prior.gather_context.output.tree_truncated",
         "directories": "$prior.gather_context.output.directories",
-        "files": "$prior.gather_context.output.files"
+        "files": "$prior.gather_context.output.files",
+        "knowledge_notes": "$workflow.knowledge_notes"
       },
       "retry": { "max_retries": 1, "timeout_seconds": 1800 }
     },

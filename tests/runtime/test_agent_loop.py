@@ -12,6 +12,7 @@ from ts_harness.agent.provider import (
     build_provider,
 )
 from ts_harness.config.schema import load_runtime_config
+from ts_harness.tools.audit import configure_tool_audit
 from ts_harness.tools.registry import build_default_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -316,6 +317,57 @@ class AgentLoopTests(unittest.TestCase):
         request = queue.get(approval_id)
         self.assertEqual((request.workflow_id, request.task_id), ("wf-1", "task-1"))
         self.assertEqual(len(provider.calls), 1)
+
+    def test_workflow_stage_denies_delegate_task_without_an_approval(self):
+        from ts_harness.tools import approvals as approvals_mod
+
+        config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")
+        call = {
+            "id": "c1",
+            "type": "function",
+            "function": {
+                "name": "delegate_task",
+                "arguments": json.dumps({"agent_id": "dev-agent", "task": "implement THD-32"}),
+            },
+        }
+        provider = FakeProvider(
+            [
+                {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [call]}}]},
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"summary": "hydrated", "artifacts": {}}),
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+        queue = approvals_mod.ApprovalQueue()
+        with patch.object(approvals_mod, "_approval_queue", queue):
+            result = EnterpriseAgent(config, build_default_registry(), provider=provider).run_workflow_dispatch(
+                tenant_id="default",
+                agent_id="orchestrator",
+                payload={
+                    "workflow_id": "wf-1",
+                    "task_id": "task-1",
+                    "step_name": "hydrate_ticket",
+                    "input": {},
+                },
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(result.tool_calls[0]["tool"], "delegate_task")
+        self.assertEqual(result.tool_calls[0]["decision"], "deny")
+        self.assertIn("workflow_stage_delegation", result.tool_calls[0]["result_preview"])
+        self.assertEqual(queue.list_pending(), [])
+        system = provider.calls[0]["messages"][0]["content"]
+        self.assertIn("do not start other agents", system)
+        tool_names = {tool["function"]["name"] for tool in provider.calls[0].get("tools") or []}
+        self.assertNotIn("delegate_task", tool_names)
+        self.assertNotIn("propose_delegate_task", tool_names)
 
     def _approval_fixture(self, queue, approved):
         req = queue.request(
@@ -656,6 +708,100 @@ class AgentLoopTests(unittest.TestCase):
         err = agent._validate_workflow_output(output, payload, tool_calls=tool_calls)
         self.assertIsNotNone(err)
         self.assertIn("run_coding_backend failed", err or "")
+
+    def test_deliver_reports_coding_failure_when_the_model_omits_pr_url(self):
+        config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")
+        tool_error = "repo tribalscale/test-ts-harness-repo is not on the tenant repo allowlist"
+        provider = FakeProvider(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call-coding",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "run_coding_backend",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "mode": "implement",
+                                                    "work_order_id": "THD-32",
+                                                    "work_order_body": "Add one line.",
+                                                }
+                                            ),
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "work_order_id": "THD-32",
+                                        "pr_url": "",
+                                        "rejected": True,
+                                    }
+                                ),
+                            }
+                        }
+                    ]
+                },
+            ]
+        )
+        registry = build_default_registry()
+        original = registry.dispatch
+
+        def dispatch(name, args, *, context):
+            if name == "run_coding_backend":
+                return {"ok": False, "error": tool_error, "pr_url": None}
+            return original(name, args, context=context)
+
+        registry.dispatch = dispatch
+        events = []
+        configure_tool_audit(lambda event: events.append(event))
+        try:
+            agent = EnterpriseAgent(config, registry, provider=provider)
+            result = agent.run_workflow_dispatch(
+                tenant_id="default",
+                agent_id="dev-agent",
+                payload={
+                    "task_id": "deliver-empty-pr",
+                    "workflow_id": "wf-deliver",
+                    "step_name": "deliver_work_order",
+                    "contract": {
+                        "output_schema": {
+                            "type": "object",
+                            "required": ["work_order_id", "pr_url"],
+                            "properties": {
+                                "work_order_id": {"type": "string", "minLength": 1},
+                                "pr_url": {"type": "string", "pattern": "^https://"},
+                            },
+                        },
+                        "required_artifacts": {"pr_url": "/pr_url"},
+                        "semantic_validators": ["validate_coding_backend_pr_url"],
+                    },
+                    "input": {"work_order_id": "THD-32", "work_order_body": "Add one line."},
+                },
+            )
+        finally:
+            configure_tool_audit(None)
+        self.assertEqual(result.status, "blocked")
+        self.assertIn(tool_error, result.error or "")
+        self.assertNotIn("does not match", result.error or "")
+        self.assertEqual(len(provider.calls), 2)
+        coding = [event for event in events if event.tool_name == "run_coding_backend"]
+        self.assertEqual(len(coding), 1)
+        self.assertIn(tool_error, coding[0].result_preview or "")
 
     def test_deliver_accepts_pr_url_matching_coding_tool_result(self):
         config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")

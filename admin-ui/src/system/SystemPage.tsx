@@ -10,6 +10,7 @@ import { CronEditor } from "./CronEditor";
 import { AgentsPage } from "./AgentsPage";
 import { McpPage } from "./McpPage";
 import { ProjectSettingsPage } from "../projects/ProjectSettingsPage";
+import { OrgNotesPage } from "../knowledge/OrgNotesPage";
 import { BudgetsPage } from "../budgets/BudgetsPage";
 import { GitHubPage } from "./GitHubPage";
 import { SettingsPage } from "./SettingsPage";
@@ -81,7 +82,9 @@ export function SystemPage({
                   ? "github"
                   : section === "budgets"
                     ? "budgets"
-                    : "health";
+                    : section === "notes"
+                      ? "notes"
+                      : "health";
 
   const load = useCallback(
     async ({ background = false }: { background?: boolean } = {}) => {
@@ -108,7 +111,7 @@ export function SystemPage({
   );
 
   useEffect(() => {
-    if (activeSection === "cron" || activeSection === "settings" || activeSection === "skills" || activeSection === "mcp" || activeSection === "agents" || activeSection === "projects" || activeSection === "github" || activeSection === "budgets") return;
+    if (activeSection === "cron" || activeSection === "settings" || activeSection === "skills" || activeSection === "mcp" || activeSection === "agents" || activeSection === "projects" || activeSection === "github" || activeSection === "budgets" || activeSection === "notes") return;
     void load();
     const id = window.setInterval(() => void load({ background: true }), 30_000);
     return () => window.clearInterval(id);
@@ -208,6 +211,7 @@ export function SystemPage({
           { id: "mcp", label: "MCP" },
           { id: "agents", label: "Agents" },
           { id: "projects", label: "Projects" },
+          { id: "notes", label: "Org notes" },
           { id: "github", label: "GitHub" },
           { id: "budgets", label: "Budgets" },
           { id: "settings", label: "Settings" },
@@ -226,6 +230,8 @@ export function SystemPage({
                       ? "#/system/agents"
                       : id === "projects"
                         ? "#/system/projects"
+                        : id === "notes"
+                          ? "#/system/notes"
                         : id === "github"
                           ? "#/system/github"
                           : id === "budgets"
@@ -249,6 +255,8 @@ export function SystemPage({
           <AgentsPage selectedId={agentId} onDirtyChange={onAgentsDirtyChange} />
         ) : activeSection === "projects" ? (
           <ProjectSettingsPage selectedId={projectId} />
+        ) : activeSection === "notes" ? (
+          <OrgNotesPage />
         ) : activeSection === "github" ? (
           <GitHubPage />
         ) : activeSection === "budgets" ? (

@@ -404,6 +404,30 @@ def test_registry_admin(
 # ---------------------------------------------------------------------------
 
 
+def list_project_notes_admin(
+    memory: Any, auth: AuthContext, config: Any, _body: dict[str, Any], project_id: str
+) -> dict[str, Any]:
+    from ts_harness.gateway.knowledge_bff import list_project_notes
+
+    return list_project_notes(memory, auth, config, project_id)
+
+
+def create_project_note_admin(
+    memory: Any, auth: AuthContext, config: Any, project_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    from ts_harness.gateway.knowledge_bff import create_project_note
+
+    return create_project_note(memory, auth, config, project_id, body)
+
+
+def promote_project_note_admin(
+    memory: Any, auth: AuthContext, config: Any, project_id: str, note_id: str
+) -> dict[str, Any]:
+    from ts_harness.gateway.knowledge_bff import promote_project_note
+
+    return promote_project_note(memory, auth, config, project_id, note_id)
+
+
 def sync_egress_allowlist(memory: Any, *, ssm: Any = None, ecs: Any = None) -> dict[str, Any]:
     parameter = os.environ.get("CODING_EGRESS_DOMAINS_PARAMETER", "").strip()
     if not parameter:

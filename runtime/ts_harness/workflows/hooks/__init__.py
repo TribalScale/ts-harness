@@ -3,6 +3,7 @@
 from ts_harness.workflows.registry import HookRegistry
 
 from . import (
+    apply_review_proposals,
     approve_gate,
     bridge_workflow,
     cancel_workflow,
@@ -28,6 +29,7 @@ from . import (
 def build_default_registry() -> HookRegistry:
     registry = HookRegistry()
     registry.register("promote", promote.handle)
+    registry.register("apply_review_proposals", apply_review_proposals.handle)
     registry.register("revise_on_reject", revise_on_reject.handle)
     registry.register("hydrate_input", hydrate_input.handle)
     registry.register("approve_gate", approve_gate.handle)
