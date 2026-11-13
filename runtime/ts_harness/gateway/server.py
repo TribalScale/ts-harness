@@ -212,6 +212,7 @@ class RuntimeState:
         self._session_locks: dict[str, threading.Lock] = {}
         self._session_locks_guard = threading.Lock()
         self._start_sandbox_reaper()
+        self._start_intake_sweeper()
         self._start_definitions_watcher()
         self.mcp = get_mcp_manager()
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
@@ -452,6 +453,30 @@ class RuntimeState:
                 self._shutdown.wait(300)
 
         threading.Thread(target=loop, daemon=True, name="ec-sandbox-reaper").start()
+
+    def _start_intake_sweeper(self) -> None:
+        """Expire local intake uploads. S3 and GCS buckets expire ``intake/`` with a lifecycle rule."""
+        from ts_harness.storage.backend import StorageConfigError, object_backend
+
+        try:
+            if object_backend() != "local":
+                return
+        except StorageConfigError:
+            return
+
+        def loop() -> None:
+            from ts_harness.intake.blobs import intake_store, sweep_local_intake
+
+            while not self._shutdown.is_set():
+                try:
+                    removed = sweep_local_intake(intake_store())
+                    if removed:
+                        log_event("intake_sweep", removed=removed)
+                except Exception as exc:  # noqa: BLE001 - a failed sweep retries next hour
+                    log_event("intake_sweep_failed", error=str(exc))
+                self._shutdown.wait(3600)
+
+        threading.Thread(target=loop, daemon=True, name="ts-harness-intake-sweep").start()
 
     def rebuild_mcp_runtime(self) -> dict[str, Any]:
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
@@ -2488,6 +2513,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return
 
     def _read_json(self) -> dict[str, Any]:
+        from ts_harness.gateway.intake_uploads import BodyTooLarge, json_body_too_large
+
+        if json_body_too_large(self.path, self.headers.get("Content-Length")):
+            raise BodyTooLarge()
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length else b"{}"
         self._last_raw_body = raw
@@ -2663,10 +2692,53 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         self._send(404, {"error": "not found"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def _handle_intake_upload(self) -> None:
+        from ts_harness.gateway.intake_uploads import UploadRejected, store_from_file, upload_request
+        from ts_harness.gateway.rate_limit import check_admin_rate_limit
+        from urllib.parse import parse_qs, urlsplit
+
         try:
             self._check_origin()
-            body = self._read_json()
+            auth = self._authenticate({})
+            check_admin_rate_limit(self.client_address[0] if self.client_address else "unknown")
+        except AuthError as exc:
+            self._send(exc.status, {"error": str(exc)})
+            return
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            upload = upload_request(
+                (query.get("name") or [None])[0],
+                self.headers.get("Content-Type"),
+                self.headers.get("Content-Length"),
+            )
+            pointer = store_from_file(self.rfile, upload, tenant_id=auth.tenant_id)
+        except UploadRejected as exc:
+            self.close_connection = True
+            self._send(exc.status, {"error": str(exc)})
+            return
+        except Exception as exc:  # noqa: BLE001 - storage misconfiguration or outage
+            log_event("intake_upload_failed", tenant_id=auth.tenant_id, error=str(exc))
+            self.close_connection = True
+            self._send(503, {"error": "the file could not be stored"})
+            return
+        log_event("intake_upload", tenant_id=auth.tenant_id, size=pointer["size"], mime=pointer["mime"])
+        get_runtime().metrics.inc("intake_upload")
+        self._send(200, {"pointer": pointer})
+
+    def do_POST(self) -> None:  # noqa: N802
+        from ts_harness.gateway.intake_uploads import UPLOAD_PATH, BodyTooLarge, max_json_body_bytes
+
+        if self.path.split("?", 1)[0] == UPLOAD_PATH:
+            self._handle_intake_upload()
+            return
+        try:
+            self._check_origin()
+            try:
+                body = self._read_json()
+            except BodyTooLarge:
+                self.close_connection = True
+                self._send(413, {"error": f"request body is larger than {max_json_body_bytes() // (1024 * 1024)} MB"})
+                return
             if self.path == "/admin/auth/session":
                 from ts_harness.gateway.browser_session import open_browser_session
 

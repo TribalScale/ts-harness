@@ -34,9 +34,19 @@ def _finalize_code_review(task: dict[str, Any], config: dict[str, Any], *, memor
 
 
 def _gather_bug_context(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    """Repo context; with ``include_intake_sources`` the requester's shared files ride along."""
     from ts_harness.workflows.bug_context import gather_bug_context
 
-    return gather_bug_context(task, config, memory=memory)
+    output = gather_bug_context(task, config, memory=memory)
+    if config.get("include_intake_sources"):
+        output = {**output, **_gather_intake_sources(task, config, memory=memory)}
+    return output
+
+
+def _gather_intake_sources(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    from ts_harness.intake.gather import gather_intake_sources
+
+    return gather_intake_sources(task, config, memory=memory)
 
 
 def _prepare_ticket_queue(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
@@ -53,6 +63,7 @@ SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "review_precheck": _review_precheck,
     "finalize_code_review": _finalize_code_review,
     "gather_bug_context": _gather_bug_context,
+    "gather_intake_sources": _gather_intake_sources,
     "prepare_ticket_queue": _prepare_ticket_queue,
 }
 

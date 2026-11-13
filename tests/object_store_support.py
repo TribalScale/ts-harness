@@ -17,11 +17,19 @@ class FakeS3:
         self.objects: dict[tuple[str, str], tuple[bytes, dict[str, str]]] = {}
         self.page_size = page_size
         self.calls: list[str] = []
+        self.content_types: dict[tuple[str, str], str] = {}
 
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]) -> dict:
         self.calls.append("put_object")
         self.objects[(Bucket, Key)] = (bytes(Body), dict(Metadata))
         return {}
+
+    def upload_fileobj(self, Fileobj: Any, Bucket: str, Key: str, ExtraArgs: dict[str, Any] | None = None) -> None:
+        self.calls.append("upload_fileobj")
+        extra = dict(ExtraArgs or {})
+        self.objects[(Bucket, Key)] = (Fileobj.read(), dict(extra.get("Metadata") or {}))
+        if extra.get("ContentType"):
+            self.content_types[(Bucket, Key)] = extra["ContentType"]
 
     def get_object(self, *, Bucket: str, Key: str) -> dict:
         self.calls.append("get_object")
@@ -84,6 +92,10 @@ class _Blob:
     def upload_from_string(self, data: bytes) -> None:
         self.data = bytes(data)
         self._bucket.blobs[self.name] = self
+
+    def upload_from_file(self, fileobj: Any, size: int | None = None, content_type: str | None = None) -> None:
+        self.upload_from_string(fileobj.read() if size is None else fileobj.read(size))
+        self.content_type = content_type
 
     def download_as_bytes(self) -> bytes:
         return self.data
