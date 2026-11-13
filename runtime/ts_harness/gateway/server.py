@@ -939,10 +939,13 @@ class RuntimeState:
         if detach_finished_program_for_new_request(session, user_text, config=self.config):
             session = get_session_store().get(session.session_id) or session
 
-        attachment_note = ""
-        session, user_text, attachment_note = self._collect_intake_pointers(
+        from ts_harness.gateway.intake_pointers import with_reply_sources
+
+        session, user_text, attachment_note, reply_sources = self._collect_intake_pointers(
             session, body, user_text=user_text, tenant_id=req.tenant_id, channel_attachments=channel_attachments
         )
+        # What a workflow records as the answer: the user's words plus any files read from them.
+        answer_text = with_reply_sources(user_text, reply_sources)
 
         denied_reply = next(
             (
@@ -1207,7 +1210,7 @@ class RuntimeState:
                     tenant_id=req.tenant_id,
                     agent_id=agent_id,
                     source=channel,
-                    user_text=user_text,
+                    user_text=answer_text,
                 )
             except Exception as exc:  # noqa: BLE001
                 intake_result = {"error": str(exc)}
@@ -1247,6 +1250,7 @@ class RuntimeState:
                     agent_id=agent_id,
                     source=channel,
                     user_text=user_text,
+                    answer_text=answer_text,
                     provider=provider,
                     use_llm_fallback=True,
                 )
@@ -2242,6 +2246,7 @@ class RuntimeState:
             skill_invoke = "none"
         if attachment_note:
             model_text = f"{model_text}\n\n{attachment_note}"
+        model_text = with_reply_sources(model_text, reply_sources)
         skill_bundle = self.skill_catalog.build_prompt_bundle(skills)
         transcript = get_transcript_store()
         history = transcript.load_messages(session.session_id)
@@ -2451,27 +2456,46 @@ class RuntimeState:
         user_text: str,
         tenant_id: str,
         channel_attachments: list[dict[str, Any]] | None,
-    ) -> tuple[Any, str, str]:
-        """Hold this message's attachments on the session until a start; return (session, text, note).
+    ) -> tuple[Any, str, str, str]:
+        """Attachments on this message; return (session, text, note for the agent, reply sources).
 
-        A thread already linked to a program or workflow is left alone here: replies with files
-        are handled separately. A message that is only files gets placeholder text so the
-        proposal still has a summary.
+        Before a start, they are held on the session for the first task. In a thread already
+        linked to a program or workflow (a clarify reply, PRD intake answers), they are read
+        now and returned as markdown. Callers keep ``text`` (the user's words) for routing and
+        the transcript, and add the sources only to the recorded answer and the agent's input,
+        so a document's wording never steers routing. A message that is only files gets
+        placeholder text so it still has a summary.
         """
         from ts_harness.gateway.intake_pointers import (
             FILES_ONLY_TEXT,
             attachment_note,
             message_pointers,
             remember_pointers,
+            resolve_reply_sources,
         )
         from ts_harness.workflows.session_compat import read_program_id
 
         metadata = dict(session.metadata or {})
-        if read_program_id(metadata) or metadata.get("workflow_id"):
-            return session, user_text, ""
         pointers = message_pointers(body, tenant_id=tenant_id, text=user_text, channel_attachments=channel_attachments)
         if not pointers:
-            return session, user_text, ""
+            return session, user_text, "", ""
+        if read_program_id(metadata) or metadata.get("workflow_id"):
+            started = time.time()
+            try:
+                sources_text = resolve_reply_sources(
+                    pointers, tenant_id=tenant_id, workflow_type=metadata.get("workflow_type")
+                )
+            except Exception as exc:  # noqa: BLE001 - the reply still goes through without the files
+                log_event("intake_reply_sources_failed", session_id=session.session_id, error=str(exc))
+                sources_text = ""
+            log_event(
+                "intake_reply_sources",
+                session_id=session.session_id,
+                pointers=len(pointers),
+                chars=len(sources_text),
+                ms=int((time.time() - started) * 1000),
+            )
+            return session, user_text if user_text.strip() else FILES_ONLY_TEXT, "", sources_text
         metadata, added = remember_pointers(metadata, pointers)
         if added:
             session.metadata = metadata
@@ -2484,7 +2508,7 @@ class RuntimeState:
             )
         if not user_text.strip():
             user_text = FILES_ONLY_TEXT
-        return session, user_text, attachment_note(added)
+        return session, user_text, attachment_note(added), ""
 
     def handle_channel_webhook(self, channel: str, body: dict[str, Any], auth) -> dict[str, Any]:
         if channel == "slack" and body.get("type") == "url_verification":

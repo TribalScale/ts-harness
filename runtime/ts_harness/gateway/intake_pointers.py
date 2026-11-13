@@ -118,3 +118,48 @@ def attachment_note(pointers: list[dict[str, Any]]) -> str:
     if refused:
         parts.append(f"Not attached: {'; '.join(refused)}.")
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Replies after a program or workflow has started
+# ---------------------------------------------------------------------------
+
+SOURCES_OPEN = "<intake_sources>"
+SOURCES_CLOSE = "</intake_sources>"
+REPLY_DEADLINE_SECONDS = 60.0
+
+
+def drive_agent_for(workflow_type: str | None) -> str:
+    """Whose Workspace mailbox reads Drive for a reply: the stage agent of that workflow."""
+    return "sales-agent" if str(workflow_type or "") == "rfp_request" else "pm-agent"
+
+
+def resolve_reply_sources(
+    pointers: list[dict[str, Any]], *, tenant_id: str, workflow_type: str | None, resolver: Any = None
+) -> str:
+    """Read a reply's attachments now (half the text budget, 60 s) and return the markdown."""
+    from ts_harness.intake import connectors
+    from ts_harness.intake.resolve import resolve_intake_sources
+    from ts_harness.intake.sources import MAX_TOTAL_TEXT_CHARS
+
+    agent_id = drive_agent_for(workflow_type)
+    capped = apply_arrival_caps(pointers)
+    needs_drive = any(p.get("kind") == "drive" and not p.get("error") for p in capped)
+    resolve = resolver or resolve_intake_sources
+    result = resolve(
+        capped,
+        download=connectors.build_download(),
+        drive=connectors.build_drive(tenant_id=tenant_id, agent_id=agent_id) if needs_drive else None,
+        describe_image=connectors.build_image_describer(agent_id=agent_id, scope={"tenant": tenant_id, "agent": agent_id}),
+        deadline_s=REPLY_DEADLINE_SECONDS,
+        max_total_text=MAX_TOTAL_TEXT_CHARS // 2,
+    )
+    return str(result.get("sources_text") or "")
+
+
+def with_reply_sources(text: str, sources_text: str) -> str:
+    """The reply text followed by the read sources, fenced so displays can collapse them."""
+    if not sources_text.strip():
+        return text
+    block = f"{SOURCES_OPEN}\n{sources_text.strip()}\n{SOURCES_CLOSE}"
+    return f"{text}\n\n{block}" if text.strip() else block

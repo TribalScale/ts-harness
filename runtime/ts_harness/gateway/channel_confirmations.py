@@ -900,12 +900,16 @@ def execute_workflow_gate_response(
     agent_id: str,
     source: str,
     user_text: str,
+    answer_text: str | None = None,
     provider: ModelProvider | None = None,
     use_llm_fallback: bool = True,
 ) -> dict[str, Any]:
+    """Classify ``user_text`` (the person's words); record ``answer_text`` (their words plus
+    any attachments read from the reply) as the answer or the approval reply."""
+    answer = user_text if answer_text is None else answer_text
     intake_gate = None if _repo_pick_reply(session, user_text) else _pending_intake_gate(session)
     if intake_gate is not None and not _intake_go_ahead(intake_gate, user_text):
-        return record_intake_answer(session, intake_gate, user_text)
+        return record_intake_answer(session, intake_gate, answer)
     if intake_gate is not None or _repo_pick_reply(session, user_text):
         classification = ConfirmationClassification(decision="approve", source="deterministic")
     else:
@@ -934,7 +938,8 @@ def execute_workflow_gate_response(
         tenant_id=tenant_id,
         agent_id=agent_id,
         source=source,
-        reply_text=user_text,
+        # Only an intake gate takes the attachments; a repo pick or plain approval reads the words.
+        reply_text=answer if intake_gate is not None else user_text,
     )
 
 

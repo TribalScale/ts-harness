@@ -11,6 +11,12 @@ First public release.
 
 ### Added
 
+- Intake sources: attach files (console, Slack, Telegram, Discord) or paste
+  Google Drive file and folder links when asking for a plan, bug report, PRD or
+  RFP. The intake stages read them as text, including images described by the
+  stage agent's model. Uploads stream to the intake object store (local, S3 or
+  GCS); filing and implementation never see the raw files. See
+  [intake sources](docs/runbooks/intake-sources.md).
 - Jira to PR can confirm a serial queue. `implement all` and `implement the rest` order this person's assigned tickets, blockers first, and implement them one at a time after each merge. A named key still runs that ticket only.
 - Knowledge notes: reviewed `avoid` and `howto` notes at org and project scope.
   Active notes load into every run. Proposals from a finished-program review or

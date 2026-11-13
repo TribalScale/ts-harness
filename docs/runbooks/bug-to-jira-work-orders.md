@@ -12,6 +12,8 @@ propose_start_program(program_type=bug_to_jira_work_orders, entry_phase=bug_inta
 
 Mid-pipeline file: `entry_phase=file_jira` with `work_order_ids` + `work_orders_markdown`.
 
+Screenshots, logs and specs attached to the report (or Drive links) are read for `investigate`, `clarify` and `draft_bug`. See [intake-sources.md](intake-sources.md).
+
 Live routing sees these signals only after the host runtime YAML (the mounted file, not the template) has the same intent.
 
 ## What it does
