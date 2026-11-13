@@ -911,6 +911,10 @@ class EnterpriseAgent:
                 "and follow_up_needed.\n"
                 "- Put each question as a string in the top-level questions "
                 "array; do not put the PRD body in summary or artifacts.\n"
+                "- input.sources, when present, is what the requester attached "
+                "(files, Drive documents, image descriptions) as markdown. Do not "
+                "ask for anything it already states; ask once about each source "
+                "marked Could not be read or listed under Not read.\n"
             )
         elif (
             "prd-to-work-orders" in skill_hints

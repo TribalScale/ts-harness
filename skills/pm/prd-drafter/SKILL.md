@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.1.0
+version: 1.2.0
 ---
 
 # PRD drafter
@@ -17,6 +17,8 @@ Never create or update Jira issues here.
 - `input.intake_output` is what intake asked.
 - On `revise_prd`: `input.prior_artifact` is the last draft and `input.comments` is the reviewer's feedback. Change what the comments ask; keep FR and DoD ids stable.
 - `input.today` is today's date. Use it for **Last updated**; never guess a date.
+
+- `input.sources`, when present, is what the requester attached (files, Drive documents, image descriptions), one markdown section per source. Treat it as part of the request and name a source when the PRD relies on it. A section marked _Could not be read_ or listed under _Not read_ is missing; list it under Open Questions rather than guessing its contents.
 
 Recall prior PRDs and decisions for the area first (`recall_memory` with tags `prd` and the component area).
 If the problem, the persona or the desired outcome is still unknown, return a clarification request instead of guessing.

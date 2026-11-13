@@ -292,3 +292,56 @@ def build_image_describer(*, agent_id: str = "pm-agent", scope: dict[str, Any] |
         return text
 
     return describe
+
+
+# ---------------------------------------------------------------------------
+# Discord prefetch
+# ---------------------------------------------------------------------------
+
+
+def prefetch_discord_files(pointers: list[dict[str, Any]], *, tenant_id: str, client: httpx.Client | None = None) -> int:
+    """Copy Discord attachments into the store before their CDN URLs expire. Returns files copied.
+
+    Failures are only logged: the gather falls back to the URL, then reports the file as expired.
+    """
+    from ts_harness.intake.blobs import IntakeSpool, intake_store
+
+    http = client or httpx.Client(timeout=_TIMEOUT)
+    store = intake_store()
+    copied = 0
+    for pointer in pointers:
+        if pointer.get("kind") != "discord_file" or pointer.get("error") or not pointer.get("object_key"):
+            continue
+        try:
+            if store.head(str(pointer["object_key"])) is not None:
+                continue
+            data = fetch_capped(http, str(pointer.get("url") or ""))
+            with IntakeSpool() as spool:
+                spool.write(data)
+                spool.store(
+                    tenant_id=tenant_id,
+                    name=str(pointer.get("name") or "attachment"),
+                    mime=str(pointer.get("mime") or ""),
+                    key=str(pointer["object_key"]),
+                    store=store,
+                )
+            copied += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("intake: discord prefetch of %s failed: %s", pointer.get("attachment_id"), type(exc).__name__)
+    return copied
+
+
+def start_discord_prefetch(pointers: list[dict[str, Any]], *, tenant_id: str) -> None:
+    """Run ``prefetch_discord_files`` on a daemon thread so the webhook is not held."""
+    import threading
+
+    wanted = [p for p in pointers if p.get("kind") == "discord_file" and not p.get("error")]
+    if not wanted:
+        return
+    threading.Thread(
+        target=prefetch_discord_files,
+        args=(wanted,),
+        kwargs={"tenant_id": tenant_id},
+        daemon=True,
+        name="intake-discord-prefetch",
+    ).start()

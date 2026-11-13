@@ -99,17 +99,17 @@ def parse_drive_urls(text: str) -> list[dict[str, Any]]:
 
 def pointer_identity(pointer: dict[str, Any]) -> str:
     kind = str(pointer.get("kind") or "")
-    if kind == "drive":
-        return f"drive:{pointer.get('file_id') or pointer.get('url')}"
-    if kind == "slack_file":
-        return f"slack:{pointer.get('file_id')}"
-    if kind == "telegram_file":
-        return f"telegram:{pointer.get('file_unique_id') or pointer.get('file_id')}"
-    if kind == "discord_file":
-        return f"discord:{pointer.get('attachment_id') or pointer.get('url')}"
-    if kind == "stored":
-        return f"stored:{pointer.get('sha256') or pointer.get('object_key')}"
-    return f"{kind}:{pointer.get('name')}:{pointer.get('url')}"
+    key = {
+        "drive": pointer.get("file_id") or pointer.get("url"),
+        "slack_file": pointer.get("file_id"),
+        "telegram_file": pointer.get("file_unique_id") or pointer.get("file_id"),
+        "discord_file": pointer.get("attachment_id") or pointer.get("url"),
+        "stored": pointer.get("sha256") or pointer.get("object_key"),
+    }.get(kind)
+    if key:
+        return f"{kind}:{key}"
+    # No id (e.g. a refused attachment): distinct names and errors stay distinct entries.
+    return f"{kind}:?:{pointer.get('name')}:{pointer.get('url')}:{pointer.get('error')}"
 
 
 def dedupe_pointers(pointers: list[dict[str, Any]]) -> list[dict[str, Any]]:

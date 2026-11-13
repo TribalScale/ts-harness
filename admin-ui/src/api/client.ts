@@ -85,3 +85,30 @@ export async function apiDownload(path: string): Promise<{ blob: Blob; headers: 
   }
   return { blob: await res.blob(), headers: res.headers };
 }
+
+/** A file the gateway stored for intake; sent back in `attachments` on `/session/message`. */
+export interface IntakePointer {
+  kind: "stored";
+  object_key: string;
+  sha256: string;
+  size: number;
+  name: string;
+  mime: string;
+}
+
+export const INTAKE_MAX_FILE_BYTES = 20 * 1024 * 1024;
+export const INTAKE_MAX_TOTAL_BYTES = 80 * 1024 * 1024;
+export const INTAKE_MAX_FILES = 25;
+
+/** Streams one file to `/intake/uploads` (raw body, not JSON) and returns its pointer. */
+export async function uploadIntakeFile(file: File): Promise<IntakePointer> {
+  const result = await apiFetch<{ pointer: IntakePointer }>(
+    `/intake/uploads?name=${encodeURIComponent(file.name)}`,
+    {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    }
+  );
+  return result.pointer;
+}

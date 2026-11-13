@@ -1,6 +1,6 @@
 {
   "workflow_type": "content_to_plan",
-  "definition_version": "1.3.0",
+  "definition_version": "1.4.0",
   "display_name": "Content to approved plan",
   "contracts": {
     "repo_pick": {
@@ -90,7 +90,10 @@
       "barrier": {
         "hook": "gather_bug_context",
         "repo": "$prior.pick_repo.output.repo",
-        "default_branch": "$prior.pick_repo.output.default_branch"
+        "default_branch": "$prior.pick_repo.output.default_branch",
+        "include_intake_sources": true,
+        "intake_sources": "$workflow.intake_sources",
+        "agent_id": "pm-agent"
       },
       "input_map": {
         "knowledge_notes": "$workflow.knowledge_notes"
@@ -116,7 +119,8 @@
         "tree_truncated": "$prior.gather_context.output.tree_truncated",
         "directories": "$prior.gather_context.output.directories",
         "files": "$prior.gather_context.output.files",
-        "knowledge_notes": "$workflow.knowledge_notes"
+        "knowledge_notes": "$workflow.knowledge_notes",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     },
@@ -130,7 +134,8 @@
       "present_prompt": "intake",
       "input_map": {
         "content": "$prior.pick_repo.input.summary",
-        "compare_output": "$prior.compare_codebase.output"
+        "compare_output": "$prior.compare_codebase.output",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 3600 }
     },
@@ -162,7 +167,8 @@
         "clarified_requirements": "$prior.await_ready.output",
         "compare_output": "$prior.compare_codebase.output",
         "repo": "$prior.pick_repo.output.repo",
-        "default_branch": "$prior.pick_repo.output.default_branch"
+        "default_branch": "$prior.pick_repo.output.default_branch",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     },

@@ -209,7 +209,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             "workflow": {
                 "id": "wf-bug",
                 "workflow_type": "bug_to_plan",
-                "definition_version": "1.3.0",
+                "definition_version": "1.4.0",
                 "program_id": "prog-1",
             },
             "tasks": [
@@ -218,7 +218,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
                     "workflow_id": "wf-bug",
                     "workflow_type": "bug_to_plan",
                     "step_name": "await_ready",
-                    "definition_version": "1.3.0",
+                    "definition_version": "1.4.0",
                     "status": "succeeded",
                     "approval_required": True,
                 }
@@ -233,7 +233,7 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             "workflow_id": "wf-bug",
             "workflow_type": "bug_to_plan",
             "step_name": "await_ready",
-            "definition_version": "1.3.0",
+            "definition_version": "1.4.0",
             "status": "pending",
             "approval_required": True,
             "input": {},

@@ -7,12 +7,16 @@ allowed_agents: [sales-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Draft RFP
 
 Draft a durable RFP response from clarified intake answers.
+
+## Shared sources
+
+`input.sources`, when present, is what the requester attached: files, Google Drive documents and descriptions of images, as markdown with one section per source. Treat it as part of the RFP request, alongside the clarified answers. Answer the RFP's own questions and requirements in its order when it provides them. Name the source when you rely on it. Do not ask for anything it already states. A section marked _Could not be read_, or listed under _Not read_, is missing: ask about it once (for a Drive link, ask the requester to share it with the workspace account), then carry on without it. A section cut at the size limit is incomplete; say so when the missing part matters.
 
 ## Output contract
 

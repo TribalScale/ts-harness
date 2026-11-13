@@ -40,7 +40,8 @@ class WorkflowMaterializeTests(unittest.TestCase):
 
     def test_prd_request_skeleton_loads(self):
         skeleton = load_skeleton("prd_request")
-        self.assertEqual(skeleton.stages[0].name, "intake")
+        self.assertEqual(skeleton.stages[0].name, "gather_sources")
+        self.assertEqual(skeleton.intake_stage_name(), "intake")
         self.assertTrue(any(stage.name == "approve_prd" for stage in skeleton.stages))
 
     def test_rfp_request_skeleton_loads(self):
@@ -130,6 +131,7 @@ class WorkflowPromotionTests(unittest.TestCase):
             {"id": "t2"},
             {"id": "t3"},
             {"id": "t4"},
+            {"id": "t5"},
         ]
         session = SessionRecord(
             session_id="s-promote",
@@ -158,7 +160,7 @@ class WorkflowPromotionTests(unittest.TestCase):
             workflow_call["program_id"],
         )
         client.get_workflow.assert_not_called()
-        self.assertEqual(len(client.create_task.call_args_list), 4)
+        self.assertEqual(len(client.create_task.call_args_list), 5)
         saved = get_session_store().get("s-promote")
         self.assertEqual(saved.metadata.get("mode"), "workflow_linked")
         self.assertEqual(saved.metadata.get("workflow_type"), "prd_request")

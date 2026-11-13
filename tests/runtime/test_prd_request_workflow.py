@@ -10,12 +10,14 @@ from ts_harness.workflows.materialize import load_skeleton, materialize_skeleton
 class PrdRequestWorkflowTests(unittest.TestCase):
     def test_prd_request_skeleton_v1_1(self):
         skeleton = load_skeleton("prd_request")
-        self.assertEqual(skeleton.definition_version, "1.4.0")
+        self.assertEqual(skeleton.definition_version, "1.5.0")
         stage_names = [stage.name for stage in skeleton.stages]
         self.assertEqual(
             stage_names,
-            ["intake", "await_intake_answers", "draft_prd", "approve_prd"],
+            ["gather_sources", "intake", "await_intake_answers", "draft_prd", "approve_prd"],
         )
+        # The barrier runs first but the human-facing intake stage is unchanged.
+        self.assertEqual(skeleton.intake_stage_name(), "intake")
         self.assertNotIn("delivery_planning", stage_names)
 
     def test_intake_wait_stage_blocks_on_channel_response(self):
@@ -39,7 +41,7 @@ class PrdRequestWorkflowTests(unittest.TestCase):
     def test_materialize_prd_request_tasks(self):
         skeleton = load_skeleton("prd_request")
         tasks = materialize_skeleton_tasks(skeleton, workflow_id="wf-prd")
-        self.assertEqual(len(tasks), 4)
+        self.assertEqual(len(tasks), 5)
         approve = next(task for task in tasks if task["step_name"] == "approve_prd")
         self.assertEqual(approve["depends_on"], ["draft_prd"])
         self.assertTrue(approve.get("approval_required"))
