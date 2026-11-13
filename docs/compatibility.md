@@ -24,6 +24,7 @@ are shared. See [`runbooks/install.md`](runbooks/install.md).
 |----------|---------|
 | `POST /workflow/dispatch` | Workflow runner dispatch contract |
 | `POST /session/message` | Normalized channel/session messages |
+| `POST /intake/uploads` | One raw file (≤ 20 MB) streamed to the intake object store; returns a `stored` pointer for `attachments` |
 | `POST /cron/trigger` | Scheduler smoke and manual cron trigger |
 | `GET /healthz` | Provider, memory-api, MCP, channels, slack_socket, sandbox, scheduler readiness |
 | `POST /channels/{channel}` | Inbound HTTP Events API webhook (optional; public ingress) |
