@@ -92,4 +92,6 @@ def record_opencode_usage(
             cost = None if match_model(pricing(), provider, model) else row["cost"]
             if record(scope, provider=provider, model=model, usage=usage, cost_usd=cost, session_id=session_id):
                 written += 1
+    if not written:
+        logger.warning("opencode usage: no session of this run found in %s (since %s)", repo_dir, since_ms)
     return written
