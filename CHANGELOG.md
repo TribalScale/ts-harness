@@ -161,6 +161,9 @@ First public release.
 
 ### Fixed
 
+- The workflow runner image did not install the `google`, `aws` and `gcp` extras, so
+  the intake gather could not read uploaded files from S3/GCS or Drive links. It now
+  installs `.[google,aws,gcp]`, like agent-runtime.
 - The installer rejected install configs with a `github_app` section (missing from the
   schema), and mapped `app_id` to `github_app_app_id`, which Terraform ignores. The
   section is now allowed and maps to `github_app_id`.

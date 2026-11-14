@@ -24,7 +24,9 @@ COPY config/programs /config/programs
 # Built-in workflows include fragments; the runner cannot load them without these.
 COPY config/fragments /app/config/fragments
 
-RUN pip install --no-cache-dir . "psycopg[binary]>=3.2"
+# The intake gather runs here: google reads Drive links, aws/gcp read uploaded files
+# from the object store (TS_HARNESS_OBJECT_BACKEND=s3|gcs).
+RUN pip install --no-cache-dir ".[google,aws,gcp]" "psycopg[binary]>=3.2"
 
 ENV PYTHONPATH=/app/runtime:/app/scripts
 ENV TS_HARNESS_ROOT=/app
