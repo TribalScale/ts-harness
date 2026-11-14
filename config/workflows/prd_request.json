@@ -1,6 +1,6 @@
 {
   "workflow_type": "prd_request",
-  "definition_version": "1.4.0",
+  "definition_version": "1.5.0",
   "display_name": "PRD review",
   "contracts": {
     "prd_intake": {
@@ -101,14 +101,32 @@
   },
   "stages": [
     {
+      "name": "gather_sources",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "barrier": {
+        "hook": "gather_intake_sources",
+        "intake_sources": "$workflow.intake_sources",
+        "agent_id": "pm-agent"
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 300
+      }
+    },
+    {
       "name": "intake",
       "kind": "task",
       "agent_id": "pm-agent",
+      "depends_on": ["gather_sources"],
       "allowed_agents": ["pm-agent"],
       "required_artifacts": ["clarified_requirements"],
       "contract_ref": "prd_intake",
       "skill_hints": ["clarify-requirements"],
       "present_prompt": "intake",
+      "input_map": {
+        "sources": "$prior.gather_sources.output.sources_text"
+      },
       "retry": {
         "max_retries": 2,
         "timeout_seconds": 600
@@ -147,7 +165,8 @@
       "input_map": {
         "clarified_requirements": "$prior.await_intake_answers.output.clarified_requirements",
         "intake_output": "$prior.intake.output",
-        "today": "$runtime.today"
+        "today": "$runtime.today",
+        "sources": "$prior.gather_sources.output.sources_text"
       },
       "retry": {
         "max_retries": 2,

@@ -11,7 +11,14 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import React, { useEffect, useRef, useState } from "react";
-import { apiFetch } from "../api/client";
+import {
+  apiFetch,
+  INTAKE_MAX_FILE_BYTES,
+  INTAKE_MAX_FILES,
+  INTAKE_MAX_TOTAL_BYTES,
+  uploadIntakeFile,
+  type IntakePointer,
+} from "../api/client";
 import { chatReplyText, messageDisplayText } from "../api/normalizers";
 import type { ChatMessage, ProgramStatus, SessionMessageResponse, SessionSummary } from "../api/types";
 import { Button } from "../components/Button";
@@ -30,6 +37,34 @@ const SAMPLE_PROMPTS = [
 ];
 
 type SkillHint = { id: string; agents?: string[] };
+
+/** A file picked in the composer: uploading, uploaded (with its pointer), or refused. */
+interface ComposerAttachment {
+  id: string;
+  name: string;
+  size: number;
+  status: "uploading" | "ready" | "error";
+  pointer?: IntakePointer;
+  error?: string;
+}
+
+const EMPTY_SEND = "Enter a message before sending.";
+const EMPTY_SEND_WITH_FILES = "Enter a message or attach a file.";
+const SIZE_LIMIT_MESSAGE = "Files are limited to 20 MB each and 80 MB per message.";
+const COUNT_LIMIT_MESSAGE = `Attach up to ${INTAKE_MAX_FILES} files per message.`;
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+/** What the user bubble shows: their words, then the attached file names. */
+function sentText(text: string, names: string[]): string {
+  if (names.length === 0) return text;
+  const line = `Attached: ${names.join(", ")}`;
+  return text ? `${text}\n\n${line}` : line;
+}
 
 /** Same stems `resolve_for_channel_chat` drops; listing them would pin-then-block. */
 const CHANNEL_CHAT_EXCLUDED_IDS = new Set(["workflow-state", "governed-delivery", "fan-out"]);
@@ -115,6 +150,10 @@ function ConsoleComposer({
   restoreDraft,
   onText,
   onRejectEmpty,
+  attachments,
+  onPickFiles,
+  onRemoveAttachment,
+  onSendFilesOnly,
 }: {
   agentId: string;
   busy: boolean;
@@ -124,7 +163,15 @@ function ConsoleComposer({
   restoreDraft: React.MutableRefObject<(text: string) => void>;
   onText: (text: string) => void;
   onRejectEmpty: () => void;
+  /** Omitted where the chat posts to a custom endpoint: those chats take text only. */
+  attachments?: ComposerAttachment[];
+  onPickFiles?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+  onSendFilesOnly?: () => void;
 }) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const uploading = (attachments || []).some((item) => item.status === "uploading");
+  const readyFiles = (attachments || []).filter((item) => item.status === "ready").length;
   const { value, setText, send } = unstable_useComposerInput();
   const [caret, setCaret] = useState(0);
   const [skillHints, setSkillHints] = useState<SkillHint[]>([]);
@@ -168,8 +215,12 @@ function ConsoleComposer({
   }, [slashQuery === null ? null : "open"]);
 
   function submit() {
-    if (busy) return;
+    if (busy || uploading) return;
     if (!value.trim()) {
+      if (readyFiles > 0 && onSendFilesOnly) {
+        onSendFilesOnly();
+        return;
+      }
       onRejectEmpty();
       return;
     }
@@ -227,10 +278,66 @@ function ConsoleComposer({
             </ul>
           )}
         </div>
-        <Button variant="primary" type="button" busy={busy} onClick={submit}>
+        {onPickFiles && (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              aria-label="Attach files"
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files || []);
+                event.currentTarget.value = "";
+                if (files.length > 0) onPickFiles(files);
+              }}
+            />
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={busy}
+              onClick={() => fileInput.current?.click()}
+            >
+              Attach
+            </Button>
+          </>
+        )}
+        <Button
+          variant="primary"
+          type="button"
+          busy={busy}
+          disabled={uploading}
+          onClick={submit}
+        >
           Send
         </Button>
       </ComposerPrimitive.Root>
+      {attachments && attachments.length > 0 && (
+        <ul className="composer-attachments" aria-label="Attachments">
+          {attachments.map((item) => (
+            <li key={item.id} className={`composer-attachment is-${item.status}`}>
+              <span className="composer-attachment-name">{item.name}</span>
+              <span className="composer-attachment-meta">
+                {item.status === "uploading"
+                  ? "Uploading…"
+                  : item.status === "error"
+                    ? item.error || "Not uploaded"
+                    : formatBytes(item.size)}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                aria-label={`Remove ${item.name}`}
+                disabled={busy}
+                onClick={() => onRemoveAttachment?.(item.id)}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -281,6 +388,10 @@ export function ChatThread({
   const [programId, setProgramId] = useState("");
   const [activity, setActivity] = useState("");
   const [composerText, setComposerText] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  attachmentsRef.current = attachments;
+  const allowAttachments = !endpoint;
   const activeSession = useRef(sessionId || "");
   const pendingSendSession = useRef<string | null>(null);
   const restoreDraft = useRef<(text: string) => void>(() => undefined);
@@ -367,16 +478,67 @@ export function ChatThread({
     };
   }, [programId]);
 
+  function pickFiles(files: File[]) {
+    const current = attachmentsRef.current.filter((item) => item.status !== "error");
+    if (current.length + files.length > INTAKE_MAX_FILES) {
+      onError(COUNT_LIMIT_MESSAGE);
+      return;
+    }
+    let total = current.reduce((sum, item) => sum + item.size, 0);
+    const added: ComposerAttachment[] = [];
+    const toUpload: Array<[string, File]> = [];
+    for (const file of files) {
+      const id = nextMessageId();
+      if (file.size > INTAKE_MAX_FILE_BYTES || total + file.size > INTAKE_MAX_TOTAL_BYTES) {
+        added.push({ id, name: file.name, size: file.size, status: "error", error: "Too large" });
+        onError(SIZE_LIMIT_MESSAGE);
+        continue;
+      }
+      total += file.size;
+      added.push({ id, name: file.name, size: file.size, status: "uploading" });
+      toUpload.push([id, file]);
+    }
+    setAttachments((prev) => [...prev, ...added]);
+    for (const [id, file] of toUpload) {
+      uploadIntakeFile(file)
+        .then((pointer) =>
+          setAttachments((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, status: "ready", pointer } : item))
+          )
+        )
+        .catch((e: any) =>
+          setAttachments((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? { ...item, status: "error", error: String(e?.message || "Upload failed") }
+                : item
+            )
+          )
+        );
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((item) => item.id !== id));
+  }
+
   async function onNew(message: AppendMessage) {
-    const text = appendText(message).trim();
-    if (!text) {
-      onError("Enter a message before sending.");
+    await sendMessage(appendText(message).trim());
+  }
+
+  async function sendMessage(text: string) {
+    const ready = allowAttachments
+      ? attachmentsRef.current.filter((item) => item.status === "ready" && item.pointer)
+      : [];
+    if (!text && ready.length === 0) {
+      onError(allowAttachments ? EMPTY_SEND_WITH_FILES : EMPTY_SEND);
       return;
     }
     setBusy(true);
     onError(null);
-    const userMessage: DisplayMessage = { id: nextMessageId(), role: "user", content: text };
-    setMessages((prev) => [...dropTrailingFailure(prev, text), userMessage]);
+    const display = sentText(text, ready.map((item) => item.name));
+    const userMessage: DisplayMessage = { id: nextMessageId(), role: "user", content: display };
+    setMessages((prev) => [...dropTrailingFailure(prev, display), userMessage]);
     try {
       const body = endpoint
         ? { ...extraBody, text, session_id: sessionId || undefined }
@@ -387,6 +549,7 @@ export function ChatThread({
             thread_id: bindingKey,
             binding_key: bindingKey,
             session_id: sessionId || undefined,
+            ...(ready.length > 0 ? { attachments: ready.map((item) => item.pointer) } : {}),
           };
       const result = await apiFetch<SessionMessageResponse>(endpoint || "/session/message", {
         method: "POST",
@@ -409,6 +572,10 @@ export function ChatThread({
         );
         return;
       }
+      if (ready.length > 0) {
+        const sentIds = new Set(ready.map((item) => item.id));
+        setAttachments((prev) => prev.filter((item) => !sentIds.has(item.id)));
+      }
       const reply = chatReplyText(result).trim();
       if (reply) {
         setMessages((prev) => [
@@ -422,7 +589,7 @@ export function ChatThread({
       setMessages((prev) =>
         prev.map((item) => (item.id === userMessage.id ? { ...item, failed: true } : item))
       );
-      restoreDraft.current(text);
+      if (text) restoreDraft.current(text);
       onError(String(e.message || e));
     } finally {
       setBusy(false);
@@ -483,7 +650,11 @@ export function ChatThread({
           placeholder={placeholder}
           restoreDraft={restoreDraft}
           onText={setComposerText}
-          onRejectEmpty={() => onError("Enter a message before sending.")}
+          onRejectEmpty={() => onError(allowAttachments ? EMPTY_SEND_WITH_FILES : EMPTY_SEND)}
+          attachments={allowAttachments ? attachments : undefined}
+          onPickFiles={allowAttachments ? pickFiles : undefined}
+          onRemoveAttachment={allowAttachments ? removeAttachment : undefined}
+          onSendFilesOnly={allowAttachments ? () => void sendMessage("") : undefined}
         />
       </div>
     </AssistantRuntimeProvider>

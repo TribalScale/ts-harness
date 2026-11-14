@@ -7,6 +7,10 @@ description: Compare pasted content to an allowlisted repo, ask clarifying quest
 
 Use this skill on `content_to_plan` stages.
 
+## Shared sources
+
+On `compare_codebase`, `clarify` and `draft_plan`, `input.sources`, when present, is what the requester attached: files, Google Drive documents and descriptions of images, as markdown with one section per source. Treat it as part of the brief, alongside `input.content`. Name the source when you rely on it. Do not ask for anything it already states. A section marked _Could not be read_, or listed under _Not read_, is missing: ask about it once (for a Drive link, ask the requester to share it with the workspace account), then carry on without it. A section cut at the size limit is incomplete; say so when the missing part matters.
+
 ## pick_repo
 
 List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` and **fail closed** unless an operator added it. If there is one repo, still confirm it. Record `repo` and `default_branch` (omit → `dev`).

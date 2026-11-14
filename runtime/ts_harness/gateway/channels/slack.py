@@ -96,6 +96,7 @@ class SlackAdapter(BaseChannelAdapter):
             sender_id=str(payload.get("user", "unknown")),
             thread_id=payload.get("thread_ts") or payload.get("ts"),
             metadata={**payload, "channel_id": channel_id},
+            attachments=slack_file_pointers(payload.get("files")),
         )
 
     def _first_sighting(self, dedup_key: str) -> bool:
@@ -148,3 +149,21 @@ class SlackAdapter(BaseChannelAdapter):
             "message_id": response.get("ts"),
             "text_preview": str(args.get("text", ""))[:200],
         }
+
+
+def slack_file_pointers(files: Any) -> list[dict[str, Any]]:
+    """``slack_file`` pointers for a message's ``files``; downloaded later, at gather."""
+    out: list[dict[str, Any]] = []
+    for item in files if isinstance(files, list) else []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        out.append(
+            {
+                "kind": "slack_file",
+                "file_id": str(item["id"]),
+                "name": str(item.get("name") or item.get("title") or "attachment"),
+                "mime": str(item.get("mimetype") or ""),
+                "size": int(item.get("size") or 0),
+            }
+        )
+    return out

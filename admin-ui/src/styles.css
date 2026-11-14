@@ -1538,6 +1538,47 @@ a {
   gap: 8px;
 }
 
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 2px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  font-size: 13px;
+}
+
+.composer-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-meta {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.composer-attachment.is-error {
+  border-color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.composer-attachment.is-error .composer-attachment-meta {
+  color: var(--bad);
+}
+
 .composer-input {
   flex: 1;
   min-width: 0;

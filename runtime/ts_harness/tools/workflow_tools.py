@@ -369,6 +369,12 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
     history = get_transcript_store().load_messages(session.session_id)
     session_metadata = session.metadata or {}
     requester_actor_id = channel_requester_actor_id(session_metadata, ctx.agent_id)
+    from ts_harness.gateway.intake_pointers import clear_pointers, start_sources
+
+    extra_input = dict(pending.get("input")) if isinstance(pending.get("input"), dict) else {}
+    sources = start_sources(session_metadata, pending)
+    if sources:
+        extra_input["intake_sources"] = sources
     service = WorkflowPromotionService()
     try:
         result = service.start(
@@ -379,10 +385,13 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
             binding_key=binding_key,
             requester_actor_id=requester_actor_id,
             transcript_messages=history,
-            extra_input=pending.get("input") if isinstance(pending.get("input"), dict) else None,
+            extra_input=extra_input or None,
         )
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
+    if sources:
+        session.metadata = clear_pointers(dict(session.metadata or {}))
+        get_session_store().save(session)
     clear_pending_workflow(session)
     return {
         "status": "started",
@@ -939,6 +948,10 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             department = department_for_email(get_runtime().config, starter_email)
         except Exception:
             department = None
+    from ts_harness.gateway.intake_pointers import clear_pointers, start_sources
+
+    # Passed as first-task input, not artifacts: program artifacts never carry the files.
+    sources = start_sources(session.metadata, pending)
     try:
         result = service.create_program(
             entry_phase=entry_phase,
@@ -947,6 +960,7 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             binding_key=binding_key,
             requester_actor_id=channel_requester_actor_id(session.metadata or {}, ctx.agent_id),
             artifacts=artifacts,
+            extra_input={"intake_sources": sources} if sources else None,
             transcript_messages=history,
             actor=ctx.agent_id,
             program_type=program_type,
@@ -962,7 +976,7 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
-    metadata = dict(session.metadata or {})
+    metadata = clear_pointers(dict(session.metadata or {}))
     from ts_harness.workflows.session_compat import write_program_session
 
     metadata = write_program_session(

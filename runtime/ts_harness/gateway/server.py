@@ -767,7 +767,10 @@ class RuntimeState:
             thread_id=body.get("thread_id"),
         )
 
-    def handle_session_message(self, body: dict[str, Any], auth) -> dict[str, Any]:
+    def handle_session_message(
+        self, body: dict[str, Any], auth, *, channel_attachments: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """``channel_attachments`` come only from ``handle_channel_webhook`` (signed channel events)."""
         req = normalize_runtime_body(body, default_tenant=self.config.gateway.default_tenant_id)
         channel = body.get("channel", "slack")
         agent_id = self.config.bindings.get(channel, self.config.default_agent().id)
@@ -787,6 +790,7 @@ class RuntimeState:
                 channel=channel,
                 agent_id=agent_id,
                 agent_cfg=agent_cfg,
+                channel_attachments=channel_attachments,
             )
 
     def _handle_session_message_locked(
@@ -799,6 +803,7 @@ class RuntimeState:
         channel: str,
         agent_id: str,
         agent_cfg,
+        channel_attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         from ts_harness.agent.transcript import get_transcript_store
         from ts_harness.gateway.delegate_confirmation import (
@@ -933,6 +938,11 @@ class RuntimeState:
 
         if detach_finished_program_for_new_request(session, user_text, config=self.config):
             session = get_session_store().get(session.session_id) or session
+
+        attachment_note = ""
+        session, user_text, attachment_note = self._collect_intake_pointers(
+            session, body, user_text=user_text, tenant_id=req.tenant_id, channel_attachments=channel_attachments
+        )
 
         denied_reply = next(
             (
@@ -2230,6 +2240,8 @@ class RuntimeState:
                 tenant_id=req.tenant_id,
             )
             skill_invoke = "none"
+        if attachment_note:
+            model_text = f"{model_text}\n\n{attachment_note}"
         skill_bundle = self.skill_catalog.build_prompt_bundle(skills)
         transcript = get_transcript_store()
         history = transcript.load_messages(session.session_id)
@@ -2431,6 +2443,49 @@ class RuntimeState:
             "error": result.error,
         }
 
+    def _collect_intake_pointers(
+        self,
+        session,
+        body: dict[str, Any],
+        *,
+        user_text: str,
+        tenant_id: str,
+        channel_attachments: list[dict[str, Any]] | None,
+    ) -> tuple[Any, str, str]:
+        """Hold this message's attachments on the session until a start; return (session, text, note).
+
+        A thread already linked to a program or workflow is left alone here: replies with files
+        are handled separately. A message that is only files gets placeholder text so the
+        proposal still has a summary.
+        """
+        from ts_harness.gateway.intake_pointers import (
+            FILES_ONLY_TEXT,
+            attachment_note,
+            message_pointers,
+            remember_pointers,
+        )
+        from ts_harness.workflows.session_compat import read_program_id
+
+        metadata = dict(session.metadata or {})
+        if read_program_id(metadata) or metadata.get("workflow_id"):
+            return session, user_text, ""
+        pointers = message_pointers(body, tenant_id=tenant_id, text=user_text, channel_attachments=channel_attachments)
+        if not pointers:
+            return session, user_text, ""
+        metadata, added = remember_pointers(metadata, pointers)
+        if added:
+            session.metadata = metadata
+            get_session_store().save(session)
+            log_event(
+                "intake_pointers_held",
+                session_id=session.session_id,
+                added=len(added),
+                refused=sum(1 for p in added if p.get("error")),
+            )
+        if not user_text.strip():
+            user_text = FILES_ONLY_TEXT
+        return session, user_text, attachment_note(added)
+
     def handle_channel_webhook(self, channel: str, body: dict[str, Any], auth) -> dict[str, Any]:
         if channel == "slack" and body.get("type") == "url_verification":
             return {"status": "challenge", "challenge": body.get("challenge", "")}
@@ -2450,7 +2505,11 @@ class RuntimeState:
             "sender_email": sender_email,
             "actor": {"actor_id": event.sender_id, "auth_provider": channel},
         }
-        result = self.handle_session_message(message_body, auth)
+        if channel == "discord" and event.attachments:
+            from ts_harness.intake.connectors import start_discord_prefetch
+
+            start_discord_prefetch(event.attachments, tenant_id=event.tenant_id)
+        result = self.handle_session_message(message_body, auth, channel_attachments=event.attachments)
         result["channel"] = channel
         if result.get("status") == "blocked" and result.get("error") == "max iterations exceeded":
             reply_text = (
