@@ -169,3 +169,8 @@ output "workspaces_bucket" {
   description = "S3 bucket for agent workspaces (object_backend=s3)"
   value       = try(aws_s3_bucket.workspaces[0].id, "")
 }
+
+output "intake_bucket" {
+  description = "S3 bucket for files attached to requests, kept 14 days (object_backend=s3)"
+  value       = try(aws_s3_bucket.intake[0].id, "")
+}

@@ -458,6 +458,12 @@ variable "embeddings_model" {
   default     = "text-embedding-3-small"
 }
 
+variable "intake_vision_model" {
+  description = "Model that reads images attached to requests, as provider/model. Empty uses the stage agent's model; off turns image reading off."
+  type        = string
+  default     = ""
+}
+
 variable "embeddings_dimensions" {
   description = "Output dimensionality. MUST equal the vector() width in database/migrations/001_init_memory.sql (currently 1536)."
   type        = number

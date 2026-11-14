@@ -19,6 +19,7 @@ locals {
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider
     EMBEDDINGS_MODEL                      = var.embeddings_model
+    TS_HARNESS_INTAKE_VISION_MODEL        = var.intake_vision_model
     EMBEDDINGS_DIMENSIONS                 = tostring(var.embeddings_dimensions)
     EMBEDDINGS_FALLBACK                   = var.embeddings_fallback
     IMPLEMENT_WORK_ORDERS_REPO_URL        = var.implement_work_orders_repo_url
@@ -45,6 +46,7 @@ locals {
     TS_HARNESS_OBJECT_BACKEND             = var.object_backend
     TS_HARNESS_SKILLS_BUCKET              = try(google_storage_bucket.skills[0].name, "")
     TS_HARNESS_WORKSPACE_BUCKET           = try(google_storage_bucket.workspaces[0].name, "")
+    TS_HARNESS_INTAKE_BUCKET              = try(google_storage_bucket.intake[0].name, "")
   }
 }
 

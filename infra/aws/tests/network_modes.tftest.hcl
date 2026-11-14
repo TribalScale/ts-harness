@@ -178,8 +178,8 @@ run "scale_out_in_vpc" {
   }
 
   assert {
-    condition     = alltrue([for b in aws_s3_bucket_public_access_block.objects : b.block_public_acls && b.block_public_policy && b.restrict_public_buckets]) && length(aws_s3_bucket_public_access_block.objects) == 2
-    error_message = "both buckets block public access"
+    condition     = alltrue([for b in aws_s3_bucket_public_access_block.objects : b.block_public_acls && b.block_public_policy && b.restrict_public_buckets]) && length(aws_s3_bucket_public_access_block.objects) == 3
+    error_message = "all three buckets block public access"
   }
 
   assert {
@@ -189,7 +189,7 @@ run "scale_out_in_vpc" {
 
   assert {
     condition     = alltrue([for e in aws_s3_bucket_server_side_encryption_configuration.objects : [for r in e.rule : [for d in r.apply_server_side_encryption_by_default : d.sse_algorithm]][0][0] == "aws:kms"])
-    error_message = "both buckets encrypt with KMS"
+    error_message = "all buckets encrypt with KMS"
   }
 
   assert {
@@ -210,8 +210,18 @@ run "scale_out_in_vpc" {
   }
 
   assert {
-    condition     = [for s in local.object_storage_policy.Statement : s.Sid if contains(s.Action, "s3:GetObject")] == ["ReadWriteSkillsAndWorkspaces"]
-    error_message = "the runtime reads and writes both buckets"
+    condition     = [for s in local.object_storage_policy.Statement : s.Sid if contains(s.Action, "s3:GetObject")] == ["ReadWriteSkillsAndWorkspaces", "ReadWriteIntakeFiles"]
+    error_message = "the runtime reads and writes the skills, workspaces and intake buckets"
+  }
+
+  assert {
+    condition     = aws_s3_bucket.intake[0].bucket == "ts-harness-intake" && contains(keys(local.runtime_config_object), "TS_HARNESS_INTAKE_BUCKET")
+    error_message = "scale_out creates the intake bucket and publishes it in runtime-config"
+  }
+
+  assert {
+    condition     = !contains(keys(aws_s3_bucket_versioning.objects), "intake") && aws_s3_bucket_lifecycle_configuration.intake[0].rule[0].filter[0].prefix == "intake/" && aws_s3_bucket_lifecycle_configuration.intake[0].rule[0].expiration[0].days == 14
+    error_message = "intake files are deleted after 14 days and not kept as old versions"
   }
 }
 

@@ -74,6 +74,11 @@ model that writes the brief.
 A model that cannot read images produces _image could not be read_; the run
 continues.
 
+Set it with `intake_vision_model` in `terraform.tfvars` (or `runtime.intake_vision_model`
+in the install contract). Terraform stores it in the runtime-config store, not the
+secrets manager, because it is not a secret; the provider's API key already is.
+After `terraform apply`, run `scripts/ops/sync-runtime-config.sh` and redeploy.
+
 ## Storage
 
 Uploads and Discord copies live in the `intake` object store under
@@ -83,29 +88,25 @@ sha256; reads are checked against the sha256.
 | Backend | Setting | Retention |
 | --- | --- | --- |
 | `TS_HARNESS_OBJECT_BACKEND=local` | `ts-harness-intake-objects` volume, shared by agent-runtime and workflow-runner | Swept hourly by the gateway after 14 days |
-| `s3` | `TS_HARNESS_INTAKE_BUCKET` | Bucket lifecycle rule (below) |
-| `gcs` | `TS_HARNESS_INTAKE_BUCKET` | Bucket lifecycle rule |
+| `s3` | `TS_HARNESS_INTAKE_BUCKET` | Bucket lifecycle rule, 14 days |
+| `gcs` | `TS_HARNESS_INTAKE_BUCKET` | Bucket lifecycle rule, 14 days |
 
-S3 lifecycle rule:
+With `object_backend=s3` (AWS) or `gcs` (GCP), Terraform in `infra/` creates the
+`<project_name>-intake` bucket next to the skills and workspaces buckets. The bucket is
+encrypted and not versioned, and it deletes objects under `intake/` after 14 days.
+Terraform publishes the name as `TS_HARNESS_INTAKE_BUCKET` in the runtime-config store,
+and grants the runtime read and write access (no delete). To pick it up on a running
+host after `terraform apply`:
 
-```hcl
-resource "aws_s3_bucket_lifecycle_configuration" "intake" {
-  bucket = aws_s3_bucket.intake.id
-  rule {
-    id     = "expire-intake"
-    status = "Enabled"
-    filter { prefix = "intake/" }
-    expiration { days = 14 }
-    abort_incomplete_multipart_upload { days_after_initiation = 1 }
-  }
-}
+```bash
+scripts/ops/sync-runtime-config.sh                    # writes instance-env.sh
+# then redeploy so agent-runtime and workflow-runner get the variable
 ```
 
-Turn on default server-side encryption for the bucket. The gateway and the
-workflow runner need `s3:PutObject`, `s3:GetObject` and `s3:ListBucket` on it
-(`s3:DeleteObject` only if you also sweep from code). A program started more
-than 14 days after its files were uploaded reports them as _attachment
-expired; please attach it again_.
+If the backend is `s3` or `gcs` and the bucket is not set, the installer prints a warning.
+Console uploads then fail with _the file could not be stored_ (503). A program started
+more than 14 days after its files were uploaded reports them as _attachment expired;
+please attach it again_.
 
 ## Workflow runner settings
 

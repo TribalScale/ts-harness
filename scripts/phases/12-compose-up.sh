@@ -180,7 +180,7 @@ if [[ "${LLM_PROXY_ENABLED:-false}" == "true" ]]; then
 fi
 
 # A path that does not exist is hashed by name, so a storage flag change re-runs compose up.
-STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}"
+STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}:${TS_HARNESS_INTAKE_BUCKET:-}"
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
@@ -262,6 +262,8 @@ fi
     echo "export TS_HARNESS_OBJECT_BACKEND=$(printf '%q' "${TS_HARNESS_OBJECT_BACKEND}")"
     echo "export TS_HARNESS_SKILLS_BUCKET=$(printf '%q' "${TS_HARNESS_SKILLS_BUCKET:-}")"
     echo "export TS_HARNESS_WORKSPACE_BUCKET=$(printf '%q' "${TS_HARNESS_WORKSPACE_BUCKET:-}")"
+    echo "export TS_HARNESS_INTAKE_BUCKET=$(printf '%q' "${TS_HARNESS_INTAKE_BUCKET:-}")"
+    echo "export TS_HARNESS_INTAKE_VISION_MODEL=$(printf '%q' "${TS_HARNESS_INTAKE_VISION_MODEL:-}")"
     echo "export TS_HARNESS_STATE_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_STATE_VOLUME_MODE}")"
     echo "export TS_HARNESS_OBJECT_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_OBJECT_VOLUME_MODE}")"
     echo "export CODING_ECS_CLUSTER=$(printf '%q' "${CODING_ECS_CLUSTER:-}")"

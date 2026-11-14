@@ -123,3 +123,8 @@ output "workspaces_bucket" {
   description = "GCS bucket for agent workspaces (object_backend=gcs)"
   value       = try(google_storage_bucket.workspaces[0].name, "")
 }
+
+output "intake_bucket" {
+  description = "GCS bucket for files attached to requests, kept 14 days (object_backend=gcs)"
+  value       = try(google_storage_bucket.intake[0].name, "")
+}

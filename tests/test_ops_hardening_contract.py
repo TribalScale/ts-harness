@@ -357,7 +357,13 @@ class LlmProxyContractTests(unittest.TestCase):
         self.assertIn('write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"', fetch)
 
 
-STORAGE_FLAGS = ("TS_HARNESS_STATE_BACKEND", "TS_HARNESS_OBJECT_BACKEND", "TS_HARNESS_SKILLS_BUCKET", "TS_HARNESS_WORKSPACE_BUCKET")
+STORAGE_FLAGS = (
+    "TS_HARNESS_STATE_BACKEND",
+    "TS_HARNESS_OBJECT_BACKEND",
+    "TS_HARNESS_SKILLS_BUCKET",
+    "TS_HARNESS_WORKSPACE_BUCKET",
+    "TS_HARNESS_INTAKE_BUCKET",
+)
 
 
 def _resolve_storage(**env: str) -> dict[str, str]:
@@ -391,6 +397,20 @@ class SharedStateContractTests(unittest.TestCase):
             self.assertIn(f'echo "export {name}=', phase12)
         phase10b = (REPO_ROOT / "scripts" / "phases" / "10b-render-workspace.sh").read_text()
         self.assertLess(phase10b.index("load_instance_env"), phase10b.index("resolve_storage_backends"))
+
+    def test_intake_vision_model_flows_from_runtime_config_to_the_runner(self):
+        name = "TS_HARNESS_INTAKE_VISION_MODEL"
+        common = COMMON.read_text()
+        keys = common[common.index("INSTANCE_ENV_KEYS=("):common.index("instance_env_path()")]
+        compose_env = common[common.index("run_docker_compose_as_admin()"):common.index("with_runtime_replicas()")]
+        self.assertIn(f"    {name}\n", keys)
+        self.assertIn(f'{name}="${{{name}:-}}"', compose_env)
+        self.assertIn(f'echo "export {name}=', (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text())
+        for cloud in ("aws", "gcp"):
+            runtime_config = (REPO_ROOT / "infra" / cloud / "runtime_config.tf").read_text()
+            self.assertRegex(runtime_config, rf"{name}\s+= var.intake_vision_model")
+        runner = _compose("docker-compose.workflow-runner.yml")["services"]["workflow-runner"]["environment"]
+        self.assertEqual(runner[name], f"${{{name}:-}}")
 
     def test_profile_defaults(self):
         self.assertEqual(
