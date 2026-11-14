@@ -156,6 +156,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "objects" {
       kms_master_key_id = aws_kms_key.object_storage[0].arn
     }
     bucket_key_enabled = true
+    # AWS blocks customer-provided keys (SSE-C) on new buckets; keep it that way.
+    blocked_encryption_types = ["SSE-C"]
   }
 }
 

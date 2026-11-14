@@ -176,6 +176,16 @@
         }
       }
     },
+    "github_app": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub App used for repository tokens. Maps to github_app_id, github_app_slug and github_app_host; the private key stays in the secrets manager.",
+      "properties": {
+        "app_id": { "type": ["integer", "string"] },
+        "slug": { "type": "string" },
+        "host": { "type": "string" }
+      }
+    },
     "terraform_state": {
       "type": "object",
       "additionalProperties": false,

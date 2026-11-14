@@ -161,6 +161,10 @@ First public release.
 
 ### Fixed
 
+- The installer rejected install configs with a `github_app` section (missing from the
+  schema), and mapped `app_id` to `github_app_app_id`, which Terraform ignores. The
+  section is now allowed and maps to `github_app_id`.
+- S3 object buckets keep SSE-C blocked. Terraform was about to clear the AWS default.
 - Terraform did not create a bucket for intake files, so with `object_backend=s3`
   or `gcs` console uploads failed with 503. AWS and GCP now create
   `<project_name>-intake` (encrypted, not versioned, `intake/` deleted after 14 days),
