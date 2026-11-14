@@ -32,11 +32,62 @@ from ts_harness.workflows.artifacts import (
     work_orders_artifacts_failure_reason,
 )
 from ts_harness.workflows import stage_contracts
+from ts_harness.workflows.prd_checks import check_prd
 
 # Cap in-loop repairs so a bad model response can self-correct before the
 # runner marks the task blocked / retries the whole dispatch.
 _MAX_WORKFLOW_OUTPUT_REPAIRS = 2
 _WORKFLOW_MEMORY_TOOLS = frozenset({"recall_memory", "remember_memory", "forget_memory"})
+
+# Step guidance for prd_request. Both stages have output contracts, so this text is
+# added on the contract path too; the skills (prd-intake, prd-drafter) carry the detail.
+PRD_INTAKE_MODE = (
+    "\nClarifying Intake mode (follow the prd-intake skill):\n"
+    "- Ask 3 to 7 clarifying questions needed to draft the PRD. Do not draft, "
+    "outline, or review the PRD in this step.\n"
+    "- Facts are your job: input.sources, when present, is what the requester "
+    "attached (files, Drive documents, image descriptions) as markdown. Never ask "
+    "for anything it or a recalled prior decision already states; ask once about "
+    "each source marked Could not be read or listed under Not read.\n"
+    "- End each question with 'Recommended: <a concrete answer and why>', worded "
+    "so that 'yes' accepts it.\n"
+    "- Return JSON with summary, questions, confidence, warnings, and "
+    "follow_up_needed. Put each question as a string in the top-level questions "
+    "array; do not put the PRD body in summary or artifacts.\n"
+)
+PRD_DRAFT_MODE = (
+    "\nDraft / Revise PRD mode (follow the prd-drafter skill):\n"
+    "- Use input.clarified_requirements and input.intake_output as the source of "
+    "truth.\n"
+    "- input.clarified_requirements.initial_request is the requester's own request "
+    "and clarified_requirements.answers are their answers to the intake questions. "
+    "A 'yes' accepts the recommended answers. Every requirement, named item, "
+    "number, and technology in them must appear in the PRD; answers refine the "
+    "request and win on conflict.\n"
+    "- Keep stated specifics exact (frameworks, named assets or entities, "
+    "intervals, limits, storage, validation rules). Never replace them with "
+    "generic wording.\n"
+    "- Add a 'Requirements' section listing each stated requirement as a checklist "
+    "item, and a 'Technical Constraints' section listing every technology, "
+    "platform, storage, and data choice the requester stated.\n"
+    "- Record each intake answer under Decisions and each unanswered gap you filled "
+    "under Assumptions. Give every FR a priority: Must, Should or Could.\n"
+    "- Do not ask for more intake information unless a critical blocker is "
+    "explicitly marked unknown.\n"
+    "- Return JSON with result.prd_title, result.prd_status='Draft', "
+    "result.prd_markdown, confidence, warnings, and follow_up_needed. Put the full "
+    "PRD only in result.prd_markdown; no preamble, next-step instructions, or "
+    "markdown code fences outside the JSON.\n"
+)
+
+
+def _prd_stage_mode(skill_hints: list[str]) -> str:
+    """PRD step guidance for a stage whose hints name a PRD skill, else empty."""
+    if "prd-intake" in skill_hints:
+        return PRD_INTAKE_MODE
+    if "prd-drafter" in skill_hints:
+        return PRD_DRAFT_MODE
+    return ""
 
 
 def _ensure_tool_call_id(call: dict[str, Any]) -> str:
@@ -881,6 +932,7 @@ class EnterpriseAgent:
                 "Complete the assigned workflow step. Return JSON with keys "
                 "summary and artifacts when done.\n"
                 f"{handoff}"
+                f"{_prd_stage_mode(skill_hints)}"
                 f"\n{stage_contracts.summarize_stage_contract(contract)}\n"
             )
             task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
@@ -897,25 +949,11 @@ class EnterpriseAgent:
                 )
             return self._append_knowledge_notes(prompt, payload)
         if (
-            "clarify-requirements" in skill_hints
+            "prd-intake" in skill_hints
             or "clarified_requirements" in required_artifacts
             or payload.get("step_name") == "intake"
         ):
-            extra = (
-                "\nClarifying Intake mode:\n"
-                "- Ask concise clarifying questions needed to draft the PRD.\n"
-                "- Do not draft, outline, or review the PRD in this step.\n"
-                "- Prefer 3-7 questions covering audience, scope, must-have "
-                "features, constraints, success metrics, and launch timing.\n"
-                "- Return JSON with summary, questions, confidence, warnings, "
-                "and follow_up_needed.\n"
-                "- Put each question as a string in the top-level questions "
-                "array; do not put the PRD body in summary or artifacts.\n"
-                "- input.sources, when present, is what the requester attached "
-                "(files, Drive documents, image descriptions) as markdown. Do not "
-                "ask for anything it already states; ask once about each source "
-                "marked Could not be read or listed under Not read.\n"
-            )
+            extra = PRD_INTAKE_MODE
         elif (
             "prd-to-work-orders" in skill_hints
             and "prd-to-work-orders-governed" not in skill_hints
@@ -968,31 +1006,8 @@ class EnterpriseAgent:
                 "- Return JSON with work_order_id and pr_url from the tool result.\n"
                 "- Fail the stage if work_order_body or pr_url is missing.\n"
             )
-        elif "draft-prd" in skill_hints or "prd_draft" in required_artifacts:
-            extra = (
-                "\nDraft / Revise PRD mode:\n"
-                "- Use input.clarified_requirements and input.intake_output "
-                "as the source of truth.\n"
-                "- input.clarified_requirements.initial_request is the requester's "
-                "own request and clarified_requirements.answers are their answers. "
-                "Every requirement, named item, number, and technology in them "
-                "must appear in the PRD; answers refine the request and win on "
-                "conflict.\n"
-                "- Keep stated specifics exact (frameworks, named assets or "
-                "entities, intervals, limits, storage, validation rules). Never "
-                "replace them with generic wording.\n"
-                "- Add a 'Requirements' section listing each stated requirement as "
-                "a checklist item, and a 'Technical Constraints' section listing "
-                "every technology, platform, storage, and data choice the "
-                "requester stated.\n"
-                "- Do not ask for more intake information unless a critical "
-                "blocker is explicitly marked unknown.\n"
-                "- Produce a complete draft PRD in Markdown.\n"
-                "- Return JSON with result.prd_title, result.prd_status='Draft', "
-                "result.prd_markdown, confidence, warnings, and follow_up_needed.\n"
-                "- Put the full PRD only in result.prd_markdown; do not add preamble, "
-                "next-step instructions, or markdown code fences outside the JSON.\n"
-            )
+        elif "prd-drafter" in skill_hints or "prd_draft" in required_artifacts:
+            extra = PRD_DRAFT_MODE
         prompt = (
             f"You are {agent.id}, an enterprise specialist agent.\n"
             f"{_soul_paragraph(agent)}"
@@ -1100,10 +1115,13 @@ class EnterpriseAgent:
         text = (content or "").strip()
         parsed = self._parse_json_object(text)
         if parsed is not None:
-            return self._normalize_work_orders_output(
-                self._sanitize_prd_output(parsed, payload),
+            return self._attach_prd_checks(
+                self._normalize_work_orders_output(
+                    self._sanitize_prd_output(parsed, payload),
+                    payload,
+                    raw_text=text,
+                ),
                 payload,
-                raw_text=text,
             )
         output = {
             "summary": text,
@@ -1135,7 +1153,24 @@ class EnterpriseAgent:
                 "Normalized Markdown PRD response without JSON wrapper."
             ]
             output["follow_up_needed"] = False
-        return self._normalize_work_orders_output(output, payload, raw_text=text)
+        return self._attach_prd_checks(
+            self._normalize_work_orders_output(output, payload, raw_text=text),
+            payload,
+        )
+
+    def _attach_prd_checks(self, output: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        """Add ``prd_checks`` (mechanical findings) to a drafted or revised PRD."""
+        if not self._requires_prd_output(payload):
+            return output
+        markdown = ""
+        for source in (output.get("result"), output, output.get("artifacts")):
+            if isinstance(source, dict) and isinstance(source.get("prd_markdown"), str):
+                markdown = source["prd_markdown"]
+                if markdown.strip():
+                    break
+        if not markdown.strip():
+            return output
+        return {**output, "prd_checks": check_prd(markdown)}
 
     def _parse_json_object(self, text: str) -> dict[str, Any] | None:
         candidates = [text]
@@ -1211,7 +1246,7 @@ class EnterpriseAgent:
         step_name = str(payload.get("step_name") or "")
         return (
             "prd_draft" in required_artifacts
-            or "draft-prd" in skill_hints
+            or "prd-drafter" in skill_hints
             or step_name in {"draft_prd", "revise_prd"}
         )
 
@@ -1223,7 +1258,7 @@ class EnterpriseAgent:
         step_name = str(payload.get("step_name") or "")
         return (
             "clarified_requirements" in required_artifacts
-            or "clarify-requirements" in skill_hints
+            or "prd-intake" in skill_hints
             or step_name == "intake"
         )
 

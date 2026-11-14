@@ -3,7 +3,7 @@ name: prd-review
 description: Review an approved or draft PRD before it becomes Jira work (jira_from_prd review_prd). Grades each dimension, audits requirement coverage, and returns the top 3 to 5 gaps. Read-only.
 category: pm
 allowed_agents: [pm-agent, orchestrator]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # PRD review
@@ -29,14 +29,21 @@ audit or personal data, material load) as a critical gap naming the trigger.
 4. **Requirement coverage** (the highest-value check):
    - every FR has `Specified in` and `Verified by`, and `Specified in` really describes the behaviour rather than naming it;
    - walk Proposed Solution, Key User Flows, states and settings for behaviour with **no FR**: those orphans become stories nobody planned;
-   - FR and DoD ids are unique and none were renumbered.
+   - FR and DoD ids are unique and none were renumbered;
+   - every FR has a priority (Must, Should or Could), and the Musts alone make a usable first release.
 5. **Failure paths**: every key flow has an `On failure` branch.
 6. **Technical constraints**: every stated technology and limit is listed word for word.
 7. **Non-functional** (Full): performance, accessibility, localization and observability, or `N/A` with who confirmed it.
 8. **Definition of Done**: 5 to 10 verifiable, customer-observable items.
 9. **Success metrics**: baseline and target for each; target-only is a gap.
 10. **Open questions**: each has a named owner; note which would block a story.
-11. **AI behaviour**: if the feature makes probabilistic decisions, a human approves or rejects them, and eval targets are named.
+11. **Decisions and assumptions**: each intake answer that shaped the PRD is under Decisions; each
+    Assumption says what changes if it is wrong. An assumption that would change scope, permissions
+    or data is a critical gap until a human confirms it.
+12. **Hygiene**: no `<placeholder>`, TBD or TODO left, and no vague word ("fast", "easy",
+    "intuitive", "seamless") without a number or a concrete behaviour. These are the runtime's
+    automatic PRD checks; anything still present was seen and approved, so list it under Hygiene.
+13. **AI behaviour**: if the feature makes probabilistic decisions, a human approves or rejects them, and eval targets are named.
 
 ## Verdict
 
@@ -44,7 +51,11 @@ audit or personal data, material load) as a critical gap naming the trigger.
 - `gaps`: at least one critical gap. Stories can still be planned, but the plan must carry each critical gap as an open question and the human decides at the plan gate.
 
 A critical gap is one that would make a story unbuildable or untestable: an orphan behaviour, an FR
-with no specification, a blocking open question, a mis-profiled PRD, or a missing failure path on a key flow.
+with no specification, a blocking open question, an unconfirmed assumption that changes scope,
+permissions or data, a mis-profiled PRD, or a missing failure path on a key flow.
+
+A PRD drafted before `prd-drafter` 1.3.0 has no Decisions, Assumptions or FR priorities; note that
+under Notes for later rather than as a critical gap.
 
 ## Output
 

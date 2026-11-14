@@ -3,7 +3,7 @@ name: story-writer
 description: Turn an approved PRD into a numbered Jira plan (jira_from_prd plan_stories) - epic, user-facing, technical and enabler stories with inline acceptance criteria and Blocks order - for human approval before anything is filed.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Story writer
@@ -36,6 +36,11 @@ Definition of Done and Technical Constraints.
 
 - Number stories `1.1` to `1.n` with no gaps. Each has a short title, a shape (`user-facing`, `technical` or `enabler`), the FRs it implements, and what it waits on.
 - Every FR lands in at least one story. Nothing outside Non-Goals is dropped; nothing in Non-Goals is planned.
+- Order by FR priority: stories carrying a Must FR come first, then Should, then Could. When the
+  size check forces a split, Could work goes to the second epic first. A PRD written before FR
+  priorities existed has none; plan it as before.
+- Each item under the PRD's Assumptions goes into `open_questions` unless the review or the PRD
+  confirms it.
 - A cross-cutting rule (audit, permissions, a limit) becomes either its own story, when something has to be built, or acceptance criteria inside each affected story. State which.
 - Backend work that only unblocks one user-facing story is an **enabler** story that blocks it.
 - **Size check:** up to 9 stories is normal. 10 to 12 is allowed but goes in `warnings` with where you would split. More than 12 is not allowed in one epic: plan the first coherent half only (12 or fewer), and state at the top of `plan_markdown` and in `warnings` that the epic must be split and what the second epic covers. More than 10 tickets in total also needs the human's explicit approval at the gate, so say so in `plan_markdown`.

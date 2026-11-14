@@ -98,7 +98,7 @@ class ContentToJiraProgramTests(unittest.TestCase):
         cases = {
             "content_to_plan": ("gather_context", ["compare_codebase", "clarify", "draft_plan"], "1.4.0"),
             "bug_to_plan": ("gather_context", ["investigate", "clarify", "draft_bug"], "1.4.0"),
-            "prd_request": ("gather_sources", ["intake", "draft_prd"], "1.5.0"),
+            "prd_request": ("gather_sources", ["intake", "draft_prd"], "1.6.0"),
             "rfp_request": ("gather_sources", ["intake", "draft_rfp"], "1.2.0"),
         }
         for workflow_type, (barrier_step, consumers, version) in cases.items():
@@ -130,7 +130,7 @@ class ContentToJiraProgramTests(unittest.TestCase):
 
     def test_prd_and_rfp_requests_validate(self):
         for name, agents, skills in (
-            ("prd_request", {"orchestrator", "pm-agent"}, {"clarify-requirements", "draft-prd"}),
+            ("prd_request", {"orchestrator", "pm-agent"}, {"prd-intake", "prd-drafter"}),
             ("rfp_request", {"orchestrator", "sales-agent"}, set()),
         ):
             payload = json.loads((WORKFLOWS / f"{name}.json").read_text())

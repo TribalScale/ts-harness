@@ -14,6 +14,7 @@ Decoupled Jira programs:
 
 | Skill | Path | Used by |
 |-------|------|---------|
+| prd-intake | `skills/pm/prd-intake/SKILL.md` | pm-agent (`prd_request` intake) |
 | prd-drafter | `skills/pm/prd-drafter/SKILL.md` | pm-agent (`prd_request` draft and revise) |
 | prd-review | `skills/pm/prd-review/SKILL.md` | pm-agent (`jira_from_prd` review_prd) |
 | story-writer | `skills/pm/story-writer/SKILL.md` | pm-agent (`jira_from_prd` plan_stories) |

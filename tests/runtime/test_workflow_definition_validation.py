@@ -44,8 +44,8 @@ class WorkflowDefinitionValidationTests(unittest.TestCase):
             "skill_ids": {
                 "skill-a",
                 "skill-b",
-                "clarify-requirements",
-                "draft-prd",
+                "prd-intake",
+                "prd-drafter",
                 "verified-merge-governed",
                 "governed-qa-gate",
                 "prd-to-work-orders-governed",

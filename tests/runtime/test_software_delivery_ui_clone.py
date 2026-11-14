@@ -44,8 +44,8 @@ def _agent_catalog() -> set[str]:
 
 def _skill_catalog(payloads: list[dict] | None = None) -> set[str]:
     skills = {
-        "clarify-requirements",
-        "draft-prd",
+        "prd-intake",
+        "prd-drafter",
         "verified-merge-governed",
         "governed-qa-gate",
         "prd-to-work-orders-governed",

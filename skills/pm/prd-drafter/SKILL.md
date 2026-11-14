@@ -1,9 +1,9 @@
 ---
 name: prd-drafter
-description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n, and keeps acceptance criteria out of the PRD.
+description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n with a priority, records intake decisions and assumptions, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.2.0
+version: 1.3.0
 ---
 
 # PRD drafter
@@ -14,7 +14,12 @@ Never create or update Jira issues here.
 ## Inputs
 
 - `input.clarified_requirements.initial_request` is the requester's own words; `answers` refine it and win on conflict.
-- `input.intake_output` is what intake asked.
+- `input.intake_output` is what intake asked (`prd-intake`). Each question carries a
+  `Recommended:` answer. In `answers`:
+  - "yes", "yes to all" or similar accepts every recommendation not otherwise answered;
+  - an answer to a numbered question replaces that recommendation;
+  - a question the reply does not cover, when the reply is not a general yes, is not decided:
+    use the recommendation and list it under Assumptions.
 - On `revise_prd`: `input.prior_artifact` is the last draft and `input.comments` is the reviewer's feedback. Change what the comments ask; keep FR and DoD ids stable.
 - `input.today` is today's date. Use it for **Last updated**; never guess a date.
 
@@ -52,12 +57,20 @@ Sections marked (Full) are omitted in a Lite PRD.
 
 ## Problem Statement
 <Who has the problem, what it is, the evidence.>
+**Current state:** <how it works today, or "nothing exists">
+**Why now:** <the trigger: a deadline, a customer, a dependency, a cost>
 
 ## Goals
 - <measurable outcome>
 
 ## Non-Goals
 - <explicit exclusion>
+
+## Decisions
+- <decision> (from intake Q<n>: <"accepted recommendation" or the requester's answer>)
+
+## Assumptions
+- <what the draft assumes without an answer, and what changes if it is wrong>
 
 ## Personas & Permissions
 | Persona | Can | Cannot |
@@ -72,7 +85,7 @@ Sections marked (Full) are omitted in a Lite PRD.
 **On failure:** <what the user sees and can do>
 
 ## Requirements
-- [ ] **FR-1** <requirement with its exact specifics> (Specified in: <section>; Verified by: DoD-2)
+- [ ] **FR-1** (Must) <requirement with its exact specifics> (Specified in: <section>; Verified by: DoD-2)
 
 ## Technical Constraints
 - <every framework, language, platform, storage and data choice the requester stated, word for word>
@@ -105,6 +118,15 @@ Sections marked (Full) are omitted in a Lite PRD.
 - **Requirements carry the request forward.** Refinery, work orders and the coding agent copy Requirements and Technical Constraints verbatim. Every named item, number, interval, limit and technology the requester stated appears there exactly.
 - **Write Requirements last.** Read every other section back and give each behaviour, state, setting, error case and permission an FR row. A behaviour with no FR is an orphan; an FR with no `Specified in` is unspecified; one with no `Verified by` will ship untested.
 - **In a Lite PRD**, `Specified in` points only at Proposed Solution, Key User Flows or Personas & Permissions. If an FR needs a Full-only section, re-check the triggers.
+- **Every FR has a priority:** Must (the release fails without it), Should (expected, can slip
+  one release) or Could (only if cheap). Jira orders stories by it and the first release is the
+  Musts.
+- **Decisions and Assumptions keep the reviewer honest.** Every intake answer that shaped the PRD
+  is a Decision, citing the question. Every gap you filled without an answer is an Assumption,
+  never a silent choice. Write `N/A: <reason>` when there are none.
+- **Describe behaviour, not code.** No file paths, function names or code snippets; they go
+  stale and the coding agent finds them in the repository. Name modules or systems only when the
+  requester did.
 - **Ids are append-only.** Never renumber or reuse `FR-n` or `DoD-n`. Withdraw in place: `FR-3: ~~withdrawn, superseded by FR-9~~`.
 - **No Given/When/Then in the PRD.** Acceptance criteria are written per story when the PRD is filed in Jira.
 - Definition of Done has 5 to 10 items. Every metric has a baseline and a target, or says why there is none.
@@ -115,7 +137,10 @@ Sections marked (Full) are omitted in a Lite PRD.
 
 - Profile matches the triggers; every required section is present or `N/A: <reason>`.
 - Every stated requirement and technology appears in Requirements and Technical Constraints.
-- Every FR has `Specified in` and `Verified by`; no orphan behaviour.
+- Every FR has a priority, `Specified in` and `Verified by`; no orphan behaviour.
+- Every intake answer appears under Decisions; every unanswered gap appears under Assumptions.
+- No `<placeholder>`, TBD or TODO is left, and no vague word ("fast", "easy", "intuitive",
+  "user-friendly", "seamless") stands without a number or a concrete behaviour.
 - Non-Goals is not empty; every open question has an owner.
 
 ## Output
@@ -135,6 +160,9 @@ Sections marked (Full) are omitted in a Lite PRD.
   "follow_up_needed": ["Human review of PRD"]
 }
 ```
+
+The runtime runs the same checks on `result.prd_markdown` and shows anything it finds to the
+reviewer next to the draft, so fix them before returning.
 
 Governed `prd_request`: return the PRD in `result.prd_markdown` only; the runtime publishes it
 to Google Drive. Outside a workflow, follow `skills/pm/google-workspace.md` to save a Doc, and
