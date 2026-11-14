@@ -45,6 +45,7 @@ locals {
     TS_HARNESS_OBJECT_BACKEND             = var.object_backend
     TS_HARNESS_SKILLS_BUCKET              = try(google_storage_bucket.skills[0].name, "")
     TS_HARNESS_WORKSPACE_BUCKET           = try(google_storage_bucket.workspaces[0].name, "")
+    TS_HARNESS_INTAKE_BUCKET              = try(google_storage_bucket.intake[0].name, "")
   }
 }
 

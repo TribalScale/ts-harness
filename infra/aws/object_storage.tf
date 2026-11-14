@@ -1,7 +1,8 @@
 # Skill files and agent workspaces in S3, and where runtime state lives.
 # state_backend=postgres moves definitions, cron, scheduler state, audit and
 # dedup into the database; object_backend=s3 moves skill files and workspaces
-# into the two buckets below. Both default from deployment_profile.
+# into the two buckets below. Both default from deployment_profile. Files
+# attached to requests (intake) go to a third bucket that keeps them 14 days.
 
 locals {
   state_backend_effective  = var.state_backend != "" ? var.state_backend : (var.deployment_profile == "scale_out" ? "postgres" : "local")
@@ -9,8 +10,10 @@ locals {
   object_buckets_enabled   = local.object_backend_effective == "s3"
   skills_bucket_name       = "${var.project_name}-skills"
   workspaces_bucket_name   = "${var.project_name}-workspaces"
+  intake_bucket_name       = "${var.project_name}-intake"
   skills_bucket_arn        = "arn:aws:s3:::${local.skills_bucket_name}"
   workspaces_bucket_arn    = "arn:aws:s3:::${local.workspaces_bucket_name}"
+  intake_bucket_arn        = "arn:aws:s3:::${local.intake_bucket_name}"
 
   object_storage_policy = {
     Version = "2012-10-17"
@@ -19,13 +22,20 @@ locals {
         Sid      = "ListObjectBuckets"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = [local.skills_bucket_arn, local.workspaces_bucket_arn]
+        Resource = [local.skills_bucket_arn, local.workspaces_bucket_arn, local.intake_bucket_arn]
       },
       {
         Sid      = "ReadWriteSkillsAndWorkspaces"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = ["${local.skills_bucket_arn}/*", "${local.workspaces_bucket_arn}/*"]
+      },
+      {
+        # Intake files are removed by the bucket lifecycle rule, not by the runtime.
+        Sid      = "ReadWriteIntakeFiles"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = ["${local.intake_bucket_arn}/intake/*"]
       },
       {
         # Approved skill versions are immutable: the runtime may only delete drafts.
@@ -106,11 +116,25 @@ resource "aws_s3_bucket" "workspaces" {
   }
 }
 
+resource "aws_s3_bucket" "intake" {
+  count  = local.object_buckets_enabled ? 1 : 0
+  bucket = local.intake_bucket_name
+
+  tags = {
+    Name    = local.intake_bucket_name
+    Purpose = "request-intake-files"
+  }
+}
+
 locals {
+  # Versioned buckets. Intake is left out so expired files are really deleted.
   object_buckets = local.object_buckets_enabled ? {
     skills     = aws_s3_bucket.skills[0].id
     workspaces = aws_s3_bucket.workspaces[0].id
   } : {}
+  all_object_buckets = local.object_buckets_enabled ? merge(local.object_buckets, {
+    intake = aws_s3_bucket.intake[0].id
+  }) : {}
 }
 
 resource "aws_s3_bucket_versioning" "objects" {
@@ -123,7 +147,7 @@ resource "aws_s3_bucket_versioning" "objects" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "objects" {
-  for_each = local.object_buckets
+  for_each = local.all_object_buckets
   bucket   = each.value
 
   rule {
@@ -136,7 +160,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "objects" {
 }
 
 resource "aws_s3_bucket_public_access_block" "objects" {
-  for_each                = local.object_buckets
+  for_each                = local.all_object_buckets
   bucket                  = each.value
   block_public_acls       = true
   block_public_policy     = true
@@ -145,7 +169,7 @@ resource "aws_s3_bucket_public_access_block" "objects" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "objects" {
-  for_each = local.object_buckets
+  for_each = local.all_object_buckets
   bucket   = each.value
 
   rule {
@@ -196,8 +220,28 @@ resource "aws_s3_bucket_lifecycle_configuration" "workspaces" {
   depends_on = [aws_s3_bucket_versioning.objects]
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "intake" {
+  count  = local.object_buckets_enabled ? 1 : 0
+  bucket = aws_s3_bucket.intake[0].id
+
+  # Matches the 14-day sweep used with the local backend (docs/runbooks/intake-sources.md).
+  rule {
+    id     = "expire-intake"
+    status = "Enabled"
+    filter {
+      prefix = "intake/"
+    }
+    expiration {
+      days = 14
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+}
+
 resource "aws_s3_bucket_policy" "objects_tls_only" {
-  for_each = local.object_buckets
+  for_each = local.all_object_buckets
   bucket   = each.value
   policy = jsonencode({
     Version = "2012-10-17"

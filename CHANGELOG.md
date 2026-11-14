@@ -161,6 +161,11 @@ First public release.
 
 ### Fixed
 
+- Terraform did not create a bucket for intake files, so with `object_backend=s3`
+  or `gcs` console uploads failed with 503. AWS and GCP now create
+  `<project_name>-intake` (encrypted, not versioned, `intake/` deleted after 14 days),
+  publish `TS_HARNESS_INTAKE_BUCKET` in runtime-config, and pass it through
+  instance-env and compose. The installer warns when the bucket is missing.
 - Reopening a software delivery program that ended at its PRD failed in the
   memory API: the `delivery_program_reopened` audit action was not allowed by
   the audit log check. Migration `045_program_may_end_audit.sql` adds it, and a

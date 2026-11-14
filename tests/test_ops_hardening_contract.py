@@ -357,7 +357,13 @@ class LlmProxyContractTests(unittest.TestCase):
         self.assertIn('write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"', fetch)
 
 
-STORAGE_FLAGS = ("TS_HARNESS_STATE_BACKEND", "TS_HARNESS_OBJECT_BACKEND", "TS_HARNESS_SKILLS_BUCKET", "TS_HARNESS_WORKSPACE_BUCKET")
+STORAGE_FLAGS = (
+    "TS_HARNESS_STATE_BACKEND",
+    "TS_HARNESS_OBJECT_BACKEND",
+    "TS_HARNESS_SKILLS_BUCKET",
+    "TS_HARNESS_WORKSPACE_BUCKET",
+    "TS_HARNESS_INTAKE_BUCKET",
+)
 
 
 def _resolve_storage(**env: str) -> dict[str, str]:
