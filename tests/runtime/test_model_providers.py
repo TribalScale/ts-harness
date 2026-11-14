@@ -210,6 +210,8 @@ class UsageRecordingTests(unittest.TestCase):
         llm, agent = log
         self.assertIn("INSERT INTO llm_usage", llm[0])
         self.assertEqual((llm[1]["actor"], llm[1]["input"], llm[1]["output"]), ("pm-agent", 3000, 100))
+        self.assertEqual(llm[1]["agent"], "pm-agent")
+        self.assertIn("agent_id", llm[0])
         self.assertAlmostEqual(llm[1]["cost"], (1000 * 4 + 100 * 20 + 2000 * 0.2) / 1_000_000)
         self.assertIn("INSERT INTO agent_token_usage", agent[0])
         self.assertEqual(agent[1][:5], ("pm-agent", "anthropic", "claude-opus-5-5", 3000, 100))
@@ -299,6 +301,43 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class OpencodeRunMeteringTests(unittest.TestCase):
+    """implement() reads back the OpenCode run it made, in implement and in conflict-refresh mode."""
+
+    def _backend(self, mode):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+
+        def run(request):
+            oc._note_opencode_run("/tools/opencode", {"X": "1"}, "/tmp/repo")
+            return SimpleNamespace(ok=True, mode=request.mode)
+
+        backend._implement = run
+        backend.refresh = run
+        return backend
+
+    def test_both_modes_record_the_run(self):
+        for mode in ("implement", "refresh"):
+            request = SimpleNamespace(mode=mode, program_id="p", delivery_workflow_id="wf", requested_by="u@x")
+            with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+                result = self._backend(mode).implement(request)
+            with self.subTest(mode=mode):
+                self.assertEqual(result.mode, mode)
+                kwargs = record.call_args.kwargs
+                self.assertEqual((kwargs["binary"], str(kwargs["repo_dir"])), ("/tools/opencode", "/tmp/repo"))
+                self.assertEqual(kwargs["scope"]["agent"], "coding-backend")
+
+    def test_a_run_without_opencode_records_nothing(self):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+        backend.refresh = lambda request: SimpleNamespace(ok=True)
+        with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+            backend.implement(SimpleNamespace(mode="refresh"))
+        record.assert_not_called()
+
+
 class SessionsListTests(unittest.TestCase):
     def test_newest_sessions_first_with_a_limit(self):
         from ts_harness.agent.sessions import SessionRecord, SessionStore, get_session_store, reset_session_store
@@ -334,3 +373,44 @@ class SessionsListTests(unittest.TestCase):
         row = sessions_list_handler({}, SimpleNamespace(tenant_id="default"))["sessions"][0]
         self.assertEqual(row["metadata"], {"program_id": "p-1", "workflow_phase": "prd"})
         self.assertEqual(row["metadata_omitted"], ["approved_artifact", "review_artifact"])
+
+
+class CodingRunSlotsTests(unittest.TestCase):
+    def test_in_process_runs_wait_for_a_slot(self):
+        import threading
+        import time as _time
+
+        from ts_harness.implementation import coding_job
+
+        coding_job._RUN_SLOTS = None
+        self.addCleanup(setattr, coding_job, "_RUN_SLOTS", None)
+        running, peak = [0], [0]
+        lock = threading.Lock()
+
+        class Backend:
+            def implement(self, request):
+                with lock:
+                    running[0] += 1
+                    peak[0] = max(peak[0], running[0])
+                _time.sleep(0.05)
+                with lock:
+                    running[0] -= 1
+                return SimpleNamespace(branch="b", pr_url=None)
+
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": ""}), \
+             patch.object(coding_job, "_backend_from_config", return_value=Backend()), \
+             patch.object(coding_job, "coding_request_from_spec", return_value=None), \
+             patch.object(coding_job, "_result_dict", create=True):
+            threads = [threading.Thread(target=self._run, args=(coding_job,)) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(peak[0], 1)
+
+    @staticmethod
+    def _run(coding_job):
+        try:
+            coding_job.run_coding_request({"repo_url": "r"}, record_refs=False)
+        except Exception:  # noqa: BLE001 - only the overlap is under test
+            pass

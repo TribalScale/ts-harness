@@ -1,8 +1,8 @@
 {
   "fragment_id": "verified_merge",
-  "definition_version": "1.6.0",
+  "definition_version": "1.7.0",
   "display_name": "PR checks, code review, QA gate, freshness, human merge",
-  "description": "Publish the host security scan, wait for PR checks, run an independent automated code review and the QA gate, each with a revise loop back to the implement stage, confirm each PR contains its base branch head (refreshing it when the base moved), then wait for the human merge. A \"Request changes\" review or /revise comment sends the PR back to the implement stage; closing it stops the work order.",
+  "description": "Publish the host security scan, wait for PR checks (failing checks go back to the implement stage with the end of each failed job's log), run an independent automated code review and the QA gate, each with a revise loop back to the implement stage, confirm each PR contains its base branch head (refreshing it when the base moved), then wait for the human merge. A \"Request changes\" review or /revise comment sends the PR back to the implement stage; closing it stops the work order.",
   "params": {
     "implement_stage": {
       "kind": "stage_ref",
@@ -243,6 +243,75 @@
       "retry": {
         "max_retries": 3,
         "timeout_seconds": 86400
+      },
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 3,
+        "revise": {
+          "step_name": "{{param.implement_stage}}",
+          "agent_id": "dev-agent",
+          "budget": "checks",
+          "source_steps": [
+            "{{param.implement_stage}}"
+          ],
+          "input_map": {
+            "qa_feedback": "$reject.comments",
+            "pr_url": "$prior.{{param.implement_stage}}.output.pr_url",
+            "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
       }
     },
     {

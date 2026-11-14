@@ -391,6 +391,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("t.input ->> '_awaiting_human_decision' IS NOT NULL", flat)
         self.assertIn("w.status = 'running'", flat)
         self.assertEqual(params[0], "acme")
+        # Blocked for good (failed coding run, failing checks) counts too; waits and stops do not.
+        for clause in ("NOT LIKE 'awaiting\\_external:%%'", "NOT LIKE 'awaiting\\_tool\\_approval:%%'",
+                       "NOT LIKE 'stopped\\_by\\_human:%%'"):
+            self.assertIn(clause, flat)
 
     def test_resume_blocked_task_rejects_a_task_that_is_not_stuck(self):
         gateway = load_gateway()

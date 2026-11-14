@@ -1545,6 +1545,8 @@ def format_stuck_step_ack(result: dict[str, Any]) -> str:
         return "You need the approve_gate permission to decide this."
     if result.get("error"):
         return f"I couldn't {action} {label}: {result['error']}"
+    if status == "revising" and result.get("rerun"):
+        return f"Running {label} again with your guidance."
     if status == "revising":
         return (
             f"Sent {label} back to OpenCode with a fresh revision budget "

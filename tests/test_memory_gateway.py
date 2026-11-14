@@ -197,6 +197,28 @@ class MemoryGatewayTests(unittest.TestCase):
         )
         self.assertEqual(result["department"], "engineering")
 
+    def test_long_text_embeds_only_its_head(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        gateway = load_gateway()
+        sent = []
+
+        def run(cmd, **kwargs):
+            sent.append(cmd[2])
+            if len(sent) == 1 and len(cmd[2]) > 10000:
+                return SimpleNamespace(returncode=22, stdout="", stderr="curl: (22) The requested URL returned error: 400")
+            return SimpleNamespace(returncode=0, stdout="[0.1,0.2]", stderr="")
+
+        with patch.object(gateway.subprocess, "run", run):
+            self.assertEqual(gateway.generate_embedding("x" * 50000), gateway.normalize_embedding("[0.1,0.2]"))
+        self.assertEqual([len(text) for text in sent], [gateway.EMBED_MAX_INPUT_CHARS, gateway.EMBED_MAX_INPUT_CHARS // 4])
+
+        sent.clear()
+        with patch.object(gateway.subprocess, "run", run):
+            gateway.generate_embedding("short")
+        self.assertEqual(sent, ["short"])
+
     def _assert_psycopg_placeholders(self, sql, params):
         """psycopg rejects a bare % in a query with parameters: only %s and %% may appear."""
         import re

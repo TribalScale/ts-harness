@@ -318,8 +318,8 @@ Each `deliver_work_order` child runs the per-work-order pipeline:
 
 | Stage | Agent | Skill / tool | Notes |
 | --- | --- | --- | --- |
-| `deliver_work_order` | `dev-agent` | `verified-merge-governed` + `run_coding_backend` | OpenCode implement + commit/push/PR incl. host verify; output must include `work_order_id` + `pr_url` |
-| `await_pr_checks` | orchestrator | — | Waits for `github.pr_checks` on the PR head SHA; required checks come from `merge_readiness` (see [Merge readiness policy](#merge-readiness-policy)) |
+| `deliver_work_order` | `dev-agent` | `verified-merge-governed` + `run_coding_backend` | OpenCode implement + commit/push/PR incl. host verify; output must include `work_order_id` + `pr_url`. A run that fails for good (no PR) waits for a human: `/revise WO-n <guidance>` runs it again, `/stop WO-n` stops it |
+| `await_pr_checks` | orchestrator | — | Waits for `github.pr_checks` on the PR head SHA; required checks come from `merge_readiness` (see [Merge readiness policy](#merge-readiness-policy)). Failing checks send the PR back to `dev-agent` with the end of each failed job's log (`checks` budget, 3 revisions), then wait for a human decision (`verified_merge` 1.7.0) |
 | `review_precheck` | orchestrator (system step) | — | Collects the PR diff, applies `diff_limits`, and checks a declared `## Files` list. See [Code review](#code-review) |
 | `code_review` | `review-agent` | `governed-code-review` | Reviews the diff against the work order and returns findings |
 | `finalize_code_review` | orchestrator (system step) | — | Computes the verdict, posts the review and `harness/code-review` status; a blocking verdict sends the PR back to `dev-agent` |

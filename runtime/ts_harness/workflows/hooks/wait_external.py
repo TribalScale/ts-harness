@@ -208,6 +208,10 @@ def resume(ctx: HookContext) -> dict[str, Any]:
         if str(output.get("checks_state") or "") == "failure":
             failed = [str(item) for item in output.get("failed_checks") or [] if item]
             detail = ", ".join(failed) or "checks_state=failure"
+            if event_type == "github.pr_checks" and "failed_check_logs" not in output:
+                logs = _failed_check_logs(output)
+                if logs:
+                    output["failed_check_logs"] = logs
             reason = f"external_blocked:{event_type} {detail}"
             ctx.memory_client.block_task_api(str(task["id"]), reason, output=output, actor=ctx.actor)
             return {"status": "blocked", "task_id": str(task["id"]), "reason": reason}
@@ -382,3 +386,26 @@ def _payload_matches(
         if payload.get(key) != resolved and str(payload.get(key)) != str(resolved):
             return False
     return True
+
+
+def _failed_check_logs(output: dict[str, Any]) -> dict[str, str]:
+    """The end of each failed CI job's log, keyed ``<pr_url>:<check>``, for the revision prompt."""
+    from ts_harness.integrations.github_client import github_for, parse_github_pr_url
+
+    logs: dict[str, str] = {}
+    for pr in output.get("prs") or []:
+        if not isinstance(pr, dict) or pr.get("state") != "failure":
+            continue
+        pr_url = str(pr.get("pr_url") or "")
+        parsed = parse_github_pr_url(pr_url)
+        head_sha = str(pr.get("head_sha") or output.get("head_sha") or "")
+        if parsed is None or not head_sha:
+            continue
+        owner, repo, _number = parsed
+        try:
+            tails = github_for(pr_url).failed_check_logs(owner, repo, head_sha, [str(name) for name in pr.get("failed") or []])
+        except Exception:  # noqa: BLE001 - feedback is best effort; the block itself must happen
+            continue
+        for name, tail in tails.items():
+            logs[f"{pr_url}:{name}"] = tail
+    return logs

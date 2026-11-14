@@ -752,6 +752,9 @@ class WorkflowEngine:
                     result["program_phase"] = phase_result
                 return result
 
+        if event == "blocked" and ctx.stage is not None:
+            self._park_failed_run_for_a_human(ctx, task, error)
+
         if event == "ready" and ctx.stage is not None and ctx.stage.wait_external:
             wait_result = self.registry.invoke("wait_external", ctx)
             self._maybe_notify(ctx, "awaiting_external")
@@ -773,6 +776,32 @@ class WorkflowEngine:
         if event in {"blocked", "failed"}:
             return notify_result
         return None
+
+    def _park_failed_run_for_a_human(self, ctx: HookContext, task: dict[str, Any], error: str | None) -> None:
+        """A coding run that failed for good waits for a person to re-run or stop it.
+
+        Marked as awaiting a human decision, the block no longer counts as a failed work
+        order, so the wave keeps waiting instead of failing while the run can still be fixed.
+        """
+        from ts_harness.workflows import human_decisions
+
+        if not human_decisions._reruns_on_revise(ctx.stage) or human_decisions.awaiting_human_decision(task):
+            return
+        reason = str(error or task.get("error") or "")
+        if not reason or reason.startswith(("awaiting_external:", "awaiting_tool_approval:", human_decisions.STOPPED_PREFIX)):
+            return
+        tasks = list(self._workflow_payload(ctx.workflow_id).get("tasks") or [])
+        task_id = str(task.get("id") or "")
+        human_decisions.mark_awaiting_human_decision(self.client, task_id, tasks, reason="failed_run")
+        task.setdefault("input", {})
+        if isinstance(task["input"], dict):
+            task["input"][human_decisions.HUMAN_DECISION_KEY] = {"reason": "failed_run"}
+        label = human_decisions.work_order_label(tasks, ctx.workflow)
+        ctx.extras["channel_text"] = (
+            f"{label}: the coding run failed: {reason[:600]}\n"
+            f"Reply `/revise {label} <guidance>` to run it again, or `/stop {label}` to stop the work order. "
+            "You can also decide from the admin Inbox."
+        )
 
     def notify_tool_approval_waiting(
         self,
@@ -1130,6 +1159,8 @@ def _qa_feedback_text(
     review_feedback = str(output.get("review_feedback") or "").strip()
     if review_feedback:
         return review_feedback
+    if str(output.get("checks_state") or "") == "failure":
+        return _failed_checks_feedback(output)
     parts: list[str] = []
     result = output.get("result") if isinstance(output.get("result"), dict) else {}
     summary = str(result.get("summary") or output.get("summary") or "").strip()
@@ -1148,6 +1179,17 @@ def _qa_feedback_text(
     if parts:
         return "\n".join(parts)
     return str(error or "").strip()
+
+
+def _failed_checks_feedback(output: dict[str, Any]) -> str:
+    """What OpenCode needs to fix failing CI: which checks failed and how each job's log ends."""
+    failed = [str(item) for item in output.get("failed_checks") or [] if item]
+    lines = ["The PR's CI checks failed: " + (", ".join(failed) or "see the PR checks") + "."]
+    lines.append("Fix the cause so these checks pass in CI, not only locally; CI may use a different environment.")
+    logs = output.get("failed_check_logs") if isinstance(output.get("failed_check_logs"), dict) else {}
+    for name, tail in logs.items():
+        lines.append(f"\nEnd of the log for {name}:\n{str(tail)[-4000:]}")
+    return "\n".join(lines)
 
 
 def get_workflow_engine() -> WorkflowEngine:

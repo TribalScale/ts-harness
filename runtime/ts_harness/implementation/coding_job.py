@@ -9,6 +9,7 @@ worker in another process.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -331,6 +332,29 @@ def record_coding_refs(
     return warnings
 
 
+_RUN_SLOTS_LOCK = threading.Lock()
+_RUN_SLOTS: threading.BoundedSemaphore | None = None
+
+
+def _run_slots() -> threading.BoundedSemaphore:
+    """OpenCode runs allowed at once in this process (``CODING_INPROCESS_MAX_RUNNING``, default 1).
+
+    In-process runs share the runtime container's memory. Each OpenCode run with its test
+    suite takes about 1 GB, so a wave of three work orders on a 4 GB host was killed by the
+    kernel's out-of-memory killer. Extra runs wait for a slot; the runner keeps renewing
+    their task leases meanwhile. Coding workers run one job each, so the limit never binds there.
+    """
+    global _RUN_SLOTS
+    with _RUN_SLOTS_LOCK:
+        if _RUN_SLOTS is None:
+            try:
+                size = int(os.environ.get("CODING_INPROCESS_MAX_RUNNING") or 1)
+            except ValueError:
+                size = 1
+            _RUN_SLOTS = threading.BoundedSemaphore(max(1, size))
+        return _RUN_SLOTS
+
+
 def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dict[str, Any]:
     """Run OpenCode for a spec and return the ``run_coding_backend`` result dict.
 
@@ -339,7 +363,8 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
     """
     backend_spec = spec.get("backend")
     backend = _backend_from_spec(backend_spec) if isinstance(backend_spec, dict) else _backend_from_config()
-    result = backend.implement(coding_request_from_spec(spec))
+    with _run_slots():
+        result = backend.implement(coding_request_from_spec(spec))
     if record_refs and spec.get("program_id"):
         record_coding_refs(
             spec["program_id"],

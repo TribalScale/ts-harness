@@ -11,6 +11,14 @@ First public release.
 
 ### Added
 
+- Failing PR checks go back to OpenCode like a code review or QA block (`verified_merge`
+  1.7.0; `deliver_work_order` and `implement_jira_ticket` 1.6.0). The revision prompt
+  names the failed checks and quotes the end of each failed GitHub Actions job log. Three
+  revisions on their own `checks` budget, then a human decides.
+- A coding run that fails for good (OpenCode killed, crashed or left no PR) waits for a
+  person instead of failing its wave: `/revise WO-n <guidance>` in chat or "revise" in the
+  Inbox runs it again, `/stop WO-n` stops it.
+
 - Agents can run on Claude, and each agent picks its model and reasoning depth.
   - The Anthropic provider sends no `temperature`, passes tools and tool results
     both ways, replays Claude's thinking blocks within a tool loop (retrying once
@@ -24,10 +32,15 @@ First public release.
     and sales on Claude Sonnet 5.5 (medium); review on GPT-6 Astra; qa, ops,
     analyst and marketing on GPT-6.1 Sol; comms on GPT-6 Luna; heartbeats on
     Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
+- `scripts/ops/redeploy.sh` rolls a checkout onto an existing host: secrets, runtime
+  config, workspace, compose env, migrations, then rebuilt images. See
+  `docs/runbooks/redeploy.md`.
+- `llm_usage.agent_id` (migration 046): the agent that made each model call. `actor`
+  stays the person the work is for, which for a workflow task is the requester.
 - Model usage is recorded without the LLM proxy. Direct agent calls write
   `llm_usage` and `agent_token_usage`; coding-backend runs are read back from
-  OpenCode's sessions. Costs come from the new `llm_pricing` table in the runtime
-  config template.
+  OpenCode's sessions, conflict refreshes included. Costs come from the new
+  `llm_pricing` table in the runtime config template.
 
 - PRD requests ask better questions and the reviewer sees what a draft is missing.
   - New `prd-intake` skill: each intake question carries a recommended answer worded so
@@ -205,6 +218,19 @@ First public release.
 
 ### Fixed
 
+- A work order blocked for good (a failed coding run, failing PR checks) never reached
+  the Inbox or the chat `/accept` and `/stop` commands: the stuck-step list only held
+  steps parked after the revision limit, so the wave waited with nothing to act on.
+  Those blocks are listed now; external waits, tool approvals and stopped steps are not.
+- Coding runs inside the runtime container had no concurrency limit. A wave of three
+  work orders ran three OpenCode processes at once and the kernel killed one for lack of
+  memory on a 4 GB host. In-process runs now take a slot first
+  (`CODING_INPROCESS_MAX_RUNNING`, default 1); the others wait.
+- A program could stop after its work-orders phase: the program snapshot was too long
+  for the embedding model (8192 tokens), memory-api refused it, and the move to
+  implementation never happened. Only the first 16000 characters of a memory are
+  embedded now (`EMBEDDINGS_MAX_INPUT_CHARS`), with one shorter retry; the stored
+  content is unchanged.
 - `recall_memory` failed on every call without a department scope: the recall query
   had a bare `%` in `ILIKE 'department:%'`, which psycopg reads as a placeholder.
 - `sessions_list` returned every session the tenant ever had (about 200k tokens in one

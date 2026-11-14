@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "1.5.0",
+  "definition_version": "1.6.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -421,7 +421,76 @@
       "present_prompt": "",
       "contract_ref": "",
       "allowed_contracts": [],
-      "output_schema": {}
+      "output_schema": {},
+      "on_block": {
+        "hook": "revise_on_reject",
+        "max_revisions": 3,
+        "revise": {
+          "step_name": "deliver_work_order",
+          "agent_id": "dev-agent",
+          "budget": "checks",
+          "source_steps": [
+            "deliver_work_order"
+          ],
+          "input_map": {
+            "qa_feedback": "$reject.comments",
+            "pr_url": "$prior.deliver_work_order.output.pr_url",
+            "human_change_requests": "$runtime.human_requests:deliver_work_order"
+          }
+        },
+        "re_gate": {
+          "step_name": "await_pr_checks",
+          "agent_id": "orchestrator",
+          "approval_required": false,
+          "depends_on": [
+            "$revise.id"
+          ]
+        },
+        "resume_after": [
+          {
+            "step_name": "review_precheck",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$re_gate.id"
+            ]
+          },
+          {
+            "step_name": "code_review",
+            "agent_id": "review-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "finalize_code_review",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "qa_gate",
+            "agent_id": "qa-agent",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "ensure_fresh",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          },
+          {
+            "step_name": "await_human_merge",
+            "agent_id": "orchestrator",
+            "depends_on": [
+              "$previous.id"
+            ]
+          }
+        ]
+      }
     },
     {
       "name": "review_precheck",
