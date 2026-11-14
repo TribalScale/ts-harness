@@ -49,6 +49,28 @@ function humanize(value?: string): string {
   return value.replace(/_/g, " ");
 }
 
+/** Short phase name, matching the chat offer: "prd" -> "PRD", "work_orders" -> "Work orders". */
+export function phaseLabel(phase?: string): string {
+  const text = String(phase || "").replace(/_/g, " ").trim();
+  if (!text) return "Unknown";
+  return text.length <= 3 ? text.toUpperCase() : text[0].toUpperCase() + text.slice(1);
+}
+
+/** The phase a succeeded program stopped at when it may still continue (a may_end node). */
+export function endedAtPhase(program?: {
+  status?: string;
+  artifacts?: Record<string, unknown>;
+}): string | undefined {
+  if (String(program?.status || "").toLowerCase() !== "succeeded") return undefined;
+  const ended = program?.artifacts?.ended_at_phase;
+  return typeof ended === "string" && ended ? ended : undefined;
+}
+
+function statusLabel(program?: { status?: string; artifacts?: Record<string, unknown> }): string {
+  const ended = endedAtPhase(program);
+  return ended ? `Done at ${phaseLabel(ended)}` : humanize(program?.status);
+}
+
 function parseJsonObject<T extends Record<string, unknown>>(value: unknown): T | undefined {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as T;
@@ -129,6 +151,8 @@ export function ProgramsPage({
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
   const [pendingAction, setPendingAction] = useState<ProgramAction | null>(null);
+  // Set when the pending advance continues an ended program to a chosen phase.
+  const [advanceTarget, setAdvanceTarget] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -217,7 +241,11 @@ export function ProgramsPage({
       await apiFetch(`/admin/programs/${encodeURIComponent(programId)}/${action}`, {
         method: "POST",
         body: JSON.stringify(
-          action === "cancel" ? { reason: "cancelled from admin console" } : {}
+          action === "cancel"
+            ? { reason: "cancelled from admin console" }
+            : advanceTarget
+              ? { target_phase: advanceTarget }
+              : {}
         ),
       });
       const [nextStatus] = await Promise.all([loadStatus(programId), loadList()]);
@@ -229,6 +257,7 @@ export function ProgramsPage({
       setError(String(e.message || e));
     } finally {
       setPendingAction(null);
+      setAdvanceTarget(undefined);
       setBusy(false);
     }
   }
@@ -336,7 +365,7 @@ export function ProgramsPage({
               {title}
             </span>
             <span className="row-meta">
-              <StatusPill status={programStatus(p.status)} label={humanize(p.status)} />
+              <StatusPill status={programStatus(p.status)} label={statusLabel(p)} />
               {p.visibility && <VisibilityPill visibility={p.visibility} />}
               <span>{humanize(p.current_phase)}</span>
               {p.owner && <span>Owner {p.owner}</span>}
@@ -373,12 +402,19 @@ export function ProgramsPage({
           confirmLabel: "Cancel program",
           danger: true,
         }
-      : {
-          title: "Advance program?",
-          description: "This moves the selected delivery program to the next phase.",
-          confirmLabel: "Advance program",
-          danger: false,
-        };
+      : advanceTarget
+        ? {
+            title: "Continue program?",
+            description: `This reopens the program and starts ${phaseLabel(advanceTarget)}.`,
+            confirmLabel: `Continue to ${phaseLabel(advanceTarget)}`,
+            danger: false,
+          }
+        : {
+            title: "Advance program?",
+            description: "This moves the selected delivery program to the next phase.",
+            confirmLabel: "Advance program",
+            danger: false,
+          };
 
   function tabPanel(children: React.ReactNode) {
     return (
@@ -415,6 +451,16 @@ export function ProgramsPage({
       status.resolved_workflow_versions
     );
     const definitionHref = programDefinitionHref(status.program_type || topology?.program_type);
+    const endedAt = endedAtPhase(status);
+    const continueTargets = endedAt
+      ? Array.from(
+          new Set(
+            (topology?.edges || [])
+              .filter((edge) => edge.source === endedAt && edge.target)
+              .map((edge) => String(edge.target))
+          )
+        )
+      : [];
     const pinnedWorkflowLinks = Object.entries(resolved || {})
       .map(([phase, pin]) => {
         const workflowType = pin?.workflow_type || (status.phases || {})[phase]?.workflow_type;
@@ -438,10 +484,7 @@ export function ProgramsPage({
           <div className="program-header-main">
             <h2>{status.summary || status.program_id}</h2>
             <div className="program-header-meta">
-              <StatusPill
-                status={programStatus(status.status)}
-                label={humanize(status.status)}
-              />
+              <StatusPill status={programStatus(status.status)} label={statusLabel(status)} />
               {status.visibility && <VisibilityPill visibility={status.visibility} />}
               {(status.program_type ||
                 status.program_definition_version ||
@@ -479,11 +522,25 @@ export function ProgramsPage({
             </div>
           </div>
           <div className="program-actions" role="group" aria-label="Program actions">
-            {canWrite && (
+            {canWrite && !programClosed && (
               <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
                 Advance
               </Button>
             )}
+            {canWrite &&
+              continueTargets.map((target) => (
+                <Button
+                  key={target}
+                  variant="primary"
+                  busy={busy}
+                  onClick={() => {
+                    setAdvanceTarget(target);
+                    setPendingAction("advance");
+                  }}
+                >
+                  Continue to {phaseLabel(target)}
+                </Button>
+              ))}
             {canManage && (
               <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
                 Cancel
@@ -774,7 +831,10 @@ export function ProgramsPage({
           danger={confirmation.danger}
           busy={busy}
           onConfirm={() => pendingAction && mutateProgram(pendingAction)}
-          onCancel={() => setPendingAction(null)}
+          onCancel={() => {
+            setPendingAction(null);
+            setAdvanceTarget(undefined);
+          }}
         />
         {programId && (
           <ShareDialog

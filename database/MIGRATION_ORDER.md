@@ -49,6 +49,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 43 | `042_scale_out_metrics.sql` | Last-seen GitHub rate limit per App installation, and indexes for coding job and gate wait metrics |
 | 44 | `043_shared_runtime_state.sql` | Shared file trees, managed skill index, runtime key-value state, runtime audit events and channel dedup, so no runtime state lives on the host disk |
 | 45 | `044_knowledge_notes.sql` | Org and project knowledge notes, their versions, and knowledge-note audit actions |
+| 46 | `045_program_may_end_audit.sql` | Audit actions for reopening a program that ended at a `may_end` node and for closing older ones |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.
