@@ -25,6 +25,50 @@ Both tracks share the same program nodes (`prd` → planning → `implement` →
 
 Each change is one **root** program; `content_to_jira_work_orders`, `bug_to_jira_work_orders`, and `jira_to_pr` runs for that change are **child** programs (`parent_program_id`). See [`prd-first-delivery-flow.md`](../architecture/prd-first-delivery-flow.md#one-program-per-change).
 
+## Stopping after the PRD or Jira
+
+A requester does not have to take a program all the way to release. From
+`software_delivery` 1.4.0, the `prd` and `jira` nodes are marked `may_end`:
+
+- When the PRD is approved (or the Jira tickets are filed) and nobody has asked for
+  the next step, the program is marked **succeeded** and records
+  `ended_at_phase`. The console shows it as **Done at PRD** (or **Done at Jira**).
+- The thread is told the program is complete and given the phrases that continue
+  it: "create jira" or "work orders" after the PRD, "start implementation" after
+  Jira. A chat approval carries this in its reply; a console approval posts it to
+  the thread.
+- Continuing later, in the thread or with **Continue to …** on the program page,
+  reopens the same program with its approved PRD and history. The audit log
+  records `delivery_program_reopened`.
+- Only a program that ended this way can be reopened. One that reached release,
+  or was cancelled or failed, is refused: start a new request instead.
+- Child programs (started by a parent program) never end early at a `may_end`
+  node, so a parent does not continue on a child that stopped at its PRD.
+
+Other program definitions can opt in with **Program may end here** in the
+[program builder](program-builder.md). It is refused on terminal nodes and on nodes
+whose next step is automatic.
+
+### Programs created before 1.4.0
+
+Programs pin their definition when they start, so older programs still stay
+`running` after an approved PRD. Close them once per environment after deploying,
+after applying migration
+[`045_program_may_end_audit.sql`](../../database/migrations/045_program_may_end_audit.sql):
+
+```bash
+python scripts/close-ended-programs.py              # dry run: lists what would close
+python scripts/close-ended-programs.py --apply      # closes them
+```
+
+It selects root `software_delivery` programs that are `running` at `prd` or `jira`,
+whose workflow for that phase succeeded, with nothing running or blocked and no open
+child program, and no workflow activity for `--idle-days` days (default 7). Each is
+marked succeeded with `ended_at_phase`, audited as
+`delivery_program_closed_by_backfill`, and can be continued like a new one. Running
+it again closes nothing new. It uses the memory API's database settings
+(`TS_HARNESS_DB_*`).
+
 For sign-off testing of the work-orders path, see [`work-orders-delivery-smoke-test.md`](work-orders-delivery-smoke-test.md).
 Authoring custom topologies: [`program-builder.md`](program-builder.md).
 

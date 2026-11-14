@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { setPermissions, setRoles } from "../auth/session";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
-import { formatAge, portfolioUrl, ProgramsPage } from "./ProgramsPage";
+import { endedAtPhase, formatAge, phaseLabel, portfolioUrl, ProgramsPage } from "./ProgramsPage";
 
 const programId = "57249723-checkers-program";
 const LIST_URL = "/admin/programs?portfolio=1";
@@ -789,4 +789,81 @@ it("warns when the program's team reached its LLM budget", async () => {
   expect(banner).toHaveAttribute("role", "status");
   expect(banner).toHaveTextContent("(2 waiting)");
   expect(within(banner).getByRole("link", { name: "Open budgets" })).toHaveAttribute("href", "#/system/budgets");
+});
+
+function endedAtPrd() {
+  return {
+    ...programStatus("succeeded"),
+    current_phase: "prd",
+    active_workflow_id: undefined,
+    waiting_on: undefined,
+    phases: { ...programStatus().phases, implement: { state: "not_started" } },
+    artifacts: { ended_at_phase: "prd", program_status: "succeeded" },
+  };
+}
+
+it("labels a program that ended at the PRD and continues it to a chosen phase", async () => {
+  const calls: Array<{ url: string; method: string; body?: string }> = [];
+  let ended = true;
+  mockFetch((url, init) => {
+    calls.push({ url, method: init?.method || "GET", body: init?.body as string | undefined });
+    if (url === LIST_URL) {
+      const list = programList("succeeded");
+      list.programs[0] = { ...list.programs[0], current_phase: "prd", artifacts: { ended_at_phase: "prd" } } as never;
+      return jsonResponse(list);
+    }
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
+      return jsonResponse(ended ? endedAtPrd() : programStatus("running"));
+    }
+    if (url.includes("/phases/")) return jsonResponse(phaseActivity());
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/advance`) {
+      ended = false;
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
+  const actions = await screen.findByRole("group", { name: "Program actions" });
+  expect(screen.getAllByText("Done at PRD").length).toBeGreaterThan(0);
+  expect(within(actions).queryByRole("button", { name: "Advance" })).toBeNull();
+  expect(within(actions).getByRole("button", { name: "Continue to Work orders" })).toBeInTheDocument();
+
+  await userEvent.click(within(actions).getByRole("button", { name: "Continue to Jira" }));
+  const dialog = screen.getByRole("dialog", { name: /continue program/i });
+  expect(within(dialog).getByText(/reopens the program and starts Jira/)).toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Continue to Jira" }));
+
+  await waitFor(() =>
+    expect(calls).toContainEqual({
+      url: `/admin/programs/${encodeURIComponent(programId)}/advance`,
+      method: "POST",
+      body: JSON.stringify({ target_phase: "jira" }),
+    })
+  );
+});
+
+it("offers neither Advance nor Continue on a program that finished for good", async () => {
+  mockFetch((url) => {
+    if (url === LIST_URL) return jsonResponse(programList("succeeded"));
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
+      return jsonResponse({ ...programStatus("succeeded"), artifacts: {} });
+    }
+    if (url.includes("/phases/")) return jsonResponse(phaseActivity());
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
+  const actions = await screen.findByRole("group", { name: "Program actions" });
+  expect(within(actions).queryByRole("button", { name: "Advance" })).toBeNull();
+  expect(within(actions).queryByRole("button", { name: /Continue to/ })).toBeNull();
+  expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0);
+});
+
+it("names phases like the chat offer and only reads ended_at_phase on succeeded programs", () => {
+  expect(phaseLabel("prd")).toBe("PRD");
+  expect(phaseLabel("work_orders")).toBe("Work orders");
+  expect(endedAtPhase({ status: "succeeded", artifacts: { ended_at_phase: "jira" } })).toBe("jira");
+  expect(endedAtPhase({ status: "running", artifacts: { ended_at_phase: "jira" } })).toBeUndefined();
+  expect(endedAtPhase({ status: "succeeded", artifacts: {} })).toBeUndefined();
 });

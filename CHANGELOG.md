@@ -11,6 +11,12 @@ First public release.
 
 ### Added
 
+- Software delivery programs may end after the PRD or the Jira tickets. The
+  program is marked succeeded ("Done at PRD" in the console), the thread is
+  offered the next steps, and continuing later reopens the same program. Older
+  programs stuck at PRD can be closed with `scripts/close-ended-programs.py`
+  (dry run by default). See
+  [governed delivery flow](docs/runbooks/governed-delivery-flow.md#stopping-after-the-prd-or-jira).
 - Intake sources: attach files (console, Slack, Telegram, Discord) or paste
   Google Drive file and folder links when asking for a plan, bug report, PRD or
   RFP. The intake stages read them as text, including images described by the
@@ -155,6 +161,10 @@ First public release.
 
 ### Fixed
 
+- Reopening a software delivery program that ended at its PRD failed in the
+  memory API: the `delivery_program_reopened` audit action was not allowed by
+  the audit log check. Migration `045_program_may_end_audit.sql` adds it, and a
+  test now checks every audit action the gateway writes against that list.
 - Workflow stages hand off through the next stage's agent. `delegate_task` and
   `propose_delegate_task` are denied while a workflow task is running, unless
   that stage lists the tool in `tool_allow`. Approving an intake gate keeps
