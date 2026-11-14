@@ -37,6 +37,7 @@ class UsageStoreTests(PgTestCase):
             (row["tenant_id"], row["team_id"], row["project_id"], row["actor"], row["provider"], row["model"]),
             ("acme", "t-1", "web", "dev@acme.test", "openai", "gpt-4o"),
         )
+        self.assertEqual(row["agent_id"], "dev-agent")  # migration 046: the agent apart from the requester
         self.assertEqual((row["input_tokens"], row["output_tokens"], float(row["cost_usd"]), row["status"]), (150, 20, 0.0123, 200))
 
     def test_team_and_program_fall_back_to_the_task_and_workflow(self):

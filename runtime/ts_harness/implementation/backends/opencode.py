@@ -234,6 +234,14 @@ def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -
     )
 
 
+# The OpenCode run of the current implement() call on this thread, read back for usage.
+_USAGE_RUN = threading.local()
+
+
+def _note_opencode_run(binary: Any, env: dict[str, str], repo_dir: Any) -> None:
+    _USAGE_RUN.ctx = {"binary": str(binary), "env": env, "repo_dir": Path(repo_dir)}
+
+
 def build_opencode_command(
     *,
     binary: str,
@@ -731,20 +739,22 @@ class OpenCodeBackend:
         )
 
     def implement(self, request: CodingRequest) -> CodingResult:
-        if request.mode == "refresh":
-            return self.refresh(request)
+        """Implement or refresh, then record the tokens of every OpenCode run it made."""
         started_ms = int(time.time() * 1000)
-        usage_ctx: dict[str, Any] = {}
+        _USAGE_RUN.ctx = {}
         try:
-            return self._implement(request, usage_ctx)
+            if request.mode == "refresh":
+                return self.refresh(request)
+            return self._implement(request)
         finally:
+            usage_ctx, _USAGE_RUN.ctx = getattr(_USAGE_RUN, "ctx", {}), {}
             if usage_ctx:
                 try:
                     record_opencode_usage(since_ms=started_ms, scope=coding_usage_scope(request), **usage_ctx)
                 except Exception:  # noqa: BLE001 - metering never fails a coding run
                     pass
 
-    def _implement(self, request: CodingRequest, usage_ctx: dict[str, Any]) -> CodingResult:
+    def _implement(self, request: CodingRequest) -> CodingResult:
         provider, api_key = resolve_coding_backend_credentials(
             provider=request.provider, scope=coding_usage_scope(request)
         )
@@ -860,7 +870,7 @@ class OpenCodeBackend:
             env = os.environ.copy()
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
-            usage_ctx.update(binary=str(binary), env=env, repo_dir=Path(repo_dir))
+            _note_opencode_run(binary, env, repo_dir)
             completed = self._run_opencode(
                 cmd,
                 cwd=str(repo_dir),
@@ -1154,6 +1164,7 @@ class OpenCodeBackend:
                 if not provider or not api_key:
                     raise RuntimeError("CODING_BACKEND_PROVIDER and CODING_BACKEND_API_KEY are required to resolve conflicts")
                 binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
+                _note_opencode_run(binary, env, repo_dir)
                 completed = self._run_opencode(
                     build_opencode_command(
                         binary=binary,

@@ -42,6 +42,7 @@ class UsageStore:
             "workflow": claims.get("workflow"),
             "task": claims.get("task"),
             "actor": claims.get("user") or claims.get("agent"),
+            "agent": claims.get("agent"),
             "provider": provider,
             "model": model,
             "input": usage.input_tokens + usage.cache_read_tokens,
@@ -55,13 +56,13 @@ class UsageStore:
             cur.execute(
                 """
                 INSERT INTO llm_usage (tenant_id, team_id, project_id, program_id, workflow_id, task_id, actor,
-                                       provider, model, input_tokens, output_tokens, cost_usd, status)
+                                       agent_id, provider, model, input_tokens, output_tokens, cost_usd, status)
                 VALUES (
                     %(tenant)s,
                     COALESCE(%(team)s, (SELECT team_id::text FROM workflow_tasks WHERE id = %(task_uuid)s::uuid)),
                     %(project)s,
                     COALESCE(%(program)s, workflow_program_id(%(workflow_uuid)s::uuid)::text),
-                    %(workflow)s, %(task)s, %(actor)s, %(provider)s, %(model)s,
+                    %(workflow)s, %(task)s, %(actor)s, %(agent)s, %(provider)s, %(model)s,
                     %(input)s, %(output)s, %(cost)s, %(status)s
                 )
                 """,

@@ -210,6 +210,8 @@ class UsageRecordingTests(unittest.TestCase):
         llm, agent = log
         self.assertIn("INSERT INTO llm_usage", llm[0])
         self.assertEqual((llm[1]["actor"], llm[1]["input"], llm[1]["output"]), ("pm-agent", 3000, 100))
+        self.assertEqual(llm[1]["agent"], "pm-agent")
+        self.assertIn("agent_id", llm[0])
         self.assertAlmostEqual(llm[1]["cost"], (1000 * 4 + 100 * 20 + 2000 * 0.2) / 1_000_000)
         self.assertIn("INSERT INTO agent_token_usage", agent[0])
         self.assertEqual(agent[1][:5], ("pm-agent", "anthropic", "claude-opus-5-5", 3000, 100))
@@ -297,6 +299,43 @@ class OpencodeUsageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpencodeRunMeteringTests(unittest.TestCase):
+    """implement() reads back the OpenCode run it made, in implement and in conflict-refresh mode."""
+
+    def _backend(self, mode):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+
+        def run(request):
+            oc._note_opencode_run("/tools/opencode", {"X": "1"}, "/tmp/repo")
+            return SimpleNamespace(ok=True, mode=request.mode)
+
+        backend._implement = run
+        backend.refresh = run
+        return backend
+
+    def test_both_modes_record_the_run(self):
+        for mode in ("implement", "refresh"):
+            request = SimpleNamespace(mode=mode, program_id="p", delivery_workflow_id="wf", requested_by="u@x")
+            with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+                result = self._backend(mode).implement(request)
+            with self.subTest(mode=mode):
+                self.assertEqual(result.mode, mode)
+                kwargs = record.call_args.kwargs
+                self.assertEqual((kwargs["binary"], str(kwargs["repo_dir"])), ("/tools/opencode", "/tmp/repo"))
+                self.assertEqual(kwargs["scope"]["agent"], "coding-backend")
+
+    def test_a_run_without_opencode_records_nothing(self):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+        backend.refresh = lambda request: SimpleNamespace(ok=True)
+        with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+            backend.implement(SimpleNamespace(mode="refresh"))
+        record.assert_not_called()
 
 
 class SessionsListTests(unittest.TestCase):

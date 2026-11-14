@@ -50,6 +50,7 @@ Apply migrations in this strict order via `scripts/ops/migrate-db.sh`:
 | 44 | `043_shared_runtime_state.sql` | Shared file trees, managed skill index, runtime key-value state, runtime audit events and channel dedup, so no runtime state lives on the host disk |
 | 45 | `044_knowledge_notes.sql` | Org and project knowledge notes, their versions, and knowledge-note audit actions |
 | 46 | `045_program_may_end_audit.sql` | Audit actions for reopening a program that ended at a `may_end` node and for closing older ones |
+| 47 | `046_llm_usage_agent.sql` | `llm_usage.agent_id`: the agent that made each model call (`actor` stays the requesting user) |
 
 Existing deployments with both `002_*` files already applied: `migrate-db.sh` tracks applied
 filenames; do not rename historical files on disk.

@@ -37,12 +37,13 @@ Usage is still recorded when calls go straight to the provider, as long as a
 session database is configured (`TS_HARNESS_SESSION_DB_URL`, or
 `LLM_USAGE_DB_URL` to use another one):
 
-- Agent calls: each model call writes one `llm_usage` row (actor is the
-  requesting user, or the agent) and one `agent_token_usage` row (by agent).
+- Agent calls: each model call writes one `llm_usage` row (`agent_id` is the
+  agent; `actor` is the requesting user, or the agent when there is none) and one
+  `agent_token_usage` row.
 - Coding backend: after each OpenCode run the backend exports the sessions
   that run created in the repo (`opencode session list`, `opencode export`)
-  and writes one row per model with `agent = coding-backend`. Conflict
-  refreshes (`mode: refresh`) are not counted.
+  and writes one row per model with `agent_id = coding-backend`, for conflict
+  refreshes too.
 
 Prices come from `llm_pricing` in the runtime config. For a coding-backend
 model the table does not list, the cost OpenCode reports is used instead.

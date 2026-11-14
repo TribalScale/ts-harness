@@ -24,10 +24,15 @@ First public release.
     and sales on Claude Sonnet 5.5 (medium); review on GPT-6 Astra; qa, ops,
     analyst and marketing on GPT-6.1 Sol; comms on GPT-6 Luna; heartbeats on
     Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
+- `scripts/ops/redeploy.sh` rolls a checkout onto an existing host: secrets, runtime
+  config, workspace, compose env, migrations, then rebuilt images. See
+  `docs/runbooks/redeploy.md`.
+- `llm_usage.agent_id` (migration 046): the agent that made each model call. `actor`
+  stays the person the work is for, which for a workflow task is the requester.
 - Model usage is recorded without the LLM proxy. Direct agent calls write
   `llm_usage` and `agent_token_usage`; coding-backend runs are read back from
-  OpenCode's sessions. Costs come from the new `llm_pricing` table in the runtime
-  config template.
+  OpenCode's sessions, conflict refreshes included. Costs come from the new
+  `llm_pricing` table in the runtime config template.
 
 - PRD requests ask better questions and the reviewer sees what a draft is missing.
   - New `prd-intake` skill: each intake question carries a recommended answer worded so

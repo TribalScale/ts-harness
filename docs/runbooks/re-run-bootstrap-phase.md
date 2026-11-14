@@ -1,5 +1,8 @@
 # Re-run a Bootstrap Phase
 
+To roll a new version or a config change onto a host, use
+[`redeploy.md`](redeploy.md) instead: it re-runs every phase that matters, in order.
+
 Use this when one setup phase failed or when testing a phase script change on an
 existing instance.
 
