@@ -319,3 +319,18 @@ class SessionsListTests(unittest.TestCase):
         self.assertNotIn("metadata", out["sessions"][0])
         pm = sessions_list_handler({"agent_id": "pm-agent", "limit": 500}, ctx)
         self.assertEqual((pm["total"], pm["returned"]), (15, 15))
+
+    def test_large_metadata_is_named_not_returned(self):
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, get_session_store, reset_session_store
+        from ts_harness.tools.workflow_tools import sessions_list_handler
+
+        reset_session_store(SessionStore())
+        self.addCleanup(reset_session_store, SessionStore())
+        get_session_store().save(SessionRecord(
+            session_id="s1", routing_key="rk", tenant_id="default", agent_id="orchestrator", source="web",
+            metadata={"program_id": "p-1", "workflow_phase": "prd", "approved_artifact": {"prd": "x" * 50000},
+                      "review_artifact": "y" * 5000, "pending_workflow": {}},
+        ))
+        row = sessions_list_handler({}, SimpleNamespace(tenant_id="default"))["sessions"][0]
+        self.assertEqual(row["metadata"], {"program_id": "p-1", "workflow_phase": "prd"})
+        self.assertEqual(row["metadata_omitted"], ["approved_artifact", "review_artifact"])

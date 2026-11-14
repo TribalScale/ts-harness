@@ -763,10 +763,33 @@ def sessions_list_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             "status": session.status,
             "started_at": session.started_at,
         }
-        if session.metadata:
-            row["metadata"] = session.metadata
+        metadata, omitted = _session_list_metadata(session.metadata)
+        if metadata:
+            row["metadata"] = metadata
+        if omitted:
+            row["metadata_omitted"] = omitted
         rows.append(row)
     return {"sessions": rows, "total": len(sessions), "returned": len(rows)}
+
+
+SESSION_LIST_VALUE_MAX = 300
+
+
+def _session_list_metadata(metadata: Any) -> tuple[dict[str, Any], list[str]]:
+    """Short scalar fields (ids, phase, type, URLs). Drafts and handoffs are left out by name:
+    one approved PRD alone is tens of kilobytes. ``sessions_history`` reads a session in full."""
+    if not isinstance(metadata, dict):
+        return {}, []
+    kept: dict[str, Any] = {}
+    omitted: list[str] = []
+    for key, value in metadata.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (str, int, float, bool)) and len(str(value)) <= SESSION_LIST_VALUE_MAX:
+            kept[key] = value
+        else:
+            omitted.append(str(key))
+    return kept, sorted(omitted)
 
 
 def sessions_history_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

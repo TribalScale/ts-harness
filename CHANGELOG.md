@@ -209,7 +209,8 @@ First public release.
   had a bare `%` in `ILIKE 'department:%'`, which psycopg reads as a placeholder.
 - `sessions_list` returned every session the tenant ever had (about 200k tokens in one
   tool result on the dev host). It now returns the 20 newest by default (`limit` up
-  to 100), can filter by `agent_id`, and includes `started_at`.
+  to 100), can filter by `agent_id`, includes `started_at`, and leaves large
+  metadata (drafts, handoffs) out by name; `sessions_history` reads one in full.
 - The Anthropic API key never reached the containers: phase 12 did not export
   `ANTHROPIC_API_KEY`, and the compose wrapper did not forward it. Phase 12 now also
   re-runs when the script itself changes.
