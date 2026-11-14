@@ -3922,6 +3922,24 @@ def get_delivery_program_status(
     }
 
 
+def _program_reopens_on_advance(program: dict[str, Any]) -> bool:
+    """Same rule as ``ensure_program_can_advance`` in the runtime, enforced here as well.
+
+    Only a program that ended at a ``may_end`` node (``ended_at_phase`` equals its
+    current phase) may be advanced after it succeeded.
+    """
+    status = str(program.get("status") or "running")
+    if status in {"cancelled", "failed"}:
+        raise ValueError(f"program is {status}; start a new request instead")
+    if status != "succeeded":
+        return False
+    artifacts = _program_metadata_artifacts(program.get("metadata"))
+    ended_at = str(artifacts.get("ended_at_phase") or "")
+    if ended_at and ended_at == str(program.get("current_phase") or ""):
+        return True
+    raise ValueError("program is complete; start a new request instead")
+
+
 def advance_delivery_program(conn, program_id: str, body: dict[str, Any]) -> dict[str, Any]:
     parsed_id = parse_uuid(program_id)
     target_phase = str(body.get("target_phase") or body.get("current_phase") or "").strip()
@@ -3932,6 +3950,7 @@ def advance_delivery_program(conn, program_id: str, body: dict[str, Any]) -> dic
         program = cur.fetchone()
         if not program:
             raise ValueError("program not found")
+        reopening = _program_reopens_on_advance(program)
         topology = _program_topology(program)
         current = str(program.get("current_phase") or "")
         successors = _topology_next_phases(topology, current)
@@ -3979,6 +3998,14 @@ def advance_delivery_program(conn, program_id: str, body: dict[str, Any]) -> dic
             },
             actor,
         )
+        if reopening:
+            audit_workflow_event(
+                cur,
+                "delivery_program_reopened",
+                f"Delivery program reopened from {current} to {target_phase}",
+                {"program_id": parsed_id, "source_phase": current, "target_phase": target_phase},
+                actor,
+            )
         decision_id = record_workflow_decision(
             cur,
             {

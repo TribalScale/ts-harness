@@ -45,6 +45,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "prd_request_smoke": lambda: True,
                 "continue_bridge_smoke": lambda: True,
                 "continue_delivery_smoke": lambda: True,
+                "program_may_end_smoke": lambda: True,
                 "intent_routing_smoke": lambda: True,
                 "workflow_runner_import_smoke": lambda: True,
                 "skeleton_hooks_registered": lambda: True,

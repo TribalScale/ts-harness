@@ -421,6 +421,29 @@ def _validate_graph(
                     f"nonterminal node requires an outgoing edge: {node.id}",
                 )
             )
+        if node.may_end and node.terminal:
+            issues.append(
+                _issue(
+                    "error",
+                    "may_end_on_terminal",
+                    _node_path(index),
+                    f"terminal node already ends the program; drop may_end: {node.id}",
+                )
+            )
+        automatic = [
+            definition.edges[edge_index]
+            for edge_index in outs
+            if definition.edges[edge_index].mode == "automatic"
+        ]
+        if node.may_end and automatic:
+            issues.append(
+                _issue(
+                    "error",
+                    "may_end_with_automatic_edge",
+                    _node_path(index),
+                    f"may_end has no effect: {node.id} -> {automatic[0].target} is automatic",
+                )
+            )
 
     visiting: set[str] = set()
     visited: set[str] = set()

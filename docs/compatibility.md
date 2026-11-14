@@ -115,9 +115,10 @@ Required gates (all must pass):
 18. `workflow_hook_smoke` — in-process `WorkflowEngine.handle_reject` against prd_request skeleton
 19. `prd_request_smoke` — promote + reject loop in-process
 20. `continue_bridge_smoke` — bridge materializes downstream workflow tasks (`continue_delivery_smoke` alias)
-21. `intent_routing_smoke` — yaml routing returns `governed_prd` for canonical phrase
-22. `workflow_runner_import_smoke` — workflow engine importable in runner/runtime bundle
-23. `skeleton_hooks_registered` — every hook referenced in workflow skeletons is registered
+21. `program_may_end_smoke` — a `software_delivery` program ends (succeeded) at an approved PRD and reopens when Jira is requested
+22. `intent_routing_smoke` — yaml routing returns `governed_prd` for canonical phrase
+23. `workflow_runner_import_smoke` — workflow engine importable in runner/runtime bundle
+24. `skeleton_hooks_registered` — every hook referenced in workflow skeletons is registered
 
 Gate list is driven by `config/release-gates.yaml`. Session metadata uses generic keys (`workflow_phase`, `approved_artifact`, `pending_bridge`, `bridge_linked`); legacy PRD-specific keys are read-only compat.
 

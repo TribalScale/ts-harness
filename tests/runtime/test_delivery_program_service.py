@@ -326,7 +326,7 @@ class DeliveryProgramServiceTests(unittest.TestCase):
         self.assertEqual(result.workflow_type, "prd_request")
         create_kwargs = client.create_program.call_args.kwargs
         self.assertEqual(create_kwargs["program_type"], "software_delivery")
-        self.assertEqual(create_kwargs["program_definition_version"], "1.3.0")
+        self.assertEqual(create_kwargs["program_definition_version"], "1.4.0")
         self.assertTrue(create_kwargs["program_definition_revision"])
         snapshot = create_kwargs["program_definition_snapshot"]
         self.assertEqual(snapshot["program_type"], "software_delivery")

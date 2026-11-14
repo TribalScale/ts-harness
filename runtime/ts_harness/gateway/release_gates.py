@@ -135,6 +135,7 @@ class ReleaseGateRunner:
         "workflow_hook_smoke",
         "prd_request_smoke",
         "continue_bridge_smoke",
+        "program_may_end_smoke",
         "intent_routing_smoke",
         "workflow_runner_import_smoke",
         "delivery_program",
