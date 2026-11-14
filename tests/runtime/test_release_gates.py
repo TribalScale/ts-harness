@@ -243,6 +243,22 @@ class ReleaseGateTests(unittest.TestCase):
     def test_workflow_runner_import_smoke_uses_installed_layout(self):
         self.assertTrue(release_gates.workflow_runner_import_smoke())
 
+    def test_session_smokes_never_touch_the_session_database(self):
+        # On a deployed host TS_HARNESS_SESSION_DB_URL points at the live database. The
+        # in-process smokes reuse fixed session ids and routing keys, so writing them
+        # there collides with earlier runs and leaves fake sessions behind.
+        from ts_harness.agent import sessions
+
+        with patch.dict(os.environ, {"TS_HARNESS_SESSION_DB_URL": "postgresql://gate@127.0.0.1:1/none"}), \
+                patch.object(sessions.SessionStore, "_connect", side_effect=AssertionError("session database used")):
+            try:
+                self.assertTrue(release_gates.prd_request_smoke())
+                self.assertTrue(release_gates.continue_delivery_smoke())
+                self.assertTrue(release_gates.continue_bridge_smoke())
+                self.assertIsNone(sessions.get_session_store().db_url)
+            finally:
+                sessions.reset_session_store(sessions.SessionStore())
+
     def test_delivery_program_gate_loads_default_definition_and_pinned_workflows(self):
         source = Path(release_gates.__file__).read_text(encoding="utf-8")
         self.assertNotIn("PHASE_ORDER", source)
