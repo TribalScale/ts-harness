@@ -373,3 +373,44 @@ class SessionsListTests(unittest.TestCase):
         row = sessions_list_handler({}, SimpleNamespace(tenant_id="default"))["sessions"][0]
         self.assertEqual(row["metadata"], {"program_id": "p-1", "workflow_phase": "prd"})
         self.assertEqual(row["metadata_omitted"], ["approved_artifact", "review_artifact"])
+
+
+class CodingRunSlotsTests(unittest.TestCase):
+    def test_in_process_runs_wait_for_a_slot(self):
+        import threading
+        import time as _time
+
+        from ts_harness.implementation import coding_job
+
+        coding_job._RUN_SLOTS = None
+        self.addCleanup(setattr, coding_job, "_RUN_SLOTS", None)
+        running, peak = [0], [0]
+        lock = threading.Lock()
+
+        class Backend:
+            def implement(self, request):
+                with lock:
+                    running[0] += 1
+                    peak[0] = max(peak[0], running[0])
+                _time.sleep(0.05)
+                with lock:
+                    running[0] -= 1
+                return SimpleNamespace(branch="b", pr_url=None)
+
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": ""}), \
+             patch.object(coding_job, "_backend_from_config", return_value=Backend()), \
+             patch.object(coding_job, "coding_request_from_spec", return_value=None), \
+             patch.object(coding_job, "_result_dict", create=True):
+            threads = [threading.Thread(target=self._run, args=(coding_job,)) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(peak[0], 1)
+
+    @staticmethod
+    def _run(coding_job):
+        try:
+            coding_job.run_coding_request({"repo_url": "r"}, record_refs=False)
+        except Exception:  # noqa: BLE001 - only the overlap is under test
+            pass

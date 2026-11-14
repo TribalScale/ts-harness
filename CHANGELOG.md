@@ -210,6 +210,10 @@ First public release.
 
 ### Fixed
 
+- Coding runs inside the runtime container had no concurrency limit. A wave of three
+  work orders ran three OpenCode processes at once and the kernel killed one for lack of
+  memory on a 4 GB host. In-process runs now take a slot first
+  (`CODING_INPROCESS_MAX_RUNNING`, default 1); the others wait.
 - A program could stop after its work-orders phase: the program snapshot was too long
   for the embedding model (8192 tokens), memory-api refused it, and the move to
   implementation never happened. Only the first 16000 characters of a memory are
