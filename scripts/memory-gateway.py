@@ -788,7 +788,13 @@ def resume_blocked_task(conn, body: dict[str, Any]) -> dict[str, str]:
 
 
 def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
-    """Steps parked for a human decision (revise, accept or stop) in running workflows."""
+    """Steps waiting for a human decision (revise, accept or stop) in running workflows.
+
+    Two kinds, matching ``human_decisions.decidable``: steps parked after the revision limit,
+    and steps blocked for good (a failed coding run, failing PR checks). The second kind
+    used to be left out, so a work order blocked that way never reached the Inbox or chat
+    and its wave waited for ever. External waits, tool approvals and stopped steps are not
+    decisions."""
     tenant_id = str(body.get("tenant_id") or "default")
     with conn.cursor() as cur:
         cur.execute(
@@ -800,7 +806,13 @@ def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
             JOIN workflows w ON w.id = t.workflow_id
             WHERE t.tenant_id = %s
               AND t.status = 'blocked'
-              AND t.input ->> '_awaiting_human_decision' IS NOT NULL
+              AND (
+                    t.input ->> '_awaiting_human_decision' IS NOT NULL
+                 OR (COALESCE(t.error, '') <> ''
+                     AND t.error NOT LIKE 'awaiting\\_external:%%'
+                     AND t.error NOT LIKE 'awaiting\\_tool\\_approval:%%'
+                     AND t.error NOT LIKE 'stopped\\_by\\_human:%%')
+              )
               AND w.status = 'running'
             ORDER BY t.updated_at DESC
             LIMIT 100

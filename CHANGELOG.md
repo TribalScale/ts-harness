@@ -210,6 +210,10 @@ First public release.
 
 ### Fixed
 
+- A work order blocked for good (a failed coding run, failing PR checks) never reached
+  the Inbox or the chat `/accept` and `/stop` commands: the stuck-step list only held
+  steps parked after the revision limit, so the wave waited with nothing to act on.
+  Those blocks are listed now; external waits, tool approvals and stopped steps are not.
 - Coding runs inside the runtime container had no concurrency limit. A wave of three
   work orders ran three OpenCode processes at once and the kernel killed one for lack of
   memory on a 4 GB host. In-process runs now take a slot first
