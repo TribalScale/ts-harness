@@ -564,6 +564,18 @@ class InstallerPipelineTests(unittest.TestCase):
         tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
         self.assertEqual(tfvars["secret_prefix"], "acme")
 
+    def test_github_app_section_is_accepted_and_mapped(self):
+        # install.py reads a top-level github_app section; the schema must allow it.
+        text = AWS_EXAMPLE.read_text().replace(
+            "# github_app:", "github_app:\n  app_id: 12345\n  slug: acme-harness\n# was github_app:", 1
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "aws.yaml"
+            path.write_text(text)
+            cfg = load_install_config(path)
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual((tfvars["github_app_id"], tfvars["github_app_slug"]), ("12345", "acme-harness"))
+
     def test_run_terraform_streams_output(self):
         with mock.patch.object(install_mod.subprocess, "run") as run:
             run.return_value = subprocess.CompletedProcess(["terraform"], 0)
