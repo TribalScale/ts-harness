@@ -297,3 +297,25 @@ class OpencodeUsageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionsListTests(unittest.TestCase):
+    def test_newest_sessions_first_with_a_limit(self):
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, get_session_store, reset_session_store
+        from ts_harness.tools.workflow_tools import sessions_list_handler
+
+        reset_session_store(SessionStore())
+        self.addCleanup(reset_session_store, SessionStore())
+        store = get_session_store()
+        for i in range(30):
+            store.save(SessionRecord(session_id=f"s{i:02d}", routing_key=f"rk{i}", tenant_id="default",
+                                     agent_id="pm-agent" if i % 2 else "orchestrator", source="web",
+                                     started_at=f"2026-11-{1 + i % 28:02d}T00:00:{i:02d}Z"))
+        ctx = SimpleNamespace(tenant_id="default")
+        out = sessions_list_handler({}, ctx)
+        self.assertEqual((out["total"], out["returned"]), (30, 20))
+        started = [row["started_at"] for row in out["sessions"]]
+        self.assertEqual(started, sorted(started, reverse=True))
+        self.assertNotIn("metadata", out["sessions"][0])
+        pm = sessions_list_handler({"agent_id": "pm-agent", "limit": 500}, ctx)
+        self.assertEqual((pm["total"], pm["returned"]), (15, 15))

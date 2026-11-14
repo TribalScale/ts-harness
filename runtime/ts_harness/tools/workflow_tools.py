@@ -731,23 +731,42 @@ def remember_memory_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     )
 
 
+SESSIONS_LIST_DEFAULT = 20
+SESSIONS_LIST_MAX = 100
+
+
 def sessions_list_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
+    """Newest sessions first, ``limit`` of them (20 by default, 100 at most).
+
+    The full list grows with every chat and workflow step; returned whole it ran to
+    hundreds of thousands of tokens in a single tool result.
+    """
     source = args.get("source")
+    agent_id = args.get("agent_id")
+    try:
+        limit = int(args.get("limit") or SESSIONS_LIST_DEFAULT)
+    except (TypeError, ValueError):
+        limit = SESSIONS_LIST_DEFAULT
+    limit = max(1, min(limit, SESSIONS_LIST_MAX))
     sessions = get_session_store().list_for_tenant(ctx.tenant_id)
     if source:
         sessions = [session for session in sessions if session.source == str(source)]
-    return {
-        "sessions": [
-            {
-                "session_id": session.session_id,
-                "agent_id": session.agent_id,
-                "source": session.source,
-                "status": session.status,
-                "metadata": session.metadata,
-            }
-            for session in sessions
-        ]
-    }
+    if agent_id:
+        sessions = [session for session in sessions if session.agent_id == str(agent_id)]
+    sessions = sorted(sessions, key=lambda session: str(session.started_at or ""), reverse=True)
+    rows = []
+    for session in sessions[:limit]:
+        row = {
+            "session_id": session.session_id,
+            "agent_id": session.agent_id,
+            "source": session.source,
+            "status": session.status,
+            "started_at": session.started_at,
+        }
+        if session.metadata:
+            row["metadata"] = session.metadata
+        rows.append(row)
+    return {"sessions": rows, "total": len(sessions), "returned": len(rows)}
 
 
 def sessions_history_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

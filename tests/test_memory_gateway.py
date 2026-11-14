@@ -197,13 +197,36 @@ class MemoryGatewayTests(unittest.TestCase):
         )
         self.assertEqual(result["department"], "engineering")
 
+    def _assert_psycopg_placeholders(self, sql, params):
+        """psycopg rejects a bare % in a query with parameters: only %s and %% may appear."""
+        import re
+
+        unescaped = sql.replace("%%", "")
+        self.assertEqual(re.findall(r"%(?!s)", unescaped), [], sql)
+        self.assertEqual(unescaped.count("%s"), len(params))
+
+    def test_recall_scope_without_department_passes_every_scope_shape(self):
+        gateway = load_gateway()
+        cursor = FakeCursor(rows=[])
+        conn = FakeConnection(cursor)
+        for body in (
+            {"query": "q", "tenant_id": "default", "scope": "tenant:default:agent:orchestrator"},
+            {"query": "q", "tenant_id": "default", "department_scope": "department:engineering"},
+        ):
+            cursor.calls.clear()
+            gateway.recall(conn, body, embed=lambda text: "[0.1,0.2]")
+            sql, params = cursor.calls[0]
+            with self.subTest(body=body):
+                self._assert_psycopg_placeholders(sql, params)
+
     def test_recall_hides_department_rows_unless_the_program_scope_is_set(self):
         gateway = load_gateway()
         cursor = FakeCursor(rows=[])
         conn = FakeConnection(cursor)
         gateway.recall(conn, {"query": "stack", "tenant_id": "default"}, embed=lambda text: "[0.1,0.2]")
-        sql, _params = cursor.calls[0]
-        self.assertIn("scope NOT ILIKE 'department:%'", sql)
+        sql, params = cursor.calls[0]
+        self.assertIn("scope NOT ILIKE 'department:%%'", sql)
+        self._assert_psycopg_placeholders(sql, params)
 
         cursor.calls.clear()
         gateway.recall(
@@ -218,6 +241,7 @@ class MemoryGatewayTests(unittest.TestCase):
         )
         sql, params = cursor.calls[0]
         self.assertIn("scope = %s OR scope = 'global' OR scope = %s", sql)
+        self._assert_psycopg_placeholders(sql, params)
         self.assertIn("department:engineering", params)
         self.assertNotIn("department:sales", params)
 

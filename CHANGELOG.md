@@ -205,9 +205,14 @@ First public release.
 
 ### Fixed
 
+- `recall_memory` failed on every call without a department scope: the recall query
+  had a bare `%` in `ILIKE 'department:%'`, which psycopg reads as a placeholder.
+- `sessions_list` returned every session the tenant ever had (about 200k tokens in one
+  tool result on the dev host). It now returns the 20 newest by default (`limit` up
+  to 100), can filter by `agent_id`, and includes `started_at`.
 - The Anthropic API key never reached the containers: phase 12 did not export
-  `ANTHROPIC_API_KEY` to compose. Phase 12 now also re-runs when the script itself
-  changes.
+  `ANTHROPIC_API_KEY`, and the compose wrapper did not forward it. Phase 12 now also
+  re-runs when the script itself changes.
 
 - A PRD request confirmed in chat never read its attachments. The promote hook folded
   `intake_sources` into the intake task's context, where `gather_intake_sources` does not
