@@ -24,6 +24,9 @@ First public release.
     Definition of Done outside 5 to 10 items, and open questions without an owner. The
     findings travel as `prd_checks` and are listed under the draft in the approval
     message; they never block it.
+  - Console Inbox: a PRD approval gate shows a "Draft checks" card with what the
+    checks found on the draft under review (the latest draft or revision), or that it
+    passed.
   - `prd-review` 1.1.0 grades decisions, assumptions, FR priorities and hygiene;
     `story-writer` 1.1.0 orders stories by FR priority and carries assumptions into open
     questions.

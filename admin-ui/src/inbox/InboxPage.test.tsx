@@ -171,6 +171,50 @@ it("decides a stuck step: revise again with guidance", async () => {
   });
 });
 
+it("shows what the automatic PRD checks found on a PRD gate", async () => {
+  const prdGate: InboxItem = {
+    type: "workflow_gate",
+    id: "gate-prd",
+    title: "approve_prd",
+    subtitle: "Program Expense export",
+    created_at: "2026-11-14T10:10:00Z",
+    meta: {
+      task_id: "gate-prd",
+      step_name: "approve_prd",
+      program_id: "program-2",
+      prd_checks: ["No priority (Must, Should or Could) on FR-3.", "Definition of Done has 4 items; it needs 5 to 10."],
+    },
+  };
+  mockFetch((url) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: [prdGate, inboxItems[2]] });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="workflow_gate" initialId="gate-prd" />);
+
+  const checks = await screen.findByRole("region", { name: "Draft checks" });
+  expect(within(checks).getByText(/found 2 issues/)).toBeInTheDocument();
+  expect(within(checks).getByText("No priority (Must, Should or Could) on FR-3.")).toBeInTheDocument();
+  expect(within(checks).getByText("Definition of Done has 4 items; it needs 5 to 10.")).toBeInTheDocument();
+});
+
+it("says a PRD draft passed and shows nothing on other gates", async () => {
+  const passed: InboxItem = { ...inboxItems[2], id: "gate-ok", meta: { ...inboxItems[2].meta, prd_checks: [] } };
+  mockFetch((url) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: [passed, inboxItems[2]] });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  const { unmount } = renderPage(<StatefulInbox initialType="workflow_gate" initialId="gate-ok" />);
+  const checks = await screen.findByRole("region", { name: "Draft checks" });
+  expect(within(checks).getByText("The automatic PRD checks found no issues.")).toBeInTheDocument();
+  unmount();
+
+  renderPage(<StatefulInbox initialType="workflow_gate" initialId="gate-1" />);
+  expect(await screen.findByText("Approve release")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Draft checks" })).not.toBeInTheDocument();
+});
+
 it("only offers the decisions the step allows", async () => {
   const waitItem = { ...stuckItem, meta: { ...stuckItem.meta, decisions: ["revise", "stop"] } };
   mockFetch((url) => {

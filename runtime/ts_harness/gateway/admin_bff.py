@@ -167,6 +167,16 @@ def build_inbox(
         match = waiting.get("match") or {}
         task_id = str(match.get("task_id") or "")
         step = str(match.get("step_name") or status.get("active_step") or "gate")
+        meta = {
+            "program_id": program_id,
+            "task_id": task_id,
+            "step_name": step,
+            "waiting_on": waiting,
+            "recommended_action": status.get("recommended_action"),
+        }
+        checks = _gate_draft_checks(memory, str(status.get("active_workflow_id") or ""))
+        if checks is not None:
+            meta["prd_checks"] = checks
         items.append(
             {
                 "type": "workflow_gate",
@@ -175,13 +185,7 @@ def build_inbox(
                 "subtitle": f"Program {program.get('display_name') or program.get('summary') or program_id}",
                 "created_at": waiting.get("since"),
                 "href": f"/#/inbox/workflow_gate/{quote(task_id or program_id, safe='')}",
-                "meta": {
-                    "program_id": program_id,
-                    "task_id": task_id,
-                    "step_name": step,
-                    "waiting_on": waiting,
-                    "recommended_action": status.get("recommended_action"),
-                },
+                "meta": meta,
             }
         )
 
@@ -189,6 +193,29 @@ def build_inbox(
     items.extend(_knowledge_note_items(memory, auth, runtime))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+def _gate_draft_checks(memory: Any, workflow_id: str) -> list[str] | None:
+    """The automatic PRD checks on the draft a gate is approving, or None when it has none.
+
+    ``draft_prd`` and ``revise_prd`` outputs carry ``prd_checks``; the newest one is the
+    draft in front of the reviewer. Other gates have no such output and get None.
+    """
+    if not workflow_id:
+        return None
+    try:
+        tasks = list((memory.get_workflow(workflow_id) or {}).get("tasks") or [])
+    except Exception:
+        return None
+    drafts = [
+        task
+        for task in tasks
+        if isinstance(task.get("output"), dict) and isinstance(task["output"].get("prd_checks"), list)
+    ]
+    if not drafts:
+        return None
+    latest = max(drafts, key=lambda task: str(task.get("updated_at") or task.get("created_at") or ""))
+    return [str(item) for item in latest["output"]["prd_checks"] if str(item).strip()]
 
 
 _STUCK_REASONS = {"revision_limit": "Revision limit reached"}
