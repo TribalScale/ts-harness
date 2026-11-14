@@ -15,8 +15,9 @@ First public release.
   1.7.0; `deliver_work_order` and `implement_jira_ticket` 1.6.0). The revision prompt
   names the failed checks and quotes the end of each failed GitHub Actions job log. Three
   revisions on their own `checks` budget, then a human decides.
-- A coding run that fails for good (OpenCode killed, crashed or left no PR) can be run
-  again with guidance: `/revise WO-n <guidance>` in chat or "revise" in the Inbox.
+- A coding run that fails for good (OpenCode killed, crashed or left no PR) waits for a
+  person instead of failing its wave: `/revise WO-n <guidance>` in chat or "revise" in the
+  Inbox runs it again, `/stop WO-n` stops it.
 
 - Agents can run on Claude, and each agent picks its model and reasoning depth.
   - The Anthropic provider sends no `temperature`, passes tools and tool results

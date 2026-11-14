@@ -102,3 +102,38 @@ class StuckStepAckTests(unittest.TestCase):
 
         text = format_stuck_step_ack({"action": "revise", "status": "revising", "rerun": True, "work_order": "WO-003"})
         self.assertEqual(text, "Running WO-003 again with your guidance.")
+
+
+class FailedRunParkingTests(unittest.TestCase):
+    def _engine(self, task):
+        from ts_harness.workflows.engine import WorkflowEngine
+
+        engine = WorkflowEngine.__new__(WorkflowEngine)
+        engine.client = MagicMock()
+        engine._workflow_payload = lambda workflow_id: {"tasks": [task]}
+        return engine
+
+    def _ctx(self, step):
+        return SimpleNamespace(stage=load_skeleton("deliver_work_order").stage(step), workflow_id="wf-1",
+                               workflow={}, extras={})
+
+    def test_a_failed_coding_run_waits_for_a_person_and_does_not_fail_the_wave(self):
+        from ts_harness.workflows.work_order_waves import _is_terminal_block
+
+        task = {"id": "t-1", "status": "blocked", "error": "/pr_url: run failed: opencode exit -9", "input": {"work_order_id": "WO-003"}}
+        engine = self._engine(task)
+        ctx = self._ctx("deliver_work_order")
+        engine._park_failed_run_for_a_human(ctx, task, task["error"])
+        task_id, patched = engine.client.patch_task_input.call_args.args
+        self.assertEqual(task_id, "t-1")
+        self.assertEqual(patched[human_decisions.HUMAN_DECISION_KEY]["reason"], "failed_run")
+        self.assertFalse(_is_terminal_block({**task, "input": patched}))
+        self.assertIn("/revise WO-003", ctx.extras["channel_text"])
+
+    def test_waits_and_other_stages_are_left_alone(self):
+        for step, error in (("deliver_work_order", "awaiting_external:coding_job"), ("qa_gate", "qa failed")):
+            task = {"id": "t-1", "status": "blocked", "error": error, "input": {}}
+            engine = self._engine(task)
+            engine._park_failed_run_for_a_human(self._ctx(step), task, error)
+            with self.subTest(step=step):
+                engine.client.patch_task_input.assert_not_called()
