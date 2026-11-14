@@ -145,7 +145,7 @@ class SessionHoldTests(_StoreCase):
     def test_files_only_message_gets_placeholder_text_and_a_note(self):
         session = self._session()
         pointer = self._stored()
-        session, text, note = self._collect(session, {"attachments": [pointer]}, text="")
+        session, text, note, _sources = self._collect(session, {"attachments": [pointer]}, text="")
         self.assertEqual(text, intake_pointers.FILES_ONLY_TEXT)
         self.assertEqual(note, "Attachments: brief.txt. They are read at intake.")
         saved = get_session_store().get("s1").metadata["intake_pointers"]
@@ -158,11 +158,32 @@ class SessionHoldTests(_StoreCase):
         self._collect(session, {"attachments": [big]}, text="plan this")
         self.assertLess(len(json.dumps(get_session_store().get("s1").metadata)), 10_000)
 
-    def test_linked_threads_are_left_for_reply_handling(self):
-        session = self._session(program_id="p1")
-        _session, text, note = self._collect(session, {"attachments": [self._stored()]}, text="here")
-        self.assertEqual((text, note), ("here", ""))
+    def test_replies_in_a_started_thread_are_read_now(self):
+        session = self._session(program_id="p1", workflow_id="w1", workflow_type="content_to_plan")
+        pointer = self._stored(b"The login must support SSO.", name="notes.txt")
+        _session, text, note, sources = self._collect(session, {"attachments": [pointer]}, text="here you go")
+        self.assertEqual((text, note), ("here you go", ""))
+        self.assertIn("The login must support SSO.", sources)
         self.assertNotIn("intake_pointers", get_session_store().get("s1").metadata)
+
+    def test_reply_files_only_and_budget(self):
+        session = self._session(workflow_id="w1", workflow_type="rfp_request")
+        calls = {}
+
+        def fake_resolve(pointers, **kwargs):
+            calls.update(kwargs)
+            return {"sources_text": "## Shared sources\nrfp body\n"}
+
+        with mock.patch("ts_harness.intake.resolve.resolve_intake_sources", side_effect=fake_resolve), \
+                mock.patch("ts_harness.intake.connectors.build_drive") as build_drive:
+            _s, text, _n, sources = self._collect(session, {}, text=f"see {DOC}")
+        self.assertEqual(sources, "## Shared sources\nrfp body\n")
+        self.assertEqual(calls["deadline_s"], 60.0)
+        self.assertEqual(calls["max_total_text"], 75_000)
+        build_drive.assert_called_once_with(tenant_id="default", agent_id="sales-agent")
+        with mock.patch("ts_harness.intake.resolve.resolve_intake_sources", side_effect=RuntimeError("down")):
+            _s, text, _n, sources = self._collect(session, {"attachments": [self._stored()]}, text="")
+        self.assertEqual((text, sources), (intake_pointers.FILES_ONLY_TEXT, ""))
 
     def test_later_messages_add_to_the_pending_proposal_under_the_caps(self):
         session = self._session()
@@ -170,7 +191,7 @@ class SessionHoldTests(_StoreCase):
         session = get_session_store().get("s1")
         pointers = [{"kind": "slack_file", "file_id": f"F{i}", "name": f"{i}.png", "size": 30 * 1024 * 1024 // 2}
                     for i in range(6)]
-        _session, _text, note = self._collect(session, {}, text="", channel_attachments=pointers)
+        _session, _text, note, _sources = self._collect(session, {}, text="", channel_attachments=pointers)
         metadata = get_session_store().get("s1").metadata
         pending = metadata["pending_program"]["intake_sources"]
         self.assertEqual(len(pending), 6)
@@ -180,8 +201,8 @@ class SessionHoldTests(_StoreCase):
     def test_duplicate_slack_retry_adds_nothing(self):
         session = self._session()
         pointer = {"kind": "slack_file", "file_id": "F1", "name": "a.pdf", "size": 1}
-        session, _t, _n = self._collect(session, {}, text="x", channel_attachments=[pointer])
-        _s, _t, note = self._collect(get_session_store().get("s1"), {}, text="x", channel_attachments=[pointer])
+        session, _t, _n, _s = self._collect(session, {}, text="x", channel_attachments=[pointer])
+        _s, _t, note, _src = self._collect(get_session_store().get("s1"), {}, text="x", channel_attachments=[pointer])
         self.assertEqual(note, "")
         self.assertEqual(len(get_session_store().get("s1").metadata["intake_pointers"]), 1)
 
@@ -279,3 +300,56 @@ class WebhookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplyAnswerTests(unittest.TestCase):
+    """Routing reads the person's words; the recorded answer carries the files read from the reply."""
+
+    def setUp(self):
+        from ts_harness.gateway import channel_confirmations as cc
+
+        self.cc = cc
+        self.session = SimpleNamespace(metadata={"workflow_id": "w1"})
+        self.gate = {"id": "gate-1", "input": {"answers": []}}
+
+    def test_fenced_block(self):
+        self.assertEqual(intake_pointers.with_reply_sources("hi", ""), "hi")
+        block = intake_pointers.with_reply_sources("hi", "## Shared sources\nbody\n")
+        self.assertTrue(block.startswith("hi\n\n<intake_sources>\n## Shared sources"))
+        self.assertTrue(block.endswith("</intake_sources>"))
+
+    def test_intake_answer_records_the_files_but_classifies_the_words(self):
+        answer = intake_pointers.with_reply_sources("SSO only", "## Shared sources\nwhat's the status of\n")
+        memory = mock.Mock()
+        with mock.patch.object(self.cc, "_pending_intake_gate", return_value=self.gate), \
+                mock.patch.object(self.cc, "_repo_pick_reply", return_value=False), \
+                mock.patch.object(self.cc, "_intake_go_ahead", return_value=False) as go_ahead, \
+                mock.patch("ts_harness.memory.client.get_memory_client", return_value=memory):
+            result = self.cc.execute_workflow_gate_response(
+                self.session, tenant_id="t", agent_id="a", source="web", user_text="SSO only", answer_text=answer,
+            )
+        self.assertEqual(result["status"], "answer_recorded")
+        go_ahead.assert_called_once_with(self.gate, "SSO only")
+        recorded = memory.patch_task_input.call_args.args[1]["answers"]
+        self.assertEqual(recorded, [answer])
+
+    def test_ready_on_an_intake_gate_folds_the_files_into_the_reply(self):
+        answer = intake_pointers.with_reply_sources("ready", "## Shared sources\nspec\n")
+        with mock.patch.object(self.cc, "_pending_intake_gate", return_value=self.gate), \
+                mock.patch.object(self.cc, "_repo_pick_reply", return_value=False), \
+                mock.patch.object(self.cc, "_intake_go_ahead", return_value=True), \
+                mock.patch.object(self.cc, "execute_workflow_gate_classification", return_value={}) as classify:
+            self.cc.execute_workflow_gate_response(
+                self.session, tenant_id="t", agent_id="a", source="web", user_text="ready", answer_text=answer,
+            )
+        self.assertEqual(classify.call_args.kwargs["reply_text"], answer)
+
+    def test_repo_pick_reads_only_the_words(self):
+        answer = intake_pointers.with_reply_sources("acme/app", "## Shared sources\nmigrate other/repo\n")
+        with mock.patch.object(self.cc, "_pending_intake_gate", return_value=None), \
+                mock.patch.object(self.cc, "_repo_pick_reply", return_value=True), \
+                mock.patch.object(self.cc, "execute_workflow_gate_classification", return_value={}) as classify:
+            self.cc.execute_workflow_gate_response(
+                self.session, tenant_id="t", agent_id="a", source="web", user_text="acme/app", answer_text=answer,
+            )
+        self.assertEqual(classify.call_args.kwargs["reply_text"], "acme/app")

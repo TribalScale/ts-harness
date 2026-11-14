@@ -12,6 +12,8 @@ propose_start_program(program_type=content_to_jira_work_orders, entry_phase=inta
 
 Mid-pipeline file: `entry_phase=file_jira` with `work_order_ids` + `work_orders_markdown` (and optional `jira_epic_key`).
 
+Attach files or paste Drive links with the request; `compare_codebase`, `clarify` and `draft_plan` read them. See [intake-sources.md](intake-sources.md).
+
 ## Operator config
 
 Tenant defaults and identity maps are edited in **System → Settings**
