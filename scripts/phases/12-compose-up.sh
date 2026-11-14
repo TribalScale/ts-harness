@@ -263,6 +263,7 @@ fi
     echo "export TS_HARNESS_SKILLS_BUCKET=$(printf '%q' "${TS_HARNESS_SKILLS_BUCKET:-}")"
     echo "export TS_HARNESS_WORKSPACE_BUCKET=$(printf '%q' "${TS_HARNESS_WORKSPACE_BUCKET:-}")"
     echo "export TS_HARNESS_INTAKE_BUCKET=$(printf '%q' "${TS_HARNESS_INTAKE_BUCKET:-}")"
+    echo "export TS_HARNESS_INTAKE_VISION_MODEL=$(printf '%q' "${TS_HARNESS_INTAKE_VISION_MODEL:-}")"
     echo "export TS_HARNESS_STATE_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_STATE_VOLUME_MODE}")"
     echo "export TS_HARNESS_OBJECT_VOLUME_MODE=$(printf '%q' "${TS_HARNESS_OBJECT_VOLUME_MODE}")"
     echo "export CODING_ECS_CLUSTER=$(printf '%q' "${CODING_ECS_CLUSTER:-}")"

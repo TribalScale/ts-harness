@@ -74,6 +74,11 @@ model that writes the brief.
 A model that cannot read images produces _image could not be read_; the run
 continues.
 
+Set it with `intake_vision_model` in `terraform.tfvars` (or `runtime.intake_vision_model`
+in the install contract). Terraform stores it in the runtime-config store, not the
+secrets manager, because it is not a secret; the provider's API key already is.
+After `terraform apply`, run `scripts/ops/sync-runtime-config.sh` and redeploy.
+
 ## Storage
 
 Uploads and Discord copies live in the `intake` object store under

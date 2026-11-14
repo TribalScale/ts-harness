@@ -79,6 +79,7 @@ runtime:
   embeddings_model: text-embedding-3-small
   embeddings_dimensions: 1536
   embeddings_fallback: none
+  intake_vision_model: ""        # blank: the agent's model; "off" disables image reading
   agent_timezone: UTC
   implement_work_orders_repo_url: ""
   implement_work_orders_base_branch: main

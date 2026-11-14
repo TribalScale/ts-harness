@@ -269,6 +269,10 @@
           "minimum": 1
         },
         "embeddings_fallback": { "type": "string" },
+        "intake_vision_model": {
+          "type": "string",
+          "description": "Model that reads images attached to requests (provider/model). Blank uses the stage agent's model; off turns image reading off."
+        },
         "agent_timezone": { "type": "string", "minLength": 1 },
         "implement_work_orders_repo_url": { "type": "string" },
         "implement_work_orders_base_branch": { "type": "string" },

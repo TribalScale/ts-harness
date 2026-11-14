@@ -116,6 +116,13 @@ class InstallerCliTests(unittest.TestCase):
         tfvars = install_mod.generate_tfvars(gcp, cloud="gcp")
         self.assertEqual((tfvars["state_backend"], tfvars["object_backend"]), ("postgres", "gcs"))
 
+    def test_generate_tfvars_passes_intake_vision_model(self):
+        for path, cloud in ((AWS_EXAMPLE, "aws"), (GCP_EXAMPLE, "gcp")):
+            cfg = load_install_config(path)
+            self.assertEqual(install_mod.generate_tfvars(cfg, cloud=cloud)["intake_vision_model"], "")
+            cfg["runtime"] = {**cfg["runtime"], "intake_vision_model": "off"}
+            self.assertEqual(install_mod.generate_tfvars(cfg, cloud=cloud)["intake_vision_model"], "off")
+
     def test_generate_tfvars_maps_oidc_runtime_fields(self):
         cfg = load_install_config(AWS_EXAMPLE)
         tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
