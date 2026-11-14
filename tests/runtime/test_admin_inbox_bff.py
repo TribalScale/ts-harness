@@ -132,6 +132,44 @@ class AdminBffTests(unittest.TestCase):
         self.assertEqual((gate["id"], gate["title"]), ("task-1", "approve_prd"))
         self.assertEqual(gate["meta"]["waiting_on"]["kind"], "approval")
 
+    def _gate_inbox(self, tasks):
+        memory = mock.Mock()
+        memory.list_programs.return_value = {"programs": [{"id": "prog-1", "status": "running", "display_name": "PRD"}]}
+        memory.get_program_status.return_value = {
+            "active_workflow_id": "wf-1",
+            "waiting_on": {"kind": "approval", "since": "2026-11-14T01:00:00Z",
+                           "match": {"task_id": "gate-2", "step_name": "approve_prd"}},
+        }
+        memory.get_workflow.return_value = {"workflow": {"id": "wf-1"}, "tasks": tasks}
+        memory.list_knowledge_notes.return_value = {"notes": []}
+        runtime = SimpleNamespace(
+            policy=SimpleNamespace(evaluate_identity=mock.Mock(return_value=SimpleNamespace(decision="allow")))
+        )
+        auth = AuthContext(actor_id="admin", tenant_id="default", roles=["admin"])
+        with (
+            mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+        ):
+            result = build_inbox(runtime, auth, memory=memory, skills_root="skills")
+        [gate] = [item for item in result["items"] if item["type"] == "workflow_gate"]
+        memory.get_workflow.assert_called_once_with("wf-1")
+        return gate["meta"]
+
+    def test_prd_gate_carries_the_checks_of_the_draft_under_review(self):
+        meta = self._gate_inbox([
+            {"id": "d1", "step_name": "draft_prd", "updated_at": "2026-11-14T00:10:00Z",
+             "output": {"prd_checks": ["No priority (Must, Should or Could) on FR-1."]}},
+            {"id": "r1", "step_name": "revise_prd", "updated_at": "2026-11-14T00:50:00Z",
+             "output": {"prd_checks": []}},
+            {"id": "gate-2", "step_name": "approve_prd", "updated_at": "2026-11-14T01:00:00Z", "output": None},
+        ])
+        # The revision is the draft in front of the reviewer, and it passed.
+        self.assertEqual(meta["prd_checks"], [])
+
+    def test_other_gates_have_no_checks(self):
+        meta = self._gate_inbox([{"id": "plan", "step_name": "plan_stories", "output": {"plan_markdown": "x"}}])
+        self.assertNotIn("prd_checks", meta)
+
     def test_build_inbox_lists_steps_waiting_for_a_human_decision(self):
         from ts_harness.workflows.engine import WorkflowEngine
         from ts_harness.workflows.hooks import build_default_registry

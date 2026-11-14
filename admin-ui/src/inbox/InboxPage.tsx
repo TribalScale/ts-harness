@@ -144,6 +144,30 @@ function revisionOfValue(detail: Record<string, unknown> | null): string {
   return nested !== undefined && nested !== null && nested !== "" ? String(nested) : "";
 }
 
+/** What the automatic PRD checks found on the draft this gate approves. */
+function PrdChecksCard({ findings }: { findings: string[] }) {
+  return (
+    <section className="detail-card" aria-label="Draft checks">
+      <h3>Draft checks</h3>
+      {findings.length === 0 ? (
+        <p>The automatic PRD checks found no issues.</p>
+      ) : (
+        <>
+          <p>
+            The automatic PRD checks found {findings.length} {findings.length === 1 ? "issue" : "issues"}. They
+            do not block approval.
+          </p>
+          <ul>
+            {findings.map((finding) => (
+              <li key={finding}>{finding}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
 export function InboxPage({
   selectedType,
   selectedId,
@@ -499,6 +523,9 @@ export function InboxPage({
             <p>Resumes workflow {String(detail.workflow_id)} when you decide.</p>
           </section>
         ) : null}
+        {type === "workflow_gate" && Array.isArray(detail?.prd_checks) && (
+          <PrdChecksCard findings={(detail?.prd_checks as unknown[]).map(String)} />
+        )}
         {type === "workflow_gate" && programId && (
           <p>
             <a href={`#/programs/${programId}`}>Open program</a>
