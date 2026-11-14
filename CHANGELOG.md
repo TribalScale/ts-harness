@@ -218,6 +218,12 @@ First public release.
 
 ### Fixed
 
+- A revision of an open PR started from the clone's old copy of the branch. When GitHub
+  had moved the PR (a refresh merge of the base branch), the push was rejected and the
+  work order blocked with `git push --force-with-lease failed: ... (stale info)`. The
+  revision now catches up with the PR on GitHub first, keeping any unpushed local
+  commits, and a forced push leases against the tip it just fetched. The bare lease
+  could never succeed in the shallow single-branch clones the harness makes.
 - A work order blocked for good (a failed coding run, failing PR checks) never reached
   the Inbox or the chat `/accept` and `/stop` commands: the stuck-step list only held
   steps parked after the revision limit, so the wave waited with nothing to act on.
