@@ -425,7 +425,7 @@ def prd_request_smoke() -> bool:
     try:
         from unittest.mock import MagicMock, patch
 
-        from ts_harness.agent.sessions import SessionRecord, reset_session_store
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, reset_session_store
         from ts_harness.workflows.engine import WorkflowEngine
         from ts_harness.workflows.materialize import load_skeleton
 
@@ -434,7 +434,8 @@ def prd_request_smoke() -> bool:
         if [stage.name for stage in skeleton.stages[:2]] != ["gather_sources", "intake"]:
             return False
 
-        reset_session_store()
+        # In-memory store: these smokes must never write fake sessions to the live session database.
+        reset_session_store(SessionStore())
         client = MagicMock()
         client.create_workflow.return_value = {"id": "wf-prd-rg"}
         # prd_request materializes gather + intake + await + draft + approve.
@@ -571,12 +572,13 @@ def continue_delivery_smoke() -> bool:
     try:
         from unittest.mock import MagicMock
 
-        from ts_harness.agent.sessions import SessionRecord, reset_session_store
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, reset_session_store
         from ts_harness.workflows.hooks import continue_delivery
         from ts_harness.workflows.materialize import load_skeleton
         from ts_harness.workflows.registry import HookContext
 
-        reset_session_store()
+        # In-memory store: these smokes must never write fake sessions to the live session database.
+        reset_session_store(SessionStore())
         session = SessionRecord(
             session_id="rg-bridge",
             routing_key="rk",
