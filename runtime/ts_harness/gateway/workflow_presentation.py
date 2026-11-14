@@ -258,17 +258,6 @@ def _maybe_publish_artifact_doc(
     )
 
 
-def _append_prd_checks(message: str, artifact: dict[str, Any]) -> str:
-    """Show the reviewer what the automatic PRD checks found (``prd_checks`` on the draft)."""
-    from ts_harness.workflows.prd_checks import format_prd_checks
-
-    findings = artifact.get("prd_checks") if isinstance(artifact, dict) else None
-    if not isinstance(findings, list):
-        return message
-    text = format_prd_checks([str(item) for item in findings if str(item).strip()])
-    return f"{message}\n\n{text}" if text else message
-
-
 def _append_library_links(message: str, library_result: dict[str, Any] | None) -> str:
     if not isinstance(library_result, dict):
         return message
@@ -389,7 +378,6 @@ def build_workflow_artifact_channel_message(
         publish_full_text=publish_full_text,
         presentation=presentation,
     )
-    message = _append_prd_checks(message, artifact)
     share_info = doc_result.get("sharedWith") if isinstance(doc_result, dict) else None
     if isinstance(share_info, dict) and share_info.get("error"):
         message += (

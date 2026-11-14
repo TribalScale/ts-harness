@@ -133,7 +133,34 @@ def _extract_prd_outputs(
     patch: dict[str, Any] = {}
     if merged.get("approved_prd") or merged.get("prd"):
         patch["approved_prd"] = merged.get("approved_prd") or merged.get("prd")
+    else:
+        approved = _approved_draft(tasks)
+        if approved is not None:
+            patch["approved_prd"] = approved
     return patch
+
+
+PRD_DRAFT_STEPS = ("draft_prd", "revise_prd")
+
+
+def _approved_draft(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The draft a passed approval gate approved: the newest succeeded draft or revision.
+
+    Only the chat session used to keep it (``approved_artifact``), so a program that ended
+    at its PRD and was continued from the console reached Jira without the PRD.
+    """
+    from ts_harness.workflows.artifacts import latest_artifact_output
+
+    gate_passed = any(
+        task.get("approval_required")
+        and task.get("status") == "succeeded"
+        and str(task.get("approval_status") or "approved") == "approved"
+        for task in tasks
+    )
+    if not gate_passed:
+        return None
+    output, _step = latest_artifact_output(tasks, list(PRD_DRAFT_STEPS))
+    return output
 
 
 def _build_jira_inputs(

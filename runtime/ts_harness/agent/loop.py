@@ -81,6 +81,28 @@ PRD_DRAFT_MODE = (
 )
 
 
+# A recommendation that cites the request means the question was already answered there.
+_RESTATED_QUESTION = re.compile(
+    r"\bas (?:already )?(?:stated|mentioned|specified|noted|described|requested|given)"
+    r"(?: in the (?:brief|request|constraints|sources?|document|attachment))?\b"
+    r"|\bper the (?:brief|request|constraints|attached)\b"
+    r"|\b(?:the )?(?:brief|request|constraints) (?:already )?(?:says|states|specifies)\b",
+    re.IGNORECASE,
+)
+
+
+def _stated_request_text(payload: dict[str, Any]) -> str:
+    """What the requester wrote for a PRD draft: the request, their answers and the shared sources."""
+    task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+    clarified = task_input.get("clarified_requirements")
+    clarified = clarified if isinstance(clarified, dict) else {}
+    answers = clarified.get("answers")
+    if isinstance(answers, list):
+        answers = "\n".join(str(item) for item in answers)
+    parts = [clarified.get("initial_request"), answers, task_input.get("sources")]
+    return "\n\n".join(str(part) for part in parts if isinstance(part, str) and part.strip())
+
+
 def _prd_stage_mode(skill_hints: list[str]) -> str:
     """PRD step guidance for a stage whose hints name a PRD skill, else empty."""
     if "prd-intake" in skill_hints:
@@ -1159,7 +1181,19 @@ class EnterpriseAgent:
         )
 
     def _attach_prd_checks(self, output: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-        """Add ``prd_checks`` (mechanical findings) to a drafted or revised PRD."""
+        """Add ``prd_checks`` (mechanical findings) to a drafted or revised PRD.
+
+        On a prd-intake step, drop questions whose own recommendation says the request
+        already answers them ("as stated in the constraints"): the requester should never be
+        asked what they already wrote. At least one question is kept for the contract.
+        """
+        if "prd-intake" in canonical_skill_ids(payload.get("skill_hints")):
+            questions = output.get("questions")
+            if isinstance(questions, list) and len(questions) > 1:
+                kept = [q for q in questions if not (isinstance(q, str) and _RESTATED_QUESTION.search(q))]
+                if kept and len(kept) < len(questions):
+                    output = {**output, "questions": kept}
+            return output
         if not self._requires_prd_output(payload):
             return output
         markdown = ""
@@ -1170,7 +1204,7 @@ class EnterpriseAgent:
                     break
         if not markdown.strip():
             return output
-        return {**output, "prd_checks": check_prd(markdown)}
+        return {**output, "prd_checks": check_prd(markdown, stated=_stated_request_text(payload))}
 
     def _parse_json_object(self, text: str) -> dict[str, Any] | None:
         candidates = [text]

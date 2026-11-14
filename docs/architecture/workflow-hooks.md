@@ -133,6 +133,12 @@ Without `present_body` or `presentation.body`, the first `*_markdown` string in 
 contract's `output_schema` is posted. A configured path that is missing from the
 output falls back to the default body.
 
+On an `intake` gate, chat shows only the first question by default, for intakes that ask one
+question per message (bug and content-to-plan). `"presentation": { "questions": "all" }`
+shows the whole numbered list instead, with a footer saying that "yes" accepts the
+recommended answers. `prd_request` uses it, because `prd-intake` asks one round of
+questions, each with a recommended answer.
+
 Presentation stores `specialist_handoff` + transcript on the linked session so the orchestrator can reference the latest specialist output on follow-up turns.
 
 ## Engine API

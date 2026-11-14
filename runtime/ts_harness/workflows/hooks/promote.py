@@ -22,11 +22,14 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     summary = str(ctx.extras.get("summary") or "")
     binding_key = str(ctx.extras.get("binding_key") or "")
     transcript_messages = list(ctx.extras.get("transcript_messages") or [])
-    extra_input = (
+    extra_input = dict(
         ctx.extras.get("extra_input")
         if isinstance(ctx.extras.get("extra_input"), dict)
         else {}
     )
+    # Shared files go to the first task's input, where gather_intake_sources reads them.
+    # Like DeliveryProgramService, never store them as program artifacts or agent context.
+    intake_sources = extra_input.pop("intake_sources", None)
 
     if (session.metadata or {}).get("workflow_id"):
         raise ValueError("session already linked to a workflow")
@@ -92,6 +95,8 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     context = _build_context(summary, transcript_messages, extra_input)
     intake_stage = ctx.skeleton.intake_stage_name()
     stage_inputs = {intake_stage: {"context": context, "summary": summary}}
+    if isinstance(intake_sources, list) and intake_sources:
+        stage_inputs[intake_stage]["intake_sources"] = intake_sources
 
     task_bodies = materialize_skeleton_tasks(
         ctx.skeleton,

@@ -4,6 +4,7 @@
   "display_name": "PRD review",
   "contracts": {
     "prd_intake": {
+      "presentation": { "questions": "all" },
       "output_schema": {
         "type": "object",
         "required": ["questions"],

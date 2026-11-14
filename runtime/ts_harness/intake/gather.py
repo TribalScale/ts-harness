@@ -32,6 +32,11 @@ def _pointers(task: dict[str, Any], config: dict[str, Any], workflow: dict[str, 
         value = resolve_value(config.get("intake_sources"), tasks=tasks, workflow=workflow, extras=extras)
     else:
         value = extras.get("intake_sources")
+    if value is None or value == []:
+        # Workflows promoted before the fix carried the files inside the intake input's context.
+        context = extras.get("context")
+        if isinstance(context, dict) and isinstance(context.get("intake_sources"), list):
+            value = context["intake_sources"]
     return [] if value is None else value
 
 

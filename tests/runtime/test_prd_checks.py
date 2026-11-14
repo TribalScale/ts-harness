@@ -9,7 +9,7 @@ from pathlib import Path
 from ts_harness.agent.loop import PRD_DRAFT_MODE, PRD_INTAKE_MODE, EnterpriseAgent
 from ts_harness.agent.provider import FakeProvider
 from ts_harness.config.schema import load_runtime_config
-from ts_harness.gateway.workflow_presentation import _append_prd_checks
+from ts_harness.workflows.artifacts import format_artifact_for_channel
 from ts_harness.skills.aliases import canonical_skill_ids
 from ts_harness.tools.registry import build_default_registry
 from ts_harness.workflows.prd_checks import check_prd, format_prd_checks
@@ -143,15 +143,45 @@ class PrdChecksSurfaceTests(unittest.TestCase):
         clean = self.agent._parse_output(json.dumps({"result": {"prd_markdown": GOOD_PRD}}), payload)
         self.assertEqual(clean["prd_checks"], [])
 
+    def test_intake_drops_questions_the_request_already_answers(self):
+        payload = {"step_name": "intake", "skill_hints": ["prd-intake"]}
+        asked = [
+            "Should managers see the list? Recommended: yes, managers only.",
+            "How should leave be handled? Recommended: skip people on leave, as stated in the constraints.",
+            "Is a template needed? Recommended: yes; the brief already says email is the fallback.",
+        ]
+        output = self.agent._parse_output(json.dumps({"summary": "s", "questions": asked}), payload)
+        self.assertEqual(output["questions"], asked[:1])
+        only = self.agent._parse_output(json.dumps({"summary": "s", "questions": asked[1:2]}), payload)
+        self.assertEqual(only["questions"], asked[1:2])  # the contract needs one question
+
     def test_intake_output_has_no_checks(self):
         payload = {"step_name": "intake", "skill_hints": ["prd-intake"]}
         output = self.agent._parse_output(json.dumps({"summary": "s", "questions": ["q?"]}), payload)
         self.assertNotIn("prd_checks", output)
 
-    def test_findings_are_shown_to_the_reviewer(self):
-        message = _append_prd_checks("Draft ready.", {"prd_checks": ["No priority on FR-1."]})
-        self.assertIn("Automatic PRD checks found 1 issue:\n- No priority on FR-1.", message)
-        self.assertEqual(_append_prd_checks("Draft ready.", {"prd_checks": []}), "Draft ready.")
+    def test_findings_are_shown_to_the_reviewer_before_the_reply_prompt(self):
+        draft = {"result": {"prd_markdown": GOOD_PRD}, "prd_checks": ["No priority on FR-1."]}
+        message = format_artifact_for_channel(draft, display_name="PRD", present_prompt="approval")
+        checks = message.index("Automatic PRD checks found 1 issue:\n- No priority on FR-1.")
+        self.assertLess(checks, message.index("Reply yes to approve"))
+        clean = format_artifact_for_channel({**draft, "prd_checks": []}, display_name="PRD", present_prompt="approval")
+        self.assertNotIn("Automatic PRD checks", clean)
+
+    def test_stated_times_and_limits_must_reach_requirements(self):
+        stated = "Remind every Friday at 15:00, again Monday at 08:00. Exports up to 5,000 rows within 10 seconds."
+        findings = check_prd(GOOD_PRD, stated=stated)
+        self.assertEqual(
+            findings, ["Stated times and limits not found in Requirements, Technical Constraints or Definition of Done (fine if they are only context): 15:00, 08:00."]
+        )
+        carried = GOOD_PRD.replace("- CSV, UTF-8.", "- CSV, UTF-8.\n- Reminders Friday 15:00 and Monday 8:00.")
+        self.assertEqual(check_prd(carried, stated=stated), [])
+
+    def test_template_header_and_an_empty_open_questions_list_are_not_findings(self):
+        body = GOOD_PRD.replace(
+            "**Profile:** Lite (no Full trigger)", "**Profile:** Lite (no Full trigger)\n**Linked epic:** <filled in after filing>"
+        ).replace("- [ ] Should rejected expenses be included later? (owner: finance lead)", "- [ ] None")
+        self.assertEqual(check_prd(body), [])
 
     def test_prd_steps_keep_their_guidance_on_the_contract_path(self):
         # prd_request stages have output contracts; the step guidance used to be dropped there.

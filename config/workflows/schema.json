@@ -52,7 +52,8 @@
           "additionalProperties": false,
           "properties": {
             "body": { "$ref": "#/definitions/field_path" },
-            "title": { "$ref": "#/definitions/field_path" }
+            "title": { "$ref": "#/definitions/field_path" },
+            "questions": { "enum": ["first", "all"] }
           }
         },
         "outcome": {
