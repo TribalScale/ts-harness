@@ -430,13 +430,14 @@ def prd_request_smoke() -> bool:
         from ts_harness.workflows.materialize import load_skeleton
 
         skeleton = load_skeleton("prd_request")
-        if skeleton.stages[0].name != "intake":
+        # Shared files are read before the intake agent runs.
+        if [stage.name for stage in skeleton.stages[:2]] != ["gather_sources", "intake"]:
             return False
 
         reset_session_store()
         client = MagicMock()
         client.create_workflow.return_value = {"id": "wf-prd-rg"}
-        # prd_request materializes intake + await + draft + approve.
+        # prd_request materializes gather + intake + await + draft + approve.
         client.create_task.side_effect = [{"id": f"t{i}"} for i in range(8)]
         client.get_workflow.return_value = {
             "workflow": {"workflow_type": "prd_request", "source_channel": "slack:rg:1"},
