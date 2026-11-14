@@ -94,3 +94,11 @@ class FailedCodingRunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StuckStepAckTests(unittest.TestCase):
+    def test_a_re_run_is_acknowledged_without_revision_numbers(self):
+        from ts_harness.gateway.channel_confirmations import format_stuck_step_ack
+
+        text = format_stuck_step_ack({"action": "revise", "status": "revising", "rerun": True, "work_order": "WO-003"})
+        self.assertEqual(text, "Running WO-003 again with your guidance.")
