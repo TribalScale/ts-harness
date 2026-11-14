@@ -48,6 +48,8 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TS_HARNESS_INTAKE_VISION_MODEL: ${TS_HARNESS_INTAKE_VISION_MODEL:-}
+      # The runner has no env_file; point the Workspace client at the mounted key.
+      GOOGLE_WORKSPACE_SA_JSON_PATH: /config/google-workspace-sa.json
       LLM_PROXY_URL: ${LLM_PROXY_URL:-}
       LLM_PROXY_SECRET: ${LLM_PROXY_SECRET:-}
     volumes:

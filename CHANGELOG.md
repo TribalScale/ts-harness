@@ -161,6 +161,9 @@ First public release.
 
 ### Fixed
 
+- The workflow runner mounted the Google Workspace key but did not set
+  `GOOGLE_WORKSPACE_SA_JSON_PATH` (it has no env_file), so Drive links in requests were
+  reported as not connected. The runner compose now sets it.
 - The workflow runner image did not install the `google`, `aws` and `gcp` extras, so
   the intake gather could not read uploaded files from S3/GCS or Drive links. It now
   installs `.[google,aws,gcp]`, like agent-runtime.
