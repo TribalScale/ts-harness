@@ -272,6 +272,7 @@ def _catch_up_with_remote(repo_dir: Path, branch: str, *, runner=subprocess.run)
     if _is_ancestor(repo_dir, branch, remote, runner=runner):
         _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
         return
+    _configure_commit_identity(repo_dir, runner=runner)  # the merge commit needs one
     merged = runner(
         ["git", "-C", str(repo_dir), "merge", "--no-edit", remote],
         capture_output=True,
