@@ -102,6 +102,7 @@ def _urllib_transport(method: str, url: str, headers: dict[str, str], body: byte
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_POST_STEP_RE = re.compile(r"^(?:##\[group\])?(?:Post job cleanup\.|Post )")
 _LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
 
 
@@ -361,6 +362,8 @@ class GitHubClient:
         for line in raw.decode(errors="replace").splitlines():
             line = _ANSI_RE.sub("", line)
             line = _LOG_TIMESTAMP_RE.sub("", line).rstrip()
+            if _POST_STEP_RE.match(line):
+                break  # checkout and runner cleanup follow; the failure is above
             if line.strip():
                 lines.append(line)
         return "\n".join(lines[-max_lines:])

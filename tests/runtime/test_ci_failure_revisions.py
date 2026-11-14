@@ -55,6 +55,9 @@ class FailedChecksTests(unittest.TestCase):
         client = GitHubClient(token="t")
         with patch("ts_harness.integrations.github_client._download_job_log", return_value=raw):
             self.assertEqual(client.job_log_tail("acme", "app", 1), "FAIL tests/a.test.js\nProcess completed with exit code 1.")
+        with_cleanup = raw + b"2026-11-14T20:26:12Z ##[group]Post Run actions/checkout@v4\n2026-11-14T20:26:12Z Cleaning up orphan processes\n"
+        with patch("ts_harness.integrations.github_client._download_job_log", return_value=with_cleanup):
+            self.assertTrue(client.job_log_tail("acme", "app", 1).endswith("Process completed with exit code 1."))
         with patch("ts_harness.integrations.github_client._download_job_log", side_effect=OSError("gone")):
             self.assertEqual(client.job_log_tail("acme", "app", 1), "")
 
