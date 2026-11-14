@@ -121,7 +121,7 @@ export interface WorkflowHook {
 
 export interface WorkflowContract {
   output_schema?: Record<string, unknown>;
-  presentation?: { body?: string; title?: string };
+  presentation?: { body?: string; title?: string; questions?: "first" | "all" };
   required_artifacts?: Record<string, string>;
   semantic_validators?: string[];
   outcome?: {

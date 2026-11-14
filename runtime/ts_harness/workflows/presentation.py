@@ -217,6 +217,8 @@ def stage_presentation(skeleton: Any, step_name: str) -> dict[str, str]:
     out = {"body": body} if body else {}
     if configured.get("title"):
         out["title"] = str(configured["title"])
+    if configured.get("questions"):
+        out["questions"] = str(configured["questions"])
     return out
 
 

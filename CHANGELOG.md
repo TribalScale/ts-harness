@@ -24,6 +24,11 @@ First public release.
     Definition of Done outside 5 to 10 items, and open questions without an owner. The
     findings travel as `prd_checks` and are listed under the draft in the approval
     message; they never block it.
+  - The PRD checks also flag stated times and limits (from the request, answers and
+    attached sources) that never reach Requirements, Technical Constraints or the
+    Definition of Done, and appear above the reply instructions. Intake drops questions
+    whose own recommendation says the request already answers them, and trailing chat
+    ("Let me know if…") is stripped from drafted PRDs.
   - Console Inbox: a PRD approval gate shows a "Draft checks" card with what the
     checks found on the draft under review (the latest draft or revision), or that it
     passed.
@@ -182,6 +187,17 @@ First public release.
 
 ### Fixed
 
+- A PRD request confirmed in chat never read its attachments. The promote hook folded
+  `intake_sources` into the intake task's context, where `gather_intake_sources` does not
+  look, and also stored the pointers as program artifacts. They now go to the intake
+  input like every other start path; gather also reads the old location.
+- The PRD intake chat showed only the first question, cut before its recommended answer,
+  and a "yes" then accepted recommendations nobody had seen. Contracts can set
+  `presentation.questions` to `all`; `prd_request` shows every question.
+- A program that ended at its PRD kept the approved PRD only on the chat session, so
+  continuing it from the console reached Jira without `approved_prd`. The PRD phase now
+  records the approved draft on the program.
+- Contract `presentation` settings were dropped when a definition was written back out.
 - The `prd_request` intake and draft steps ran without their step guidance: both have
   output contracts, and the contract prompt returned before the guidance was added. The
   intake step therefore never received the rule to use attached sources instead of asking

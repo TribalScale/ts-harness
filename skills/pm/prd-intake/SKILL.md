@@ -3,7 +3,7 @@ name: prd-intake
 description: Ask the clarifying questions for a PRD request (prd_request intake), each with a recommended answer the requester can accept with "yes". Never drafts the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # PRD intake
@@ -42,6 +42,11 @@ Ask only what would change the PRD. Cover, in this order and only where still un
 Ask 3 to 7 questions. Skip any whose answer depends on another question in this round; the
 drafter will record it as an assumption instead.
 
+Before returning, reread each question against the request and the sources. Delete it if
+either one already answers it, even partly ("as the brief says", "as stated in the
+constraints"). What the requester stated is already decided; the drafter carries it into the
+PRD. Fewer, sharper questions are better than a full list.
+
 ## Write each question
 
 Each question is one string with the recommended answer after it:
@@ -57,13 +62,13 @@ Each question is one string with the recommended answer after it:
 ## Output
 
 Return JSON with `summary`, `questions`, `confidence`, `warnings` and `follow_up_needed`. The
-runtime numbers the questions and shows `summary` above them, so the summary is one or two
-sentences that end with: "Reply "yes" to accept all the recommendations, or give the numbers you
-want to change."
+runtime numbers the questions, shows `summary` above them and adds the reply instructions below
+them, so the summary is one sentence about what you read and what is left to decide. Do not tell
+the requester how to reply.
 
 ```json
 {
-  "summary": "Before I draft the PRD for the expense export, a few decisions. Reply \"yes\" to accept all the recommendations, or give the numbers you want to change.",
+  "summary": "I read the expense export brief; two decisions are left before I draft.",
   "questions": [
     "Should only finance admins be able to run the export? Recommended: yes, admins only, because it includes salaries.",
     "Is a monthly CSV enough for the first release? Recommended: yes; scheduled delivery can follow."

@@ -22,6 +22,8 @@ REQUIRED_SECTIONS = (
     "Success Metrics",
     "Open Questions",
 )
+# Sections later stages copy or test against; a stated time or limit must reach one of them.
+CARRIED_SECTIONS = ("Requirements", "Technical Constraints", "Definition of Done", "Non-Functional Requirements")
 # Sections where a vague word means a requirement nobody can test.
 TESTABLE_SECTIONS = ("Requirements", "Definition of Done", "Non-Functional Requirements")
 VAGUE_WORDS = (
@@ -52,6 +54,16 @@ _FR_DEFINED = re.compile(r"^\s*[-*]\s*(?:\[[ xX]\]\s*)?(?:\*\*)?(FR-\d+)\b", re.
 _DOD_DEFINED = re.compile(r"^\s*[-*]\s*(?:\*\*)?(DoD-\d+)\b", re.MULTILINE)
 _DOD_REF = re.compile(r"\bDoD-\d+\b")
 _IDS = re.compile(r"\b(?:FR|DoD)-\d+\b")
+# Specifics a requester states that must survive into Requirements: times of day and
+# quantities with a unit. Plain counts and percentages are context, not requirements.
+_SPECIFIC = re.compile(
+    r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b"
+    r"|\b(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s?(?:ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|"
+    r"KB|MB|GB|TB|requests?|rows|records|items|characters|chars)\b",
+    re.IGNORECASE,
+)
+# The template's own header fields are not placeholders the drafter forgot.
+_HEADER_LINE = re.compile(r"^\*\*(?:Author|Linked epic|Profile|Status|Last updated):\*\*.*$", re.MULTILINE)
 _PRIORITY = re.compile(r"\((Must|Should|Could)\)")
 
 
@@ -93,12 +105,31 @@ def _sample(items: list[str], limit: int = 3) -> str:
     return shown + (f" and {len(items) - limit} more" if len(items) > limit else "")
 
 
-def check_prd(markdown: str) -> list[str]:
-    """Return findings for a PRD in the prd-drafter template; an empty list means none."""
+def _normalize_specific(value: str) -> str:
+    value = re.sub(r"[\s,]+", "", value.lower())
+    return re.sub(r"^0(\d:)", r"\1", value)
+
+
+def stated_specifics(text: str) -> list[str]:
+    """Times of day and quantities with a unit in the requester's words, in order, once each."""
+    seen: dict[str, str] = {}
+    for match in _SPECIFIC.finditer(_strip_code(text or "")):
+        seen.setdefault(_normalize_specific(match.group(0)), match.group(0).strip())
+    return list(seen.values())
+
+
+def check_prd(markdown: str, *, stated: str = "") -> list[str]:
+    """Return findings for a PRD in the prd-drafter template; an empty list means none.
+
+    ``stated`` is what the requester wrote (request, answers, attached sources). Each time
+    of day and quantity with a unit in it must appear in Requirements or Technical
+    Constraints, because later stages copy only those sections.
+    """
     text = (markdown or "").strip()
     if not text:
         return ["The PRD is empty."]
     plain = _strip_code(text)
+    header_free = _HEADER_LINE.sub("", plain)
     sections = _sections(plain)
     findings: list[str] = []
 
@@ -117,7 +148,7 @@ def check_prd(markdown: str) -> list[str]:
         findings.append("Non-Goals says N/A; name at least one thing this release does not do.")
 
     placeholders = sorted(
-        {f"<{match.group(1).strip()}>" for match in _PLACEHOLDER.finditer(plain)
+        {f"<{match.group(1).strip()}>" for match in _PLACEHOLDER.finditer(header_free)
          if match.group(1).split()[0].strip("/").lower() not in _HTML_TAGS}
     )
     if placeholders:
@@ -175,6 +206,16 @@ def check_prd(markdown: str) -> list[str]:
     if no_priority:
         findings.append(f"No priority (Must, Should or Could) on {_sample(no_priority)}.")
 
+    if stated:
+        carried = " ".join(_section(sections, name) or "" for name in CARRIED_SECTIONS)
+        carried_norm = {_normalize_specific(m.group(0)) for m in _SPECIFIC.finditer(carried)}
+        dropped = [item for item in stated_specifics(stated) if _normalize_specific(item) not in carried_norm]
+        if dropped:
+            findings.append(
+                "Stated times and limits not found in Requirements, Technical Constraints or Definition "
+                f"of Done (fine if they are only context): {_sample(dropped, 5)}."
+            )
+
     if dod_body and not _is_na(dod_body) and not 5 <= len(dod_ids) <= 10:
         findings.append(f"Definition of Done has {len(dod_ids)} items; it needs 5 to 10.")
 
@@ -182,7 +223,10 @@ def check_prd(markdown: str) -> list[str]:
     ownerless = [
         line.strip(" -*[]xX").strip()[:60]
         for line in questions.splitlines()
-        if re.match(r"^\s*[-*]\s", line) and "owner" not in line.lower() and not _is_na(line.strip(" -*"))
+        if re.match(r"^\s*[-*]\s", line)
+        and "owner" not in line.lower()
+        and not _is_na(line.strip(" -*[]xX"))
+        and line.strip(" -*[]xX.").lower() not in {"none", "no open questions"}
     ]
     if ownerless:
         findings.append(f"Open questions without an owner: {_sample(ownerless, 2)}.")

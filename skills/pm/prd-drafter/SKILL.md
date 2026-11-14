@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n with a priority, records intake decisions and assumptions, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.3.0
+version: 1.3.1
 ---
 
 # PRD drafter
@@ -50,7 +50,7 @@ Sections marked (Full) are omitted in a Lite PRD.
 
 **Author:** pm-agent · **Status:** Draft · **Last updated:** <YYYY-MM-DD>
 **Profile:** Lite | Full (<deciding trigger, or "no Full trigger">)
-**Linked epic:** <filled in after filing>
+**Linked epic:** none yet (set when the PRD is filed in Jira)
 
 ## Overview
 <At most five sentences.>
@@ -111,11 +111,12 @@ Sections marked (Full) are omitted in a Lite PRD.
 
 ## Open Questions
 - [ ] <question> (owner: <named person or role, not "team">)
+<or `N/A: <reason>` when nothing is open>
 ```
 
 ## Rules
 
-- **Requirements carry the request forward.** Refinery, work orders and the coding agent copy Requirements and Technical Constraints verbatim. Every named item, number, interval, limit and technology the requester stated appears there exactly.
+- **Requirements carry the request forward.** Refinery, work orders and the coding agent copy Requirements and Technical Constraints verbatim. Every named item, number, interval, limit and technology the requester stated appears there exactly, including times of day and fallbacks ("Friday 15:00 in the contractor's time zone", "email when there is no Slack account"). Mentioning them only in a flow is not enough; the runtime checks that each stated time and limit appears in Requirements, Technical Constraints or the Definition of Done.
 - **Write Requirements last.** Read every other section back and give each behaviour, state, setting, error case and permission an FR row. A behaviour with no FR is an orphan; an FR with no `Specified in` is unspecified; one with no `Verified by` will ship untested.
 - **In a Lite PRD**, `Specified in` points only at Proposed Solution, Key User Flows or Personas & Permissions. If an FR needs a Full-only section, re-check the triggers.
 - **Every FR has a priority:** Must (the release fails without it), Should (expected, can slip

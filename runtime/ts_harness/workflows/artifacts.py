@@ -8,7 +8,8 @@ from typing import Any
 from ts_harness.workflows.workflow_session import get_phase_tracking
 
 _TRAILING_META_RE = re.compile(
-    r"\n(?:#{1,3}\s*)?(?:Next Steps|Please review|If you have any questions)\b.*",
+    r"(?:\n-{3,}[ \t]*)?\n\s*(?:#{1,3}\s*)?(?:Next Steps|Please review|If you have any questions"
+    r"|This (?:draft )?(?:PRD )?(?:draft )?is ready for review|Let me know if|Feel free to)\b.*",
     re.IGNORECASE | re.DOTALL,
 )
 _TRAILING_JSON_OUTPUT_RE = re.compile(
@@ -713,7 +714,9 @@ def _intake_questions_body(output: dict[str, Any]) -> str:
         f"{index}. {question}" for index, question in enumerate(questions, start=1)
     )
     summary = _usable_summary_text(output)
-    if summary and summary not in numbered:
+    # A plain-text reply is normalized into summary + questions; don't show the questions twice.
+    repeats = any(question[:40] in summary for question in questions)
+    if summary and summary not in numbered and not repeats:
         return f"{summary}\n\n{numbered}"
     return numbered
 
@@ -959,6 +962,16 @@ def _format_doc_link_for_slack(web_view_link: str) -> str:
     return f"View full output in Google Docs: {url}"
 
 
+def _prd_checks_text(artifact: dict[str, Any]) -> str:
+    """What the automatic PRD checks found on a draft (``prd_checks``), for the reviewer."""
+    from ts_harness.workflows.prd_checks import format_prd_checks
+
+    findings = artifact.get("prd_checks") if isinstance(artifact, dict) else None
+    if not isinstance(findings, list):
+        return ""
+    return format_prd_checks([str(item) for item in findings if str(item).strip()])
+
+
 def _first_intake_question(text: str) -> str:
     """Chat shows one question. The stored artifact still has the full reply."""
     first = text.find("?")
@@ -989,7 +1002,8 @@ def format_artifact_for_channel(
     )
     if message.startswith("I finished ") and "no readable content" in message:
         return message
-    if (present_prompt or "inform").lower() == "intake":
+    all_questions = (presentation or {}).get("questions") == "all"
+    if (present_prompt or "inform").lower() == "intake" and not all_questions:
         message = _first_intake_question(message)
 
     truncated = len(message) > max_length
@@ -1001,9 +1015,19 @@ def format_artifact_for_channel(
     elif truncated:
         message += "\n\n(Full output is stored in the workflow.)"
 
+    checks = _prd_checks_text(artifact)
+    if checks:
+        # Above the reply instructions, so the reviewer reads them before deciding.
+        message += f"\n\n{checks}"
+
     prompt_mode = (present_prompt or "inform").lower()
     if prompt_mode == "approval":
         message += "\n\nReply yes to approve, or no with feedback to revise."
+    elif prompt_mode == "intake" and all_questions:
+        message += (
+            '\n\nReply "yes" to accept the recommended answers and I\'ll draft. '
+            "To change some, answer them by number, then say ready when you want a draft."
+        )
     elif prompt_mode == "intake":
         message += (
             "\n\nReply in this thread with your answers. "

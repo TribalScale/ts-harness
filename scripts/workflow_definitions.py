@@ -413,16 +413,24 @@ def freeze_contract(raw: dict[str, Any], *, name: str = "", context: str = "cont
     if presentation is not None:
         if not isinstance(presentation, dict):
             raise ValueError(f"{context} presentation must be an object")
-        _reject_unknown_keys(presentation, frozenset({"body", "title"}), f"{context} presentation")
+        _reject_unknown_keys(presentation, frozenset({"body", "title", "questions"}), f"{context} presentation")
         resolved["presentation"] = {
             key: _presentation_path(presentation.get(key), f"{context} presentation.{key}")
             for key in ("body", "title")
             if presentation.get(key) is not None
         }
+        questions = presentation.get("questions")
+        if questions is not None:
+            if questions not in PRESENTATION_QUESTION_MODES:
+                raise ValueError(f"{context} presentation.questions must be one of: first, all")
+            resolved["presentation"]["questions"] = questions
 
     return copy.deepcopy(resolved)
 
 
+# How an intake gate shows its questions in chat: the first one (a conversation, one
+# question per message) or all of them (one round, e.g. with recommended answers).
+PRESENTATION_QUESTION_MODES = ("first", "all")
 _PRESENTATION_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
@@ -615,6 +623,9 @@ def _contract_to_payload(contract: dict[str, Any]) -> dict[str, Any]:
     outcome = contract.get("outcome")
     if outcome is not None:
         payload["outcome"] = copy.deepcopy(outcome)
+    presentation = contract.get("presentation")
+    if presentation:
+        payload["presentation"] = dict(presentation)
     return payload
 
 
