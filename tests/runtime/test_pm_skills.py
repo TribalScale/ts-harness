@@ -16,7 +16,7 @@ from ts_harness.workflows.definition_validation import validate_workflow_definit
 from ts_harness.workflows.hooks import build_default_registry
 
 ROOT = Path(__file__).resolve().parents[2]
-PM_SKILLS = {"jira-ticket-format", "prd-drafter", "prd-review", "story-writer", "prd-to-jira", "bug-intake", "file-work-orders-as-jira"}
+PM_SKILLS = {"jira-ticket-format", "prd-intake", "prd-drafter", "prd-review", "story-writer", "prd-to-jira", "bug-intake", "file-work-orders-as-jira"}
 REFERENCE = re.compile(r"read_skill_reference skill_id=([\w-]+) path=([\w./<>-]+)")
 
 
@@ -56,7 +56,7 @@ class PmSkillCatalogTests(unittest.TestCase):
             config.get_agent("pm-agent"), config, tenant_id="default", skill_hints=["story-writer"]
         )
         ids = {skill.metadata.id for skill in resolved}
-        self.assertTrue({"jira-ticket-format", "prd-drafter", "prd-review", "story-writer", "prd-to-jira"} <= ids)
+        self.assertTrue({"jira-ticket-format", "prd-intake", "prd-drafter", "prd-review", "story-writer", "prd-to-jira"} <= ids)
 
 
 class JiraFromPrdGateTests(unittest.TestCase):

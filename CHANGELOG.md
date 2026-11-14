@@ -11,6 +11,24 @@ First public release.
 
 ### Added
 
+- PRD requests ask better questions and the reviewer sees what a draft is missing.
+  - New `prd-intake` skill: each intake question carries a recommended answer worded so
+    that "yes" accepts it, and the agent no longer asks what the attached sources or a
+    recalled decision already state.
+  - `prd-drafter` 1.3.0: Decisions (each intake answer, citing its question) and
+    Assumptions (each gap filled without an answer), Must/Should/Could on every FR,
+    "Current state" and "Why now" in the problem statement, and no file paths or code.
+  - Automatic PRD checks on `draft_prd` and `revise_prd`: missing or empty sections,
+    leftover placeholders and TBD/TODO, vague wording in requirements, FRs without
+    `Specified in`, `Verified by` or a priority, references to missing DoD items, a
+    Definition of Done outside 5 to 10 items, and open questions without an owner. The
+    findings travel as `prd_checks` and are listed under the draft in the approval
+    message; they never block it.
+  - `prd-review` 1.1.0 grades decisions, assumptions, FR priorities and hygiene;
+    `story-writer` 1.1.0 orders stories by FR priority and carries assumptions into open
+    questions.
+  - `prd_request` 1.6.0 names the skills (`prd-intake`, `prd-drafter`). The old hints
+    `clarify-requirements` and `draft-prd` resolve to them for pinned workflows.
 - Software delivery programs may end after the PRD or the Jira tickets. The
   program is marked succeeded ("Done at PRD" in the console), the thread is
   offered the next steps, and continuing later reopens the same program. Older
@@ -161,6 +179,10 @@ First public release.
 
 ### Fixed
 
+- The `prd_request` intake and draft steps ran without their step guidance: both have
+  output contracts, and the contract prompt returned before the guidance was added. The
+  intake step therefore never received the rule to use attached sources instead of asking
+  about them.
 - The workflow runner mounted the Google Workspace key but did not set
   `GOOGLE_WORKSPACE_SA_JSON_PATH` (it has no env_file), so Drive links in requests were
   reported as not connected. The runner compose now sets it.
