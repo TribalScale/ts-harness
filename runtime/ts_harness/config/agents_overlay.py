@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ts_harness.config.schema import (
+    AGENT_EFFORT_LEVELS,
     FORBIDDEN_GATE_MODELS,
     GATE_AGENT_IDS,
     AgentConfig,
@@ -31,6 +32,7 @@ ALLOWED_AGENT = (
     "default",
     "delegatable",
     "sandbox_mode",
+    "effort",
 )
 SOUL_MAX_CHARS = 500
 
@@ -94,6 +96,7 @@ def overlay_object_to_agent(agent_id: str, obj: dict[str, Any]) -> AgentConfig:
         soul=_soul_value(obj),
         default=False,
         sandbox_mode=str(obj.get("sandbox_mode") or "off"),
+        effort=str(obj.get("effort")).lower() if str(obj.get("effort") or "").lower() in AGENT_EFFORT_LEVELS else None,
     )
 
 

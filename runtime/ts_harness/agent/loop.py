@@ -285,7 +285,7 @@ class EnterpriseAgent:
         payload = self._normalize_work_orders_dispatch_payload(payload)
         usage_scope = payload.get("usage_scope") if isinstance(payload.get("usage_scope"), dict) else {}
         provider = self._provider_override or build_provider(
-            agent.model,
+            _run_model(agent, payload, source),
             scope={
                 "tenant": tenant_id,
                 "team": usage_scope.get("team_id"),
@@ -294,6 +294,7 @@ class EnterpriseAgent:
                 "task": payload.get("task_id"),
                 "agent": agent_id,
             },
+            effort=_run_effort(agent, payload, source),
         )
         system_prompt = self._build_workflow_system_prompt(agent, payload)
         messages: list[dict[str, Any]] = [
@@ -463,7 +464,7 @@ class EnterpriseAgent:
             return AgentRunResult(status="blocked", error=str(exc), runtime_task_id=runtime_task_id)
 
         provider = self._provider_override or build_provider(
-            agent.model, scope={"tenant": tenant_id, "user": actor_email, "agent": agent_id}
+            agent.model, scope={"tenant": tenant_id, "user": actor_email, "agent": agent_id}, effort=agent.effort
         )
         phase = workflow_phase or prd_phase
         system_prompt = self._build_channel_system_prompt(
@@ -1907,3 +1908,22 @@ class EnterpriseAgent:
             "draft_prd output must include result.prd_markdown "
             "with the complete PRD markdown"
         )
+
+
+def _is_heartbeat(payload: dict[str, Any], source: str) -> bool:
+    return source == "cron" and payload.get("step_name") == "heartbeat"
+
+
+def _run_model(agent: Any, payload: dict[str, Any], source: str) -> str:
+    """Heartbeats run on ``heartbeat.model`` when one is set; everything else on the agent's model."""
+    heartbeat = getattr(agent, "heartbeat", None)
+    if _is_heartbeat(payload, source) and heartbeat is not None and heartbeat.model:
+        return str(heartbeat.model)
+    return agent.model
+
+
+def _run_effort(agent: Any, payload: dict[str, Any], source: str) -> str | None:
+    """A heartbeat on its own model is a light check: low effort, not the agent's."""
+    if _run_model(agent, payload, source) != agent.model:
+        return "low"
+    return agent.effort

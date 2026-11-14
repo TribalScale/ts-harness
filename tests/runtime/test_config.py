@@ -72,12 +72,37 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "gpt-4o-mini"):
             parse_runtime_config(data)
 
-    def test_shipped_template_pins_gate_agents_to_gpt_6_astra(self):
+    def test_shipped_template_pins_each_gate_agent_to_its_allowlisted_model(self):
         os.environ.setdefault("GATEWAY_TOKEN", "test-token")
         config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.yaml.tmpl")
-        for agent_id in ("review-agent", "qa-agent"):
-            self.assertEqual(config.get_agent(agent_id).model, "openai/gpt-6-astra")
-            self.assertEqual(config.policy.model_allowlist[agent_id], ["openai/gpt-6-astra"])
+        for agent_id, model in (("review-agent", "openai/gpt-6-astra"), ("qa-agent", "openai/gpt-6.1-sol")):
+            self.assertEqual(config.get_agent(agent_id).model, model)
+            self.assertEqual(config.policy.model_allowlist[agent_id], [model])
+
+    def test_shipped_template_models_and_effort(self):
+        os.environ.setdefault("GATEWAY_TOKEN", "test-token")
+        config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.yaml.tmpl")
+        expected = {
+            "pm-agent": ("anthropic/claude-opus-5-5", "high"),
+            "builder-agent": ("anthropic/claude-opus-5-5", "high"),
+            "dev-agent": ("anthropic/claude-opus-5-5", "high"),
+            "orchestrator": ("anthropic/claude-sonnet-5-5", "medium"),
+            "sales-agent": ("anthropic/claude-sonnet-5-5", "medium"),
+            "ops-agent": ("openai/gpt-6.1-sol", None),
+            "analyst-agent": ("openai/gpt-6.1-sol", None),
+            "marketing-agent": ("openai/gpt-6.1-sol", None),
+            "comms-agent": ("openai/gpt-6-luna", None),
+        }
+        for agent_id, (model, effort) in expected.items():
+            agent = config.get_agent(agent_id)
+            self.assertEqual((agent.model, agent.effort), (model, effort), agent_id)
+        heartbeat_models = {agent.heartbeat.model for agent in config.agents if agent.heartbeat}
+        self.assertEqual(heartbeat_models, {"anthropic/claude-haiku-5-5"})
+
+    def test_unknown_effort_is_rejected(self):
+        data = _config_with_agents({"id": "pm-agent", "model": "anthropic/claude-opus-5-5", "effort": "extreme"})
+        with self.assertRaisesRegex(ValueError, "effort must be one of"):
+            parse_runtime_config(data)
 
 
 def _config_with_agents(*agents: dict, allowlist: dict | None = None) -> dict:

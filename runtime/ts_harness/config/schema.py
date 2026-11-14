@@ -142,6 +142,8 @@ class AgentConfig:
     subagent_allow: list[str] = field(default_factory=list)
     heartbeat: AgentHeartbeatConfig | None = None
     sandbox_mode: str = "off"
+    # Reasoning depth: low | medium | high | xhigh | max. Unset keeps the provider default.
+    effort: str | None = None
 
 
 @dataclass
@@ -455,7 +457,20 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
         subagent_allow=list(subagents.get("allowAgents") or subagents.get("allow_agents") or []),
         heartbeat=_parse_heartbeat(raw.get("heartbeat")),
         sandbox_mode=str(sandbox.get("mode", "off")),
+        effort=_parse_effort(raw.get("effort"), str(raw["id"])),
     )
+
+
+AGENT_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _parse_effort(raw: Any, agent_id: str) -> str | None:
+    if raw in (None, ""):
+        return None
+    value = str(raw).strip().lower()
+    if value not in AGENT_EFFORT_LEVELS:
+        raise ValueError(f"agent {agent_id} effort must be one of {', '.join(AGENT_EFFORT_LEVELS)}")
+    return value
 
 
 def _parse_departments(raw: Any) -> dict[str, str]:

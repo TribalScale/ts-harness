@@ -26,6 +26,7 @@ from ts_harness.implementation.backends.base import (
     commit_message,
     security_markdown,
 )
+from ts_harness.implementation.backends.opencode_usage import record_opencode_usage
 from ts_harness.implementation.coding_backend_skills import (
     ensure_opencode_project_config,
     materialize_coding_backend_skills,
@@ -732,6 +733,18 @@ class OpenCodeBackend:
     def implement(self, request: CodingRequest) -> CodingResult:
         if request.mode == "refresh":
             return self.refresh(request)
+        started_ms = int(time.time() * 1000)
+        usage_ctx: dict[str, Any] = {}
+        try:
+            return self._implement(request, usage_ctx)
+        finally:
+            if usage_ctx:
+                try:
+                    record_opencode_usage(since_ms=started_ms, scope=coding_usage_scope(request), **usage_ctx)
+                except Exception:  # noqa: BLE001 - metering never fails a coding run
+                    pass
+
+    def _implement(self, request: CodingRequest, usage_ctx: dict[str, Any]) -> CodingResult:
         provider, api_key = resolve_coding_backend_credentials(
             provider=request.provider, scope=coding_usage_scope(request)
         )
@@ -847,6 +860,7 @@ class OpenCodeBackend:
             env = os.environ.copy()
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
+            usage_ctx.update(binary=str(binary), env=env, repo_dir=Path(repo_dir))
             completed = self._run_opencode(
                 cmd,
                 cwd=str(repo_dir),

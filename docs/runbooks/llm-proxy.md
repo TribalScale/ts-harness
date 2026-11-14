@@ -31,6 +31,23 @@ provider keys: the launcher drops them from the worker environment, and on ECS
 the `coding-backend-api-key` secret is no longer attached to the task
 definition.
 
+## Without the proxy
+
+Usage is still recorded when calls go straight to the provider, as long as a
+session database is configured (`TS_HARNESS_SESSION_DB_URL`, or
+`LLM_USAGE_DB_URL` to use another one):
+
+- Agent calls: each model call writes one `llm_usage` row (actor is the
+  requesting user, or the agent) and one `agent_token_usage` row (by agent).
+- Coding backend: after each OpenCode run the backend exports the sessions
+  that run created in the repo (`opencode session list`, `opencode export`)
+  and writes one row per model with `agent = coding-backend`. Conflict
+  refreshes (`mode: refresh`) are not counted.
+
+Prices come from `llm_pricing` in the runtime config. For a coding-backend
+model the table does not list, the cost OpenCode reports is used instead.
+With the proxy on, only the proxy records, so nothing is counted twice.
+
 ## Turn it on
 
 1. Make sure a session database is configured (`TS_HARNESS_SESSION_DB_URL`);
@@ -53,18 +70,18 @@ Both live in the runtime config (`ts-harness-runtime.yaml`):
 
 ```yaml
 llm_pricing:            # USD per million tokens
-  "claude-sonnet-*": {input_per_mtok: 3, output_per_mtok: 15}
-  "claude-opus-*":   {input_per_mtok: 15, output_per_mtok: 75}
-  "openai/gpt-4o":   {input_per_mtok: 2.5, output_per_mtok: 10, cache_read_per_mtok: 1.25}
-  "*":               {input_per_mtok: 3, output_per_mtok: 15}
+  "anthropic/claude-opus-5-5": {input_per_mtok: 4, output_per_mtok: 20, cache_read_per_mtok: 0.2}
+  "openai/gpt-6.1-sol":        {input_per_mtok: 2, output_per_mtok: 10, cache_read_per_mtok: 0.2}
 
 llm_rate_limits:        # shared across proxy replicas
   "anthropic/*": {requests_per_minute: 120, burst: 20}
 ```
 
 Keys match `provider/model`, then `model`, then the longest `prefix*`, then
-`*`. Cache reads default to a tenth of the input price. A model with no price
-records zero cost, so keep a `*` entry. Restart `llm-proxy` after changing
+`*`. Cache reads default to a tenth of the input price; cache writes are
+priced as input. A model with no price records zero cost. The shipped
+template lists every model it assigns; add a row when you assign a new one.
+Restart `llm-proxy` (and agent-runtime, for direct calls) after changing
 either table.
 
 ## Check it
