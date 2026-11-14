@@ -572,7 +572,10 @@ class WorkflowEngine:
         tenant_id: str = "default",
         decision: dict[str, Any] | None = None,
         reply_text: str = "",
+        reply_in_chat: bool = False,
     ) -> dict[str, Any]:
+        """Approve ``gate_task``. ``reply_in_chat``: the caller replies in the thread itself,
+        so phase completion returns its message instead of posting it."""
         workflow_type = str(gate_task.get("workflow_type") or "")
         ctx = self._context(
             workflow_id=workflow_id,
@@ -580,7 +583,11 @@ class WorkflowEngine:
             tenant_id=tenant_id,
             task=gate_task,
             actor=actor,
-            extras={"decision": dict(decision or {}), "reply_text": reply_text},
+            extras={
+                "decision": dict(decision or {}),
+                "reply_text": reply_text,
+                "reply_in_chat": reply_in_chat,
+            },
         )
         result = self.registry.invoke("approve_gate", ctx)
         # Approval gates are marked succeeded in memory and never dispatched, so

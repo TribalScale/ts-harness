@@ -13,8 +13,10 @@ from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.program_brief import publish_program_brief
 from ts_harness.workflows.program_materialize import (
     automatic_edges_from,
+    may_end_offer,
     next_list_item,
     node_is_terminal,
+    node_may_end,
     parse_program_snapshot,
     reentry_item_key,
     reentry_keys,
@@ -256,6 +258,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                     "artifacts": result,
                 },
             )
+        # A child program was started for its parent's delivery; it does not end early.
+        if node_may_end(snapshot, program_phase) and not program.get("parent_program_id"):
+            return _end_at_may_end_node(
+                ctx, str(program_id), program, snapshot, program_phase, result, complete_channel_text
+            )
         return _with_brief(
             ctx,
             program_id,
@@ -333,6 +340,55 @@ def _unfinished_children(memory: Any, program_id: str, *, exclude: str | None = 
         if str(child.get("id")) != str(exclude or "")
         and str(child.get("status") or "") not in CHILD_DONE_STATUSES
     ]
+
+
+def _end_at_may_end_node(
+    ctx: HookContext,
+    program_id: str,
+    program: dict[str, Any],
+    snapshot: dict[str, Any],
+    program_phase: str,
+    result: Any,
+    complete_channel_text: str,
+) -> dict[str, Any]:
+    """Mark the program succeeded where it stopped and offer the next steps.
+
+    A chat approval (``reply_in_chat``) puts the offer in its own reply, so it is not
+    posted here as well; otherwise (console approval, runner) the bound thread gets it.
+    """
+    offer = may_end_offer(snapshot, program_phase)
+    _mark_program_succeeded(
+        ctx,
+        program_id,
+        program_phase,
+        {"ended_at_phase": program_phase, "completed_at_phase": program_phase},
+    )
+    text = "\n\n".join(part for part in (complete_channel_text, offer["text"]) if part)
+    if not (ctx.extras or {}).get("reply_in_chat"):
+        ctx.extras["channel_text"] = text
+        ctx.runner_event = "completed"
+        try:
+            from ts_harness.workflows.hooks.notify_bound_channel import (
+                handle as notify_bound,
+            )
+
+            notify_bound(ctx)
+        except Exception:
+            pass
+    return _with_brief(
+        ctx,
+        program_id,
+        program,
+        program_phase,
+        {
+            "status": "phase_completed_program_ended",
+            "program_id": program_id,
+            "artifacts": result,
+            "ended_at_phase": program_phase,
+            "next_steps": offer["next_steps"],
+            "offer_text": text,
+        },
+    )
 
 
 def _mark_program_succeeded(

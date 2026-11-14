@@ -433,6 +433,8 @@ def workflow_approve_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> di
         actor=human.actor_id,
         tenant_id=ctx.tenant_id,
         decision=human.as_fields(),
+        # The agent relays the result; an ended program's offer is in result["phase"].
+        reply_in_chat=True,
     )
 
 

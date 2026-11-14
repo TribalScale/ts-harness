@@ -198,7 +198,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
     def test_builtin_file_loads(self):
         definition, payload = self.load_builtin()
         self.assertEqual(definition.program_type, "software_delivery")
-        self.assertEqual(definition.definition_version, "1.3.0")
+        self.assertEqual(definition.definition_version, "1.4.0")
         self.assertTrue(definition.display_name)
         self.assertEqual(payload["program_type"], "software_delivery")
 
@@ -225,6 +225,11 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
         self.assertNotIn("deploy", by_id)
         for phase in ("prd", "jira", "work_orders", "implement"):
             self.assertFalse(by_id[phase].terminal)
+        # A requester may stop after the PRD or the Jira tickets; planning work orders
+        # flows straight into implement, so it may not.
+        self.assertEqual(
+            {node.id for node in definition.nodes if node.may_end}, {"prd", "jira"}
+        )
         self.assertTrue(by_id["release"].terminal)
         self.assertTrue(by_id["release"].await_children)
         self.assertEqual(by_id["release"].default_workflow_type, "deploy_release")

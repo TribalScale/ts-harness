@@ -24,6 +24,8 @@ required:
     bridge_target: jira_from_prd
   - id: continue_delivery_smoke
     alias_of: continue_bridge_smoke
+  - id: program_may_end_smoke
+    workflow_type: prd_request
   - id: delivery_program
     workflow_types: [jira_from_prd, work_orders_from_prd, implement_delivery, implement_work_orders, deploy_release]
   - id: work_orders_delivery_smoke

@@ -496,6 +496,77 @@ def prd_request_smoke() -> bool:
         return False
 
 
+def program_may_end_smoke() -> bool:
+    """A software_delivery program ends at an approved PRD and reopens on "create jira"."""
+    try:
+        from unittest.mock import MagicMock, patch
+
+        from ts_harness.workflows.delivery_program import DeliveryProgramService
+        from ts_harness.workflows.hooks import complete_program_phase
+        from ts_harness.workflows.materialize import load_skeleton
+        from ts_harness.workflows.program_registry import get_program_definition_registry
+        from ts_harness.workflows.registry import HookContext
+
+        snapshot = get_program_definition_registry().load("software_delivery")
+        client = MagicMock()
+        client.get_workflow.return_value = {
+            "workflow": {"id": "wf-prd", "program_id": "prog-rg", "program_phase": "prd", "summary": "gate"},
+            "tasks": [{"status": "succeeded", "step_name": "approve_prd", "output": {}}],
+        }
+        client.get_program.return_value = {
+            "program": {
+                "id": "prog-rg",
+                "status": "running",
+                "current_phase": "prd",
+                "program_definition_snapshot": snapshot,
+                "metadata": {"artifacts": {}},
+            }
+        }
+        client.get_program_status.return_value = {"children": []}
+        skeleton = load_skeleton("prd_request")
+        ctx = HookContext(
+            workflow_id="wf-prd",
+            workflow_type="prd_request",
+            tenant_id="default",
+            task={"id": "gate"},
+            stage=skeleton.stages[-1],
+            skeleton=skeleton,
+            actor="release-gate",
+            memory_client=client,
+            extras={"reply_in_chat": True},
+        )
+        service = MagicMock()
+        service.on_workflow_terminal.return_value = {}
+        with patch.object(complete_program_phase, "get_delivery_program_service", return_value=service), \
+                patch.object(complete_program_phase, "publish_program_brief"):
+            ended = complete_program_phase.handle(ctx)
+        if ended.get("status") != "phase_completed_program_ended" or not client.complete_program.called:
+            return False
+        if "create jira" not in str(ended.get("offer_text") or ""):
+            return False
+
+        client.get_program.return_value = {
+            "program": {
+                "id": "prog-rg",
+                "status": "succeeded",
+                "current_phase": "prd",
+                "summary": "gate",
+                "program_definition_snapshot": snapshot,
+                "metadata": {"artifacts": {"approved_prd": {"title": "gate"}, "ended_at_phase": "prd"}},
+            },
+            "workflows": [],
+        }
+        client.patch_program_artifacts.reset_mock()
+        client.advance_program.return_value = {"current_phase": "jira"}
+        client.create_workflow.return_value = {"id": "wf-jira"}
+        client.create_task.return_value = {"id": "t-jira"}
+        reopened = DeliveryProgramService(client=client).advance_program(program_id="prog-rg", target_phase="jira")
+        last_patch = client.patch_program_artifacts.call_args_list[-1].args[1]
+        return reopened.get("workflow_type") == "jira_from_prd" and last_patch.get("program_status") == "running"
+    except Exception:
+        return False
+
+
 def continue_delivery_smoke() -> bool:
     try:
         from unittest.mock import MagicMock
@@ -794,6 +865,7 @@ def main() -> int:
         "prd_request_smoke": prd_request_smoke,
         "continue_bridge_smoke": continue_bridge_smoke,
         "continue_delivery_smoke": continue_delivery_smoke,
+        "program_may_end_smoke": program_may_end_smoke,
         "intent_routing_smoke": intent_routing_smoke,
         "workflow_runner_import_smoke": workflow_runner_import_smoke,
         "skeleton_hooks_registered": skeleton_hooks_registered,

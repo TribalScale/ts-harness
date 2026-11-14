@@ -103,6 +103,42 @@ def node_is_terminal(snapshot: dict[str, Any], node_id: str) -> bool:
     return bool(node.get("terminal"))
 
 
+def _phase_label(node_id: str) -> str:
+    text = str(node_id or "").replace("_", " ").strip()
+    return text.upper() if len(text) <= 3 else text[:1].upper() + text[1:]
+
+
+def may_end_offer(snapshot: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """The next steps after a program ended at ``node_id``, and the message offering them.
+
+    Each outgoing edge with signals becomes one option; its first signal is what the
+    requester says to continue (matched by ``program_advance`` routing).
+    """
+    steps: list[dict[str, str]] = []
+    for edge in snapshot_edges_from(snapshot, node_id):
+        target = str(edge.get("target") or "").strip()
+        signals = [str(item).strip() for item in list(edge.get("signals") or []) if str(item).strip()]
+        if target and signals:
+            steps.append({"target_node": target, "label": _phase_label(target), "say": signals[0]})
+    lines = [f"The {_phase_label(node_id)} step is done, so this program is complete."]
+    if steps:
+        lines.append("If you want to keep going, reply with:")
+        lines.extend(f'• "{step["say"]}" for {step["label"]}' for step in steps)
+        lines.append("Otherwise there is nothing more to do.")
+    else:
+        lines.append("You can continue it later from the Programs page in the console.")
+    return {"ended_at_phase": node_id, "next_steps": steps, "text": "\n".join(lines)}
+
+
+def node_may_end(snapshot: dict[str, Any], node_id: str) -> bool:
+    """True when the program may stop after ``node_id`` (succeeded, next steps offered)."""
+    try:
+        node = snapshot_node(snapshot, node_id)
+    except KeyError:
+        return False
+    return bool(node.get("may_end")) and not bool(node.get("terminal"))
+
+
 WORK_ORDER_REENTRY_KEYS = ("work_order_ids", "completed_work_order_ids", "next_work_order_id")
 DEFAULT_LIST_MAX_ITERATIONS = 50
 

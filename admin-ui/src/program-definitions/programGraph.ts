@@ -17,6 +17,7 @@ export type ProgramNodeData = {
   produces_artifacts: string[];
   input_bindings: InputBinding[];
   terminal: boolean;
+  may_end: boolean;
   startable: boolean;
   completion_adapter: string;
 };
@@ -107,6 +108,7 @@ export function definitionToProgramGraph(
         produces_artifacts: [...(node.produces_artifacts || [])],
         input_bindings: clone(node.input_bindings || []),
         terminal: Boolean(node.terminal),
+        may_end: Boolean(node.may_end),
         startable: startable.has(node.id),
         completion_adapter: node.completion_adapter,
       },
@@ -151,6 +153,7 @@ export function graphToProgramDefinition(
     input_bindings: clone(node.data.input_bindings || []),
     completion_adapter: node.data.completion_adapter,
     terminal: Boolean(node.data.terminal),
+    ...(node.data.may_end ? { may_end: true } : {}),
   }));
   next.startable_nodes = graph.nodes
     .filter((node) => node.data.startable)
@@ -248,6 +251,25 @@ export function detectClientProgramGraphIssues(graph: ProgramGraph): ValidationI
         )
       );
     }
+    if (node.data.may_end && node.data.terminal) {
+      issues.push(
+        issue(
+          "may_end_on_terminal",
+          `/nodes/${index}`,
+          `terminal node already ends the program; drop may_end: ${node.data.nodeId || node.id}`
+        )
+      );
+    }
+    const automatic = graph.edges.find((edge) => edge.source === node.id && edge.data?.mode === "automatic");
+    if (node.data.may_end && automatic) {
+      issues.push(
+        issue(
+          "may_end_with_automatic_edge",
+          `/nodes/${index}`,
+          `may_end has no effect: ${node.data.nodeId || node.id} -> ${automatic.target} is automatic`
+        )
+      );
+    }
   });
 
   const visiting = new Set<string>();
@@ -332,6 +354,7 @@ export function updateNodeInGraph(
               produces_artifacts: [...(node.produces_artifacts || [])],
               input_bindings: clone(node.input_bindings || []),
               terminal: Boolean(node.terminal),
+              may_end: Boolean(node.may_end),
               startable: Boolean(node.startable ?? entry.data.startable),
               completion_adapter: node.completion_adapter,
             },

@@ -197,6 +197,25 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return dict(metadata) if isinstance(metadata, dict) else {}
 
 
+def ensure_program_can_advance(program: dict[str, Any], artifacts: dict[str, Any] | None = None) -> bool:
+    """Raise when the program is closed for good; return True when advancing reopens it.
+
+    A program that ended at a ``may_end`` node (``ended_at_phase`` equals its current
+    phase) is succeeded but may continue. One that reached a terminal node, or was
+    cancelled or failed, is closed: a new request starts a new program.
+    """
+    status = str(program.get("status") or "running")
+    if status in {"cancelled", "failed"}:
+        raise ValueError(f"program is {status}; start a new request instead")
+    if status != "succeeded":
+        return False
+    found = _program_artifacts(program) if artifacts is None else artifacts
+    ended_at = str(found.get("ended_at_phase") or "")
+    if ended_at and ended_at == str(program.get("current_phase") or ""):
+        return True
+    raise ValueError("program is complete; start a new request instead")
+
+
 def _program_artifacts(program: dict[str, Any]) -> dict[str, Any]:
     metadata = _parse_metadata(program.get("metadata"))
     artifacts = metadata.get("artifacts")
@@ -441,6 +460,7 @@ class DeliveryProgramService:
                 target_phase = phase_for_workflow_type(target_workflow_type)
 
         existing_artifacts = _program_artifacts(program)
+        reopening = ensure_program_can_advance(program, existing_artifacts)
         merged_artifacts = with_project_repositories(
             self.client,
             {**existing_artifacts, **(artifacts or {})},
@@ -501,6 +521,14 @@ class DeliveryProgramService:
             actor=actor,
             **decision_fields,
         )
+        if reopening or existing_artifacts.get("ended_at_phase"):
+            # After the advance: the gateway checks ended_at_phase before it reopens the row.
+            self.client.patch_program_artifacts(
+                program_id,
+                {"program_status": "running", "ended_at_phase": None, "reopened_from_phase": current_phase},
+                merge=True,
+                actor=actor,
+            )
 
         workflow_type, definition_version = resolve_node_workflow(
             effective_snapshot,

@@ -879,6 +879,7 @@ def execute_workflow_gate_classification(
             actor=agent_id,
             tenant_id=tenant_id,
             reply_text=reply_text,
+            reply_in_chat=True,
         )
         return {**(result or {}), "status": "approved", "task_id": str(gate.get("id"))}
 
@@ -959,6 +960,9 @@ def format_workflow_gate_response_ack(
     if result.get("status") == "answer_recorded":
         return "Got it. Say ready when you want a draft."
     if result.get("status") == "approved":
+        phase = result.get("phase") if isinstance(result.get("phase"), dict) else {}
+        if phase.get("status") == "phase_completed_program_ended" and phase.get("offer_text"):
+            return f"Approved. {phase['offer_text']}"
         message = "Approved the current workflow gate. I'll continue the workflow."
         resolved_type = workflow_type or str(result.get("workflow_type") or "")
         if resolved_type:
