@@ -52,6 +52,13 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
         self.assertIn('command: ["python3", "/app/scripts/workflow-runner.py"]', compose)
         self.assertNotIn("/app/workflow-runner.py", compose)
 
+    def test_workflow_runner_can_read_drive_links(self):
+        # The intake gather builds the Workspace client from GOOGLE_WORKSPACE_SA_JSON_PATH;
+        # the runner has no env_file, so the path must point at the mounted key.
+        compose = (REPO_ROOT / "docker" / "docker-compose.workflow-runner.yml").read_text()
+        self.assertIn("google-workspace-sa.json:/config/google-workspace-sa.json:ro", compose)
+        self.assertIn("GOOGLE_WORKSPACE_SA_JSON_PATH: /config/google-workspace-sa.json", compose)
+
     def test_workflow_runner_gets_only_the_github_token_for_merge_readiness(self):
         compose = COMPOSE.read_text()
         common = COMPOSE_COMMON.read_text()
