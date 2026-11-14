@@ -16,7 +16,7 @@
 - aws_management — cloud management for the install-time provider (AWS or GCP); bind ops actions to the provider recorded at install, within approved scope
 - container_management — Docker builds and container orchestration
 
-**Model:** `openai/gpt-4o`
+**Model:** `openai/gpt-6.1-sol`
 **Workspace:** `/workspace/ops-agent`
 **Toolsets:** `core-read`, `terminal`, `skill-authoring`
 **Skills:** `ops`, `memory`

@@ -15,7 +15,7 @@
 - jira_ticket_creation — create work in approved Jira projects after PRD approval
 - backlog_grooming — propose priority, labels, and sequencing
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-opus-5-5`
 **Workspace:** `/workspace/pm-agent`
 **Toolsets:** `core-read`, `workflow`, `google-workspace-docs`, `jira-read`, `jira-write`
 **Skills:** `pm`, `memory-api`, `workflows`, `governed-workflows`

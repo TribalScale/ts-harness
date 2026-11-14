@@ -122,7 +122,7 @@ policy:
     review-agent:
       - openai/gpt-6-astra
     qa-agent:
-      - openai/gpt-6-astra
+      - openai/gpt-6.1-sol
 
 implementation:
   coding_backend: opencode
@@ -332,7 +332,8 @@ agents:
     - id: orchestrator
       default: true
       workspace: /workspace/orchestrator
-      model: openai/gpt-4o
+      model: anthropic/claude-sonnet-5-5
+      effort: medium
       skills:
         - orchestrator
         - memory-api
@@ -402,7 +403,7 @@ agents:
           - sales-agent
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -414,7 +415,8 @@ agents:
 
     - id: dev-agent
       workspace: /workspace/dev-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-opus-5-5
+      effort: high
       skills: [dev, memory, workflows, integrate, governed-workflows]
       toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read, knowledge-notes]
       tools:
@@ -423,7 +425,7 @@ agents:
 
     - id: ops-agent
       workspace: /workspace/ops-agent
-      model: openai/gpt-4o
+      model: openai/gpt-6.1-sol
       skills: [ops, memory]
       toolsets: [core-read, terminal, skill-authoring]
       tools:
@@ -431,7 +433,7 @@ agents:
         deny: [write_file, patch_file, delegate_task]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: slack
         to: "channel:{{SLACK_OPS_CHANNEL}}"
         lightContext: true
@@ -444,7 +446,7 @@ agents:
 
     - id: qa-agent
       workspace: /workspace/qa-agent
-      model: openai/gpt-6-astra
+      model: openai/gpt-6.1-sol
       skills: [qa, memory, workflows, governed-workflows]
       toolsets: [core-read]
       tools:
@@ -462,7 +464,7 @@ agents:
 
     - id: analyst-agent
       workspace: /workspace/analyst-agent
-      model: openai/gpt-4o-mini
+      model: openai/gpt-6.1-sol
       skills: [memory]
       toolsets: [core-read, terminal]
       tools:
@@ -471,7 +473,8 @@ agents:
 
     - id: pm-agent
       workspace: /workspace/pm-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-opus-5-5
+      effort: high
       skills: [pm, memory-api, workflows, governed-workflows]
       connector_bindings:
         google-workspace: pm
@@ -482,7 +485,7 @@ agents:
 
     - id: comms-agent
       workspace: /workspace/comms-agent
-      model: openai/gpt-4o-mini
+      model: openai/gpt-6-luna
       skills: [comms, memory-api]
       connector_bindings:
         google-workspace: comms
@@ -508,6 +511,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec]
       heartbeat:
         every: 30m
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -519,7 +523,7 @@ agents:
 
     - id: marketing-agent
       workspace: /workspace/marketing-agent
-      model: openai/gpt-4o
+      model: openai/gpt-6.1-sol
       skills: [memory-api]
       connector_bindings:
         google-workspace: marketing
@@ -538,7 +542,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec, google_workspace_gmail_send]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -550,7 +554,8 @@ agents:
 
     - id: sales-agent
       workspace: /workspace/sales-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-sonnet-5-5
+      effort: medium
       skills: [memory-api, clarify-rfp, draft-rfp]
       connector_bindings:
         google-workspace: sales
@@ -572,7 +577,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -584,8 +589,23 @@ agents:
 
     - id: builder-agent
       workspace: /workspace/builder-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-opus-5-5
+      effort: high
       skills: [program-builder]
       toolsets: [core-read, program-builder, skill-authoring]
       tools:
         deny: [exec, write_file, patch_file, delegate_task]
+
+# USD per million tokens, for llm_usage.cost_usd (budgets, spend reports). Read by the runtime
+# and by llm-proxy. Keys match provider/model, then model, then the longest prefix*. Models not
+# listed record zero cost, except coding-backend runs, which fall back to OpenCode's own figure.
+llm_pricing:
+  "anthropic/claude-opus-5-5":   {input_per_mtok: 4,    output_per_mtok: 20,  cache_read_per_mtok: 0.2}
+  "anthropic/claude-sonnet-5-5": {input_per_mtok: 2,    output_per_mtok: 10,  cache_read_per_mtok: 0.1}
+  "anthropic/claude-haiku-5-5":  {input_per_mtok: 0.1,  output_per_mtok: 0.5, cache_read_per_mtok: 0.01}
+  "openai/gpt-6-astra":          {input_per_mtok: 10,   output_per_mtok: 50,  cache_read_per_mtok: 1}
+  "openai/gpt-6.1-sol":          {input_per_mtok: 2,    output_per_mtok: 10,  cache_read_per_mtok: 0.2}
+  "openai/gpt-6.1-terra":        {input_per_mtok: 1,    output_per_mtok: 5,   cache_read_per_mtok: 0.1}
+  "openai/gpt-6-luna":           {input_per_mtok: 0.1,  output_per_mtok: 0.5, cache_read_per_mtok: 0.01}
+  "openai/gpt-4o":               {input_per_mtok: 2.5,  output_per_mtok: 10,  cache_read_per_mtok: 1.25}
+  "openai/gpt-4o-mini":          {input_per_mtok: 0.15, output_per_mtok: 0.6, cache_read_per_mtok: 0.075}

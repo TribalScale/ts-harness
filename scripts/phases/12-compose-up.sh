@@ -181,7 +181,8 @@ fi
 
 # A path that does not exist is hashed by name, so a storage flag change re-runs compose up.
 STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}:${TS_HARNESS_INTAKE_BUCKET:-}"
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
+# This script is an input too: a change to the compose env it writes must re-run compose up.
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -236,6 +237,7 @@ fi
     echo "export TS_HARNESS_DB_NAME=$(printf '%q' "$TS_HARNESS_DB_NAME")"
     echo "export TS_HARNESS_DB_PASSWORD=$(printf '%q' "$TS_HARNESS_DB_PASSWORD")"
     echo "export OPENAI_API_KEY=$(printf '%q' "${OPENAI_API_KEY:-}")"
+    echo "export ANTHROPIC_API_KEY=$(printf '%q' "${ANTHROPIC_API_KEY:-}")"
     echo "export VOYAGE_API_KEY=$(printf '%q' "${VOYAGE_API_KEY:-}")"
     echo "export GEMINI_API_KEY=$(printf '%q' "${GEMINI_API_KEY:-}")"
     echo "export MISTRAL_API_KEY=$(printf '%q' "${MISTRAL_API_KEY:-}")"

@@ -11,6 +11,24 @@ First public release.
 
 ### Added
 
+- Agents can run on Claude, and each agent picks its model and reasoning depth.
+  - The Anthropic provider sends no `temperature`, passes tools and tool results
+    both ways, replays Claude's thinking blocks within a tool loop (retrying once
+    without them if the API refuses), caches the prompt prefix, reports refusals,
+    and sets `max_tokens` to 16000 (`ANTHROPIC_MAX_TOKENS`).
+  - New per-agent `effort` (low, medium, high, xhigh, max): Claude's
+    `output_config.effort` and OpenAI's reasoning effort (capped at high).
+  - Every GPT-6 model uses the Responses API, not only `gpt-6-astra`.
+  - `heartbeat.model` is now used: heartbeats run on it at low effort.
+  - Shipped models: pm, builder and dev on Claude Opus 5.5 (high); orchestrator
+    and sales on Claude Sonnet 5.5 (medium); review on GPT-6 Astra; qa, ops,
+    analyst and marketing on GPT-6.1 Sol; comms on GPT-6 Luna; heartbeats on
+    Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
+- Model usage is recorded without the LLM proxy. Direct agent calls write
+  `llm_usage` and `agent_token_usage`; coding-backend runs are read back from
+  OpenCode's sessions. Costs come from the new `llm_pricing` table in the runtime
+  config template.
+
 - PRD requests ask better questions and the reviewer sees what a draft is missing.
   - New `prd-intake` skill: each intake question carries a recommended answer worded so
     that "yes" accepts it, and the agent no longer asks what the attached sources or a
@@ -186,6 +204,16 @@ First public release.
   at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
+
+- `recall_memory` failed on every call without a department scope: the recall query
+  had a bare `%` in `ILIKE 'department:%'`, which psycopg reads as a placeholder.
+- `sessions_list` returned every session the tenant ever had (about 200k tokens in one
+  tool result on the dev host). It now returns the 20 newest by default (`limit` up
+  to 100), can filter by `agent_id`, includes `started_at`, and leaves large
+  metadata (drafts, handoffs) out by name; `sessions_history` reads one in full.
+- The Anthropic API key never reached the containers: phase 12 did not export
+  `ANTHROPIC_API_KEY`, and the compose wrapper did not forward it. Phase 12 now also
+  re-runs when the script itself changes.
 
 - A PRD request confirmed in chat never read its attachments. The promote hook folded
   `intake_sources` into the intake task's context, where `gather_intake_sources` does not

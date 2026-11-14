@@ -294,10 +294,17 @@ def register_core_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             name="sessions_list",
-            description="List runtime sessions for the current tenant",
+            description=(
+                "List the tenant's most recent runtime sessions, newest first "
+                "(20 by default, up to 100). Filter by source or agent_id."
+            ),
             parameters={
                 "type": "object",
-                "properties": {"source": {"type": "string"}},
+                "properties": {
+                    "source": {"type": "string"},
+                    "agent_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
             },
             handler=lambda args, ctx: sessions_list_handler(args, ctx),
             toolsets=["core-read", "channel-chat"],

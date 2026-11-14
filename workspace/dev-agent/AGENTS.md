@@ -16,9 +16,9 @@
 - git_operations — branch, commit, push, open PRs, manage conflicts
 - dependency_management — add, update, audit dependencies
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-opus-5-5`
 **Workspace:** `/workspace/dev-agent`
-**Toolsets:** `core-read`, `core-write`, `terminal`, `coding-backend`, `skill-authoring`, `jira-read`
+**Toolsets:** `core-read`, `core-write`, `terminal`, `coding-backend`, `skill-authoring`, `jira-read`, `knowledge-notes`
 **Skills:** `dev`, `memory`, `workflows`, `integrate`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
@@ -29,6 +29,7 @@
 - recall_memory
 - run_coding_backend
 - propose_skill
+- propose_knowledge_note
 
 **tools.deny** (from `config/ts-harness-runtime.yaml`):
 - delegate_task

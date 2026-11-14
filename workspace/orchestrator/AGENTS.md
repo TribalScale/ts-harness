@@ -17,13 +17,14 @@
 - context_brokering — pass only relevant continuity refs and scoped memories
 - synthesis — combine specialist outputs into a coherent user response
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-sonnet-5-5`
 **Workspace:** `/workspace/orchestrator`
-**Toolsets:** `core-read`, `workflow`, `delegation`, `channel-chat`, `workflow-promotion`, `jira-read`
+**Toolsets:** `core-read`, `workflow`, `delegation`, `channel-chat`, `workflow-promotion`, `jira-read`, `knowledge-notes`
 **Skills:** `orchestrator`, `memory-api`, `workflow`, `workflows`, `governed-workflows`, `cost-awareness`, `audit-logging`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
 - recall_memory
+- propose_knowledge_note
 - read_file
 - session_status
 - remember_memory

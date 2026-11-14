@@ -348,13 +348,13 @@ def recall(
         scope_clause += " AND (scope = %s OR scope = 'global' OR scope = %s)"
         params.extend([str(scope), department_scope])
     elif scope:
-        scope_clause += " AND (scope = %s OR scope = 'global') AND scope NOT ILIKE 'department:%'"
+        scope_clause += " AND (scope = %s OR scope = 'global') AND scope NOT ILIKE 'department:%%'"
         params.append(str(scope))
     elif department_scope:
         scope_clause += " AND (scope = 'global' OR scope = %s)"
         params.append(department_scope)
     else:
-        scope_clause += " AND scope NOT ILIKE 'department:%'"
+        scope_clause += " AND scope NOT ILIKE 'department:%%'"
     params.extend([embedding, limit])
 
     with conn.cursor() as cur:
