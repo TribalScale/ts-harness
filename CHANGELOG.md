@@ -210,6 +210,11 @@ First public release.
 
 ### Fixed
 
+- A program could stop after its work-orders phase: the program snapshot was too long
+  for the embedding model (8192 tokens), memory-api refused it, and the move to
+  implementation never happened. Only the first 16000 characters of a memory are
+  embedded now (`EMBEDDINGS_MAX_INPUT_CHARS`), with one shorter retry; the stored
+  content is unchanged.
 - `recall_memory` failed on every call without a department scope: the recall query
   had a bare `%` in `ILIKE 'department:%'`, which psycopg reads as a placeholder.
 - `sessions_list` returned every session the tenant ever had (about 200k tokens in one

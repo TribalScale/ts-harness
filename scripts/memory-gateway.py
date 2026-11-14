@@ -170,14 +170,28 @@ def validate_status(value: Any) -> str:
     return status
 
 
-def generate_embedding(text: str) -> str:
-    result = subprocess.run(
+# Embedding models cap their input (8192 tokens for OpenAI's). JSON runs at about
+# 2.5 characters per token, so 16000 characters stays under the cap. Only the head of
+# long text is embedded; the stored content is always whole.
+EMBED_MAX_INPUT_CHARS = int(os.environ.get("EMBEDDINGS_MAX_INPUT_CHARS") or 16000)
+
+
+def _run_embed_script(text: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
         ["bash", EMBED_SCRIPT, text],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
+
+
+def generate_embedding(text: str) -> str:
+    text = text[:EMBED_MAX_INPUT_CHARS]
+    result = _run_embed_script(text)
+    if result.returncode != 0 and "400" in (result.stderr or "") and len(text) > 2000:
+        # Still too long for this provider's tokenizer: embed a shorter head once.
+        result = _run_embed_script(text[: len(text) // 4])
     if result.returncode != 0:
         raise RuntimeError(f"embed.sh failed: {result.stderr.strip()}")
     return normalize_embedding(result.stdout)
