@@ -152,7 +152,27 @@ def _responses_input_items(message: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
         return items
-    return [{"role": role or "user", "content": message.get("content") or ""}]
+    return [{"role": role or "user", "content": _responses_content(message.get("content"))}]
+
+
+def _responses_content(content: Any) -> Any:
+    """Chat-completions content parts in Responses API form (``input_text`` / ``input_image``)."""
+    if not isinstance(content, list):
+        return content or ""
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind == "text":
+            parts.append({"type": "input_text", "text": str(part.get("text") or "")})
+        elif kind == "image_url":
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            parts.append({"type": "input_image", "image_url": str(url or "")})
+        else:
+            parts.append(part)
+    return parts
 
 
 def _responses_to_chat(data: dict[str, Any]) -> dict[str, Any]:

@@ -37,11 +37,26 @@ services:
       # tasks with the real repo_url + base_branch (not ImplementationRepoConfig defaults).
       TS_HARNESS_ROOT: /app
       TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
+      # gather_intake_sources (docs/runbooks/intake-sources.md): reads chat attachments,
+      # Drive links (as the stage's Workspace mailbox), and images (when a vision model is set).
+      TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
+      TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TS_HARNESS_INTAKE_VISION_MODEL: ${TS_HARNESS_INTAKE_VISION_MODEL:-}
+      LLM_PROXY_URL: ${LLM_PROXY_URL:-}
+      LLM_PROXY_SECRET: ${LLM_PROXY_SECRET:-}
     volumes:
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/workflows:/config/workflows:ro
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/config/fragments:/config/fragments:ro
       - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/ts-harness-runtime.yaml:/config/ts-harness-runtime.yaml:ro
       - ts-harness-workflow-definitions:/workflow-definitions:ro
+      - ${TS_HARNESS_CONFIG_DIR:?set TS_HARNESS_CONFIG_DIR}/google-workspace-sa.json:/config/google-workspace-sa.json:ro
+      - ts-harness-intake-objects:/var/lib/ts-harness/objects/intake:ro
     command: ["python3", "/app/scripts/workflow-runner.py"]
     stop_grace_period: ${WORKFLOW_RUNNER_STOP_GRACE:-120s}
     restart: unless-stopped
@@ -57,3 +72,4 @@ services:
 
 volumes:
   ts-harness-workflow-definitions:
+  ts-harness-intake-objects:

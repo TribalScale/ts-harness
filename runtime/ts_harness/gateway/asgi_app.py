@@ -109,6 +109,18 @@ def _check_origin(request: Request, *, require_origin: bool | None = None) -> No
     )
 
 
+class _BodyLimitMiddleware(BaseHTTPMiddleware):
+    """Refuse declared request bodies past the JSON ceiling; only ``/intake/uploads`` carries files."""
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        from ts_harness.gateway.intake_uploads import json_body_too_large, max_json_body_bytes
+
+        if json_body_too_large(request.url.path, request.headers.get("content-length")):
+            limit_mb = max_json_body_bytes() // (1024 * 1024)
+            return _json({"error": f"request body is larger than {limit_mb} MB"}, 413)
+        return await call_next(request)
+
+
 class _TraceMiddleware(BaseHTTPMiddleware):
     """Bind one trace id for the request and return it as X-Trace-Id."""
 
@@ -483,6 +495,49 @@ async def session_message(request: Request) -> Response:
     except Exception as exc:
         log_event("session_message_error", error=str(exc))
         return _json({"error": str(exc)}, 500)
+
+
+# ── POST /intake/uploads ──────────────────────────────────────────────────────
+
+
+async def intake_upload(request: Request) -> Response:
+    """Stream one file into the intake object store; return the pointer for ``attachments``."""
+    from ts_harness.gateway.intake_uploads import UploadRejected, store_spool, upload_request
+    from ts_harness.gateway.rate_limit import check_admin_rate_limit
+    from ts_harness.intake.blobs import IntakeSpool, UploadTooLarge
+
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        check_admin_rate_limit(request.client.host if request.client else "unknown")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    try:
+        upload = upload_request(
+            request.query_params.get("name"),
+            request.headers.get("content-type"),
+            request.headers.get("content-length"),
+        )
+    except UploadRejected as exc:
+        return _json({"error": str(exc)}, exc.status)
+
+    runtime = get_runtime()
+    with IntakeSpool() as spool:
+        try:
+            async for chunk in request.stream():
+                if chunk:
+                    spool.write(chunk)
+            pointer = await asyncio.to_thread(store_spool, spool, upload, tenant_id=auth.tenant_id)
+        except UploadTooLarge as exc:
+            return _json({"error": str(exc)}, 413)
+        except UploadRejected as exc:
+            return _json({"error": str(exc)}, exc.status)
+        except Exception as exc:  # noqa: BLE001 - storage misconfiguration or outage
+            log_event("intake_upload_failed", tenant_id=auth.tenant_id, error=str(exc))
+            return _json({"error": "the file could not be stored"}, 503)
+    log_event("intake_upload", tenant_id=auth.tenant_id, size=pointer["size"], mime=pointer["mime"])
+    runtime.metrics.inc("intake_upload")
+    return _json({"pointer": pointer})
 
 
 # ── POST /cron/trigger ────────────────────────────────────────────────────────
@@ -4049,6 +4104,7 @@ routes = [
     Route("/workflow/cancel", endpoint=workflow_cancel, methods=["POST"]),
     # Session
     Route("/session/message", endpoint=session_message, methods=["POST"]),
+    Route("/intake/uploads", endpoint=intake_upload, methods=["POST"]),
     # Scheduler / cron
     Route("/cron/trigger", endpoint=cron_trigger, methods=["POST"]),
     # Sandbox
@@ -4458,6 +4514,7 @@ app = Starlette(
             ),
         ),
         Middleware(_AdminGuardMiddleware),
+        Middleware(_BodyLimitMiddleware),
         Middleware(_TraceMiddleware),
     ],
 )

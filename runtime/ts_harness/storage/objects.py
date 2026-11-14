@@ -9,11 +9,12 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from ts_harness.storage.backend import StorageConfigError, object_backend
 
@@ -83,6 +84,18 @@ class ObjectStore(ABC):
     @abstractmethod
     def head(self, key: str) -> ObjectInfo | None: ...
 
+    def put_file(
+        self, key: str, fileobj: BinaryIO, *, size: int, sha256: str, content_type: str | None = None
+    ) -> ObjectInfo:
+        """Store ``fileobj`` (read from its current position) whose sha256 the caller already computed.
+
+        Backends override this to stream; the default reads the whole body.
+        """
+        data = fileobj.read()
+        if len(data) != size or sha256_hex(data) != sha256:
+            raise ChecksumMismatch(f"{key}: body does not match the declared size or sha256")
+        return self.put(key, data)
+
     def delete_prefix(self, prefix: str) -> int:
         check_prefix(prefix)
         if not prefix:
@@ -125,6 +138,18 @@ class LocalObjectStore(ObjectStore):
         self._write(self._meta(key), sha.encode())
         self._write(self._path(key), data)
         return ObjectInfo(key, len(data), sha)
+
+    def put_file(
+        self, key: str, fileobj: BinaryIO, *, size: int, sha256: str, content_type: str | None = None
+    ) -> ObjectInfo:
+        path = self._path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=str(path.parent), prefix=".obj-", delete=False) as handle:
+            shutil.copyfileobj(fileobj, handle, 1024 * 1024)
+            tmp = Path(handle.name)
+        self._write(self._meta(key), sha256.encode())
+        tmp.replace(path)
+        return ObjectInfo(key, size, sha256)
 
     def copy(self, source: str, dest: str) -> ObjectInfo:
         return self.put(dest, self.get(source))
@@ -187,6 +212,16 @@ class S3ObjectStore(ObjectStore):
         sha = sha256_hex(data)
         self.client.put_object(Bucket=self.bucket, Key=check_key(key), Body=data, Metadata={SHA_METADATA_KEY: sha})
         return ObjectInfo(key, len(data), sha)
+
+    def put_file(
+        self, key: str, fileobj: BinaryIO, *, size: int, sha256: str, content_type: str | None = None
+    ) -> ObjectInfo:
+        # Managed transfer: multipart above 8 MB, so the body is never held whole in memory.
+        extra: dict[str, Any] = {"Metadata": {SHA_METADATA_KEY: sha256}}
+        if content_type:
+            extra["ContentType"] = content_type
+        self.client.upload_fileobj(fileobj, self.bucket, check_key(key), ExtraArgs=extra)
+        return ObjectInfo(key, size, sha256)
 
     def copy(self, source: str, dest: str) -> ObjectInfo:
         info = self.head(source)
@@ -269,6 +304,14 @@ class GcsObjectStore(ObjectStore):
         blob.upload_from_string(data)
         return ObjectInfo(key, len(data), sha)
 
+    def put_file(
+        self, key: str, fileobj: BinaryIO, *, size: int, sha256: str, content_type: str | None = None
+    ) -> ObjectInfo:
+        blob = self.bucket.blob(check_key(key))
+        blob.metadata = {SHA_METADATA_KEY: sha256}
+        blob.upload_from_file(fileobj, size=size, content_type=content_type)
+        return ObjectInfo(key, size, sha256)
+
     def copy(self, source: str, dest: str) -> ObjectInfo:
         bucket = self.bucket
         blob = bucket.get_blob(check_key(source))
@@ -296,12 +339,16 @@ class GcsObjectStore(ObjectStore):
         return ObjectInfo(key, int(blob.size or 0), (blob.metadata or {}).get(SHA_METADATA_KEY))
 
 
-_BUCKET_ENV = {"skills": "TS_HARNESS_SKILLS_BUCKET", "workspaces": "TS_HARNESS_WORKSPACE_BUCKET"}
+_BUCKET_ENV = {
+    "skills": "TS_HARNESS_SKILLS_BUCKET",
+    "workspaces": "TS_HARNESS_WORKSPACE_BUCKET",
+    "intake": "TS_HARNESS_INTAKE_BUCKET",
+}
 _STORES: dict[tuple[str, str, str], ObjectStore] = {}
 
 
 def object_store(kind: str) -> ObjectStore:
-    """The store for ``skills`` or ``workspaces`` under the configured backend."""
+    """The store for ``skills``, ``workspaces`` or ``intake`` under the configured backend."""
     if kind not in _BUCKET_ENV:
         raise ValueError(f"unknown object store kind: {kind}")
     backend = object_backend()

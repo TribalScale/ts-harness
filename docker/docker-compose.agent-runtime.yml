@@ -60,6 +60,8 @@ services:
       TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
       TS_HARNESS_SKILLS_BUCKET: ${TS_HARNESS_SKILLS_BUCKET:-}
       TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
+      # Chat attachments (docs/runbooks/intake-sources.md). Shared with workflow-runner.
+      TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
       TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
@@ -88,6 +90,8 @@ services:
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
       - ts-harness-state:/state
+      # Local-backend intake uploads; workflow-runner reads the same volume at gather.
+      - ts-harness-intake-objects:/var/lib/ts-harness/objects/intake
       - ts-harness-workflow-definitions:/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
     depends_on:
       - sandbox-worker
@@ -155,6 +159,8 @@ services:
       TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
       TS_HARNESS_SKILLS_BUCKET: ${TS_HARNESS_SKILLS_BUCKET:-}
       TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
+      # Chat attachments (docs/runbooks/intake-sources.md). Shared with workflow-runner.
+      TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
       TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       SANDBOX_STRICT: "true"
@@ -181,6 +187,8 @@ services:
       - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/workspace:/workspace:rw
       - ${TS_HARNESS_TOOLS_ROOT_HOST:?set TS_HARNESS_TOOLS_ROOT_HOST}:/tools:ro
       - ts-harness-state:/state
+      # Local-backend intake uploads; workflow-runner reads the same volume at gather.
+      - ts-harness-intake-objects:/var/lib/ts-harness/objects/intake
       - ts-harness-workflow-definitions:/workflow-definitions:${TS_HARNESS_STATE_VOLUME_MODE:-rw}
     depends_on:
       - sandbox-worker
@@ -194,5 +202,6 @@ services:
 
 volumes:
   ts-harness-state:
+  ts-harness-intake-objects:
   ts-harness-workflow-definitions:
   ts-harness-skills-managed:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 import unittest
@@ -62,6 +63,15 @@ class _Contract:
         self.store.delete("skills/x/1/SKILL.md")
         self.assertEqual([i.key for i in self.store.list("skills/x/")], [])
 
+    def test_put_file_streams_and_round_trips(self):
+        data = b"intake bytes" * 1000
+        info = self.store.put_file(
+            "intake/t1/ab/obj", io.BytesIO(data), size=len(data), sha256=sha256_hex(data), content_type="text/plain"
+        )
+        self.assertEqual((info.size, info.sha256), (len(data), sha256_hex(data)))
+        self.assertEqual(self.store.get("intake/t1/ab/obj", expected_sha256=sha256_hex(data)), data)
+        self.assertEqual(self.store.head("intake/t1/ab/obj").sha256, sha256_hex(data))
+
     def test_checksum_mismatch_is_refused(self):
         self.store.put("skills/a/SKILL.md", b"good")
         with self.assertRaises(ChecksumMismatch):
@@ -111,6 +121,13 @@ class S3ObjectStoreTests(_Contract, unittest.TestCase):
         self.assertIn("delete_objects", self.fake.calls)
         self.assertNotIn("delete_object", self.fake.calls)
 
+    def test_put_file_uses_the_managed_upload(self):
+        self.store.put_file("intake/t/x", io.BytesIO(b"abc"), size=3, sha256=sha256_hex(b"abc"), content_type="text/plain")
+        self.assertIn("upload_fileobj", self.fake.calls)
+        self.assertNotIn("put_object", self.fake.calls)
+        self.assertEqual(self.fake.objects[("bucket", "intake/t/x")][1], {"sha256": sha256_hex(b"abc")})
+        self.assertEqual(self.fake.content_types[("bucket", "intake/t/x")], "text/plain")
+
     def test_metadata_carries_the_sha(self):
         self.store.put("skills/a/SKILL.md", b"v")
         self.assertEqual(self.fake.objects[("bucket", "skills/a/SKILL.md")][1], {"sha256": sha256_hex(b"v")})
@@ -146,6 +163,14 @@ class FactoryTests(unittest.TestCase):
                 objects.object_store("workspaces")
         with self.assertRaises(ValueError):
             objects.object_store("logs")
+
+    def test_intake_kind_reads_its_own_bucket(self):
+        with mock.patch.dict(os.environ, {"TS_HARNESS_OBJECT_BACKEND": "s3", "TS_HARNESS_INTAKE_BUCKET": "intake-b"}):
+            self.assertEqual(objects.object_store("intake").bucket, "intake-b")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ, {"TS_HARNESS_OBJECT_BACKEND": "local", "TS_HARNESS_LOCAL_OBJECT_DIR": tmp}
+        ):
+            self.assertEqual(objects.object_store("intake").root, Path(tmp) / "intake")
 
     def test_gcs_backend(self):
         with mock.patch.dict(os.environ, {"TS_HARNESS_OBJECT_BACKEND": "gcs", "TS_HARNESS_WORKSPACE_BUCKET": "w"}):

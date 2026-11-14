@@ -169,6 +169,7 @@ def resolve_token(
         "workflow.bug_report",
         "workflow.project_repositories",
         "workflow.knowledge_notes",
+        "workflow.intake_sources",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):
