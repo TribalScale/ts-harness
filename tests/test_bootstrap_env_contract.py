@@ -12,6 +12,21 @@ PHASE_15 = REPO_ROOT / "scripts" / "phases" / "15-automation-cron.sh"
 
 
 class BootstrapEnvContractTests(unittest.TestCase):
+    def test_every_model_key_the_runtime_reads_reaches_compose(self):
+        """A key compose substitutes from the shell must be forwarded by phase 12 and the compose wrapper."""
+        import re
+
+        compose = (REPO_ROOT / "docker" / "docker-compose.agent-runtime.yml").read_text()
+        keys = sorted(set(re.findall(r"\$\{((?:OPENAI|ANTHROPIC)_API_KEY):-\}", compose)))
+        self.assertEqual(keys, ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
+        common = COMMON.read_text()
+        wrapper = common[common.index("run_docker_compose_as_admin()"):]
+        phase = PHASE_12.read_text()
+        for key in keys:
+            with self.subTest(key=key):
+                self.assertIn(f'{key}="${{{key}:-}}"', wrapper)
+                self.assertIn(f'echo "export {key}=', phase)
+
     def test_env_defaults_file_exists(self):
         path = REPO_ROOT / "scripts" / "phases" / "lib" / "env-defaults.sh"
         self.assertTrue(path.is_file())

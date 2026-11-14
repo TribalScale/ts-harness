@@ -732,6 +732,7 @@ run_docker_compose_as_admin() {
             EMBEDDINGS_MODEL="${EMBEDDINGS_MODEL:-text-embedding-3-small}" \
             EMBEDDINGS_DIMENSIONS="${EMBEDDINGS_DIMENSIONS:-1536}" \
             OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+            ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
             VOYAGE_API_KEY="${VOYAGE_API_KEY:-}" \
             GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
             MISTRAL_API_KEY="${MISTRAL_API_KEY:-}" \
