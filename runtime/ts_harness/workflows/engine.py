@@ -1130,6 +1130,8 @@ def _qa_feedback_text(
     review_feedback = str(output.get("review_feedback") or "").strip()
     if review_feedback:
         return review_feedback
+    if str(output.get("checks_state") or "") == "failure":
+        return _failed_checks_feedback(output)
     parts: list[str] = []
     result = output.get("result") if isinstance(output.get("result"), dict) else {}
     summary = str(result.get("summary") or output.get("summary") or "").strip()
@@ -1148,6 +1150,17 @@ def _qa_feedback_text(
     if parts:
         return "\n".join(parts)
     return str(error or "").strip()
+
+
+def _failed_checks_feedback(output: dict[str, Any]) -> str:
+    """What OpenCode needs to fix failing CI: which checks failed and how each job's log ends."""
+    failed = [str(item) for item in output.get("failed_checks") or [] if item]
+    lines = ["The PR's CI checks failed: " + (", ".join(failed) or "see the PR checks") + "."]
+    lines.append("Fix the cause so these checks pass in CI, not only locally; CI may use a different environment.")
+    logs = output.get("failed_check_logs") if isinstance(output.get("failed_check_logs"), dict) else {}
+    for name, tail in logs.items():
+        lines.append(f"\nEnd of the log for {name}:\n{str(tail)[-4000:]}")
+    return "\n".join(lines)
 
 
 def get_workflow_engine() -> WorkflowEngine:

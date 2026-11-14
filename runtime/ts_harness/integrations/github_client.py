@@ -101,6 +101,29 @@ def _urllib_transport(method: str, url: str, headers: dict[str, str], body: byte
         return exc.code, detail or b"", response_headers
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401 - urllib hook
+        return None
+
+
+def _download_job_log(url: str, headers: dict[str, str]) -> bytes:
+    """Ask GitHub for the log, then fetch the signed URL it redirects to without the token."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=20) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location") if exc.code in {301, 302, 303, 307, 308} else None
+        if not location:
+            raise
+    with urllib.request.urlopen(urllib.request.Request(location, headers={"User-Agent": USER_AGENT}), timeout=30) as resp:
+        return resp.read()[-200_000:]
+
+
 def _record_rate_limit(host: str, headers: dict[str, str]) -> None:
     remaining = headers.get("x-ratelimit-remaining")
     if remaining is None:
@@ -316,6 +339,50 @@ class GitHubClient:
                 for job in (listing or {}).get("jobs") or []
             )
         return jobs
+
+    def job_log_tail(self, owner: str, repo: str, job_id: int | str, *, max_lines: int = 80) -> str:
+        """The last lines of a GitHub Actions job log, without colour codes or timestamps.
+
+        The API answers with a redirect to a signed download URL, which must be fetched
+        without the GitHub token. Returns "" when the log is unavailable.
+        """
+        path = f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        headers = {
+            "Authorization": f"Bearer {self._token_for(path)}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": USER_AGENT,
+        }
+        try:
+            raw = _download_job_log(f"{self.api_base}{path}", headers)
+        except Exception:  # noqa: BLE001 - feedback is best effort
+            return ""
+        lines = []
+        for line in raw.decode(errors="replace").splitlines():
+            line = _ANSI_RE.sub("", line)
+            line = _LOG_TIMESTAMP_RE.sub("", line).rstrip()
+            if line.strip():
+                lines.append(line)
+        return "\n".join(lines[-max_lines:])
+
+    def failed_check_logs(self, owner: str, repo: str, ref: str, names: list[str]) -> dict[str, str]:
+        """Log tails of the failed GitHub Actions jobs among ``names`` on ``ref``."""
+        wanted = {name for name in names if name}
+        logs: dict[str, str] = {}
+        try:
+            runs = self.check_runs(owner, repo, ref)
+        except GitHubError:
+            return logs
+        for run in runs:
+            name = str(run.get("name") or "")
+            if name not in wanted or name in logs or run.get("conclusion") not in {"failure", "timed_out"}:
+                continue
+            if not run.get("id"):
+                continue
+            tail = self.job_log_tail(owner, repo, run["id"])
+            if tail:
+                logs[name] = tail
+        return logs
 
     def create_status(
         self,

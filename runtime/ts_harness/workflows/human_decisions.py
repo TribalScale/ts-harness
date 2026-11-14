@@ -49,12 +49,27 @@ def decidable(task: dict[str, Any] | None) -> bool:
     return awaiting_human_decision(task) or _is_terminal_block(task)
 
 
+def _reruns_on_revise(stage: Any) -> bool:
+    """A coding stage with no revise loop of its own (``deliver_work_order``): revise re-runs it.
+
+    Its blocks are failed coding runs (OpenCode killed, crashed or left no PR), so the useful
+    choices are running it again with guidance, or stopping. Accepting it would accept no PR.
+    """
+    if stage is None or getattr(stage, "wait_external", None):
+        return False
+    on_block = dict(getattr(stage, "on_block", None) or {})
+    return on_block.get("hook") != "revise_on_reject" and getattr(stage, "agent_id", "") == "dev-agent"
+
+
 def available_decisions(stage: Any) -> list[str]:
     """Decisions that make sense for the stage; accepting an external wait would fake its event."""
     decisions: list[str] = []
     on_block = dict(getattr(stage, "on_block", None) or {})
-    if on_block.get("hook") == "revise_on_reject":
+    if on_block.get("hook") == "revise_on_reject" or _reruns_on_revise(stage):
         decisions.append("revise")
+    if _reruns_on_revise(stage):
+        decisions.append("stop")
+        return decisions
     if stage is not None and not getattr(stage, "wait_external", None):
         decisions.append("accept")
     decisions.append("stop")
@@ -197,6 +212,21 @@ def decide(
     output = task.get("output") if isinstance(task.get("output"), dict) else {}
     base = {"decision": action, "workflow_id": workflow_id, "task_id": str(task_id), "step_name": step, "work_order": label}
     who = display_actor(actor)
+
+    if action == "revise" and _reruns_on_revise(ctx.stage):
+        note = f"The previous run failed: {error}"[:2000]
+        if guidance.strip():
+            note += f"\n\nGuidance from {'an admin' if who == 'An admin' else who}:\n{guidance.strip()}"
+        engine.client.resume_blocked_task(
+            str(task_id),
+            actor=actor,
+            input_patch={"qa_feedback": note, HUMAN_DECISION_KEY: None},
+            reason=f"re-run by {actor}",
+        )
+        ctx.extras["channel_text"] = f"{who} asked to run {label} again; sending it back to OpenCode."
+        engine._maybe_notify(ctx, "blocked")
+        engine._sync_session(workflow_id, workflow_type, tenant_id, task=task)
+        return {**base, "status": "revising", "rerun": True}
 
     if action == "revise":
         feedback = _qa_feedback_text(task, {"output": output}, error)

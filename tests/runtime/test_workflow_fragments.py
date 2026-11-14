@@ -22,7 +22,7 @@ import workflow_fragments  # noqa: E402
 
 ROOT = repo_root()
 GOLDEN = ROOT / "tests" / "fixtures" / "golden"
-VERIFIED_MERGE_REVISION = "e20f03842264417eb7a1018f674852fa974dc8d00f19b0cdf2c5268b3d0223ab"
+VERIFIED_MERGE_REVISION = "75794c4ea20495af943cc52b0b5d9d654f711f33cc20447182face030b9cb810"
 CATALOGS = {
     "hook_names": {"hydrate_input", "revise_on_reject", "compensate_on_failure", "cancel_workflow"},
     "agent_ids": {"orchestrator", "dev-agent", "qa-agent", "review-agent"},
@@ -135,7 +135,7 @@ class ConvertedBuiltinTests(unittest.TestCase):
         for workflow_type in ("deliver_work_order", "implement_jira_ticket"):
             raw = json.loads((ROOT / "config" / "workflows" / f"{workflow_type}.json").read_text())
             include = next(stage for stage in raw["stages"] if stage.get("kind") == "fragment")
-            self.assertEqual((include["fragment"], include["version"]), ("verified_merge", "1.6.0"))
+            self.assertEqual((include["fragment"], include["version"]), ("verified_merge", "1.7.0"))
             self.assertNotIn("qa_gate", raw["contracts"])
 
     def test_builtin_fragment_revision_is_pinned(self):
