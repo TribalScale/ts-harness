@@ -52,6 +52,26 @@ class PollGithubMergesTests(unittest.TestCase):
         self.assertEqual(kwargs["payload"]["merge_sha"], "abc123")
         self.assertEqual(kwargs["actor"], "github-merge-poller")
 
+    def test_a_polled_merge_is_recorded_like_the_webhook(self):
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {
+            "waits": [{"workflow_id": "wf-1", "task_id": "t-wait", "match_pr_url": "https://github.com/org/app/pull/9"}]
+        }
+        engine = MagicMock()
+        engine.resume_external.return_value = {"status": "resumed", "task_id": "t-wait"}
+        pr = {"merged": True, "merge_commit_sha": "abc123", "state": "closed", "merged_by": {"login": "alice"}, "base": {"ref": "dev"}}
+        with (
+            patch.object(system_jobs, "get_memory_client", return_value=memory),
+            patch.object(system_jobs, "get_workflow_engine", return_value=engine),
+            patch.object(system_jobs, "fetch_pull_request", MagicMock(return_value=pr)),
+            patch("ts_harness.workflows.merge_readiness.on_merge") as on_merge,
+            patch.dict("os.environ", {"GITHUB_TOKEN": "token"}, clear=False),
+        ):
+            system_jobs.poll_github_merges(force=True)
+        event = on_merge.call_args.args[0]
+        self.assertEqual(event, {"pr_url": "https://github.com/org/app/pull/9", "base_branch": "dev",
+                                 "merged_by": "alice", "merge_sha": "abc123"})
+
     def test_skips_open_pr(self):
         memory = MagicMock()
         memory.find_external_waits.return_value = {

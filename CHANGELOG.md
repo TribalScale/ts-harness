@@ -232,6 +232,12 @@ First public release.
 
 ### Fixed
 
+- On hosts without GitHub webhooks a merged PR stayed `open` in the program's references:
+  the merge poller resumed the wait but never recorded the merge. It now records it the
+  same way as the webhook.
+- A program waiting on child workflows (release tracks, wave work orders) said only that
+  it was waiting for `workflow.child_terminal`. Program status now lists each running
+  child's current step and what it waits for, and recommends the pending approval.
 - A program chat resent every earlier turn in full, including whole PRD drafts and work
   orders, so a one-line question cost over 150,000 input tokens. Assistant and tool
   messages longer than 3,000 characters from earlier turns are cut to their first 1,500.

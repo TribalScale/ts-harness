@@ -194,16 +194,21 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
                 pr_url,
             )
             try:
-                from ts_harness.workflows.merge_readiness import fan_out_base_advanced
+                # The same as the merge webhook: mark the program's PR merged (it stayed "open"
+                # on hosts without webhooks) and refresh sibling PRs on the same base.
+                from ts_harness.workflows.merge_readiness import on_merge
 
-                fan_out_base_advanced(
-                    {"pr_url": pr_url, "base_branch": str((pr.get("base") or {}).get("ref") or "")},
+                on_merge(
+                    {
+                        "pr_url": pr_url,
+                        "base_branch": str((pr.get("base") or {}).get("ref") or ""),
+                        "merged_by": str((pr.get("merged_by") or {}).get("login") or ""),
+                        "merge_sha": merge_sha,
+                    },
                     tenant_id=tenant_id,
-                    memory=memory,
-                    engine=engine,
                 )
-            except Exception as exc:  # noqa: BLE001 - fan-out is best effort
-                logger.warning("github_merge_poller base_advanced fan-out failed pr_url=%s error=%s", pr_url, exc)
+            except Exception as exc:  # noqa: BLE001 - recording the merge is best effort
+                logger.warning("github_merge_poller merge record failed pr_url=%s error=%s", pr_url, exc)
         except Exception as exc:  # noqa: BLE001
             errors += 1
             logger.warning(

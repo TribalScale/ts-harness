@@ -3865,6 +3865,7 @@ def get_delivery_program_status(
     # The runtime derives waiting_on, active_step and the rest from these.
     active_workflow: dict[str, Any] | None = None
     active_tasks: list[dict[str, Any]] = []
+    active_child_tasks: list[dict[str, Any]] = []
     if active_workflow_id:
         member = next((wf for wf in workflows if str(wf.get("id")) == active_workflow_id), None)
         active_workflow = dict(member or {})
@@ -3879,6 +3880,27 @@ def get_delivery_program_status(
                 (active_workflow_id,),
             )
             active_tasks = list(cur.fetchall())
+            # Steps of running child workflows (release tracks, wave work orders): a parent
+            # waiting on its children only says "child_terminal", not what they wait for.
+            cur.execute(
+                """
+                WITH RECURSIVE kids AS (
+                    SELECT id FROM workflows WHERE parent_workflow_id = %s
+                    UNION ALL
+                    SELECT w.id FROM workflows w JOIN kids k ON w.parent_workflow_id = k.id
+                )
+                SELECT t.workflow_id, w.workflow_type, t.step_name, t.status, t.approval_required,
+                       t.error, t.created_at
+                FROM workflow_tasks t
+                JOIN kids k ON k.id = t.workflow_id
+                JOIN workflows w ON w.id = t.workflow_id
+                WHERE w.status = 'running'
+                ORDER BY t.created_at
+                LIMIT 500
+                """,
+                (active_workflow_id,),
+            )
+            active_child_tasks = list(cur.fetchall())
     resolved_workflow_versions = _parse_json_object(program.get("resolved_workflow_versions")) or {}
     for phase_id, phase_info in phases.items():
         pin = resolved_workflow_versions.get(phase_id)
@@ -3945,6 +3967,7 @@ def get_delivery_program_status(
         "artifacts": artifacts,
         "active_workflow": active_workflow,
         "active_tasks": active_tasks,
+        "active_child_tasks": active_child_tasks,
     }
 
 

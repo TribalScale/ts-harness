@@ -160,3 +160,28 @@ class CompensateOnFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChildStepsTests(unittest.TestCase):
+    def test_a_parent_waiting_on_children_names_the_pending_approval(self):
+        from ts_harness.workflows.operability import with_operability
+
+        raw = {
+            "active_workflow_id": "wf-release",
+            "artifacts": {},
+            "active_workflow": {"definition_version": "3.0.0", "status": "running"},
+            "active_tasks": [
+                {"id": "t1", "step_name": "plan_release_tracks", "status": "succeeded"},
+                {"id": "t2", "step_name": "join_tracks", "status": "blocked", "error": "awaiting_external:workflow.child_terminal"},
+            ],
+            "active_child_tasks": [
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "await_ci_on_sha", "status": "succeeded"},
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "approve_promote_staging", "status": "pending", "approval_required": True},
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "trigger_deploy_staging", "status": "pending"},
+            ],
+        }
+        status = with_operability(raw)
+        self.assertEqual(status["waiting_on"]["children"],
+                         [{"workflow_id": "c1", "workflow_type": "release_track", "step": "approve_promote_staging", "waiting_for": "approval"}])
+        self.assertEqual(status["recommended_action"], "approve_promote_staging")
+        self.assertNotIn("active_child_tasks", status)

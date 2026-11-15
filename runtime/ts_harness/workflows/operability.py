@@ -236,13 +236,55 @@ def build_operability_status(
 _CHILD_KEYS = ("waiting_on", "last_error", "active_step")
 
 
+_SETTLED = {"succeeded", "cancelled", "skipped", "superseded"}
+
+
+def child_steps(child_tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each running child workflow's current step and what it waits for."""
+    current: dict[str, dict[str, Any]] = {}
+    for task in child_tasks:
+        workflow_id = str(task.get("workflow_id") or "")
+        if workflow_id in current or str(task.get("status") or "") in _SETTLED:
+            continue
+        status = str(task.get("status") or "")
+        error = str(task.get("error") or "")
+        if status == "pending" and task.get("approval_required"):
+            waiting_for = "approval"
+        elif error.startswith("awaiting_external:"):
+            waiting_for = error.split(":", 1)[1].split()[0]
+        elif status == "blocked":
+            waiting_for = "decision"
+        else:
+            waiting_for = status
+        current[workflow_id] = {
+            "workflow_id": workflow_id,
+            "workflow_type": task.get("workflow_type"),
+            "step": task.get("step_name"),
+            "waiting_for": waiting_for,
+        }
+    return list(current.values())
+
+
 def _from_raw(status: dict[str, Any]) -> dict[str, Any]:
     tasks = status.pop("active_tasks", None)
     workflow = status.pop("active_workflow", None)
+    child_tasks = status.pop("active_child_tasks", None)
     if not status.get("active_workflow_id") or (tasks is None and workflow is None):
         return {}
     artifacts = status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
-    return build_operability_status(workflow=dict(workflow or {}), tasks=list(tasks or []), artifacts=artifacts)
+    derived = build_operability_status(workflow=dict(workflow or {}), tasks=list(tasks or []), artifacts=artifacts)
+    waiting_on = derived.get("waiting_on") if isinstance(derived.get("waiting_on"), dict) else {}
+    if waiting_on.get("event_type") == "workflow.child_terminal" and child_tasks:
+        steps = child_steps(list(child_tasks))
+        waiting_on = {**waiting_on, "children": steps}
+        derived["waiting_on"] = waiting_on
+        approvals = [step for step in steps if step["waiting_for"] == "approval"]
+        if approvals:
+            step = str(approvals[0]["step"] or "")
+            derived["recommended_action"] = step if step.startswith("approve") else f"approve_{step}"
+        elif any(step["waiting_for"] == "decision" for step in steps):
+            derived["recommended_action"] = "decide_blocked_child_step"
+    return derived
 
 
 def with_operability(status: dict[str, Any] | None) -> dict[str, Any]:
