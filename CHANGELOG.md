@@ -247,7 +247,8 @@ First public release.
 - `program_status` returned every program artifact in full (about 125,000 characters for
   a delivered program), so a status question in chat cost tens of thousands of tokens.
   Long artifacts now come back as their size and headings; `include_artifacts` asks for
-  named ones in full.
+  named ones in full. `workflow_status` (160,000 characters for one implement workflow)
+  summarises task inputs and outputs the same way; `full: true` returns them whole.
 - Restarting agent-runtime (`restart_agent_runtime`, used by `sync-runtime-config.sh`)
   left memory-api unreachable: memory-api, workflow-runner, llm-proxy and coding-launcher
   run in agent-runtime's network namespace and lost it. They now restart right after it.

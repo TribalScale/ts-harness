@@ -442,10 +442,13 @@ def register_core_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             name="workflow_status",
-            description="Return workflow task status from memory-api",
+            description=(
+                "Return workflow task status from memory-api. Long task inputs and outputs come "
+                "back as their size; pass full: true only when you need them whole."
+            ),
             parameters={
                 "type": "object",
-                "properties": {"workflow_id": {"type": "string"}},
+                "properties": {"workflow_id": {"type": "string"}, "full": {"type": "boolean"}},
             },
             handler=lambda args, ctx: workflow_status_handler(args, ctx),
             toolsets=["workflow-promotion", "channel-chat"],

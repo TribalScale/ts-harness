@@ -412,7 +412,31 @@ def workflow_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
     if not workflow_id:
         return {"error": "workflow_id required"}
-    return get_workflow_engine().get_status(workflow_id)
+    status = get_workflow_engine().get_status(workflow_id)
+    if isinstance(status, dict) and isinstance(status.get("tasks"), list) and not args.get("full"):
+        status = {**status, "tasks": [_task_overview(task) for task in status["tasks"]]}
+    return status
+
+
+TASK_FIELD_MAX = 600
+
+
+def _task_overview(task: Any) -> Any:
+    """A task for a chat turn: its step, status and short fields; long inputs and outputs summarised.
+
+    Task inputs and outputs carry whole planning documents, so a workflow's status ran to
+    160,000 characters. ``full: true`` returns everything.
+    """
+    if not isinstance(task, dict):
+        return task
+    overview: dict[str, Any] = {}
+    for key, value in task.items():
+        if key in {"input", "output", "contract"} and isinstance(value, dict):
+            overview[key] = _artifact_overview(value, include=[])
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        overview[key] = value if len(text) <= TASK_FIELD_MAX else {"omitted_chars": len(text)}
+    return overview
 
 
 def workflow_approve_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

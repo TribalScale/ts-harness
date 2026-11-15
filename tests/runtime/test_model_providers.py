@@ -496,3 +496,18 @@ class ChatHistoryCompactionTests(unittest.TestCase):
         self.assertLess(len(once[1]["content"]), 1800)
         self.assertIn("program_status include_artifacts", once[2]["content"])
         self.assertEqual(once[3], history[3])
+
+
+class WorkflowStatusTaskTests(unittest.TestCase):
+    def test_task_inputs_and_outputs_are_summarised(self):
+        from ts_harness.tools.workflow_tools import _task_overview
+
+        task = {"id": "t", "step_name": "deliver_wave", "status": "succeeded", "error": None,
+                "input": {"work_order_id": "WO-1", "planner_artifacts": {"work_orders_markdown": "# WO\n" + "x" * 9000}},
+                "output": {"pr_url": "https://github.com/o/r/pull/1"}, "notes": "y" * 2000}
+        overview = _task_overview(task)
+        self.assertEqual(overview["step_name"], "deliver_wave")
+        self.assertEqual(overview["input"]["work_order_id"], "WO-1")
+        self.assertEqual(overview["input"]["planner_artifacts"]["headings"], ["WO"])
+        self.assertEqual(overview["output"], task["output"])
+        self.assertEqual(overview["notes"], {"omitted_chars": 2000})
