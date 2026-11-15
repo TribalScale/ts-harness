@@ -253,6 +253,10 @@ First public release.
 
 ### Fixed
 
+- The host dependency audit blocks only on vulnerabilities a change introduces. It
+  compares the scan with the base branch (a temporary worktree) and reports the findings
+  the base already had as a count in the PR body. Before, any work order that touched a
+  lockfile failed on every known vulnerability already in the repo.
 - Work orders with Given/When/Then acceptance tests no longer demand Gherkin feature files
   in a repo that does not use them. A NestJS repo with Jest failed every such work order
   (`no_bdd_runner_or_features`) and the agent tried to add Cucumber.

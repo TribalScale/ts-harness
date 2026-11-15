@@ -363,3 +363,55 @@ class ReviewEvidenceTests(unittest.TestCase):
             evidence = verification_evidence(result)
             self.assertEqual([c["check"] for c in evidence["checks"]], ["unit", "typecheck"])
             self.assertEqual(evidence["result"], "passed")
+
+
+class DependencyAuditBaselineTests(unittest.TestCase):
+    def test_only_vulnerabilities_the_change_adds_block(self):
+        from ts_harness.implementation.security_scan import audit_dependencies
+
+        def osv_payload(vulns):
+            return json.dumps(
+                {
+                    "results": [
+                        {
+                            "source": {"path": "pnpm-lock.yaml"},
+                            "packages": [
+                                {
+                                    "package": {"name": name, "version": version},
+                                    "vulnerabilities": [{"id": vid, "database_specific": {"severity": "HIGH"}}],
+                                }
+                                for name, version, vid in vulns
+                            ],
+                        }
+                    ]
+                }
+            )
+
+        old = ("lodash", "4.17.20", "GHSA-old")
+        new = ("terminus-dep", "1.0.0", "GHSA-new")
+        base_dirs: list[str] = []
+
+        def runner(command, cwd=None, **_kwargs):
+            if command[:3] == ["git", "worktree", "add"]:
+                base_dirs.append(command[4])
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:2] == ["git", "worktree"]:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            in_base = any(str(cwd).startswith(d) for d in base_dirs)
+            return subprocess.CompletedProcess(command, 1, osv_payload([old] if in_base else [old, new]), "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = audit_dependencies(
+                Path(tmp), ["pnpm-lock.yaml"], "high", runner, lambda _name: "/usr/bin/osv-scanner", base_ref="origin/dev"
+            )
+        self.assertEqual([item["id"] for item in audit.findings], ["GHSA-new"])
+        self.assertEqual(audit.preexisting, 1)
+
+    def test_without_a_base_every_finding_counts(self):
+        from ts_harness.implementation.security_scan import audit_dependencies
+
+        payload = json.dumps({"results": [{"packages": [{"package": {"name": "a", "version": "1"}, "vulnerabilities": [{"id": "X", "database_specific": {"severity": "CRITICAL"}}]}]}]})
+        runner = lambda command, **_k: subprocess.CompletedProcess(command, 1, payload, "")  # noqa: E731
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = audit_dependencies(Path(tmp), ["package.json"], "high", runner, lambda _n: "/usr/bin/osv-scanner")
+        self.assertEqual(len(audit.findings), 1)
