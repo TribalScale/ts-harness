@@ -6,6 +6,10 @@ repo's base branch as below before running governed delivery against it.
 
 ## Required status checks
 
+`scripts/repo-governance.py` reports what a base branch is missing and, with `--apply`, sets
+it (see [onboard-a-repo.md](onboard-a-repo.md#2-check-and-set-branch-protection)). It requires
+`harness/qa` as well; PRs people open by hand get `success` on the harness checks from the webhook.
+
 Protect the base branch (for example `dev` or `main`) with a ruleset or classic
 branch protection:
 

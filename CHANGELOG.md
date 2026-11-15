@@ -11,6 +11,13 @@ First public release.
 
 ### Added
 
+- Rolling out to team repos:
+  - `scripts/onboard-repo.py` drafts `.ts-harness.yml` from a repo's CI (compose startup scripts, env template, chained package scripts, Playwright). It starts an onboarding work order whose PR only opens once the declared suite passes in a coding job.
+  - `scripts/repo-governance.py` reports a base branch's protection, CI on pull requests and missing required checks, and `--apply` sets them.
+  - PRs people open by hand get `success` on required harness checks.
+- MariaDB (MySQL) and MongoDB in coding jobs, detected and wired like Postgres. Each database owns only its own directories.
+- Screenshots: the Playwright specs a change touched are rerun with screenshots. The images go to an evidence branch, a PR comment, and QA as image input; the branch is deleted on merge.
+- Monorepos (npm/yarn/pnpm workspaces, Turborepo): lint, type check, build and Playwright per changed package.
 - Frontend (React) repos:
   - The coding worker ships Chromium for Playwright.
   - A repo's Playwright suite runs in host verification and through `ts-harness-integration`.
