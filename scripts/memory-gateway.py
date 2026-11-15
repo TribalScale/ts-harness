@@ -2101,6 +2101,12 @@ def clear_task_wait_state(conn, body: dict[str, Any]) -> dict[str, str]:
 
 
 def cancel_workflow_bulk(conn, workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Cancel a workflow and every running or blocked workflow below it, with their tasks and coding jobs.
+
+    Children hang off ``parent_workflow_id`` at any depth (a release workflow's tracks, a
+    wave's work orders). Cancelling only the named workflow left them running: a cancelled
+    program's release track still waited for its promote approval in the Inbox.
+    """
     parsed_id = parse_uuid(workflow_id)
     actor = str(body.get("actor", "orchestrator"))
     reason = str(body.get("reason") or "cancelled")
@@ -2108,41 +2114,58 @@ def cancel_workflow_bulk(conn, workflow_id: str, body: dict[str, Any]) -> dict[s
     with conn.cursor() as cur:
         cur.execute(
             """
+            WITH RECURSIVE tree AS (
+                SELECT id FROM workflows WHERE parent_workflow_id = %s
+                UNION
+                SELECT w.id FROM workflows w JOIN tree t ON w.parent_workflow_id = t.id
+            )
+            SELECT w.id FROM workflows w JOIN tree t ON t.id = w.id
+            WHERE w.status IN ('running', 'blocked')
+            """,
+            (parsed_id,),
+        )
+        descendants = [str(row.get("id")) for row in cur.fetchall()]
+        targets = [parsed_id, *descendants]
+        cur.execute(
+            """
             UPDATE workflow_tasks
             SET status = 'cancelled',
                 error = %s,
                 completed_at = now()
-            WHERE workflow_id = %s
+            WHERE workflow_id = ANY(%s::uuid[])
               AND status IN ('pending', 'running', 'blocked')
             """,
-            (reason, parsed_id),
+            (reason, targets),
         )
         cur.execute(
             """
             UPDATE workflows
             SET status = 'cancelled',
                 cancellation_reason = %s
-            WHERE id = %s
+            WHERE id = ANY(%s::uuid[])
             """,
-            (reason, parsed_id),
+            (reason, targets),
         )
         cur.execute(
             """
             UPDATE coding_jobs
             SET status = 'cancelled', error = %s, finished_at = now()
-            WHERE workflow_id = %s AND status IN ('queued', 'starting', 'running')
+            WHERE workflow_id = ANY(%s::uuid[]) AND status IN ('queued', 'starting', 'running')
             """,
-            (reason, parsed_id),
+            (reason, targets),
         )
-        audit_workflow_event(
-            cur,
-            "workflow_cancelled",
-            f"Workflow cancelled: {reason}",
-            {"workflow_id": parsed_id, "reason": reason},
-            actor,
-        )
+        for target in targets:
+            audit_workflow_event(
+                cur,
+                "workflow_cancelled",
+                f"Workflow cancelled: {reason}",
+                {"workflow_id": target, "reason": reason,
+                 "cascaded_from": None if target == parsed_id else parsed_id},
+                actor,
+            )
     conn.commit()
-    return {"workflow_id": parsed_id, "status": "cancelled", "reason": reason}
+    return {"workflow_id": parsed_id, "status": "cancelled", "reason": reason,
+            "cancelled_descendants": descendants}
 
 
 def complete_workflow_record(conn, workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
