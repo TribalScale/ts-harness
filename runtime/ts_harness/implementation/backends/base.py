@@ -78,6 +78,8 @@ class CodingResult:
     refresh_method: str | None = None
     resolved_files: list[str] = field(default_factory=list)
     security: dict[str, Any] = field(default_factory=dict)
+    # Token usage per OpenCode session and model, for a coding worker to report with its result.
+    usage: list[dict[str, Any]] = field(default_factory=list)
 
 
 def security_markdown(security: dict[str, Any]) -> str:

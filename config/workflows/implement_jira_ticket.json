@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "1.6.0",
+  "definition_version": "1.7.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -93,6 +93,7 @@
       "name": "deliver_work_order",
       "kind": "task",
       "agent_id": "dev-agent",
+      "execution": "coding_job",
       "depends_on": [
         "hydrate_ticket"
       ],

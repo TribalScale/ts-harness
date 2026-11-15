@@ -337,7 +337,8 @@ _RUN_SLOTS: threading.BoundedSemaphore | None = None
 
 
 def _run_slots() -> threading.BoundedSemaphore:
-    """OpenCode runs allowed at once in this process (``CODING_INPROCESS_MAX_RUNNING``, default 1).
+    """OpenCode runs allowed at once in this process (``CODING_INPROCESS_MAX_RUNNING``; by default
+    as many as the host's memory fits, up to 3).
 
     In-process runs share the runtime container's memory. Each OpenCode run with its test
     suite takes about 1 GB, so a wave of three work orders on a 4 GB host was killed by the
@@ -347,10 +348,17 @@ def _run_slots() -> threading.BoundedSemaphore:
     global _RUN_SLOTS
     with _RUN_SLOTS_LOCK:
         if _RUN_SLOTS is None:
-            try:
-                size = int(os.environ.get("CODING_INPROCESS_MAX_RUNNING") or 1)
-            except ValueError:
-                size = 1
+            configured = str(os.environ.get("CODING_INPROCESS_MAX_RUNNING") or "").strip()
+            if configured:
+                try:
+                    size = int(configured)
+                except ValueError:
+                    size = 1
+            else:
+                # Fit the host: same rule as the local launcher, at about 1.5 GB per run.
+                from ts_harness.coding.launcher import local_worker_limit
+
+                size = local_worker_limit(3, "1.5g")
             _RUN_SLOTS = threading.BoundedSemaphore(max(1, size))
         return _RUN_SLOTS
 
@@ -386,6 +394,7 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "head_sha": result.head_sha,
         "refresh_method": result.refresh_method,
         "resolved_files": result.resolved_files,
+        "usage": list(getattr(result, "usage", None) or []),
         "security": result.security,
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",

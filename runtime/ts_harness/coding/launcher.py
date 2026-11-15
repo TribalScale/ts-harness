@@ -95,6 +95,50 @@ def _log(event: str, **fields: Any) -> None:
     print(json.dumps({"event": event, **fields}, default=str), flush=True)
 
 
+_UNITS = {"k": 1024, "m": 1024**2, "g": 1024**3}
+
+
+def parse_memory(value: str | int | float) -> int:
+    """``"2g"``, ``"1536m"`` or a byte count as bytes."""
+    text = str(value).strip().lower().removesuffix("b")
+    if text and text[-1] in _UNITS:
+        return int(float(text[:-1]) * _UNITS[text[-1]])
+    return int(float(text))
+
+
+def host_memory_bytes(meminfo: str = "/proc/meminfo") -> int | None:
+    try:
+        for line in Path(meminfo).read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def local_worker_limit(
+    configured: int,
+    per_worker: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    total_bytes: int | None = None,
+) -> int:
+    """How many coding runs fit on this host at once: never more than ``configured``, at least 1.
+
+    The platform (agent-runtime, memory-api, runner, database client) keeps
+    ``CODING_HOST_RESERVED_MEMORY`` (default 2.5 GB); the rest is shared by workers of
+    ``per_worker`` each. Three runs on a 4 GB host were killed by the kernel; this keeps
+    such a host at one while an 8 GB host runs two and a 16 GB host the configured three.
+    """
+    env = environ if environ is not None else os.environ
+    total = total_bytes if total_bytes is not None else host_memory_bytes()
+    if not total:
+        return max(1, configured)
+    reserved = parse_memory(str(env.get("CODING_HOST_RESERVED_MEMORY") or "2.5g"))
+    fits = int(max(0, total - reserved) // max(1, parse_memory(per_worker)))
+    return max(1, min(configured, fits))
+
+
 @dataclass
 class LocalDockerConfig:
     image: str = "ts-harness-coding-worker:latest"
@@ -102,7 +146,9 @@ class LocalDockerConfig:
     runtime_url: str = "http://127.0.0.1:18789"
     network: str = ""
     cpus: str = "2"
-    memory: str = "4g"
+    # An OpenCode run with a JavaScript test suite peaks around 1 GB; 2 GB leaves headroom
+    # and lets a 4 GB host run one worker beside the platform, an 8 GB host two.
+    memory: str = "2g"
     pids_limit: int = 2048
     config_host_path: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)

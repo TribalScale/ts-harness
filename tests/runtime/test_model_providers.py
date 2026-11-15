@@ -397,7 +397,7 @@ class CodingRunSlotsTests(unittest.TestCase):
                     running[0] -= 1
                 return SimpleNamespace(branch="b", pr_url=None)
 
-        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": ""}), \
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": "1"}), \
              patch.object(coding_job, "_backend_from_config", return_value=Backend()), \
              patch.object(coding_job, "coding_request_from_spec", return_value=None), \
              patch.object(coding_job, "_result_dict", create=True):
@@ -407,6 +407,16 @@ class CodingRunSlotsTests(unittest.TestCase):
             for thread in threads:
                 thread.join()
         self.assertEqual(peak[0], 1)
+
+    def test_unset_fits_the_host(self):
+        from ts_harness.implementation import coding_job
+
+        coding_job._RUN_SLOTS = None
+        self.addCleanup(setattr, coding_job, "_RUN_SLOTS", None)
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": ""}), \
+             patch("ts_harness.coding.launcher.host_memory_bytes", return_value=int(7.7 * 1024**3)):
+            slots = coding_job._run_slots()
+        self.assertEqual(slots._initial_value, 3)  # (7.7 - 2.5) GB / 1.5 GB, capped at 3
 
     @staticmethod
     def _run(coding_job):
@@ -511,3 +521,42 @@ class WorkflowStatusTaskTests(unittest.TestCase):
         self.assertEqual(overview["input"]["planner_artifacts"]["headings"], ["WO"])
         self.assertEqual(overview["output"], task["output"])
         self.assertEqual(overview["notes"], {"omitted_chars": 2000})
+
+
+class OpencodeIsolationTests(unittest.TestCase):
+    def test_each_workspace_gets_its_own_data_directory_outside_it(self):
+        import tempfile
+
+        from ts_harness.implementation.backends.opencode import opencode_data_env
+
+        a, b = tempfile.mkdtemp(), tempfile.mkdtemp()
+        env_a, env_b = opencode_data_env(a), opencode_data_env(b)
+        self.assertNotEqual(env_a["XDG_DATA_HOME"], env_b["XDG_DATA_HOME"])
+        self.assertEqual(env_a, opencode_data_env(a))
+        self.assertFalse(env_a["XDG_DATA_HOME"].startswith(str(Path(a).resolve())))
+
+    def test_a_worker_collects_usage_rows_for_its_result(self):
+        rows = []
+        sessions = [{"id": "s1", "created": 2000, "directory": "/tmp/repo-x"}]
+        export = {"messages": [{"info": {"role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-5-5",
+                                         "cost": 0.1, "tokens": {"input": 100, "output": 10, "reasoning": 0, "cache": {"read": 50, "write": 0}}}}]}
+        with patch.dict(os.environ, {"TS_HARNESS_SESSION_DB_URL": "", "LLM_USAGE_DB_URL": "", "LLM_PROXY_URL": ""}):
+            written = record_opencode_usage(binary="opencode", env={}, repo_dir=Path("/tmp/repo-x"), since_ms=1000,
+                                            scope={}, run_json=lambda cmd, **kw: sessions if cmd[1] == "session" else export,
+                                            collect=rows)
+        self.assertEqual(written, 1)
+        self.assertEqual({k: rows[0][k] for k in ("provider", "model", "input_tokens", "output_tokens", "cache_read_tokens", "session_id")},
+                         {"provider": "anthropic", "model": "claude-sonnet-5-5", "input_tokens": 100, "output_tokens": 10,
+                          "cache_read_tokens": 50, "session_id": "s1"})
+
+
+class CodingCapacityTests(unittest.TestCase):
+    def test_workers_fit_the_host_memory(self):
+        from ts_harness.coding.launcher import local_worker_limit, parse_memory
+
+        gib = 1024**3
+        self.assertEqual(parse_memory("1536m"), 1536 * 1024**2)
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(3.8 * gib)), 1)   # t3.medium
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(7.7 * gib)), 2)   # t3.large
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(15.6 * gib)), 3)  # t3.xlarge, capped
+        self.assertEqual(local_worker_limit(3, "2g", environ={"CODING_HOST_RESERVED_MEMORY": "6g"}, total_bytes=int(7.7 * gib)), 1)

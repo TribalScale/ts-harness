@@ -11,6 +11,18 @@ First public release.
 
 ### Added
 
+- Coding jobs fit the host. The local launcher runs as many workers at once as memory
+  allows (host memory minus `CODING_HOST_RESERVED_MEMORY`, default 2.5 GB, divided by
+  `CODING_WORKER_MEMORY`, now 2 GB by default), never more than `coding_max_running`.
+  In-process runs use the same rule when `CODING_INPROCESS_MAX_RUNNING` is unset.
+- Each work order's OpenCode runs keep their own data directory, so runs in parallel no
+  longer share one SQLite database (they crashed during setup and lost their usage).
+- Coding workers report OpenCode token usage with their job result; memory-api records
+  it in `llm_usage` and `agent_token_usage`. Before, usage from workers was lost unless
+  the LLM proxy was on.
+- `implement_jira_ticket` 1.7.0 runs its deliver step as a coding job when coding jobs
+  are on, like `deliver_work_order`: no dev-agent turn.
+
 - GPT-6 agents keep their reasoning across a tool loop. Responses API calls run stateless
   with the reasoning returned encrypted, and each assistant turn hands its reasoning items
   back with its tool calls, so the model no longer reasons from scratch after every call.
