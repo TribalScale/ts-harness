@@ -40,6 +40,10 @@ services:
       # gather_intake_sources (docs/runbooks/intake-sources.md): reads chat attachments,
       # Drive links (as the stage's Workspace mailbox), and images (when a vision model is set).
       TS_HARNESS_OBJECT_BACKEND: ${TS_HARNESS_OBJECT_BACKEND:-local}
+      # With the s3 backend the runner mirrors skills too; without the buckets every tick logged
+      # "skill mirror sync failed: TS_HARNESS_OBJECT_BACKEND=s3 needs TS_HARNESS_SKILLS_BUCKET".
+      TS_HARNESS_SKILLS_BUCKET: ${TS_HARNESS_SKILLS_BUCKET:-}
+      TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
       TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}

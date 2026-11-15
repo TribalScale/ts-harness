@@ -244,6 +244,8 @@ First public release.
 
 ### Fixed
 
+- With object storage on S3, the workflow runner logged "skill mirror sync failed" on every
+  tick: compose gave it the backend but not the skills and workspace buckets.
 - Coding jobs never started on a single host: the launcher runs in the agent-runtime image,
   which installed `docker.io` (on Debian trixie the daemon only) and had no `docker` client,
   so every launch failed with `No such file or directory: 'docker'`. The image installs
