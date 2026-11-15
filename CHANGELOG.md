@@ -11,6 +11,15 @@ First public release.
 
 ### Added
 
+- Frontend (React) repos:
+  - The coding worker ships Chromium for Playwright.
+  - A repo's Playwright suite runs in host verification and through `ts-harness-integration`.
+  - Web apps get a `build` check.
+  - Vitest repos run with `CI=true`, so a bare `vitest` script no longer hangs in watch mode.
+  - Every host verification command has a time limit.
+  - Before verification, the worker stops the dev servers and mock APIs OpenCode left running; workers run with `--init`.
+  - `.ts-harness.yml` can declare an `env_file` without databases.
+  - Evidence text has terminal colors stripped.
 - Coding jobs run a repo's database and integration tests: the worker image ships Postgres
   and Redis, a job starts what the repo uses, creates the role and database its env template
   names and writes `.env` pointing at them. An `integration` block in the repo's

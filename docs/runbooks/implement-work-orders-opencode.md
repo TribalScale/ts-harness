@@ -174,6 +174,25 @@ A declared suite blocks: a failure is `integration_tests_failed` and goes to the
 
 **Coverage.** When the work order mentions coverage (or `TS_HARNESS_COVERAGE=always`), a passing verification also runs the tests with coverage (Jest, Vitest with `@vitest/coverage-v8` or `-istanbul`, pytest with pytest-cov), with the repo's thresholds off. The overall line percentage and each changed source file's go into `verify_summary`; QA compares them with the targets. Coverage never fails verification.
 
+**Frontend (React) repos.** A repo with `react-dom`, `next`, or Vite with React is a web app:
+
+- Verification also runs its `build` script after the type check and lint. Bundlers catch what `tsc` misses: unresolved imports, server/client boundaries, env access at build time.
+- A repo that uses Vitest runs with `CI=true`, for OpenCode and the host alike. A bare `vitest` script otherwise watches and never exits.
+- Every host command has a 30-minute limit (`TS_HARNESS_VERIFY_COMMAND_TIMEOUT`), so a hanging test fails the check instead of the job.
+- The coding worker has Chromium's libraries and a preinstalled Playwright browser under `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` (version in `docker/Dockerfile.coding-worker`). After installing dependencies, the host runs the repo's own `playwright install chromium`, which downloads only when the repo pins a different Playwright.
+- With a `playwright.config.*`, the Playwright suite runs as the integration suite (`--reporter=line`; the HTML report never opens a server). It's advisory unless `.ts-harness.yml` declares it. Declare it when the suite needs a mock API or other background process:
+
+```yaml
+env_file: .env.example-e2e        # written to .env even without databases
+integration:
+  background:
+    - run: yarn run-mock-server
+      wait_for: 127.0.0.1:8080
+  command: yarn playwright test --reporter=line
+```
+
+- Before each verification, the worker stops every process OpenCode left running (a `yarn dev &`, a mock API), except the job's databases. Otherwise the suite's own web server finds its port taken. The local launcher starts workers with `docker run --init`, so finished processes are reaped.
+
 **BDD.** Gherkin feature files are required only in a repo that already uses them (feature files, a BDD script, or a Cucumber dependency) or has no test setup at all. A repo with its own runner and no Gherkin (a NestJS app with Jest, a Go service) covers a work order's Given/When/Then acceptance tests with its own tests; the agent is told not to add Cucumber there.
 
 Dependencies installed before OpenCode runs and again before each verify (only when a manifest changed):
