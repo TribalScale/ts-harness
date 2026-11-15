@@ -319,6 +319,24 @@ def terraform_bin() -> str:
     return os.environ.get("TS_HARNESS_TF_BIN") or os.environ.get("TF_CLI") or "terraform"
 
 
+def planned_removals(tf: str, tf_root: Path, plan_path: Path) -> list[tuple[str, list[str]]]:
+    """``(address, actions)`` for every resource the saved plan deletes or replaces."""
+    shown = subprocess.run(
+        [tf, f"-chdir={tf_root}", "show", "-json", str(plan_path)],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    plan = json.loads(shown.stdout or "{}")
+    removals: list[tuple[str, list[str]]] = []
+    for change in plan.get("resource_changes") or []:
+        actions = list((change.get("change") or {}).get("actions") or [])
+        if "delete" in actions and change.get("mode", "managed") == "managed":
+            removals.append((str(change.get("address")), actions))
+    return removals
+
+
 def run_terraform(
     cmd: Sequence[str],
     *,
@@ -451,14 +469,34 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
             # Variables and approval are baked into the saved plan.
             cmd = [tf, f"-chdir={tf_root}", "apply", "-input=false", str(plan_file)]
         else:
-            cmd = [
-                tf,
-                f"-chdir={tf_root}",
-                "apply",
-                "-input=false",
-                "-auto-approve",
-                *var_file_args,
-            ]
+            # Plan first and look at it: an apply never deletes or replaces anything unasked.
+            # A refresh that lost a bucket from state once planned to "create" it, deleting
+            # its public-access block and policy on the way, and -auto-approve applied that.
+            guard_plan = (state_dir / "apply.tfplan").resolve()
+            planned = run_terraform(
+                [tf, f"-chdir={tf_root}", "plan", "-input=false", *var_file_args, f"-out={guard_plan}"],
+                cwd=REPO_ROOT,
+                dry_run=args.dry_run,
+                check=False,
+            )
+            if not args.dry_run:
+                _print_tf_output(planned)
+            if planned.returncode != 0:
+                write_metadata(state_dir, {**meta, "status": f"{command}_failed"})
+                return planned.returncode
+            removals = [] if args.dry_run else planned_removals(tf, tf_root, guard_plan)
+            if removals and not getattr(args, "allow_destroy", False):
+                print("FAIL APPLY_WOULD_DESTROY: the plan deletes or replaces these resources:", file=sys.stderr)
+                for address, actions in removals:
+                    print(f"  {address}: {'/'.join(actions)}", file=sys.stderr)
+                print(
+                    "Nothing was applied. If this is intended, run again with --allow-destroy, or "
+                    f"apply the saved plan after reviewing it: --plan-file {guard_plan}",
+                    file=sys.stderr,
+                )
+                write_metadata(state_dir, {**meta, "status": "apply_blocked_destroy", "plan_file": str(guard_plan)})
+                return 3
+            cmd = [tf, f"-chdir={tf_root}", "apply", "-input=false", str(guard_plan)]
         action = run_terraform(cmd, cwd=REPO_ROOT, dry_run=args.dry_run, check=False)
         if not args.dry_run:
             _print_tf_output(action)
@@ -656,6 +694,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--plan-file",
         default=None,
         help="Apply this saved plan exactly (no re-plan, no -auto-approve)",
+    )
+    p_apply.add_argument(
+        "--allow-destroy",
+        action="store_true",
+        help="Apply even when the plan deletes or replaces resources (otherwise apply stops and lists them)",
     )
     p_apply.set_defaults(func=cmd_apply, detailed_exitcode=False)
 
