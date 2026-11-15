@@ -418,6 +418,11 @@ class GitHubClient:
     def branch_protection(self, owner: str, repo: str, branch: str) -> dict[str, Any] | None:
         return self.request("GET", f"/repos/{owner}/{repo}/branches/{urllib.parse.quote(branch, safe='')}/protection", allow_404=True)
 
+    def set_branch_protection(self, owner: str, repo: str, branch: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Classic branch protection (needs admin on the repo)."""
+        quoted = urllib.parse.quote(branch, safe="")
+        return self.request("PUT", f"/repos/{owner}/{repo}/branches/{quoted}/protection", body=body)
+
     def required_status_contexts(self, owner: str, repo: str, branch: str) -> list[str] | None:
         """Return required contexts, or ``None`` when the branch is unprotected."""
         protection = self.branch_protection(owner, repo, branch)
