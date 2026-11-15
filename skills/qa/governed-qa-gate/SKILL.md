@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.2
+version: 1.3.0
 ---
 
 # Governed QA Gate
@@ -60,7 +60,11 @@ Then:
    as security evidence.
    `input.host_verify_summary` lists each command the host ran on the final
    change (tests, type check, lint) with its exit code and the end of its
-   output; cite it as test evidence alongside CI.
+   output; cite it as test evidence alongside CI. It includes the
+   `integration` suite the host ran against real databases when the repo has
+   one, and, when the work order mentions coverage, the overall line coverage
+   and each changed file's: judge coverage criteria against those numbers
+   (a file "not loaded by any test" is 0%).
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that

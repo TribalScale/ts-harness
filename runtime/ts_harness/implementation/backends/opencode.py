@@ -47,6 +47,7 @@ from ts_harness.implementation.repo import (
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
+from ts_harness.implementation.test_services import start_test_services
 from ts_harness.implementation.test_env import (
     HOST_TOOLCHAINS,
     TestEnvironment,
@@ -355,6 +356,7 @@ def build_implement_prompt(
     revision_files: list[str] | None = None,
     human_change_requests: list[str] | None = None,
     knowledge_notes: list[dict] | None = None,
+    test_environment_note: str = "",
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -372,9 +374,15 @@ def build_implement_prompt(
         "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
         "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
         "report. The host runs them as well as the tests.\n"
-        "Tests that need a database or other services may not run here; still write them in the repo's "
-        "existing style so CI runs them, and keep them consistent with the code.\n"
-        f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
+        + (
+            test_environment_note.strip()
+            + " Run the repo's integration suite with `ts-harness-integration` (it resets the databases, "
+            "runs the repo's setup and starts what the suite needs); the host runs it too.\n"
+            if test_environment_note.strip()
+            else "Tests that need a database or other services may not run here; still write them in the repo's "
+            "existing style so CI runs them, and keep them consistent with the code.\n"
+        )
+        + f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
     )
     from ts_harness.knowledge.prompt import render_knowledge_notes
 
@@ -568,7 +576,11 @@ class OpenCodeBackend:
         """Venv with real runners plus the repo's declared deps, before OpenCode and verify run."""
         test_env, prep_log = prepare_test_environment(workspace_dir, repo_dir, runner=self.runner)
         deps_log = install_declared_dependencies(test_env, repo_dir, runner=self.runner)
-        return test_env, "\n".join(part for part in [prep_log, deps_log] if part)
+        services = start_test_services(repo_dir, runner=self.runner)
+        test_env.env.update(services.env)
+        test_env.services_note = services.note()
+        test_env.services_running = bool(services.services)
+        return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log] if part)
 
     def _verify_with_fixes(
         self,
@@ -964,6 +976,7 @@ class OpenCodeBackend:
                 revision_files=request.revision_files,
                 human_change_requests=request.human_change_requests,
                 knowledge_notes=request.knowledge_notes,
+                test_environment_note=test_env.services_note,
             )
             cmd = build_opencode_command(
                 binary=binary,

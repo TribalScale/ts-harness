@@ -11,6 +11,18 @@ First public release.
 
 ### Added
 
+- Coding jobs run a repo's database and integration tests: the worker image ships Postgres
+  and Redis, a job starts what the repo uses, creates the role and database its env template
+  names and writes `.env` pointing at them. An `integration` block in the repo's
+  `.ts-harness.yml` (setup steps, background processes with readiness checks, command) runs
+  the e2e suite in host verification and through `ts-harness-integration` for OpenCode.
+- Line coverage of the changed files in the verification evidence when a work order mentions
+  coverage (Jest, Vitest, pytest-cov); QA compares it with the targets instead of marking them
+  unverified.
+- Node repos run on the Node major they pin (`.nvmrc`, `.node-version`, `.tool-versions`,
+  `volta`, `engines`); other majors are downloaded and checksum-verified once per host.
+- Code review and QA reuse their last passing verdict when a base-branch refresh left the
+  PR's diff unchanged, so a merge into `dev` no longer reruns both agents on every open PR.
 - Node repos that use pnpm or yarn: the host installs with the repo's package manager
   (frozen lockfile) and runs its scripts with it, through corepack.
 - Host verification runs a Node repo's type check (its script, or `tsc --noEmit`) and

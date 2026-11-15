@@ -150,6 +150,30 @@ A bare `tests/` or `features/` directory does not select a stack. Multi-stack mo
 
 **Type check and lint (Node).** After the tests, verification runs the repo's type check: its `typecheck`, `type-check`, `check-types`, `types:check` or `tsc` script, else `node_modules/.bin/tsc --noEmit -p tsconfig.json` (skipped for a references-only tsconfig). With an ESLint config and `node_modules/.bin/eslint`, it lints the files the work order changed, not the whole repo, so existing lint debt does not block. Failures are `typecheck_failed` and `lint_failed` and go to the fix passes like test failures.
 
+**Node version.** The repo's pin (`.nvmrc`, `.node-version`, `.tool-versions`, `volta.node`, then `engines.node`) decides which Node runs. When the image's Node does not satisfy it, the newest matching release is downloaded from nodejs.org (checked against its `SHASUMS256.txt`) into the shared cache and put first on `PATH`. An exact pin is met by the same major, so `.nvmrc` 24.14.1 keeps the image's 24.x.
+
+**Databases and integration tests.** The coding worker image ships Postgres and Redis (`implementation/test_services.py`). A job starts the ones the repo uses on loopback: Postgres when it depends on `pg`, `postgres`, MikroORM's Postgres driver, Prisma with `provider = "postgresql"`, `psycopg`/`asyncpg`, or a compose file with a Postgres image; Redis for `ioredis`, `redis`, `bull`/`bullmq` or a Redis image. It creates the role and database the repo's env template names (`.env.test`, `.env.example`, `env-example*`, ...), writes `.env` from that template with compose host names pointed at `127.0.0.1` (only when `.env` is absent; it never reaches the PR), and exports `DATABASE_URL`, `PG*` and `REDIS_URL`. MySQL and MongoDB are not in the image; the prompt says so and those tests run only in CI.
+
+The integration suite runs after the unit tests, type check and lint pass, with the databases dropped and recreated first. Declare it in `.ts-harness.yml` at the repo root:
+
+```yaml
+services: [postgres]                  # detected when omitted
+env_file: env-example-relational      # detected when omitted
+integration:
+  setup: [npm run build, npm run migration:run, npm run seed:run:relational]
+  background:                         # started in order, each waited for, stopped afterwards
+    - run: npx --yes maildev@2.0.5 --smtp 1025 --web 1080 --ip 127.0.0.1
+      wait_for: 127.0.0.1:1080        # host:port or an http(s) URL
+    - run: npm run start:prod
+      wait_for: 127.0.0.1:3001
+  command: npm run test:e2e -- --runInBand
+  timeout_seconds: 1200
+```
+
+A declared suite blocks: a failure is `integration_tests_failed` and goes to the fix passes. Without the block, a `test:integration`, `test:int` or `test:db` script runs when a database is up, and a failure is only a note in the evidence. OpenCode runs the same suite with `ts-harness-integration`.
+
+**Coverage.** When the work order mentions coverage (or `TS_HARNESS_COVERAGE=always`), a passing verification also runs the tests with coverage (Jest, Vitest with `@vitest/coverage-v8` or `-istanbul`, pytest with pytest-cov), with the repo's thresholds off. The overall line percentage and each changed source file's go into `verify_summary`; QA compares them with the targets. Coverage never fails verification.
+
 **BDD.** Gherkin feature files are required only in a repo that already uses them (feature files, a BDD script, or a Cucumber dependency) or has no test setup at all. A repo with its own runner and no Gherkin (a NestJS app with Jest, a Go service) covers a work order's Given/When/Then acceptance tests with its own tests; the agent is told not to add Cucumber there.
 
 Dependencies installed before OpenCode runs and again before each verify (only when a manifest changed):
@@ -166,6 +190,10 @@ Where things live, per delivery under `/workspace/dev-agent/coding-backend/<WO>-
 - `repo/.git/info/exclude`: `node_modules/`, the stack's build output (`target/`, `.gradle/`, `build/`), the harness's own `.opencode/` skills and config, and Python bytecode, so none of them reach the team's pull request. The repo's `.gitignore` is never edited.
 
 OpenCode runs with the same `PATH` and venv, so its own test runs match host verification. The agent-runtime image ships Go, Node.js LTS, JDK 21 with Maven and Gradle, Rust (minimal profile), make and gcc; bump versions with their checksums in `docker/Dockerfile.agent-runtime`.
+
+## Review and QA after the base branch moves
+
+A merge into the base branch sends every open PR on it through refresh, CI, code review and QA again. `review_precheck` records a `diff_fingerprint` (each PR file's name, status and head blob sha). When it matches the fingerprint of the last code review or QA run that passed, the runner reuses that verdict (`carried_forward` in the step output, `verdict_carried_forward` in the runner log) instead of running the agent again; the `harness/qa` status is posted on the new head. CI still runs on the merged head. A conflict resolution, any change to a PR file (including one the base branch touched), a failed or blocked last verdict, or a human change request runs the agent. Set `TS_HARNESS_CARRY_FORWARD_VERDICTS=0` on the workflow runner to always rerun.
 
 ## Failure modes
 

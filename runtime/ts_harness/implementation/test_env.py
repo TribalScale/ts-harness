@@ -17,6 +17,9 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ts_harness.implementation.node_version import ensure_node
+from ts_harness.implementation.test_services import write_agent_command
+
 # Shipped in docker/Dockerfile.agent-runtime; prompts quote this list.
 HOST_TOOLCHAINS = (
     "Python (per-work-order venv with pytest and behave)",
@@ -57,6 +60,9 @@ class TestEnvironment:
     env: dict[str, str] = field(default_factory=dict)
     stack: str | None = None
     state_dir: Path | None = None
+    # What test services (databases) this job runs, for the coding prompt.
+    services_note: str = ""
+    services_running: bool = False
 
     def merged_env(self) -> dict[str, str]:
         return {**os.environ, **self.env}
@@ -360,13 +366,16 @@ def prepare_test_environment(
         "npm_config_cache": str(cache / "npm"),
         "COREPACK_HOME": str(cache / "corepack"),
         "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
-        "npm_config_store_dir": str(cache / "pnpm-store"),
         "YARN_CACHE_FOLDER": str(cache / "yarn"),
         "CARGO_HOME": str(cache / "cargo"),
         "GRADLE_USER_HOME": str(cache / "gradle"),
         "MAVEN_OPTS": f"-Dmaven.repo.local={cache / 'm2'}",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
     }
+    if (Path(repo_dir) / "package.json").is_file() and node_package_manager(repo_dir) == "pnpm":
+        # pnpm reads its store from npm-style config; npm itself warns on the unknown key
+        # (and will reject it), so only pnpm repos get it.
+        env["npm_config_store_dir"] = str(cache / "pnpm-store")
     test_env = TestEnvironment(python=python, env=env, stack=detect_stack(repo_dir), state_dir=state_dir)
     merged = test_env.merged_env()
     logs: list[str] = []
@@ -382,9 +391,16 @@ def prepare_test_environment(
             else:
                 marker.write_text("ok\n", encoding="utf-8")
                 logs.append("venv ready with pytest and behave")
+    node_bin, node_log = ensure_node(repo_dir, merged, cache / "node")
+    if node_bin:
+        env["PATH"] = f"{bin_dir}{os.pathsep}{node_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        merged = test_env.merged_env()
+    if node_log:
+        logs.append(node_log)
     shims = _enable_corepack(runner, repo_dir, bin_dir, workspace_dir, merged)
     if shims:
         logs.append(shims)
+    write_agent_command(bin_dir)
     _exclude_build_outputs(repo_dir)
     return test_env, "\n".join(logs)
 

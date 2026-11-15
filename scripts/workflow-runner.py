@@ -1284,6 +1284,8 @@ class WorkflowRunner:
                 task_input.update(qa_review_evidence(task, list(record.get("tasks") or [])))
             except Exception as exc:
                 log_event("qa_evidence_error", task_id=task.get("id"), error=str(exc))
+        if self._carry_forward(task, stage, task_input, dispatch_started):
+            return
         payload = {
             "workflow_id": task.get("workflow_id"),
             "task_id": task.get("id"),
@@ -1316,6 +1318,42 @@ class WorkflowRunner:
         if is_qa:
             self._publish_qa_status(task, "qa_finished", task_input, result)
         self._apply_dispatch_result(task, stage, result, dispatch_started)
+
+    def _carry_forward(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage | None,
+        task_input: dict[str, Any],
+        dispatch_started: float,
+    ) -> bool:
+        """Settle code review or QA with its last passing verdict when the PR diff is unchanged."""
+        from ts_harness.workflows import carry_forward
+
+        if str(task.get("step_name") or "") not in carry_forward.CARRY_STEPS:
+            return False
+        if os.environ.get("TS_HARNESS_CARRY_FORWARD_VERDICTS", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return False
+        try:
+            record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+            output = carry_forward.carried_output(task, task_input, list(record.get("tasks") or []))
+        except Exception as exc:  # noqa: BLE001 - fall back to running the agent
+            log_event("carry_forward_error", task_id=task.get("id"), error=str(exc))
+            return False
+        if output is None:
+            return False
+        log_event(
+            "verdict_carried_forward",
+            workflow_id=task.get("workflow_id"),
+            task_id=task.get("id"),
+            step_name=task.get("step_name"),
+            from_task_id=output["carried_forward"]["from_task_id"],
+        )
+        _runner_metrics.inc("runner_verdicts_carried_forward")
+        result = {"status": "succeeded", "output": output}
+        if task.get("step_name") == "qa_gate":
+            self._publish_qa_status(task, "qa_finished", task_input, result)
+        self._apply_dispatch_result(task, stage, result, dispatch_started)
+        return True
 
     def _dispatch_coding_job(
         self,

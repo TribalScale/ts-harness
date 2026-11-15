@@ -5,6 +5,16 @@ FROM ${AGENT_RUNTIME_IMAGE}
 ARG OPENCODE_VERSION=latest
 ENV TS_HARNESS_TOOLS_ROOT=/opt/tools
 
+# Postgres and Redis for a repo's database and integration tests (implementation/test_services.py
+# starts them on loopback per job). No cluster is created at install time; each job runs initdb.
+RUN set -eu; \
+    mkdir -p /etc/postgresql-common/createcluster.d; \
+    echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.d/ts-harness.conf; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql postgresql-contrib redis-server; \
+    rm -rf /var/lib/apt/lists/*; \
+    ls /usr/lib/postgresql/*/bin/initdb; redis-server --version
+
 RUN set -eu; \
     install_dir="/opt/tools/opencode/${OPENCODE_VERSION}"; \
     npm install --no-audit --no-fund --prefix "$install_dir" "opencode-ai@${OPENCODE_VERSION}"; \

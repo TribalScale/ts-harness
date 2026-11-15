@@ -121,6 +121,7 @@ class PackageManagerTests(unittest.TestCase):
             else:  # no corepack on this machine: say so instead of failing later
                 self.assertIn("corepack is not installed", log)
             self.assertIn("COREPACK_HOME", env.env)
+            self.assertIn("npm_config_store_dir", env.env)
 
     def test_npm_repo_needs_no_corepack(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,8 +129,11 @@ class PackageManagerTests(unittest.TestCase):
             repo = workspace / "repo"
             _package(repo, scripts={"test": "jest"})
             runner = Runner()
-            prepare_test_environment(workspace, repo, runner=runner)
+            env, _log = prepare_test_environment(workspace, repo, runner=runner)
             self.assertFalse([c for c in runner.commands if c[0] == "corepack"])
+            # npm warns on (and will reject) pnpm's store key.
+            self.assertNotIn("npm_config_store_dir", env.env)
+            self.assertTrue((workspace / ".ts-harness" / "venv" / "bin" / "ts-harness-integration").is_file())
 
     def test_harness_tooling_is_kept_out_of_commits(self):
         with tempfile.TemporaryDirectory() as tmp:

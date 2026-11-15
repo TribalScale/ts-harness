@@ -250,6 +250,52 @@ def security_status_for_head(security: dict[str, Any], head_sha: str) -> tuple[s
     return security_status(security)
 
 
+def carried_security(
+    github: GitHubClient, head: dict[str, Any], tasks: list[dict[str, Any]], security_spec: Any
+) -> dict[str, Any] | None:
+    """The last scan, re-pinned to ``head``, when everything since it came from the base branch.
+
+    A refresh that GitHub merges server-side runs no scan, and on a repo without CI the
+    ``harness/security-scan`` status is the only check the wait sees. The scan still holds
+    when no file changed between the scanned commit and the new head is one of the PR's
+    files: those changes are the base branch's, not the PR's.
+    """
+    step = str(security_spec or "").removeprefix("$prior.").split(".output", 1)[0]
+    earlier = sorted(
+        (
+            item
+            for item in tasks
+            if item.get("step_name") == step
+            and item.get("status") == "succeeded"
+            and isinstance((item.get("output") or {}).get("security"), dict)
+            and (item.get("output") or {})["security"].get("scanned_sha")
+        ),
+        key=lambda item: str(item.get("created_at") or ""),
+    )
+    if not earlier:
+        return None
+    security = dict(earlier[-1]["output"]["security"])
+    scanned, head_sha = str(security["scanned_sha"]), str(head.get("head_sha") or "")
+    parsed = parse_github_pr_url(str(head.get("pr_url") or ""))
+    if not head_sha or parsed is None:
+        return None
+    if scanned == head_sha:
+        return security
+    owner, repo, number = parsed
+    try:
+        comparison = github.compare(owner, repo, scanned, head_sha) or {}
+        if comparison.get("status") not in {"ahead", "identical"} or len(comparison.get("files") or []) >= 300:
+            return None
+        moved = {str(item.get("filename") or "") for item in comparison.get("files") or []}
+        pr_files = {str(item.get("filename") or "") for item in github.list_pull_files(owner, repo, number)}
+    except Exception as exc:  # noqa: BLE001 - without the comparison nothing is carried
+        logger.warning("security scan not carried to %s: %s", head_sha, exc)
+        return None
+    if moved & pr_files:
+        return None
+    return {**security, "scanned_sha": head_sha, "carried_from_sha": scanned}
+
+
 def _publish_security_status(
     github: GitHubClient, heads: list[dict[str, Any]], security: dict[str, Any], warnings: list[str]
 ) -> None:
@@ -343,6 +389,8 @@ def prepare_checks_wait(
     security_spec = dict(config.get("pr_checks") or {}).get("security")
     if security_spec:
         security = resolve_value(security_spec, tasks=tasks, workflow=workflow)
+        if not (isinstance(security, dict) and security) and len(heads) == 1:
+            security = carried_security(github, heads[0], tasks, security_spec)
         if isinstance(security, dict) and security:
             _publish_security_status(github, heads, security, warnings)
 
