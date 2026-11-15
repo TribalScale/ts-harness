@@ -244,6 +244,10 @@ First public release.
 
 ### Fixed
 
+- The coding worker image failed to build with npm 12, which skips install scripts unless
+  allowed: OpenCode's postinstall (which fetches its binary) never ran. The worker image
+  and phase 11h now run it explicitly. Compose also never received `OPENCODE_VERSION`, so
+  workers were built with the latest OpenCode instead of the pinned version.
 - On hosts without GitHub webhooks a merged PR stayed `open` in the program's references:
   the merge poller resumed the wait but never recorded the merge. It now records it the
   same way as the webhook.
