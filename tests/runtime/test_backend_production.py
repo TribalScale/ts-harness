@@ -197,6 +197,7 @@ class ServiceDetectionTests(unittest.TestCase):
 class RealPostgresTests(unittest.TestCase):
     def test_start_writes_env_and_resets(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as services:
+            Path(services).chmod(0o755)  # the postgres user must reach its data directory
             repo = Path(tmp)
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             _write(repo / ".gitignore", ".env\n")

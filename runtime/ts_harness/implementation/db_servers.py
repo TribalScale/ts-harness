@@ -94,12 +94,17 @@ def start_mysql(root: Path, creds: Any, *, port: int, runner=subprocess.run) -> 
     install = _mysql_bin("mariadb-install-db", "mysql_install_db")
     if not server or not install:
         return None, "mysql (MariaDB) is not installed in this worker"
-    data, sock, log = root / "mysql", root / "mysql.sock", root / "mysql.log"
-    info = {"port": port, "socket": str(sock), "pidfile": str(root / "mysql.pid"), "user": creds.user,
+    data, run_dir, log = root / "mysql", root / "mysqlrun", root / "mysql.log"
+    sock = run_dir / "mysql.sock"
+    info = {"port": port, "socket": str(sock), "pidfile": str(run_dir / "mysql.pid"), "user": creds.user,
             "password": creds.password, "database": creds.name}
     root.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    # Only MariaDB's own directories: Postgres may share ``root``.
+    _chown(data, "mysql")
+    _chown(run_dir, "mysql")
     if not (data / "mysql").is_dir():
-        data.mkdir(parents=True, exist_ok=True)
         made = runner(
             [install, "--user=mysql", f"--datadir={data}", "--auth-root-authentication-method=normal",
              "--skip-test-db", "--skip-name-resolve"],
@@ -107,7 +112,7 @@ def start_mysql(root: Path, creds: Any, *, port: int, runner=subprocess.run) -> 
         )
         if made.returncode != 0:
             return None, f"mysql install-db failed: {(made.stderr or made.stdout or '')[-800:]}"
-    _chown(root, "mysql")
+        _chown(data, "mysql")
     proc = _spawn(
         [server, "--user=mysql", f"--datadir={data}", f"--socket={sock}", f"--port={port}", "--bind-address=127.0.0.1",
          "--skip-name-resolve", "--skip-log-bin", "--innodb-flush-log-at-trx-commit=0", f"--pid-file={info['pidfile']}",

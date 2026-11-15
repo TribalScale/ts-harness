@@ -487,20 +487,22 @@ def start_postgres(root: Path, creds: DbCredentials, *, runner=subprocess.run) -
     root.mkdir(parents=True, exist_ok=True)
     if not (data / "PG_VERSION").is_file():
         data.mkdir(parents=True, exist_ok=True)
-        _chown_postgres(root)
+        _chown_postgres(data)
         made = _run(runner, _as_postgres([initdb, "-D", str(data), "-U", "postgres", "--auth=trust", "-E", "UTF8", "--no-locale"]), timeout=180)
         if made.returncode != 0:
             return None, f"postgres initdb failed: {_tail(made)}"
     sockets.mkdir(parents=True, exist_ok=True)
-    _chown_postgres(root)
+    # Only postgres's own directories: MySQL or MongoDB may share ``root``.
+    _chown_postgres(data)
+    _chown_postgres(sockets)
     port = free_port(5432)
     options = (
         f"-c listen_addresses=127.0.0.1 -p {port} -c unix_socket_directories={sockets} "
         "-c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200"
     )
-    started = _run(runner, _as_postgres([pg_ctl, "-D", str(data), "-l", str(root / "postgres.log"), "-w", "-t", "60", "-o", options, "start"]), timeout=120)
+    started = _run(runner, _as_postgres([pg_ctl, "-D", str(data), "-l", str(sockets / "postgres.log"), "-w", "-t", "60", "-o", options, "start"]), timeout=120)
     if started.returncode != 0:
-        return None, f"postgres failed to start: {_tail(started)} {_read(root / 'postgres.log')[-800:]}"
+        return None, f"postgres failed to start: {_tail(started)} {_read(sockets / 'postgres.log')[-800:]}"
     info = {"port": port, "data": str(data), "user": creds.user, "password": creds.password, "database": creds.name}
     role = _sql_ident(creds.user)
     sql = (
@@ -1006,7 +1008,7 @@ def in_coding_worker(table: dict[int, tuple[int, str, str]] | None = None) -> bo
 def _service_pids(repo_dir: Path) -> set[int]:
     root = services_root(repo_dir)
     pids: set[int] = set()
-    for path in (root / "pgdata" / "postmaster.pid", root / "redis.pid", root / "mysql.pid", root / "mongod.pid"):
+    for path in (root / "pgdata" / "postmaster.pid", root / "redis.pid", root / "mysqlrun" / "mysql.pid", root / "mongod.pid"):
         try:
             pids.add(int(_read(path).splitlines()[0].strip()))
         except (ValueError, IndexError):

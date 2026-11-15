@@ -81,6 +81,7 @@ class BsonTests(unittest.TestCase):
 class RealMysqlTests(unittest.TestCase):
     def test_start_create_user_and_reset(self):
         with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp).chmod(0o755)  # the mysql user must reach its data directory
             creds = ts.DbCredentials(user="shop", password="s3cret", name="shop")
             info, message = db_servers.start_mysql(Path(tmp), creds, port=ts.free_port(3306))
             try:
@@ -92,7 +93,7 @@ class RealMysqlTests(unittest.TestCase):
                 self.assertEqual(query.returncode, 0, query.stderr)
                 self.assertEqual(db_servers.reset_mysql(info), "")
             finally:
-                db_servers._stop_pid(Path(tmp) / "mysql.pid")
+                db_servers._stop_pid(Path(tmp) / "mysqlrun" / "mysql.pid")
 
 
 @unittest.skipUnless(shutil.which("mongod"), "MongoDB is not installed")
