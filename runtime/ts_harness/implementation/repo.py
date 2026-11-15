@@ -233,6 +233,57 @@ def _has_merge_base(
     return completed.returncode == 0 and bool((completed.stdout or "").strip())
 
 
+def _fetch_branch(repo_dir: Path, branch: str, *, runner=subprocess.run, env: dict[str, str] | None = None):
+    """Update ``origin/<branch>`` even in a single-branch clone, whose default refspec skips it."""
+    kwargs = {"env": env} if env is not None else {}
+    return runner(
+        ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        **kwargs,
+    )
+
+
+def _is_ancestor(repo_dir: Path, older: str, newer: str, *, runner=subprocess.run) -> bool:
+    done = runner(
+        ["git", "-C", str(repo_dir), "merge-base", "--is-ancestor", older, newer],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+def _catch_up_with_remote(repo_dir: Path, branch: str, *, runner=subprocess.run) -> None:
+    """Bring the checked-out PR branch level with GitHub before a revision builds on it.
+
+    The PR can move on GitHub after this clone last pushed it: a server-side refresh merge
+    of the base branch, or a person's commit. Building on the old local tip made the next
+    push non-fast-forward, and the forced push would have dropped those commits. Local
+    commits not yet pushed are kept: the remote is merged in, and when that conflicts the
+    remote tip wins.
+    """
+    remote = f"origin/{branch}"
+    if _fetch_branch(repo_dir, branch, runner=runner).returncode != 0:
+        return  # the branch is gone or unreachable; the push reports it
+    if _is_ancestor(repo_dir, remote, branch, runner=runner):
+        return  # local already contains the remote tip
+    if _is_ancestor(repo_dir, branch, remote, runner=runner):
+        _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
+        return
+    _configure_commit_identity(repo_dir, runner=runner)  # the merge commit needs one
+    merged = runner(
+        ["git", "-C", str(repo_dir), "merge", "--no-edit", remote],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merged.returncode != 0:
+        runner(["git", "-C", str(repo_dir), "merge", "--abort"], capture_output=True, text=True, check=False)
+        _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
+
+
 def create_work_branch(
     repo_dir: Path,
     *,
@@ -277,6 +328,8 @@ def create_work_branch(
     if _local_branch_exists(repo_dir, branch, runner=runner):
         if _has_merge_base(repo_dir, branch, start_point, runner=runner):
             _checkout(repo_dir, branch, runner=runner, action=f"git checkout {branch}")
+            if from_remote:
+                _catch_up_with_remote(repo_dir, branch, runner=runner)
             return
         # Stale/unrelated wo/* tip — drop it so we can recreate from origin/base.
         _checkout(
@@ -477,21 +530,25 @@ def push_branch(
     if not _is_non_fast_forward(completed.stderr or "", completed.stdout or ""):
         raise RuntimeError(f"git push failed: {detail[-2000:]}")
 
-    # Refresh the remote-tracking tip used by --force-with-lease, then retry.
-    runner(
-        ["git", "-C", str(repo_dir), "fetch", "origin", branch, "--depth", "1"],
+    # Lease against the tip just fetched. A bare --force-with-lease finds the expected tip
+    # through the remote's fetch refspec, which a single-branch clone lacks for this branch,
+    # so it always failed with "stale info".
+    _fetch_branch(repo_dir, branch, runner=runner, env=env)
+    tip = runner(
+        ["git", "-C", str(repo_dir), "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"],
         capture_output=True,
         text=True,
         check=False,
-        env=env,
     )
+    expected = (tip.stdout or "").strip() if tip.returncode == 0 else ""
+    lease = f"--force-with-lease={branch}:{expected}" if expected else "--force-with-lease"
     leased = runner(
         [
             "git",
             "-C",
             str(repo_dir),
             "push",
-            "--force-with-lease",
+            lease,
             "-u",
             "origin",
             branch,
