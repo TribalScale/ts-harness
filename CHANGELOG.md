@@ -11,6 +11,14 @@ First public release.
 
 ### Added
 
+- GPT-6 agents keep their reasoning across a tool loop. Responses API calls run stateless
+  with the reasoning returned encrypted, and each assistant turn hands its reasoning items
+  back with its tool calls, so the model no longer reasons from scratch after every call.
+- A program phase completion that fails is retried: the engine records it, the
+  `retry-program-phases` system job runs it again every 5 minutes with backoff (up to an
+  hour), and the program's chat is told when it fails and when it recovers. A program that
+  already moved on is never completed twice.
+
 - dev-agent runs on Claude Sonnet 5.5 at medium effort instead of Opus 5.5 at high. In an
   A/B run of the same work order on athena, Sonnet and GPT-6.1 Sol both passed every gate
   first time; Sonnet did it in 2 dev-agent calls, one coding run and 5.6 minutes against
@@ -224,6 +232,10 @@ First public release.
 
 ### Fixed
 
+- `program_status` returned every program artifact in full (about 125,000 characters for
+  a delivered program), so a status question in chat cost tens of thousands of tokens.
+  Long artifacts now come back as their size and headings; `include_artifacts` asks for
+  named ones in full.
 - Restarting agent-runtime (`restart_agent_runtime`, used by `sync-runtime-config.sh`)
   left memory-api unreachable: memory-api, workflow-runner, llm-proxy and coding-launcher
   run in agent-runtime's network namespace and lost it. They now restart right after it.

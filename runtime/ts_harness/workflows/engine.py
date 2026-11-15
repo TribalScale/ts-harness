@@ -891,13 +891,40 @@ class WorkflowEngine:
     def _maybe_complete_program_phase(self, ctx: HookContext) -> dict[str, Any] | None:
         try:
             return self.registry.invoke("complete_program_phase", ctx)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "complete_program_phase failed workflow_id=%s workflow_type=%s",
                 ctx.workflow_id,
                 ctx.workflow_type,
             )
+            self._phase_completion_failed(ctx, exc)
             return None
+
+    def _phase_completion_failed(self, ctx: HookContext, exc: Exception) -> None:
+        """Queue the program workflow for ``retry_program_phases`` and tell its chat, once.
+
+        A failure here used to be logged only: the program stayed at its phase, running,
+        with nothing to show it had stalled.
+        """
+        from ts_harness.workflows import phase_retries
+
+        workflow = ctx.workflow if isinstance(ctx.workflow, dict) else {}
+        if not workflow.get("program_id"):
+            return
+        try:
+            first = phase_retries.record_failure(
+                self.client, workflow_id=ctx.workflow_id, workflow_type=ctx.workflow_type,
+                tenant_id=ctx.tenant_id, error=str(exc),
+            )
+        except Exception:  # noqa: BLE001 - the retry record is best effort
+            logger.exception("could not queue phase completion retry workflow_id=%s", ctx.workflow_id)
+            return
+        if first:
+            ctx.extras["channel_text"] = (
+                "Moving this program to its next phase failed: "
+                f"{str(exc)[:300]}\nIt will be retried automatically every few minutes."
+            )
+            self._maybe_notify(ctx, "blocked")
 
     @_locked(_first_workflow)
     def cancel(self, workflow_id: str, *, actor: str, tenant_id: str = "default", reason: str = "") -> dict[str, Any]:

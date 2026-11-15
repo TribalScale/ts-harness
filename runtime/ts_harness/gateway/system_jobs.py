@@ -688,6 +688,13 @@ def sweep_channel_dedup() -> dict[str, Any]:
     return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
 
 
+def _retry_program_phases() -> dict[str, Any]:
+    """Program phase completions that failed earlier (see ``workflows.phase_retries``)."""
+    from ts_harness.workflows.phase_retries import retry_due
+
+    return retry_due()
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
@@ -698,6 +705,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "sweep_channel_dedup": sweep_channel_dedup,
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
+    "retry_program_phases": lambda: _retry_program_phases(),
 }
 
 PAYLOAD_HANDLERS = frozenset({"start_program"})

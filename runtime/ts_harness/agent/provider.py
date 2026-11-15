@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # Kept on an assistant message so the next request can replay Claude's blocks (thinking included) verbatim.
 ANTHROPIC_CONTENT_KEY = "_anthropic_content"
+# Kept on an assistant message so the next Responses API request replays the model's
+# reasoning items (encrypted) with its tool calls, in order.
+OPENAI_OUTPUT_KEY = "_openai_output"
 
 
 @dataclass
@@ -56,9 +59,9 @@ class OpenAICompatibleProvider(ModelProvider):
         *,
         temperature: float = 0.2,
     ) -> dict[str, Any]:
-        messages = [_openai_message(message) for message in messages]
         if _uses_responses_api(self.endpoint.model):
             return self._chat_via_responses(messages, tools)
+        messages = [_openai_message(message) for message in messages]
         payload: dict[str, Any] = {
             "model": self.endpoint.model.split("/", 1)[-1],
             "messages": messages,
@@ -104,6 +107,10 @@ class OpenAICompatibleProvider(ModelProvider):
                 for item in _responses_input_items(message)
             ],
             "reasoning": {"effort": _openai_effort(self.endpoint.effort)},
+            # Stateless, with the reasoning returned encrypted so the next turn of a tool loop
+            # can hand it back instead of the model reasoning from scratch after every call.
+            "store": False,
+            "include": ["reasoning.encrypted_content"],
         }
         if instructions:
             payload["instructions"] = instructions
@@ -150,6 +157,9 @@ def _responses_input_items(message: dict[str, Any]) -> list[dict[str, Any]]:
                 "output": str(message.get("content") or ""),
             }
         ]
+    replay = message.get(OPENAI_OUTPUT_KEY)
+    if role == "assistant" and isinstance(replay, list) and replay:
+        return [dict(item) for item in replay]
     tool_calls = message.get("tool_calls") or []
     if role == "assistant" and tool_calls:
         items: list[dict[str, Any]] = []
@@ -213,7 +223,22 @@ def _responses_to_chat(data: dict[str, Any]) -> dict[str, Any]:
     message: dict[str, Any] = {"role": "assistant", "content": "\n".join(text)}
     if tool_calls:
         message["tool_calls"] = tool_calls
+    replay = [
+        _replayable(item) for item in data.get("output") or [] if item.get("type") in {"reasoning", "function_call", "message"}
+    ]
+    if any(item.get("type") == "reasoning" for item in replay):
+        message[OPENAI_OUTPUT_KEY] = replay
     return {"choices": [{"message": message}], "usage": data.get("usage") or {}, "model": data.get("model")}
+
+
+def _replayable(item: dict[str, Any]) -> dict[str, Any]:
+    """An output item in the form the Responses API accepts back as input."""
+    keep = {
+        "reasoning": ("type", "id", "summary", "encrypted_content"),
+        "function_call": ("type", "id", "call_id", "name", "arguments"),
+        "message": ("type", "id", "role", "content"),
+    }[str(item.get("type"))]
+    return {key: item[key] for key in keep if key in item}
 
 
 def _uses_responses_api(model: str) -> bool:

@@ -433,3 +433,46 @@ class OpencodeJsonOutputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "boom"):
             _run_json([sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(2)"], env={"PATH": os.environ.get("PATH", "")}, cwd=".")
+
+
+class OpenAIReasoningReplayTests(unittest.TestCase):
+    def test_reasoning_items_go_back_with_their_tool_calls(self):
+        first = {"output": [
+            {"type": "reasoning", "id": "rs_1", "summary": [], "content": None, "encrypted_content": "enc-1"},
+            {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "read_file", "arguments": "{}", "status": "completed"},
+        ], "usage": {}}
+        second = {"output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}], "usage": {}}
+        sent, opener = _capture(first, second)
+        provider = OpenAICompatibleProvider(ProviderEndpoint(provider="openai", model="gpt-6.1-sol", base_url="https://api.test/v1", api_key="k"))
+        messages = [{"role": "user", "content": "go"}]
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            reply = provider.chat(messages, tools=TOOLS)["choices"][0]["message"]
+            messages += [reply, {"role": "tool", "tool_call_id": "call_1", "content": "file"}]
+            provider.chat(messages, tools=TOOLS)
+        self.assertEqual(sent[0]["body"]["store"], False)
+        self.assertEqual(sent[0]["body"]["include"], ["reasoning.encrypted_content"])
+        replayed = sent[1]["body"]["input"]
+        self.assertEqual([item.get("type") for item in replayed], [None, "reasoning", "function_call", "function_call_output"])
+        self.assertEqual(replayed[1], {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "enc-1"})
+        self.assertNotIn("status", replayed[2])
+
+    def test_without_reasoning_the_old_tool_call_shape_is_used(self):
+        sent, opener = _capture({"output": [{"type": "function_call", "call_id": "c", "name": "read_file", "arguments": "{}"}], "usage": {}})
+        provider = OpenAICompatibleProvider(ProviderEndpoint(provider="openai", model="gpt-6-luna", base_url="https://api.test/v1", api_key="k"))
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            reply = provider.chat([{"role": "user", "content": "go"}], tools=TOOLS)["choices"][0]["message"]
+        self.assertNotIn("_openai_output", reply)
+
+
+class ProgramStatusArtifactsTests(unittest.TestCase):
+    def test_long_artifacts_become_size_and_headings_unless_asked_for(self):
+        from ts_harness.tools.workflow_tools import _artifact_overview
+
+        prd = "# PRD: Reminders\n\n## Overview\n" + "text " * 500 + "\n## Goals\n- one"
+        artifacts = {"program_phase": "implement", "approved_prd": {"result": {"prd_markdown": prd}},
+                     "work_orders_markdown": "# Work Orders\n" + "x" * 5000}
+        overview = _artifact_overview(artifacts, include=["work_orders_markdown"])
+        self.assertEqual(overview["program_phase"], "implement")
+        self.assertEqual(overview["work_orders_markdown"], artifacts["work_orders_markdown"])
+        self.assertEqual(overview["approved_prd"]["headings"], ["Overview", "Goals"])
+        self.assertGreater(overview["approved_prd"]["omitted_chars"], 2500)

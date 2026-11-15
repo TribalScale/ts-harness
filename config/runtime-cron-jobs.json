@@ -71,6 +71,15 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
+    },
+    {
+      "name": "retry-program-phases",
+      "kind": "system",
+      "handler": "retry_program_phases",
+      "interval_seconds": 300,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
     }
   ]
 }
