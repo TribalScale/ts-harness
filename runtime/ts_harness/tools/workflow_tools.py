@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 from typing import Any
 
 from ts_harness.agent.sessions import get_session_store
@@ -410,7 +413,31 @@ def workflow_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
     if not workflow_id:
         return {"error": "workflow_id required"}
-    return get_workflow_engine().get_status(workflow_id)
+    status = get_workflow_engine().get_status(workflow_id)
+    if isinstance(status, dict) and isinstance(status.get("tasks"), list) and not args.get("full"):
+        status = {**status, "tasks": [_task_overview(task) for task in status["tasks"]]}
+    return status
+
+
+TASK_FIELD_MAX = 600
+
+
+def _task_overview(task: Any) -> Any:
+    """A task for a chat turn: its step, status and short fields; long inputs and outputs summarised.
+
+    Task inputs and outputs carry whole planning documents, so a workflow's status ran to
+    160,000 characters. ``full: true`` returns everything.
+    """
+    if not isinstance(task, dict):
+        return task
+    overview: dict[str, Any] = {}
+    for key, value in task.items():
+        if key in {"input", "output", "contract"} and isinstance(value, dict):
+            overview[key] = _artifact_overview(value, include=[])
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        overview[key] = value if len(text) <= TASK_FIELD_MAX else {"omitted_chars": len(text)}
+    return overview
 
 
 def workflow_approve_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
@@ -1126,7 +1153,37 @@ def program_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
         status["resolved_config"] = _resolved_config_for_snapshot(
             _load_program_snapshot(program_type=program_type or None, program_id=program_id)
         )
+        wanted = args.get("include_artifacts")
+        wanted = [str(name) for name in wanted] if isinstance(wanted, list) else []
+        if isinstance(status.get("artifacts"), dict):
+            status["artifacts"] = _artifact_overview(status["artifacts"], include=wanted)
     return status
+
+
+ARTIFACT_VALUE_MAX = 400
+# A Markdown heading at the start of a line, or at the start of a JSON string value.
+_HEADING_RE = re.compile(r'(?:^|\n|"\s?)#{1,6}\s+([^\n"]+)')
+
+
+def _artifact_overview(artifacts: dict[str, Any], *, include: list[str]) -> dict[str, Any]:
+    """Program artifacts for a chat turn: short values as they are, long ones as a size and headings.
+
+    The full artifact bag (PRD, requirements, blueprints, work orders) ran to about 125,000
+    characters; returned on every status call it made each answer cost tens of thousands of
+    tokens. Name artifacts in ``include_artifacts`` to get them whole.
+    """
+    overview: dict[str, Any] = {}
+    for key, value in artifacts.items():
+        if key in include:
+            overview[key] = value
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if len(text) <= ARTIFACT_VALUE_MAX:
+            overview[key] = value
+            continue
+        headings = [match.strip() for match in _HEADING_RE.findall(text.replace("\\n", "\n"))]
+        overview[key] = {"omitted_chars": len(text), "headings": headings[:12]}
+    return overview
 
 
 def propose_advance_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

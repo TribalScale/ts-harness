@@ -194,16 +194,21 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
                 pr_url,
             )
             try:
-                from ts_harness.workflows.merge_readiness import fan_out_base_advanced
+                # The same as the merge webhook: mark the program's PR merged (it stayed "open"
+                # on hosts without webhooks) and refresh sibling PRs on the same base.
+                from ts_harness.workflows.merge_readiness import on_merge
 
-                fan_out_base_advanced(
-                    {"pr_url": pr_url, "base_branch": str((pr.get("base") or {}).get("ref") or "")},
+                on_merge(
+                    {
+                        "pr_url": pr_url,
+                        "base_branch": str((pr.get("base") or {}).get("ref") or ""),
+                        "merged_by": str((pr.get("merged_by") or {}).get("login") or ""),
+                        "merge_sha": merge_sha,
+                    },
                     tenant_id=tenant_id,
-                    memory=memory,
-                    engine=engine,
                 )
-            except Exception as exc:  # noqa: BLE001 - fan-out is best effort
-                logger.warning("github_merge_poller base_advanced fan-out failed pr_url=%s error=%s", pr_url, exc)
+            except Exception as exc:  # noqa: BLE001 - recording the merge is best effort
+                logger.warning("github_merge_poller merge record failed pr_url=%s error=%s", pr_url, exc)
         except Exception as exc:  # noqa: BLE001
             errors += 1
             logger.warning(
@@ -688,6 +693,13 @@ def sweep_channel_dedup() -> dict[str, Any]:
     return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
 
 
+def _retry_program_phases() -> dict[str, Any]:
+    """Program phase completions that failed earlier (see ``workflows.phase_retries``)."""
+    from ts_harness.workflows.phase_retries import retry_due
+
+    return retry_due()
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
@@ -698,6 +710,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "sweep_channel_dedup": sweep_channel_dedup,
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
+    "retry_program_phases": lambda: _retry_program_phases(),
 }
 
 PAYLOAD_HANDLERS = frozenset({"start_program"})

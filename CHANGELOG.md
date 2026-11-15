@@ -11,6 +11,14 @@ First public release.
 
 ### Added
 
+- GPT-6 agents keep their reasoning across a tool loop. Responses API calls run stateless
+  with the reasoning returned encrypted, and each assistant turn hands its reasoning items
+  back with its tool calls, so the model no longer reasons from scratch after every call.
+- A program phase completion that fails is retried: the engine records it, the
+  `retry-program-phases` system job runs it again every 5 minutes with backoff (up to an
+  hour), and the program's chat is told when it fails and when it recovers. A program that
+  already moved on is never completed twice.
+
 - dev-agent runs on Claude Sonnet 5.5 at medium effort instead of Opus 5.5 at high. In an
   A/B run of the same work order on athena, Sonnet and GPT-6.1 Sol both passed every gate
   first time; Sonnet did it in 2 dev-agent calls, one coding run and 5.6 minutes against
@@ -224,6 +232,23 @@ First public release.
 
 ### Fixed
 
+- On hosts without GitHub webhooks a merged PR stayed `open` in the program's references:
+  the merge poller resumed the wait but never recorded the merge. It now records it the
+  same way as the webhook.
+- A program waiting on child workflows (release tracks, wave work orders) said only that
+  it was waiting for `workflow.child_terminal`. Program status now lists each running
+  child's current step and what it waits for, and recommends the pending approval.
+- A program chat resent every earlier turn in full, including whole PRD drafts and work
+  orders, so a one-line question cost over 150,000 input tokens. Assistant and tool
+  messages longer than 3,000 characters from earlier turns are cut to their first 1,500.
+- Program status reported a stale lease on a step that was only waiting (for example a
+  release waiting for its promote approval), and the orchestrator told people the release
+  was stuck. Only a running task's lease is checked now.
+- `program_status` returned every program artifact in full (about 125,000 characters for
+  a delivered program), so a status question in chat cost tens of thousands of tokens.
+  Long artifacts now come back as their size and headings; `include_artifacts` asks for
+  named ones in full. `workflow_status` (160,000 characters for one implement workflow)
+  summarises task inputs and outputs the same way; `full: true` returns them whole.
 - Restarting agent-runtime (`restart_agent_runtime`, used by `sync-runtime-config.sh`)
   left memory-api unreachable: memory-api, workflow-runner, llm-proxy and coding-launcher
   run in agent-runtime's network namespace and lost it. They now restart right after it.
