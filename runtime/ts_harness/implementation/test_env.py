@@ -251,7 +251,10 @@ def bdd_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | 
     return None
 
 
-_TYPECHECK_SCRIPTS = ("typecheck", "type-check", "check-types", "types:check", "tsc")
+_TYPECHECK_SCRIPTS = (
+    "typecheck", "type-check", "check-types", "types:check", "check:types", "test:typecheck", "lint:types",
+    "typecheck:all", "tsc",
+)
 _LINTABLE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 _ESLINT_CONFIGS = tuple(
     [f"eslint.config.{ext}" for ext in ("js", "mjs", "cjs", "ts", "mts", "cts")]

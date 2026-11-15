@@ -1151,6 +1151,7 @@ def assertion_frames(trace_zip: Path, out_dir: Path, *, limit: int = FRAMES_PER_
         names = set(archive.namelist())
         expects: dict[str, float] = {}
         ends: dict[str, float] = {}
+        starts: list[float] = []
         frames: list[tuple[float, str]] = []
         for name in sorted(n for n in names if n.endswith(".trace") and n != "test.trace"):
             for line in archive.read(name).decode(errors="replace").splitlines():
@@ -1159,6 +1160,8 @@ def assertion_frames(trace_zip: Path, out_dir: Path, *, limit: int = FRAMES_PER_
                 except json.JSONDecodeError:
                     continue
                 kind = event.get("type")
+                if kind == "before":
+                    starts.append(float(event.get("startTime") or 0))
                 if kind == "before" and event.get("method") == "expect":
                     expects[str(event.get("callId"))] = float(event.get("startTime") or 0)
                 elif kind == "after" and event.get("callId"):
@@ -1166,12 +1169,17 @@ def assertion_frames(trace_zip: Path, out_dir: Path, *, limit: int = FRAMES_PER_
                 elif kind == "screencast-frame" and event.get("sha1"):
                     frames.append((float(event.get("timestamp") or 0), str(event["sha1"])))
         frames.sort()
+        starts.sort()
         picked: list[str] = []
         for call_id, _start in sorted(expects.items(), key=lambda item: item[1]):
             end = ends.get(call_id)
             if end is None:
                 continue
-            shown = [sha for stamp, sha in frames if stamp <= end + 50]
+            # Frames are painted a little after the DOM the assertion saw: take the latest frame
+            # before the next action starts (within a second), else the last one before it passed.
+            next_start = next((t for t in starts if t > end), end + 1000)
+            settled = [sha for stamp, sha in frames if end <= stamp < min(next_start, end + 1000)]
+            shown = settled or [sha for stamp, sha in frames if stamp <= end]
             if shown and (not picked or picked[-1] != shown[-1]):
                 picked.append(shown[-1])
         if len(picked) > limit:

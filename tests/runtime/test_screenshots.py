@@ -153,8 +153,11 @@ class AssertionFrameTests(unittest.TestCase):
         for i in range(expects):
             call = f"call@{i}"
             events.append({"type": "before", "callId": call, "method": "expect", "startTime": 100 * i + 10})
-            events.append({"type": "screencast-frame", "sha1": f"page-{i}.jpeg", "timestamp": 100 * i + 20})
+            events.append({"type": "screencast-frame", "sha1": f"stale-{i}.jpeg", "timestamp": 100 * i + 20})
             events.append({"type": "after", "callId": call, "endTime": 100 * i + 30})
+            # painted just after the assertion passed, before the next action
+            events.append({"type": "screencast-frame", "sha1": f"page-{i}.jpeg", "timestamp": 100 * i + 40})
+            resources[f"resources/stale-{i}.jpeg"] = b"stale"
             resources[f"resources/page-{i}.jpeg"] = f"frame{i}".encode()
         events.append({"type": "screencast-frame", "sha1": "page-late.jpeg", "timestamp": 99999})
         with zipfile.ZipFile(path, "w") as archive:
