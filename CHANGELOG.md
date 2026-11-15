@@ -11,6 +11,14 @@ First public release.
 
 ### Added
 
+- Node repos that use pnpm or yarn: the host installs with the repo's package manager
+  (frozen lockfile) and runs its scripts with it, through corepack.
+- Host verification runs a Node repo's type check (its script, or `tsc --noEmit`) and
+  ESLint on the changed files, so these failures go to the fix passes instead of coming
+  back as a failed PR check.
+- Review and QA get the host's test evidence: each command verification ran, its exit code
+  and the end of its output (`verify_summary`). Before, QA never received it.
+
 - Coding jobs fit the host. The local launcher runs as many workers at once as memory
   allows (host memory minus `CODING_HOST_RESERVED_MEMORY`, default 2.5 GB, divided by
   `CODING_WORKER_MEMORY`, now 2 GB by default), never more than `coding_max_running`.
@@ -244,6 +252,18 @@ First public release.
   at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
+
+- Work orders with Given/When/Then acceptance tests no longer demand Gherkin feature files
+  in a repo that does not use them. A NestJS repo with Jest failed every such work order
+  (`no_bdd_runner_or_features`) and the agent tried to add Cucumber.
+- Pull requests no longer carry the harness's `.opencode/` skills and config, or Python
+  ignore lines added to the repo's `.gitignore`.
+- Review and QA no longer judge a cut-off patch: the per-file limit is 60k characters with a
+  240k budget per review, trimming the largest files first, and new files GitHub sends
+  without a patch are read from the PR head. QA marks what it cannot see as unverified
+  instead of failing the work order on it, which repeated revisions that could not help.
+- `redeploy.sh` builds the runtime image before the coding worker image, which is built
+  from it. Compose built both at once and workers kept the previous runtime code.
 
 - Cancelling a program or a workflow left the workflows below its own running: a cancelled
   program's release track kept waiting for its promote approval in the Inbox. A cancel now
