@@ -11,6 +11,18 @@ First public release.
 
 ### Added
 
+- Coding jobs fit the host. The local launcher runs as many workers at once as memory
+  allows (host memory minus `CODING_HOST_RESERVED_MEMORY`, default 2.5 GB, divided by
+  `CODING_WORKER_MEMORY`, now 2 GB by default), never more than `coding_max_running`.
+  In-process runs use the same rule when `CODING_INPROCESS_MAX_RUNNING` is unset.
+- Each work order's OpenCode runs keep their own data directory, so runs in parallel no
+  longer share one SQLite database (they crashed during setup and lost their usage).
+- Coding workers report OpenCode token usage with their job result; memory-api records
+  it in `llm_usage` and `agent_token_usage`. Before, usage from workers was lost unless
+  the LLM proxy was on.
+- `implement_jira_ticket` 1.7.0 runs its deliver step as a coding job when coding jobs
+  are on, like `deliver_work_order`: no dev-agent turn.
+
 - GPT-6 agents keep their reasoning across a tool loop. Responses API calls run stateless
   with the reasoning returned encrypted, and each assistant turn hands its reasoning items
   back with its tool calls, so the model no longer reasons from scratch after every call.
@@ -47,8 +59,9 @@ First public release.
     analyst and marketing on GPT-6.1 Sol; comms on GPT-6 Luna; heartbeats on
     Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
 - `scripts/ops/redeploy.sh` rolls a checkout onto an existing host: secrets, runtime
-  config, workspace, compose env, migrations, then rebuilt images. See
-  `docs/runbooks/redeploy.md`.
+  config, workspace, compose env, migrations, then rebuilt images. After a successful
+  deploy it prunes untagged images and caps the build cache at 6 GB (`BUILD_CACHE_MAX`), so repeated
+  deploys do not fill the root volume. See `docs/runbooks/redeploy.md`.
 - `llm_usage.agent_id` (migration 046): the agent that made each model call. `actor`
   stays the person the work is for, which for a workflow task is the requester.
 - Model usage is recorded without the LLM proxy. Direct agent calls write
@@ -232,6 +245,16 @@ First public release.
 
 ### Fixed
 
+- With object storage on S3, the workflow runner logged "skill mirror sync failed" on every
+  tick: compose gave it the backend but not the skills and workspace buckets.
+- Coding jobs never started on a single host: the launcher runs in the agent-runtime image,
+  which installed `docker.io` (on Debian trixie the daemon only) and had no `docker` client,
+  so every launch failed with `No such file or directory: 'docker'`. The image installs
+  `docker-cli` instead.
+- The coding worker image failed to build with npm 12, which skips install scripts unless
+  allowed: OpenCode's postinstall (which fetches its binary) never ran. The worker image
+  and phase 11h now run it explicitly. Compose also never received `OPENCODE_VERSION`, so
+  workers were built with the latest OpenCode instead of the pinned version.
 - On hosts without GitHub webhooks a merged PR stayed `open` in the program's references:
   the merge poller resumed the wait but never recorded the merge. It now records it the
   same way as the webhook.

@@ -518,9 +518,49 @@ def complete_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, An
             "coding-worker",
         )
         refs = _record_refs(cur, row, result)
+        usage_rows = _record_usage(cur, row, result)
         resumed = _resume_task(cur, row.get("task_id"), jid, "coding-worker")
     conn.commit()
-    return {**_public(row), "task_resumed": resumed, "refs_recorded": refs}
+    return {**_public(row), "task_resumed": resumed, "refs_recorded": refs, "usage_recorded": usage_rows}
+
+
+def _record_usage(cur, row: dict[str, Any], result: dict[str, Any]) -> int:
+    """The worker's OpenCode token usage, as ``llm_usage`` and ``agent_token_usage`` rows.
+
+    A worker has no database connection; without the metering proxy this is the only place
+    its usage is counted. Through the proxy the worker reports none, so nothing is doubled.
+    """
+    written = 0
+    for item in result.get("usage") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            fresh = max(0, int(item.get("input_tokens") or 0))
+            cached = max(0, int(item.get("cache_read_tokens") or 0))
+            output = max(0, int(item.get("output_tokens") or 0))
+            cost = max(0.0, float(item.get("cost_usd") or 0))
+        except (TypeError, ValueError):
+            continue
+        provider, model = str(item.get("provider") or "unknown"), str(item.get("model") or "unknown")
+        task_id = str(row.get("task_id") or "") or None
+        cur.execute(
+            """
+            INSERT INTO llm_usage (tenant_id, team_id, program_id, workflow_id, task_id, actor, agent_id,
+                                   provider, model, input_tokens, output_tokens, cost_usd, status)
+            VALUES (%s, (SELECT team_id::text FROM workflow_tasks WHERE id = %s::uuid), %s, %s, %s, %s,
+                    'coding-backend', %s, %s, %s, %s, %s, 200)
+            """,
+            (str(row.get("tenant_id") or "default"), task_id, str(row.get("program_id") or "") or None,
+             str(row.get("workflow_id") or "") or None, task_id, str(row.get("requested_by") or "") or "coding-backend",
+             provider, model, fresh + cached, output, cost),
+        )
+        cur.execute(
+            "INSERT INTO agent_token_usage (agent_id, provider, model, input_tokens, output_tokens, session_id) "
+            "VALUES ('coding-backend', %s, %s, %s, %s, %s)",
+            (provider, model, fresh + cached, output, str(item.get("session_id") or "") or None),
+        )
+        written += 1
+    return written
 
 
 def _mark_lost(cur, row: dict[str, Any], reason: str, actor: str) -> dict[str, Any]:

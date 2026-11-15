@@ -44,7 +44,7 @@ class LocalDockerLauncherTests(unittest.TestCase):
         cmd, kwargs = docker.calls[0]
         joined = " ".join(cmd)
         for expected in (
-            "--rm", "--label ts-harness.coding-job=" + JOB["id"], "--cpus 2", "--memory 4g", "--pids-limit 2048",
+            "--rm", "--label ts-harness.coding-job=" + JOB["id"], "--cpus 2", "--memory 2g", "--pids-limit 2048",
             "--network container:abc", "-v /data/rt.yaml:/config/ts-harness-runtime.yaml:ro", "-e JOB_TOKEN ", "-e GITHUB_TOKEN",
         ):
             self.assertIn(expected, joined)

@@ -238,6 +238,7 @@ fi
     echo "export TS_HARNESS_DB_PASSWORD=$(printf '%q' "$TS_HARNESS_DB_PASSWORD")"
     echo "export OPENAI_API_KEY=$(printf '%q' "${OPENAI_API_KEY:-}")"
     echo "export ANTHROPIC_API_KEY=$(printf '%q' "${ANTHROPIC_API_KEY:-}")"
+    echo "export OPENCODE_VERSION=$(printf '%q' "${OPENCODE_VERSION:-}")"
     echo "export VOYAGE_API_KEY=$(printf '%q' "${VOYAGE_API_KEY:-}")"
     echo "export GEMINI_API_KEY=$(printf '%q' "${GEMINI_API_KEY:-}")"
     echo "export MISTRAL_API_KEY=$(printf '%q' "${MISTRAL_API_KEY:-}")"

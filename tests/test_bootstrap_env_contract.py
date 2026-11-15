@@ -27,6 +27,15 @@ class BootstrapEnvContractTests(unittest.TestCase):
                 self.assertIn(f'{key}="${{{key}:-}}"', wrapper)
                 self.assertIn(f'echo "export {key}=', phase)
 
+    def test_the_pinned_opencode_version_reaches_the_worker_build(self):
+        """Without it compose built the coding worker with opencode-ai@latest, not the pinned version."""
+        common = COMMON.read_text()
+        wrapper = common[common.index("run_docker_compose_as_admin()"):]
+        self.assertIn('OPENCODE_VERSION="${OPENCODE_VERSION:-}"', wrapper)
+        self.assertIn('echo "export OPENCODE_VERSION=', PHASE_12.read_text())
+        dockerfile = (REPO_ROOT / "docker" / "Dockerfile.coding-worker").read_text()
+        self.assertIn("node postinstall.mjs", dockerfile)
+
     def test_env_defaults_file_exists(self):
         path = REPO_ROOT / "scripts" / "phases" / "lib" / "env-defaults.sh"
         self.assertTrue(path.is_file())

@@ -43,6 +43,8 @@ WORKDIR /app
 # (trixie packages JDK 21, not 17). apt and libapt-pkg7.0 are listed so the base image's
 # 3.0.3 copies pick up trixie-security 3.0.4 (CVE-2026-109518). zlib1g is listed for the
 # same reason: the base image's 1.3.1-1+b1 predates deb13u1 (CVE-2026-76844, CVE-2026-85091).
+# docker-cli: coding-launcher (this image) starts worker containers through the mounted
+# Docker socket. On trixie the client is its own package; docker.io is the daemon only.
 RUN mkdir -p /usr/share/man/man1 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -50,7 +52,7 @@ RUN mkdir -p /usr/share/man/man1 \
         libapt-pkg7.0 \
         ca-certificates \
         curl \
-        docker.io \
+        docker-cli \
         gcc \
         git \
         gnupg \

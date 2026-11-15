@@ -145,10 +145,19 @@ class CodingJobsPostgresTests(PgTestCase):
             self.assertEqual((spec["status"], spec["spec"]["repo_url"]), ("running", SPEC["repo_url"]))
             self.assertEqual(coding_jobs.heartbeat_coding_job(conn, job["id"], {"last_output": "x" * 5000})["status"], "running")
 
+            usage = [{"provider": "anthropic", "model": "claude-sonnet-5-5", "input_tokens": 1000, "output_tokens": 50,
+                      "cache_read_tokens": 4000, "cost_usd": 0.0045, "session_id": "ses_1"}]
             done = coding_jobs.complete_coding_job(
-                conn, job["id"], {"result": {"ok": True, "pr_url": "https://github.com/acme/app/pull/1"}}
+                conn, job["id"], {"result": {"ok": True, "pr_url": "https://github.com/acme/app/pull/1", "usage": usage}}
             )
-            self.assertEqual((done["status"], done["task_resumed"]), ("succeeded", True))
+            self.assertEqual((done["status"], done["task_resumed"], done["usage_recorded"]), ("succeeded", True, 1))
+            with conn.cursor() as cur:
+                cur.execute("SELECT agent_id, provider, model, input_tokens, output_tokens, cost_usd, workflow_id, task_id "
+                            "FROM llm_usage WHERE task_id = %s", (task_id,))
+                recorded = cur.fetchone()
+            self.assertEqual((recorded["agent_id"], recorded["model"], recorded["input_tokens"], recorded["output_tokens"]),
+                             ("coding-backend", "claude-sonnet-5-5", 5000, 50))
+            self.assertAlmostEqual(float(recorded["cost_usd"]), 0.0045)
             task = self.task(conn, task_id)
             self.assertEqual((task["status"], task["error"], task["attempt"], task["wait_token"]), ("pending", None, 0, None))
 

@@ -61,14 +61,26 @@ def record_opencode_usage(
     scope: Mapping[str, Any],
     run_json: Callable[..., Any] = _run_json,
     record: Callable[..., bool] | None = None,
+    collect: list[dict[str, Any]] | None = None,
 ) -> int:
-    """Record every session OpenCode created in ``repo_dir`` since ``since_ms``. Returns rows written."""
+    """Record every session OpenCode created in ``repo_dir`` since ``since_ms``. Returns rows written.
+
+    Where the runtime can write usage itself (a session database, no proxy) the rows go to
+    ``llm_usage`` here. A coding worker has no database: with ``collect`` given, the rows are
+    appended to it instead and travel back with the job result. Through the metering proxy
+    nothing is recorded or collected, since the proxy already counted every call.
+    """
+    from ts_harness.llm_proxy.tokens import proxy_enabled
+
+    if proxy_enabled():
+        return 0
     if record is None:
         from ts_harness.llm_usage import record_usage, recording_enabled
 
-        if not recording_enabled():
+        if recording_enabled():
+            record = record_usage
+        elif collect is None:
             return 0
-        record = record_usage
     written = 0
     try:
         sessions = run_json([binary, "session", "list", "--format", "json", "-n", "50"], env=env, cwd=str(repo_dir))
@@ -98,8 +110,17 @@ def record_opencode_usage(
             from ts_harness.llm_proxy.metering import match_model
 
             # Our price table wins; OpenCode's own figure covers models the table does not list.
-            cost = None if match_model(pricing(), provider, model) else row["cost"]
-            if record(scope, provider=provider, model=model, usage=usage, cost_usd=cost, session_id=session_id):
+            from ts_harness.llm_proxy.metering import price
+
+            table = pricing()
+            cost = price(table, provider, model, usage) if match_model(table, provider, model) else row["cost"]
+            if record is not None:
+                if record(scope, provider=provider, model=model, usage=usage, cost_usd=cost, session_id=session_id):
+                    written += 1
+            elif collect is not None:
+                collect.append({"provider": provider, "model": model, "input_tokens": usage.input_tokens,
+                                "output_tokens": usage.output_tokens, "cache_read_tokens": usage.cache_read_tokens,
+                                "cost_usd": round(float(cost or 0), 6), "session_id": session_id})
                 written += 1
     if not written:
         logger.warning("opencode usage: no session of this run found in %s (since %s)", repo_dir, since_ms)

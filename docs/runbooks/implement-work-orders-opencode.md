@@ -81,13 +81,13 @@ Each delivery workflow gets its own workspace and branch: `coding-backend/<WO>-<
 
 ## Coding jobs (OpenCode outside agent-runtime)
 
-With `coding_jobs_enabled: true` (env `CODING_JOBS_ENABLED=true`), `deliver_work_order` 1.5.0 no longer runs OpenCode inside an agent turn. The stage has `"execution": "coding_job"`:
+With `coding_jobs_enabled: true` (env `CODING_JOBS_ENABLED=true`), the deliver step of `deliver_work_order` (1.5.0 and later) and `implement_jira_ticket` (1.7.0 and later) runs no agent turn at all: the stage has `"execution": "coding_job"`, and dev-agent is not called. A run that fails waits for a person (`/revise WO-n <guidance>` or `/stop WO-n`).
 
 1. The runner builds the job spec from the task input (repo, branch, PR, feedback, refresh) and queues a coding job.
 2. The task parks as `blocked` with `awaiting_external:coding.finished`, and the runner thread is free. The console shows "OpenCode queued" until a worker starts, then "OpenCode implementing" with run time and the latest log line.
-3. `coding-launcher` claims queued jobs, up to `coding_max_running` (default 3) starting or running at once, and starts one `ts-harness-coding-worker` container per job with `docker run --rm` and CPU, memory and pids limits.
+3. `coding-launcher` claims queued jobs and starts one `ts-harness-coding-worker` container per job with `docker run --rm` and CPU, memory and pids limits. The local launcher runs as many jobs at once as the host's memory fits, never more than `coding_max_running` (default 3): (host memory − `CODING_HOST_RESERVED_MEMORY`, default 2.5 GB) ÷ `CODING_WORKER_MEMORY` (default 2 GB). A t3.medium (4 GB) runs one, a t3.large (8 GB) two, a t3.xlarge (16 GB) three. The launcher logs the result as `coding_launcher_capacity` when it starts.
 4. The worker fetches its spec with a job token that only opens that job's spec, heartbeat and complete endpoints. It heartbeats every 30 seconds with the last line of the OpenCode log, then posts the result and exits.
-5. Completing the job puts the task back to pending. The runner checks the result against the stage contract exactly as it checks an agent's output; a failed run blocks with `deliver_work_order cannot succeed when run_coding_backend failed: ...` and revision and retry policy apply as before.
+5. The worker reports OpenCode's token usage with its result, and memory-api writes it to `llm_usage` and `agent_token_usage` as `coding-backend` (unless the LLM proxy already metered it). Completing the job puts the task back to pending. The runner checks the result against the stage contract exactly as it checks an agent's output; a failed run blocks with `deliver_work_order cannot succeed when run_coding_backend failed: ...` and revision and retry policy apply as before.
 
 Restarting `agent-runtime` or `workflow-runner` mid-run does not interrupt a job; the worker keeps running and its result is picked up when the task is next dispatched.
 

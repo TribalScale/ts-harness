@@ -238,6 +238,23 @@ def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -
 _USAGE_RUN = threading.local()
 
 
+def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
+    """A data directory of its own for each work order's OpenCode runs.
+
+    OpenCode keeps sessions in one SQLite database under ``XDG_DATA_HOME``. Shared by runs
+    in parallel, it crashed their setup ("crashed while OpenCode was setting up its own
+    database") and lost their usage. The model cache (``XDG_CACHE_HOME``) stays shared.
+    """
+    import hashlib
+    import tempfile
+
+    # Outside the workspace: a workspace that is itself a checkout would commit it.
+    key = hashlib.sha256(str(Path(workspace_dir).resolve()).encode()).hexdigest()[:16]
+    path = Path(tempfile.gettempdir()) / "ts-harness-opencode-data" / key
+    path.mkdir(parents=True, exist_ok=True)
+    return {"XDG_DATA_HOME": str(path)}
+
+
 def _note_opencode_run(binary: Any, env: dict[str, str], repo_dir: Any) -> None:
     _USAGE_RUN.ctx = {"binary": str(binary), "env": env, "repo_dir": Path(repo_dir)}
 
@@ -742,17 +759,20 @@ class OpenCodeBackend:
         """Implement or refresh, then record the tokens of every OpenCode run it made."""
         started_ms = int(time.time() * 1000)
         _USAGE_RUN.ctx = {}
+        result: CodingResult | None = None
         try:
-            if request.mode == "refresh":
-                return self.refresh(request)
-            return self._implement(request)
+            result = self.refresh(request) if request.mode == "refresh" else self._implement(request)
+            return result
         finally:
             usage_ctx, _USAGE_RUN.ctx = getattr(_USAGE_RUN, "ctx", {}), {}
             if usage_ctx:
+                rows: list[dict[str, Any]] = []
                 try:
-                    record_opencode_usage(since_ms=started_ms, scope=coding_usage_scope(request), **usage_ctx)
+                    record_opencode_usage(since_ms=started_ms, scope=coding_usage_scope(request), collect=rows, **usage_ctx)
                 except Exception:  # noqa: BLE001 - metering never fails a coding run
-                    pass
+                    rows = []
+                if result is not None and rows:
+                    result.usage = rows
 
     def _implement(self, request: CodingRequest) -> CodingResult:
         provider, api_key = resolve_coding_backend_credentials(
@@ -870,6 +890,7 @@ class OpenCodeBackend:
             env = os.environ.copy()
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
+            env.update(opencode_data_env(request.workspace_dir))
             _note_opencode_run(binary, env, repo_dir)
             completed = self._run_opencode(
                 cmd,
@@ -1155,6 +1176,7 @@ class OpenCodeBackend:
             env.update(test_env.env)
             if provider and api_key:
                 env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
+            env.update(opencode_data_env(request.workspace_dir))
             binary = ""
             if merged.returncode != 0:
                 conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")
