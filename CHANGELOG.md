@@ -245,6 +245,13 @@ First public release.
 
 ### Fixed
 
+- OpenCode edited files outside a work order's `## Files` list; the harness reverted them
+  after the run, which broke tests that imported from them and spent the fix passes. Each
+  run now gets an `OPENCODE_CONFIG` (outside the repository) whose edit permissions deny
+  everything but the declared files, `features/**` for Given/When/Then work orders, the
+  paths the pipeline writes, and review revision files. OpenCode refuses such an edit at
+  once and works within the list. The revert stays for files written another way, and the
+  fix pass is told which files it reverted.
 - `install.sh apply` without `--plan-file` ran `terraform apply -auto-approve`, so a plan
   that deleted resources was applied unseen. On the dev install a refresh lost the intake
   bucket from state; the next apply planned to create it, deleted its public-access block,
