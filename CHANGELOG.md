@@ -244,6 +244,10 @@ First public release.
 
 ### Fixed
 
+- Coding jobs never started on a single host: the launcher runs in the agent-runtime image,
+  which installed `docker.io` (on Debian trixie the daemon only) and had no `docker` client,
+  so every launch failed with `No such file or directory: 'docker'`. The image installs
+  `docker-cli` instead.
 - The coding worker image failed to build with npm 12, which skips install scripts unless
   allowed: OpenCode's postinstall (which fetches its binary) never ran. The worker image
   and phase 11h now run it explicitly. Compose also never received `OPENCODE_VERSION`, so

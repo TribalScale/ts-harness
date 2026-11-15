@@ -239,6 +239,11 @@ class OpsHardeningContractTests(unittest.TestCase):
         self.assertIn("014_workflow_wait_tokens.sql", script)
         self.assertIn("015_workflow_superseded.sql", script)
 
+    def test_runtime_image_has_the_docker_client_for_the_coding_launcher(self):
+        text = (REPO_ROOT / "docker" / "Dockerfile.agent-runtime").read_text()
+        self.assertIn("docker-cli", text)
+        self.assertNotIn("docker.io", text)
+
     def test_images_build_security_tools_from_pinned_commits(self):
         for dockerfile in (REPO_ROOT / "docker" / "Dockerfile.agent-runtime",):
             with self.subTest(dockerfile=dockerfile.name):
