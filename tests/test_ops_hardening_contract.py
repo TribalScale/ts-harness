@@ -360,7 +360,7 @@ class LlmProxyContractTests(unittest.TestCase):
         common = COMMON.read_text()
         for name in ("LLM_PROXY_SECRET \\", "LLM_PROXY_ENABLED", "CODING_WORKER_LLM_PROXY_URL"):
             self.assertIn(name, common)
-        self.assertIn("printf '%s\\n' llm-proxy", common)
+        self.assertIn("_emit_runtime_service llm-proxy", common)
         fetch = (REPO_ROOT / "scripts" / "phases" / "10-fetch-secrets.sh").read_text()
         self.assertIn('write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"', fetch)
 

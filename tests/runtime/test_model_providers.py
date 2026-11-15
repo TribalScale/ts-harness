@@ -414,3 +414,22 @@ class CodingRunSlotsTests(unittest.TestCase):
             coding_job.run_coding_request({"repo_url": "r"}, record_refs=False)
         except Exception:  # noqa: BLE001 - only the overlap is under test
             pass
+
+
+class OpencodeJsonOutputTests(unittest.TestCase):
+    def test_large_output_is_read_whole_from_a_file(self):
+        import sys
+
+        from ts_harness.implementation.backends.opencode_usage import _run_json
+
+        script = "import json,sys; sys.stdout.write(json.dumps({'messages': ['x' * 200000]}))"
+        data = _run_json([sys.executable, "-c", script], env={"PATH": os.environ.get("PATH", "")}, cwd=".")
+        self.assertEqual(len(data["messages"][0]), 200000)
+
+    def test_a_failing_command_raises_with_its_error(self):
+        import sys
+
+        from ts_harness.implementation.backends.opencode_usage import _run_json
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            _run_json([sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(2)"], env={"PATH": os.environ.get("PATH", "")}, cwd=".")

@@ -779,28 +779,51 @@ run_docker_compose_as_admin() {
 # Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use.
 # llm-proxy and workflow-runner share agent-runtime's network namespace, so a recreate
 # of the runtime leaves them attached to the old namespace unless they are recreated too.
+# Services to restart or recreate together. Services that run in agent-runtime's network
+# namespace (network_mode: service:agent-runtime) lose their network when it restarts
+# alone, so restarting agent-runtime brings them along. Each service is listed once.
 with_runtime_replicas() {
-    local service
+    local service files="${COMPOSE_FILES_SERIALIZED:-}" seen=" "
+    _emit_runtime_service() {
+        case "$seen" in
+            *" $1 "*) ;;
+            *) seen+="$1 "; printf '%s\n' "$1" ;;
+        esac
+    }
     for service in "$@"; do
-        printf '%s\n' "$service"
-        if [[ "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.replicas.yml* ]]; then
+        _emit_runtime_service "$service"
+        if [[ "$files" == *docker-compose.replicas.yml* ]]; then
             case "$service" in
-                agent-runtime|memory-api) printf '%s\n' "${service}-2" ;;
+                agent-runtime|memory-api) _emit_runtime_service "${service}-2" ;;
             esac
         fi
-        if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.llm-proxy.yml* ]]; then
-            printf '%s\n' llm-proxy
+        [[ "$service" == agent-runtime ]] || continue
+        if [[ "$files" == *docker-compose.memory-api.yml* ]]; then
+            _emit_runtime_service memory-api
+            [[ "$files" == *docker-compose.replicas.yml* ]] && _emit_runtime_service memory-api-2
         fi
-        if [[ "$service" == agent-runtime && "${COMPOSE_FILES_SERIALIZED:-}" == *docker-compose.workflow-runner.yml* ]]; then
-            printf '%s\n' workflow-runner
-        fi
+        [[ "$files" == *docker-compose.llm-proxy.yml* ]] && _emit_runtime_service llm-proxy
+        [[ "$files" == *docker-compose.workflow-runner.yml* ]] && _emit_runtime_service workflow-runner
+        [[ "$files" == *docker-compose.coding-jobs.yml* ]] && _emit_runtime_service coding-launcher
     done
+    return 0
 }
 
+# Restart agent-runtime first, then the services in its network namespace. Restarted
+# together, a sharer that came back before agent-runtime kept the old namespace and lost
+# its network (workflow-runner then saw "connection refused" on every tick).
 restart_agent_runtime() {
-    local services=() service
-    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas agent-runtime)
-    run_docker_compose_as_admin restart "${services[@]}"
+    local runtimes=() sharers=() service
+    while IFS= read -r service; do
+        case "$service" in
+            agent-runtime|agent-runtime-2) runtimes+=("$service") ;;
+            *) sharers+=("$service") ;;
+        esac
+    done < <(with_runtime_replicas agent-runtime)
+    run_docker_compose_as_admin restart "${runtimes[@]}"
+    if [[ ${#sharers[@]} -gt 0 ]]; then
+        run_docker_compose_as_admin restart "${sharers[@]}"
+    fi
 }
 
 # secrets.env is sourced by bash, so values are shell-quoted like phase 10 writes them.

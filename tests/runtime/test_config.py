@@ -85,7 +85,7 @@ class ConfigTests(unittest.TestCase):
         expected = {
             "pm-agent": ("anthropic/claude-opus-5-5", "high"),
             "builder-agent": ("anthropic/claude-opus-5-5", "high"),
-            "dev-agent": ("anthropic/claude-opus-5-5", "high"),
+            "dev-agent": ("anthropic/claude-sonnet-5-5", "medium"),
             "orchestrator": ("anthropic/claude-sonnet-5-5", "medium"),
             "sales-agent": ("anthropic/claude-sonnet-5-5", "medium"),
             "ops-agent": ("openai/gpt-6.1-sol", None),

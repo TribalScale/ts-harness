@@ -16,7 +16,7 @@
 - git_operations — branch, commit, push, open PRs, manage conflicts
 - dependency_management — add, update, audit dependencies
 
-**Model:** `anthropic/claude-opus-5-5`
+**Model:** `anthropic/claude-sonnet-5-5`
 **Workspace:** `/workspace/dev-agent`
 **Toolsets:** `core-read`, `core-write`, `terminal`, `coding-backend`, `skill-authoring`, `jira-read`, `knowledge-notes`
 **Skills:** `dev`, `memory`, `workflows`, `integrate`, `governed-workflows`

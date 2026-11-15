@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -19,10 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 def _run_json(cmd: list[str], *, env: Mapping[str, str], cwd: str, timeout: float = 60) -> Any:
-    completed = subprocess.run(cmd, env=dict(env), cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    """Run an OpenCode command and parse its JSON output.
+
+    Output goes to a temporary file, not a pipe: OpenCode stops writing to a pipe after
+    64 KiB, so a long session's export arrived cut off and failed to parse.
+    """
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as out:
+        completed = subprocess.run(cmd, env=dict(env), cwd=cwd, stdout=out, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        out.seek(0)
+        text = out.read()
     if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or completed.stdout or "")[-300:])
-    return json.loads(completed.stdout or "null")
+        raise RuntimeError((completed.stderr or text or "")[-300:])
+    return json.loads(text or "null")
 
 
 def session_usage(export: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, float]]:
