@@ -169,3 +169,50 @@ class StrayProcessTests(unittest.TestCase):
 
         command = LocalDockerLauncher(LocalDockerConfig(), environ={}).command({"id": "job-123456789"})
         self.assertIn("--init", command)
+
+
+class MonorepoTests(unittest.TestCase):
+    def _mono(self, root: Path) -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"name": "mono", "scripts": {"test": "turbo run test"}, "packageManager": "pnpm@10.18.3"}))
+        _write(repo / "pnpm-workspace.yaml", "packages:\n  - 'apps/*'\n  - 'packages/*'\n")
+        _write(repo / "pnpm-lock.yaml")
+        _write(repo / "apps" / "web" / "package.json", json.dumps({"name": "web", "scripts": {"build": "next build", "check-types": "tsc --noEmit"}, "dependencies": {"next": "15", "react-dom": "19"}, "devDependencies": {"@playwright/test": "1.59.1"}}))
+        _write(repo / "apps" / "web" / "eslint.config.js", "export default []")
+        _write(repo / "apps" / "web" / "playwright.config.ts", "export default {}")
+        _write(repo / "apps" / "web" / "app" / "page.tsx", "export default 1")
+        _write(repo / "apps" / "web" / "e2e" / "home.spec.ts", "test")
+        _write(repo / "packages" / "logger" / "package.json", json.dumps({"name": "@repo/logger", "scripts": {"build": "tsup"}}))
+        _write(repo / "packages" / "logger" / "tsconfig.json", "{}")
+        _write(repo / "packages" / "logger" / "eslint.config.js", "export default []")
+        _write(repo / "packages" / "logger" / "src" / "index.ts", "export {}")
+        for where in ("apps/web", "packages/logger", "."):
+            for tool in ("eslint", "tsc"):
+                path = _write(repo / where / "node_modules" / ".bin" / tool, "#!/bin/sh\n")
+                path.chmod(0o755)
+        _write(repo / "node_modules" / ".bin" / "turbo", "#!/bin/sh\n").chmod(0o755)
+        _write(repo / "apps" / "web" / "node_modules" / ".bin" / "playwright", "#!/bin/sh\n").chmod(0o755)
+        return repo
+
+    def test_checks_run_per_changed_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._mono(Path(tmp))
+            checks = node_static_checks(repo, ["apps/web/app/page.tsx", "packages/logger/src/index.ts"])
+            commands = {label + ":" + " ".join(cmd[3:] if cmd[0] == "env" else cmd).replace(str(repo), "R") for label, cmd in checks}
+            self.assertIn("typecheck:pnpm --filter web run check-types", commands)
+            self.assertIn("typecheck:R/packages/logger/node_modules/.bin/tsc --noEmit -p tsconfig.json", commands)
+            self.assertIn("lint:R/apps/web/node_modules/.bin/eslint app/page.tsx", commands)
+            self.assertIn("lint:R/packages/logger/node_modules/.bin/eslint src/index.ts", commands)
+            self.assertIn("build:R/node_modules/.bin/turbo run build --filter=web --output-logs=errors-only", commands)
+            lint = next(cmd for label, cmd in checks if label == "lint")
+            self.assertEqual(lint[:2], ["env", "-C"])
+
+    def test_package_playwright_suite_and_screenshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._mono(Path(tmp))
+            changed = ["apps/web/app/page.tsx", "apps/web/e2e/home.spec.ts"]
+            plan = ts.integration_plan(repo, services_running=False, changed_files=changed)
+            self.assertIn(f"cd {repo / 'apps' / 'web'} &&", plan.command)
+            self.assertEqual(ts.changed_playwright_specs(repo, changed), ["apps/web/e2e/home.spec.ts"])
+            steps = [command for _m, command in _manifest_steps(repo, TestEnvironment(python="python3"))]
+            self.assertTrue(steps[-1][0].endswith("apps/web/node_modules/.bin/playwright"))

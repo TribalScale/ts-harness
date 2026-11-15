@@ -745,7 +745,9 @@ class IntegrationPlan:
     evidence_dir: str = ""
 
 
-def integration_plan(repo_dir: Path, *, services_running: bool) -> IntegrationPlan | None:
+def integration_plan(
+    repo_dir: Path, *, services_running: bool, changed_files: list[str] | None = None
+) -> IntegrationPlan | None:
     """The configured integration suite, or a ``test:integration``-style script when a service is up."""
     config = load_repo_config(repo_dir)
     block = config.get("integration")
@@ -765,14 +767,17 @@ def integration_plan(repo_dir: Path, *, services_running: bool) -> IntegrationPl
         )
     from ts_harness.implementation.test_env import node_run_command, package_scripts, uses_playwright
 
-    if uses_playwright(repo_dir) and any(Path(repo_dir).glob("playwright.config.*")):
+    config_file = playwright_config(repo_dir, changed_files)
+    if config_file is not None and (uses_playwright(repo_dir) or uses_playwright(config_file.parent)):
         # Playwright starts the app itself through the config's webServer; with
         # nothing declared, its result is evidence, not a gate.
-        return IntegrationPlan(
-            command=shlex.join([str(Path(repo_dir) / "node_modules" / ".bin" / "playwright"), "test", "--reporter=line"]),
-            blocking=False,
-            source="playwright",
-        )
+        from ts_harness.implementation.workspaces import find_bin
+
+        binary = find_bin(repo_dir, config_file.parent, "playwright") or Path(repo_dir) / "node_modules" / ".bin" / "playwright"
+        command = shlex.join([str(binary), "test", "--reporter=line"])
+        if config_file.parent != Path(repo_dir):
+            command = f"cd {shlex.quote(str(config_file.parent))} && {command}"
+        return IntegrationPlan(command=command, blocking=False, source="playwright")
     if not services_running:
         return None
 
@@ -1058,9 +1063,18 @@ MAX_SCREENSHOTS = 6
 EVIDENCE_CONFIG = "playwright.ts-harness-evidence.config.ts"
 
 
-def playwright_config(repo_dir: Path) -> Path | None:
+def playwright_config(repo_dir: Path, changed_files: list[str] | None = None) -> Path | None:
+    """The repo's Playwright config, or in a monorepo the one of a package the change touched."""
     found = sorted(Path(repo_dir).glob("playwright.config.*"))
-    return found[0] if found else None
+    if found:
+        return found[0]
+    from ts_harness.implementation.workspaces import changed_packages
+
+    for package in changed_packages(repo_dir, changed_files or []):
+        found = sorted(package.glob("playwright.config.*"))
+        if found:
+            return found[0]
+    return None
 
 
 def changed_playwright_specs(repo_dir: Path, changed_files: list[str]) -> list[str]:
@@ -1093,11 +1107,14 @@ def _evidence_config_text(base: Path, out_dir: Path) -> str:
 
 def capture_screenshots(repo_dir: Path, specs: list[str], out_dir: Path, env: dict[str, str], *, timeout: int = 600) -> str:
     """Rerun ``specs`` with screenshots on; images land in ``out_dir``. Never fails verification."""
+    from ts_harness.implementation.workspaces import find_bin
+
     repo_dir = Path(repo_dir)
-    base = playwright_config(repo_dir)
-    binary = repo_dir / "node_modules" / ".bin" / "playwright"
-    if base is None or not binary.exists():
+    base = playwright_config(repo_dir, specs)
+    binary = find_bin(repo_dir, base.parent, "playwright") if base is not None else None
+    if base is None or binary is None:
         return "screenshots: no Playwright config or binary"
+    specs = [os.path.relpath(repo_dir / spec, base.parent) for spec in specs]
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     wrapper = base.parent / EVIDENCE_CONFIG

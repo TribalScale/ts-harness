@@ -426,14 +426,14 @@ def verify_implementation(
         shutil.rmtree(screenshots_dir(test_env), ignore_errors=True)
     plan = None
     if test_env is not None and changed_files is not None:
-        plan = integration_plan(repo_dir, services_running=test_env.services_running)
+        plan = integration_plan(repo_dir, services_running=test_env.services_running, changed_files=changed_files)
     if plan is not None:
         command = ["sh", "-c", plan.command]
         if plan.blocking and reasons:
             # A suite that resets databases and starts the app costs minutes; run it once the cheap checks pass.
             warnings.append("integration suite not run: earlier checks failed")
         else:
-            specs = changed_playwright_specs(repo_dir, changed_files) if playwright_config(repo_dir) else []
+            specs = changed_playwright_specs(repo_dir, changed_files) if playwright_config(repo_dir, changed_files) else []
             if specs and test_env.state_dir is not None:
                 plan.evidence_specs = specs
                 plan.evidence_dir = str(screenshots_dir(test_env))
