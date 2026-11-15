@@ -618,9 +618,10 @@ class MemoryApiClient:
         status: str | None = None,
         unconsumed: bool = False,
         limit: int = 50,
+        repo_url: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": limit}
-        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status)):
+        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status), ("repo_url", repo_url)):
             if value:
                 params[key] = value
         if unconsumed:
@@ -1457,6 +1458,9 @@ class WorkflowRunner:
             except CodingRequestError as exc:
                 self._apply_dispatch_result(task, stage, {"status": "blocked", "error": str(exc), "output": {}}, dispatch_started)
                 return
+            remembered = self._remembered_memory(str(spec.get("repo_url") or ""))
+            if remembered:
+                spec = {**spec, "worker_memory_mb": remembered}
             job = self.memory.create_coding_job(
                 spec=spec,
                 workflow_id=str(task.get("workflow_id") or "") or None,
@@ -1471,6 +1475,17 @@ class WorkflowRunner:
         )
         self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
         log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _remembered_memory(self, repo_url: str) -> int:
+        """Memory a recent successful job of this repo needed after running out: start there."""
+        if not repo_url:
+            return 0
+        try:
+            jobs = self.memory.list_coding_jobs(repo_url=repo_url, status="succeeded", limit=20)
+        except Exception as exc:  # noqa: BLE001 - sizing is an optimisation
+            log_event("coding_job_sizing_lookup_failed", repo_url=repo_url, error=str(exc)[:200])
+            return 0
+        return max((int(job.get("spec_memory_mb") or 0) for job in jobs or []), default=0)
 
     def _retry_out_of_memory(self, task: dict[str, Any], task_input: dict[str, Any], finished: dict[str, Any]) -> bool:
         """Queue the job again with twice the memory when the worker was OOM-killed (once, up to a cap)."""

@@ -2382,6 +2382,18 @@ class CodingJobDispatchTests(unittest.TestCase):
         self.assertEqual(memory.consumed, ["job-1"])
         self.assertEqual(memory.blocked, [("task-1", "awaiting_external:coding.finished")])
 
+    def test_a_repo_that_needed_more_memory_starts_there(self):
+        class Remembering(CodingJobMemoryClient):
+            def list_coding_jobs(self, *, task_id=None, repo_url=None, **kwargs):
+                if repo_url:
+                    return [{"status": "succeeded", "spec_memory_mb": 4096}, {"status": "succeeded"}]
+                return super().list_coding_jobs(task_id=task_id, **kwargs)
+
+        memory = Remembering(ready=[self.task()])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(memory.created_jobs[0]["spec"]["worker_memory_mb"], 4096)
+
     def test_out_of_memory_at_the_cap_reports_the_failure(self):
         oom = {"id": "job-1", "task_id": "task-1", "status": "failed", "worker_memory_mb": 6144,
                "error": "out_of_memory: the coding worker hit its memory limit (6144 MB)"}

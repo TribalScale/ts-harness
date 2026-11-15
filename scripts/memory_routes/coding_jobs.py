@@ -91,6 +91,9 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
         "worker_cpu", "worker_memory_mb",
     )
     job = {key: row.get(key) for key in keys}
+    sized = _spec_sizing(row)
+    if sized:
+        job["spec_memory_mb"] = sized["worker_memory_mb"]
     for key in ("id", "workflow_id", "task_id", "program_id"):
         if job.get(key) is not None:
             job[key] = str(job[key])
@@ -678,6 +681,9 @@ def list_coding_jobs(conn, query: dict[str, Any]) -> dict[str, Any]:
         if query.get(key):
             clauses.append(f"{key} = %s")
             params.append(_uuid(query[key], key))
+    if query.get("repo_url"):
+        clauses.append("repo_url = %s")
+        params.append(str(query["repo_url"]))
     if query.get("status"):
         statuses = [s.strip() for s in str(query["status"]).split(",") if s.strip()]
         clauses.append("status = ANY(%s)")
