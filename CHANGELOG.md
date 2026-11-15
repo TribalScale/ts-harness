@@ -60,7 +60,7 @@ First public release.
     Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
 - `scripts/ops/redeploy.sh` rolls a checkout onto an existing host: secrets, runtime
   config, workspace, compose env, migrations, then rebuilt images. After a successful
-  deploy it prunes untagged images and build cache older than 3 days, so repeated
+  deploy it prunes untagged images and caps the build cache at 6 GB (`BUILD_CACHE_MAX`), so repeated
   deploys do not fill the root volume. See `docs/runbooks/redeploy.md`.
 - `llm_usage.agent_id` (migration 046): the agent that made each model call. `actor`
   stays the person the work is for, which for a workflow task is the requester.
