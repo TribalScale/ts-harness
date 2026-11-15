@@ -47,7 +47,7 @@ from ts_harness.implementation.repo import (
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
-from ts_harness.implementation.test_services import start_test_services
+from ts_harness.implementation.test_services import integration_plan, start_test_services
 from ts_harness.implementation.test_env import (
     HOST_TOOLCHAINS,
     TestEnvironment,
@@ -580,6 +580,13 @@ class OpenCodeBackend:
         test_env.env.update(services.env)
         test_env.services_note = services.note()
         test_env.services_running = bool(services.services)
+        plan = integration_plan(repo_dir, services_running=test_env.services_running)
+        if plan is not None and not test_env.services_note:
+            test_env.services_note = (
+                f"The repo's end-to-end suite (`{plan.command}`) runs here with a headless Chromium for Playwright"
+                + (f"; settings are in {services.env_file}" if services.env_file else "")
+                + ". Add or update e2e tests for user-visible changes and run them before finishing."
+            )
         return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log] if part)
 
     def _verify_with_fixes(

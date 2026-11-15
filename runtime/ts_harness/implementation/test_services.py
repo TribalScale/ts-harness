@@ -567,7 +567,15 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
         running.log.append(str(config["_error"]))
     wanted, unavailable = detect_services(repo_dir, config)
     running.unavailable = list(unavailable)
+    overrides = {str(k): str(v) for k, v in (config.get("env") or {}).items()} if isinstance(config.get("env"), dict) else {}
     if not wanted:
+        # A frontend needs no database but may still need its declared env file (API URL,
+        # mocking switch) for its e2e suite.
+        if config.get("env_file"):
+            template_path = find_env_template(repo_dir, config, [])
+            if template_path is not None:
+                _write_env_file(repo_dir, config, template_path, _read(template_path), overrides, runner, running)
+            running.env = dict(overrides)
         return running
     template_path = find_env_template(repo_dir, config, wanted)
     template_text = _read(template_path) if template_path else ""
@@ -586,16 +594,10 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
             running.services[name] = info
     if not running.services:
         return running
-    overrides = {str(k): str(v) for k, v in (config.get("env") or {}).items()} if isinstance(config.get("env"), dict) else {}
     changes = {**rewrite_env(template, running.services, set(compose_services(repo_dir))), **overrides}
     service_env = _service_env(running.services, creds)
-    target = str(config.get("env_target") or ".env")
-    if template_path is not None and not (repo_dir / target).exists():
-        (repo_dir / target).write_text(render_env_file(template_text, changes), encoding="utf-8")
-        if not _git_ignored(repo_dir, target, runner):
-            _exclude_locally(repo_dir, target)
-        running.env_file = target
-        running.log.append(f"wrote {target} from {template_path.name}")
+    if template_path is not None:
+        _write_env_file(repo_dir, config, template_path, template_text, changes, runner, running)
     running.env = {
         **service_env,
         **{key: value for key, value in {**template, **changes}.items() if value and _connection_key(key)},
@@ -603,6 +605,21 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
         SERVICES_ENV: json.dumps(running.services),
     }
     return running
+
+
+def _write_env_file(
+    repo_dir: Path, config: dict[str, Any], template_path: Path, template_text: str,
+    changes: dict[str, str], runner, running: RunningServices,
+) -> None:
+    """``.env`` from the template, only when absent, and never committed."""
+    target = str(config.get("env_target") or ".env")
+    if (repo_dir / target).exists():
+        return
+    (repo_dir / target).write_text(render_env_file(template_text, changes), encoding="utf-8")
+    if not _git_ignored(repo_dir, target, runner):
+        _exclude_locally(repo_dir, target)
+    running.env_file = target
+    running.log.append(f"wrote {target} from {template_path.name}")
 
 
 def _connection_key(key: str) -> bool:
@@ -640,9 +657,18 @@ def integration_plan(repo_dir: Path, *, services_running: bool) -> IntegrationPl
             timeout_seconds=int(block.get("timeout_seconds") or DEFAULT_INTEGRATION_TIMEOUT),
             blocking=bool(block.get("blocking", True)),
         )
+    from ts_harness.implementation.test_env import node_run_command, package_scripts, uses_playwright
+
+    if uses_playwright(repo_dir) and any(Path(repo_dir).glob("playwright.config.*")):
+        # Playwright starts the app itself through the config's webServer; with
+        # nothing declared, its result is evidence, not a gate.
+        return IntegrationPlan(
+            command=shlex.join([str(Path(repo_dir) / "node_modules" / ".bin" / "playwright"), "test", "--reporter=line"]),
+            blocking=False,
+            source="playwright",
+        )
     if not services_running:
         return None
-    from ts_harness.implementation.test_env import node_run_command, package_scripts
 
     scripts = package_scripts(repo_dir)
     script = next((name for name in _INTEGRATION_SCRIPTS if name in scripts), None)
