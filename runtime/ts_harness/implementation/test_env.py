@@ -20,7 +20,7 @@ from pathlib import Path
 # Shipped in docker/Dockerfile.agent-runtime; prompts quote this list.
 HOST_TOOLCHAINS = (
     "Python (per-work-order venv with pytest and behave)",
-    "Node.js with npm",
+    "Node.js with npm, plus pnpm and yarn through corepack",
     "Go",
     "JDK 21 with Maven and Gradle",
     "Rust with cargo",
@@ -37,6 +37,8 @@ FALLBACK_RUNNER_PACKAGES = ("pytest", "behave")
 
 _PYTHON_REQUIREMENTS = ("requirements.txt", "requirements-dev.txt", "requirements-test.txt")
 _NODE_LOCKFILE = "package-lock.json"
+# Lockfile per package manager; pnpm and yarn run through corepack, which ships with Node.
+NODE_LOCKFILES = {"pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock", "npm": _NODE_LOCKFILE}
 _LOCAL_EXCLUDES = {
     "node": ("node_modules/",),
     "cargo": ("target/",),
@@ -44,6 +46,7 @@ _LOCAL_EXCLUDES = {
     "gradle": (".gradle/", "build/"),
 }
 _EXCLUDE_MARKER = "# ts-harness test environment"
+HARNESS_LOCAL_PATHS = (".opencode/",)
 
 
 @dataclass
@@ -76,6 +79,59 @@ def package_scripts(repo_dir: Path) -> dict[str, str]:
         return {}
     scripts = data.get("scripts", {}) if isinstance(data, dict) else {}
     return scripts if isinstance(scripts, dict) else {}
+
+
+def package_manifest(repo_dir: Path) -> dict:
+    try:
+        data = json.loads(_read_text(Path(repo_dir) / "package.json") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def node_package_manager(repo_dir: Path) -> str:
+    """npm, pnpm or yarn: the ``packageManager`` field first, then the lockfile."""
+    repo_dir = Path(repo_dir)
+    declared = str(package_manifest(repo_dir).get("packageManager") or "").split("@", 1)[0].strip()
+    if declared in NODE_LOCKFILES:
+        return declared
+    for manager in ("pnpm", "yarn"):
+        if (repo_dir / NODE_LOCKFILES[manager]).is_file():
+            return manager
+    return "npm"
+
+
+def _yarn_berry(repo_dir: Path) -> bool:
+    repo_dir = Path(repo_dir)
+    declared = str(package_manifest(repo_dir).get("packageManager") or "")
+    if declared.startswith("yarn@"):
+        return not declared.split("@", 1)[1].startswith("1.")
+    return (repo_dir / ".yarnrc.yml").is_file()
+
+
+def node_run_command(repo_dir: Path, script: str) -> list[str]:
+    """The command that runs one package.json script with the repo's package manager."""
+    manager = node_package_manager(repo_dir)
+    if script == "test":
+        return [manager, "test"]
+    return [manager, "run", script]
+
+
+def node_install_command(repo_dir: Path) -> tuple[list[str], list[str]]:
+    """(manifests that trigger the install, command) for the repo's package manager."""
+    repo_dir = Path(repo_dir)
+    manager = node_package_manager(repo_dir)
+    lockfile = NODE_LOCKFILES[manager]
+    if not (repo_dir / lockfile).is_file():
+        if manager == "npm":
+            return ["package.json"], ["npm", "install", "--no-audit", "--no-fund"]
+        return ["package.json"], [manager, "install"]
+    if manager == "pnpm":
+        return ["package.json", lockfile], ["pnpm", "install", "--frozen-lockfile"]
+    if manager == "yarn":
+        flag = "--immutable" if _yarn_berry(repo_dir) else "--frozen-lockfile"
+        return ["package.json", lockfile], ["yarn", "install", flag]
+    return ["package.json", lockfile], ["npm", "ci", "--no-audit", "--no-fund"]
 
 
 def _has_python_tests(repo_dir: Path) -> bool:
@@ -126,7 +182,7 @@ def unit_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] |
     repo_dir = Path(repo_dir)
     stack = detect_stack(repo_dir)
     if stack == "node":
-        return ["npm", "test"] if "test" in package_scripts(repo_dir) else ["npm", "run", "test:unit"]
+        return node_run_command(repo_dir, "test" if "test" in package_scripts(repo_dir) else "test:unit")
     if stack == "go":
         return ["go", "test", "./..."]
     if stack == "cargo":
@@ -149,7 +205,7 @@ def bdd_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | 
     scripts = package_scripts(repo_dir)
     for script in ("test:bdd", "cucumber", "bdd"):
         if script in scripts:
-            return ["npm", "run", script]
+            return node_run_command(repo_dir, script)
     features = repo_dir / "features"
     if (
         (repo_dir / "behave.ini").is_file()
@@ -158,6 +214,82 @@ def bdd_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | 
     ):
         return [python, "-m", "behave"]
     return None
+
+
+_TYPECHECK_SCRIPTS = ("typecheck", "type-check", "check-types", "types:check", "tsc")
+_LINTABLE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+_ESLINT_CONFIGS = tuple(
+    [f"eslint.config.{ext}" for ext in ("js", "mjs", "cjs", "ts", "mts", "cts")]
+    + [f".eslintrc{ext}" for ext in ("", ".js", ".cjs", ".json", ".yaml", ".yml")]
+)
+_SKIPPED_DIRS = {"node_modules", ".git", "dist", "build", "target", "vendor", ".venv", ".ts-harness"}
+
+
+def _tsconfig_has_sources(path: Path) -> bool:
+    """False for a solution-style tsconfig (references only), which ``tsc -p`` cannot check alone."""
+    text = _read_text(path)
+    if '"references"' not in text or '"include"' in text:
+        return True
+    return '"files"' in text and not re.search(r'"files"\s*:\s*\[\s*\]', text)
+
+
+def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[tuple[str, list[str]]]:
+    """Type check and lint for a Node repo: what its CI usually runs besides the tests.
+
+    The type check is the repo's own script when it has one, else ``tsc --noEmit`` on its
+    tsconfig. ESLint runs on the changed files only, so lint debt elsewhere does not block.
+    """
+    repo_dir = Path(repo_dir)
+    if detect_stack(repo_dir) != "node":
+        return []
+    checks: list[tuple[str, list[str]]] = []
+    scripts = package_scripts(repo_dir)
+    bin_dir = repo_dir / "node_modules" / ".bin"
+    script = next((name for name in _TYPECHECK_SCRIPTS if name in scripts), None)
+    tsconfig = repo_dir / "tsconfig.json"
+    if script:
+        checks.append(("typecheck", node_run_command(repo_dir, script)))
+    elif tsconfig.is_file() and (bin_dir / "tsc").exists() and _tsconfig_has_sources(tsconfig):
+        checks.append(("typecheck", [str(bin_dir / "tsc"), "--noEmit", "-p", "tsconfig.json"]))
+    has_config = any((repo_dir / name).is_file() for name in _ESLINT_CONFIGS) or "eslintConfig" in package_manifest(repo_dir)
+    files = sorted(
+        {
+            path
+            for path in (changed_files or [])
+            if path.endswith(_LINTABLE_SUFFIXES)
+            and not set(Path(path).parts) & _SKIPPED_DIRS
+            and (repo_dir / path).is_file()
+        }
+    )
+    if files and has_config and (bin_dir / "eslint").exists():
+        checks.append(("lint", [str(bin_dir / "eslint"), *files]))
+    return checks
+
+
+def repo_feature_files(repo_dir: Path) -> list[Path]:
+    """Gherkin feature files the repo owns (dependencies and build output excluded)."""
+    found = []
+    for path in Path(repo_dir).rglob("*.feature"):
+        if not set(path.relative_to(repo_dir).parts) & _SKIPPED_DIRS:
+            found.append(path)
+    return found
+
+
+def repo_runs_bdd(repo_dir: Path) -> bool:
+    """True when acceptance scenarios belong in Gherkin for this repo.
+
+    That is a repo that already has feature files or a BDD runner, or one with no test
+    setup at all yet. A repo with its own test runner and no Gherkin (Jest, Vitest, Go
+    tests...) covers acceptance scenarios with that runner instead.
+    """
+    repo_dir = Path(repo_dir)
+    if repo_feature_files(repo_dir) or bdd_test_command(repo_dir) is not None:
+        return True
+    manifest = package_manifest(repo_dir)
+    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+    if any(name in deps for name in ("@cucumber/cucumber", "cucumber", "jest-cucumber")):
+        return True
+    return unit_test_command(repo_dir) is None
 
 
 def required_tools(command: list[str]) -> list[str]:
@@ -226,6 +358,10 @@ def prepare_test_environment(
         "GOCACHE": str(cache / "go-build"),
         "GOMODCACHE": str(cache / "go" / "pkg" / "mod"),
         "npm_config_cache": str(cache / "npm"),
+        "COREPACK_HOME": str(cache / "corepack"),
+        "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+        "npm_config_store_dir": str(cache / "pnpm-store"),
+        "YARN_CACHE_FOLDER": str(cache / "yarn"),
         "CARGO_HOME": str(cache / "cargo"),
         "GRADLE_USER_HOME": str(cache / "gradle"),
         "MAVEN_OPTS": f"-Dmaven.repo.local={cache / 'm2'}",
@@ -246,8 +382,25 @@ def prepare_test_environment(
             else:
                 marker.write_text("ok\n", encoding="utf-8")
                 logs.append("venv ready with pytest and behave")
+    shims = _enable_corepack(runner, repo_dir, bin_dir, workspace_dir, merged)
+    if shims:
+        logs.append(shims)
     _exclude_build_outputs(repo_dir)
     return test_env, "\n".join(logs)
+
+
+def _enable_corepack(runner, repo_dir: Path, bin_dir: Path, cwd: Path, env: dict[str, str]) -> str:
+    """Put pnpm and yarn shims on the work order's PATH when the repo uses one of them."""
+    manager = node_package_manager(repo_dir) if (Path(repo_dir) / "package.json").is_file() else "npm"
+    if manager == "npm" or (bin_dir / manager).exists():
+        return ""
+    if shutil.which("corepack", path=env.get("PATH")) is None:
+        return f"{manager} unavailable: corepack is not installed"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    enabled = _run(runner, ["corepack", "enable", "--install-directory", str(bin_dir), "pnpm", "yarn"], cwd=cwd, env=env)
+    if enabled.returncode != 0:
+        return f"corepack enable failed (exit {enabled.returncode}): {_tail(enabled)}"
+    return f"{manager} ready through corepack"
 
 
 def _exclude_build_outputs(repo_dir: Path) -> None:
@@ -255,7 +408,8 @@ def _exclude_build_outputs(repo_dir: Path) -> None:
     info = Path(repo_dir) / ".git" / "info"
     if not (Path(repo_dir) / ".git").is_dir():
         return
-    patterns = list(_LOCAL_EXCLUDES["node"])
+    # The coding tool's skills and config are harness tooling, not part of the team's repo.
+    patterns = [*HARNESS_LOCAL_PATHS, *_LOCAL_EXCLUDES["node"]]
     for stack in (detect_stack(repo_dir), "cargo" if (Path(repo_dir) / "Cargo.toml").is_file() else None):
         patterns += [p for p in _LOCAL_EXCLUDES.get(stack or "", ()) if p not in patterns]
     info.mkdir(parents=True, exist_ok=True)
@@ -280,10 +434,7 @@ def _manifest_steps(repo_dir: Path, test_env: TestEnvironment) -> list[tuple[lis
     if re.search(r"^\[project\]", _read_text(repo_dir / "pyproject.toml"), re.MULTILINE):
         steps.append((["pyproject.toml"], [test_env.python, "-m", "pip", "install", "-q", "-e", "."]))
     if (repo_dir / "package.json").is_file():
-        if (repo_dir / _NODE_LOCKFILE).is_file():
-            steps.append((["package.json", _NODE_LOCKFILE], ["npm", "ci", "--no-audit", "--no-fund"]))
-        else:
-            steps.append((["package.json"], ["npm", "install", "--no-audit", "--no-fund"]))
+        steps.append(node_install_command(repo_dir))
     if (repo_dir / "go.mod").is_file():
         steps.append((["go.mod", "go.sum"], ["go", "mod", "download"]))
     return steps

@@ -16,6 +16,9 @@ from ts_harness.implementation.test_env import (
     bdd_test_command,
     detect_stack,
     missing_tools,
+    node_static_checks,
+    repo_feature_files,
+    repo_runs_bdd,
     unit_test_command,
 )
 
@@ -121,8 +124,13 @@ def validate_work_order_changeset(
     *,
     work_order_id: str,
     work_order_body: str,
+    bdd: bool = True,
 ) -> list[str]:
-    """Return verification reasons when the diff does not implement the work order."""
+    """Return verification reasons when the diff does not implement the work order.
+
+    ``bdd`` False (a repo whose acceptance tests use its own runner, not Gherkin) drops the
+    feature-file requirement; the code-or-test requirement stays.
+    """
     reasons: list[str] = []
     paths = [normalize_changed_path(p) for p in changed_files if normalize_changed_path(p)]
     non_junk = [p for p in paths if not is_junk_path(p)]
@@ -146,7 +154,7 @@ def validate_work_order_changeset(
             for p in feature_paths
             if wo and wo.replace("_", "-") in p.lower().replace("_", "-")
         ]
-        if not wo_feature:
+        if bdd and not wo_feature:
             reasons.append("missing_bdd_feature_for_work_order")
         code_or_test = [
             p
@@ -187,7 +195,7 @@ def _python_runner(command: list[str] | None) -> str | None:
 
 
 def repo_has_feature_files(repo_dir: Path) -> bool:
-    return any(repo_dir.glob("**/*.feature"))
+    return bool(repo_feature_files(repo_dir))
 
 
 def collect_docs_text(repo_dir: Path) -> str:
@@ -238,6 +246,7 @@ def verify_implementation(
 ) -> VerifyResult:
     reasons: list[str] = []
     logs: list[str] = []
+    failed_logs: set[int] = set()
     unit_command: list[str] | None = None
     bdd_command: list[str] | None = None
     skipped_unit = False
@@ -261,7 +270,8 @@ def verify_implementation(
 
     behavioral = looks_behavioral(work_order_body)
     docs_text = collect_docs_text(repo_dir)
-    bdd_required = has_gwt_acceptance(work_order_body, docs_text)
+    runs_bdd = repo_runs_bdd(repo_dir)
+    bdd_required = runs_bdd and has_gwt_acceptance(work_order_body, docs_text)
 
     if changed_files is not None:
         reasons.extend(
@@ -269,6 +279,7 @@ def verify_implementation(
                 changed_files,
                 work_order_id=work_order_id,
                 work_order_body=work_order_body,
+                bdd=runs_bdd,
             )
         )
 
@@ -285,6 +296,7 @@ def verify_implementation(
             unit_ran = True
             logs.append(_format_command_log("unit", unit_command, unit_result))
             if unit_result.returncode != 0:
+                failed_logs.add(len(logs) - 1)
                 reasons.append("unit_tests_failed")
     else:
         skipped_unit = True
@@ -310,9 +322,22 @@ def verify_implementation(
                 bdd_result = _run_command(runner, bdd_command, repo_dir, env=env)
                 logs.append(_format_command_log("bdd", bdd_command, bdd_result))
                 if bdd_result.returncode != 0:
+                    failed_logs.add(len(logs) - 1)
                     reasons.append("bdd_tests_failed")
     else:
         skipped_bdd = True
+
+    # What a Node repo's CI runs besides the tests; a red check here would only come back
+    # later as a failed PR check and a revision round.
+    if changed_files is not None:
+        for label, command in node_static_checks(repo_dir, changed_files):
+            if blocked(command):
+                continue
+            result = _run_command(runner, command, repo_dir, env=env)
+            logs.append(_format_command_log(label, command, result))
+            if result.returncode != 0:
+                failed_logs.add(len(logs) - 1)
+                reasons.append(f"{label}_failed")
 
     security_block: dict[str, Any] = {}
     warnings: list[str] = []
@@ -338,7 +363,7 @@ def verify_implementation(
 
     ok = not reasons
     summary = "verification passed" if ok else "verification failed: " + ", ".join(reasons)
-    log_tail = "\n".join(logs)[-_LOG_TAIL_CHARS:]
+    log_tail = _compose_log_tail(logs, failed_logs)
     return VerifyResult(
         ok=ok,
         reasons=reasons,
@@ -404,6 +429,16 @@ def build_verification_fix_prompt(
         lines.append(
             f"Add a Gherkin feature file for {work_order_id} (name should include the WO id) "
             "plus step definitions covering the acceptance criteria."
+        )
+    if "typecheck_failed" in verify.reasons:
+        lines.append(
+            "The type check failed. Fix the type errors in the code you changed or added; do not "
+            "silence them with `any`, `@ts-ignore` or `@ts-expect-error`, and do not loosen tsconfig."
+        )
+    if "lint_failed" in verify.reasons:
+        lines.append(
+            "ESLint failed on files you changed. Fix what it reports (running it with --fix is fine "
+            "for formatting); do not disable rules or add eslint-disable comments."
         )
     if "no_substantive_changes" in verify.reasons or "missing_code_or_test_changes" in verify.reasons:
         lines.append(
@@ -482,6 +517,26 @@ def _run_command(
         return runner(command, cwd=repo_dir, capture_output=True, text=True, **kwargs)
     except Exception as exc:  # pragma: no cover - exercised through subprocess-like runners.
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=str(exc))
+
+
+def _compose_log_tail(logs: list[str], failed: set[int]) -> str:
+    """The verification log within budget, keeping the end of every failing command's output.
+
+    A plain tail of the joined logs dropped the unit test failures whenever a later check
+    (type check, lint) also failed with long output.
+    """
+    if not failed:
+        return "\n".join(logs)[-_LOG_TAIL_CHARS:]
+    passed = [logs[i].splitlines()[0] for i in range(len(logs)) if i not in failed and logs[i]]
+    share = max(400, (_LOG_TAIL_CHARS - sum(len(line) + 1 for line in passed)) // len(failed))
+    parts = list(passed)
+    for index in sorted(failed):
+        text = logs[index]
+        if len(text) > share:
+            head = text.splitlines()[0]
+            text = head + "\n...\n" + text[-(share - len(head) - 5):]
+        parts.append(text)
+    return "\n".join(parts)
 
 
 def _format_command_log(

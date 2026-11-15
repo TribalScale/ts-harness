@@ -358,6 +358,13 @@ def build_implement_prompt(
         "runner for the language you implement in, declared in that language's manifest.\n"
         "Never add a module or script that stands in for a test framework "
         "(for example pytest.py or a behave/ package).\n"
+        "Use the repo's package manager (pnpm, yarn or npm, by its lockfile) and update that lockfile "
+        "with it when you add a dependency.\n"
+        "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
+        "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
+        "report. The host runs them as well as the tests.\n"
+        "Tests that need a database or other services may not run here; still write them in the repo's "
+        "existing style so CI runs them, and keep them consistent with the code.\n"
         f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
     )
     from ts_harness.knowledge.prompt import render_knowledge_notes
@@ -1074,12 +1081,6 @@ class OpenCodeBackend:
                     "\n## Planning docs\n\n"
                     "Approved Refinery / Foundry / Planner specs were materialized under `docs/` "
                     "for this change and are included in the PR.\n"
-                )
-            if skills_written:
-                pr_body += (
-                    "\n## Coding-backend skills\n\n"
-                    "Enterprise coding-backend skills were copied under `.opencode/skills/` "
-                    "for OpenCode to load during implementation.\n"
                 )
             pr_url = create_pull_request(
                 repo_dir,

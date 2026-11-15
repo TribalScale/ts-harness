@@ -404,16 +404,24 @@ def list_changed_files(repo_dir: Path, *, base_ref: str | None = None, runner=su
 
 
 def _ensure_python_artifact_gitignore(repo_dir: Path) -> None:
-    gitignore = Path(repo_dir) / ".gitignore"
+    """Ignore Python bytecode from verification runs in this clone only.
+
+    This used to append to the repo's ``.gitignore``, which put Python lines into every
+    pull request, Node repos included. The clone-local exclude file keeps them out of
+    commits without touching the team's files.
+    """
+    info = Path(repo_dir) / ".git" / "info"
+    if not (Path(repo_dir) / ".git").is_dir():
+        return
+    exclude = info / "exclude"
     required = ("__pycache__/", "*.py[cod]", ".pytest_cache/")
-    existing = ""
-    if gitignore.is_file():
-        existing = gitignore.read_text(encoding="utf-8")
+    existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
     missing = [line for line in required if line not in existing.splitlines()]
     if not missing:
         return
+    info.mkdir(parents=True, exist_ok=True)
     prefix = "" if (not existing or existing.endswith("\n")) else "\n"
-    gitignore.write_text(existing + prefix + "\n".join(missing) + "\n", encoding="utf-8")
+    exclude.write_text(existing + prefix + "\n".join(missing) + "\n", encoding="utf-8")
 
 
 def _discard_junk_worktree_noise(repo_dir: Path, *, runner=subprocess.run) -> None:
