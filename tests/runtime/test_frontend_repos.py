@@ -263,3 +263,31 @@ class FormatCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(Path(tmp), "steps:\n  - run: yarn lint\n", {"format": "prettier --write ."})
             self.assertNotIn("format", dict(node_static_checks(repo, ["src/a.tsx"])))
+
+
+class RelatedTestsTests(unittest.TestCase):
+    def _repo(self, root: Path, tests: int, runner: str = "vitest") -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"scripts": {"test": "yarn test:app", "test:app": runner}, "devDependencies": {runner: "1"}}))
+        _write(repo / "node_modules" / ".bin" / runner, "#!/bin/sh\n").chmod(0o755)
+        _write(repo / "src" / "stats.tsx", "export {}")
+        for i in range(tests):
+            _write(repo / "src" / "t" / f"case{i}.test.tsx", "")
+        return repo
+
+    def test_large_vitest_repo_runs_related_tests(self):
+        from ts_harness.implementation.verification import related_tests_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), 130)
+            command = related_tests_command(repo, ["src/stats.tsx", "README.md"])
+            self.assertEqual(command[1:], ["related", "--run", "src/stats.tsx"])
+
+    def test_large_jest_repo_and_small_repos(self):
+        from ts_harness.implementation.verification import related_tests_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), 130, runner="jest")
+            self.assertEqual(related_tests_command(repo, ["src/stats.tsx"])[1:], ["--findRelatedTests", "src/stats.tsx", "--passWithNoTests"])
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(related_tests_command(self._repo(Path(tmp), 10), ["src/stats.tsx"]))

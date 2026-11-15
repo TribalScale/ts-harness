@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -275,6 +276,46 @@ def collect_docs_text(repo_dir: Path) -> str:
     return "\n\n".join(part for part in docs_parts if part)
 
 
+RELATED_TESTS_THRESHOLD = 120
+_TEST_FILE = re.compile(r"\.(test|spec)\.(ts|tsx|js|jsx|mts|cts|mjs)$")
+
+
+def count_test_files(repo_dir: Path, limit: int) -> int:
+    """Test files in the repo, counted up to ``limit`` (dependencies and build output skipped)."""
+    count = 0
+    for root, dirs, files in os.walk(repo_dir):
+        dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"}]
+        count += sum(1 for name in files if _TEST_FILE.search(name))
+        if count > limit:
+            break
+    return count
+
+
+def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> list[str] | None:
+    """For a large Vitest/Jest repo, only the tests that import the changed files.
+
+    The full suite of a repo with hundreds of test files takes most of a coding job on two
+    CPUs and reruns on every fix pass; CI still runs all of it on the PR.
+    """
+    from ts_harness.implementation.coverage import _package, _script_args
+
+    sources = [p for p in (changed_files or []) if p.endswith((".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs")) and (Path(repo_dir) / p).is_file()]
+    raw = os.environ.get("TS_HARNESS_RELATED_TESTS_THRESHOLD", "")
+    threshold = int(raw) if raw.isdigit() else RELATED_TESTS_THRESHOLD
+    if not sources or threshold <= 0 or count_test_files(Path(repo_dir), threshold) <= threshold:
+        return None
+    package = _package(repo_dir)
+    script = str((package.get("scripts") or {}).get("test") or "")
+    bin_dir = Path(repo_dir) / "node_modules" / ".bin"
+    deps = {**(package.get("devDependencies") or {}), **(package.get("dependencies") or {})}
+    if "vitest" in deps and (bin_dir / "vitest").exists():
+        args = [a for a in _script_args(script, "vitest") if a not in {"run", "--watch"}]
+        return [str(bin_dir / "vitest"), "related", "--run", *args, *sources]
+    if "jest" in deps and (bin_dir / "jest").exists():
+        return [str(bin_dir / "jest"), *_script_args(script, "jest"), "--findRelatedTests", *sources, "--passWithNoTests"]
+    return None
+
+
 def screenshots_dir(test_env: TestEnvironment) -> Path:
     return Path(test_env.state_dir or ".") / "screenshots"
 
@@ -315,6 +356,7 @@ def verify_implementation(
     integration_runner=run_integration,
 ) -> VerifyResult:
     reasons: list[str] = []
+    warnings: list[str] = []
     logs: list[str] = []
     failed_logs: set[int] = set()
     checks: list[dict[str, Any]] = []
@@ -357,6 +399,10 @@ def verify_implementation(
     unit_ran = False
     if behavioral:
         unit_command = detect_unit_test_command(repo_dir, python=python)
+        related = related_tests_command(repo_dir, changed_files) if unit_command is not None else None
+        if related is not None:
+            unit_command = related
+            warnings.append("large repo: host ran the tests related to the changed files; CI runs the full suite")
         if unit_command is None:
             reasons.append("no_test_runner")
             skipped_unit = True
@@ -413,7 +459,6 @@ def verify_implementation(
                 failed_logs.add(len(logs) - 1)
                 reasons.append(f"{label}_failed")
 
-    warnings: list[str] = []
     screenshots: list[str] = []
     if ONBOARD_MARKER in work_order_body and changed_files is not None:
         from ts_harness.implementation.repo_onboarding import repo_has_e2e_suite
