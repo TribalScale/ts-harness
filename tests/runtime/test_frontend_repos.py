@@ -306,3 +306,25 @@ class VerificationOutOfMemoryTests(unittest.TestCase):
                 result = verify_implementation(repo, work_order_body="chore: x", work_order_id="WO-1", changed_files=["src/x.ts"], runner=_ok)
             self.assertEqual(result.reasons[0], "out_of_memory")
             self.assertTrue(any("2048 MB" in w for w in result.warnings))
+
+
+class RefreshedTokenTests(unittest.TestCase):
+    def test_client_from_env_follows_the_refreshed_token(self):
+        from unittest.mock import patch
+
+        from ts_harness.integrations.github_client import github_for
+
+        seen = []
+
+        def transport(method, url, headers, data):
+            seen.append(headers["Authorization"])
+            return 200, b"{}", {}
+
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "ghs_first"}), patch("ts_harness.integrations.github_app.app_for", return_value=None):
+            client = github_for("https://github.com/acme/web", transport=transport)
+            client.get_pull("acme", "web", 1)
+            import os
+
+            os.environ["GITHUB_TOKEN"] = "ghs_second"  # the worker's refresher swapped it
+            client.get_pull("acme", "web", 1)
+        self.assertEqual(seen, ["Bearer ghs_first", "Bearer ghs_second"])
