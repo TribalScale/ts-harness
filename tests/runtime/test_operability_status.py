@@ -74,6 +74,26 @@ class OperabilityStatusTests(unittest.TestCase):
         self.assertTrue(status["lease"]["expired"])
         self.assertIn("stale_lease", status["recommended_action"])
 
+    def test_a_waiting_step_with_an_old_lease_is_not_stale(self):
+        now = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+        status = build_operability_status(
+            workflow={"definition_version": "3.0.0", "status": "running"},
+            tasks=[
+                {
+                    "id": "t-join",
+                    "step_name": "join_tracks",
+                    "status": "blocked",
+                    "error": "awaiting_external:workflow.child_terminal",
+                    "lock_expires_at": (now - timedelta(hours=3)).isoformat(),
+                    "updated_at": (now - timedelta(hours=3)).isoformat(),
+                }
+            ],
+            artifacts={},
+            now=now,
+        )
+        self.assertIsNone(status["lease"])
+        self.assertNotIn("stale_lease", str(status["recommended_action"]))
+
 
 class CompensateOnFailureTests(unittest.TestCase):
     def test_technical_failure_triggers_compensation_once(self):

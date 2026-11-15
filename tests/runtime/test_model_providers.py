@@ -476,3 +476,23 @@ class ProgramStatusArtifactsTests(unittest.TestCase):
         self.assertEqual(overview["work_orders_markdown"], artifacts["work_orders_markdown"])
         self.assertEqual(overview["approved_prd"]["headings"], ["Overview", "Goals"])
         self.assertGreater(overview["approved_prd"]["omitted_chars"], 2500)
+
+
+class ChatHistoryCompactionTests(unittest.TestCase):
+    def test_long_earlier_turns_are_cut_the_same_way_every_time(self):
+        from ts_harness.agent.transcript import compact_history
+
+        prd = "# PRD\\n" + "line\\n" * 2000
+        history = [
+            {"role": "user", "content": "x" * 10000},
+            {"role": "assistant", "content": prd},
+            {"role": "tool", "tool_call_id": "c", "content": "y" * 5000},
+            {"role": "assistant", "content": "short"},
+        ]
+        once = compact_history(history)
+        self.assertEqual(once, compact_history(history))
+        self.assertEqual(once[0]["content"], history[0]["content"])
+        self.assertTrue(once[1]["content"].startswith("# PRD"))
+        self.assertLess(len(once[1]["content"]), 1800)
+        self.assertIn("program_status include_artifacts", once[2]["content"])
+        self.assertEqual(once[3], history[3])

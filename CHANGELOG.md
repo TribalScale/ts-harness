@@ -232,6 +232,12 @@ First public release.
 
 ### Fixed
 
+- A program chat resent every earlier turn in full, including whole PRD drafts and work
+  orders, so a one-line question cost over 150,000 input tokens. Assistant and tool
+  messages longer than 3,000 characters from earlier turns are cut to their first 1,500.
+- Program status reported a stale lease on a step that was only waiting (for example a
+  release waiting for its promote approval), and the orchestrator told people the release
+  was stuck. Only a running task's lease is checked now.
 - `program_status` returned every program artifact in full (about 125,000 characters for
   a delivered program), so a status question in chat cost tens of thousands of tokens.
   Long artifacts now come back as their size and headings; `include_artifacts` asks for

@@ -10,6 +10,33 @@ import json
 import os
 
 
+HISTORY_MESSAGE_MAX_CHARS = 3000
+HISTORY_MESSAGE_KEEP_CHARS = 1500
+
+
+def compact_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shorten long assistant and tool messages from earlier turns before they are resent.
+
+    A program chat accumulates whole PRD drafts, requirements and work orders; resent on
+    every turn they made a one-line question cost over 150,000 input tokens. Those documents
+    stay available through ``program_status`` (``include_artifacts``). The cut does not
+    depend on a message's position, so a message is cut the same way on every turn and the
+    cached prompt prefix still matches. User messages are kept whole.
+    """
+    compacted: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") in {"assistant", "tool"} and isinstance(content, str) and len(content) > HISTORY_MESSAGE_MAX_CHARS:
+            message = {
+                **message,
+                "content": content[:HISTORY_MESSAGE_KEEP_CHARS]
+                + f"\n[... {len(content) - HISTORY_MESSAGE_KEEP_CHARS} more characters omitted from this earlier turn;"
+                " program documents are available through program_status include_artifacts.]",
+            }
+        compacted.append(message)
+    return compacted
+
+
 def repair_tool_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Close assistant tool calls and drop tool rows that have no matching call.
 

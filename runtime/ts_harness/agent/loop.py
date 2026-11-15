@@ -477,9 +477,9 @@ class EnterpriseAgent:
         )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         if history:
-            from ts_harness.agent.transcript import repair_tool_history
+            from ts_harness.agent.transcript import compact_history, repair_tool_history
 
-            messages.extend(repair_tool_history(history))
+            messages.extend(compact_history(repair_tool_history(history)))
         if system_context:
             messages.append({"role": "system", "content": system_context})
         messages.append({"role": "user", "content": text})

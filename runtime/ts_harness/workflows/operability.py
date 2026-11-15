@@ -164,7 +164,9 @@ def build_operability_status(
         recommended_action = "wait_for_agent_or_inspect_runtime_task"
 
     lease = None
-    if active:
+    # Only a running task holds a lease. A blocked or pending task can keep the expiry of
+    # its last run, which read as a stale lease on a step that was simply waiting.
+    if active and str(active.get("status") or "") == "running":
         expires = _parse_dt(active.get("lock_expires_at"))
         if expires is not None:
             expired = expires <= current
