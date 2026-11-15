@@ -79,6 +79,17 @@ Each delivery workflow gets its own workspace and branch: `coding-backend/<WO>-<
 
 `POST /workflow/dispatch` uses `TS_HARNESS_DISPATCH_REQUEST_TIMEOUT` (default **7200s**) so long OpenCode runs are not cut by the general 300s API timeout.
 
+## File scope
+
+When a work order lists its files under `## Files` (or `## Touches`), each OpenCode run gets an `OPENCODE_CONFIG` in the job workspace, outside the repository, with `permission.edit` set to deny everything except:
+
+- the listed files (a path ending in `/` covers its directory);
+- `features/**` when the work order has Given/When/Then acceptance tests;
+- the paths the pipeline writes (`.opencode/**`, `docs/planner/**` and the other planning docs);
+- the files a review revision cites.
+
+OpenCode refuses an edit outside the list with a message naming the rule, and works within it. After the run, files changed outside the list some other way (for example from the shell) are still reverted before verification, and the fix pass is told which ones. A work order without a `## Files` list is not restricted.
+
 ## Coding jobs (OpenCode outside agent-runtime)
 
 With `coding_jobs_enabled: true` (env `CODING_JOBS_ENABLED=true`), the deliver step of `deliver_work_order` (1.5.0 and later) and `implement_jira_ticket` (1.7.0 and later) runs no agent turn at all: the stage has `"execution": "coding_job"`, and dev-agent is not called. A run that fails waits for a person (`/revise WO-n <guidance>` or `/stop WO-n`).

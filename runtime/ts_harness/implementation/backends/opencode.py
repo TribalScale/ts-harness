@@ -255,6 +255,64 @@ def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
     return {"XDG_DATA_HOME": str(path)}
 
 
+def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None = None) -> list[str] | None:
+    """Paths OpenCode may edit for this work order, or None when the work order names none.
+
+    The ``## Files`` / ``## Touches`` list, ``features/**`` when the work order has
+    Given/When/Then acceptance tests, the paths the pipeline writes itself (planning docs,
+    ``.opencode``), and the files a review revision cites.
+    """
+    from ts_harness.implementation.verification import has_gwt_acceptance
+    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, declared_paths
+
+    declared = declared_paths(work_order_body)
+    if not declared:
+        return None
+    allowed: list[str] = []
+    for raw in [*declared, *(revision_files or [])]:
+        path = str(raw).strip().removeprefix("./")
+        if not path:
+            continue
+        if path.endswith("/"):
+            allowed.append(path + "**")
+        else:
+            allowed.append(path)
+            if "*" not in path and "." not in Path(path).name:
+                allowed.append(path.rstrip("/") + "/**")  # a bare directory name
+    if has_gwt_acceptance(work_order_body):
+        allowed.append("features/**")
+    allowed.extend(PIPELINE_WRITTEN)
+    return list(dict.fromkeys(allowed))
+
+
+def opencode_scope_env(env: dict[str, str], config_dir: Any, allowed: list[str]) -> dict[str, str]:
+    """An ``OPENCODE_CONFIG`` that denies edits outside ``allowed``, kept outside the repository.
+
+    OpenCode refuses the edit tool call with a message naming the rule, so the run adapts
+    at once instead of having its out-of-scope files reverted afterwards (which broke tests
+    that imported from them). A config already set for the LLM proxy is kept and extended.
+    Rules apply last match wins: deny everything, then allow each path.
+    """
+    import json
+
+    base: dict[str, Any] = {}
+    existing = str(env.get("OPENCODE_CONFIG") or "")
+    if existing and Path(existing).is_file():
+        try:
+            loaded = json.loads(Path(existing).read_text())
+            base = loaded if isinstance(loaded, dict) else {}
+        except ValueError:
+            base = {}
+    permission = dict(base.get("permission") or {}) if isinstance(base.get("permission"), dict) else {}
+    permission["edit"] = {"*": "deny", **{path: "allow" for path in allowed}}
+    config = {"$schema": "https://opencode.ai/config.json", **base, "permission": permission}
+    directory = Path(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "opencode-scope.json"
+    path.write_text(json.dumps(config, indent=2))
+    return {"OPENCODE_CONFIG": str(path)}
+
+
 def _note_opencode_run(binary: Any, env: dict[str, str], repo_dir: Any) -> None:
     _USAGE_RUN.ctx = {"binary": str(binary), "env": env, "repo_dir": Path(repo_dir)}
 
@@ -518,8 +576,9 @@ class OpenCodeBackend:
         fix_passes_used = 0
         verify_logs: list[str] = []
         base_ref = f"origin/{request.base_branch}" if request.base_branch else None
+        reverted: list[str] = []
         while True:
-            self._revert_undeclared(repo_dir, request)
+            reverted = sorted({*reverted, *self._revert_undeclared(repo_dir, request)})
             changed = list_changed_files(repo_dir, base_ref=base_ref, runner=self.runner)
             deps_log = (
                 install_declared_dependencies(test_env, repo_dir, runner=self.runner)
@@ -572,6 +631,7 @@ class OpenCodeBackend:
                 request.work_order_id,
                 verify,
                 skills_materialized=skills_materialized,
+                reverted_paths=reverted,
             )
             fix_cmd = build_opencode_command(
                 binary=binary,
@@ -660,13 +720,18 @@ class OpenCodeBackend:
             names.extend(line.strip() for line in str(completed.stdout or "").splitlines() if line.strip())
         return sorted(set(names))
 
-    def _revert_undeclared(self, repo_dir: Path, request: CodingRequest) -> None:
-        """Drop files the work order did not name before verification. Review revisions keep the reject path."""
+    def _revert_undeclared(self, repo_dir: Path, request: CodingRequest) -> list[str]:
+        """Drop files the work order did not name before verification and return them.
+
+        The edit tool already refuses them (``opencode_scope_env``); this catches files written
+        another way, such as from the shell. Review revisions keep the reject path.
+        """
         if request.revision_files:
-            return
+            return []
         from ts_harness.workflows.code_review import undeclared_paths
 
-        for path in undeclared_paths(self._working_tree_names(repo_dir), request.work_order_body):
+        reverted = undeclared_paths(self._working_tree_names(repo_dir), request.work_order_body)
+        for path in reverted:
             self.runner(
                 ["git", "checkout", "HEAD", "--", path],
                 cwd=str(repo_dir),
@@ -681,6 +746,7 @@ class OpenCodeBackend:
                 text=True,
                 check=False,
             )
+        return reverted
 
     def _with_scanned_sha(self, repo_dir: Path, security: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(security, dict):
@@ -891,6 +957,9 @@ class OpenCodeBackend:
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            allowed = opencode_scope_paths(request.work_order_body, request.revision_files)
+            if allowed:
+                env.update(opencode_scope_env(env, request.workspace_dir, allowed))
             _note_opencode_run(binary, env, repo_dir)
             completed = self._run_opencode(
                 cmd,

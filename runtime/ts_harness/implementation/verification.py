@@ -359,6 +359,7 @@ def build_verification_fix_prompt(
     verify: VerifyResult,
     *,
     skills_materialized: bool = False,
+    reverted_paths: list[str] | None = None,
 ) -> str:
     reasons = ", ".join(verify.reasons) if verify.reasons else "unknown"
     log = verify.log_tail or "(no verification log captured)"
@@ -374,6 +375,13 @@ def build_verification_fix_prompt(
         skill_line,
         "Fixing runner/deps alone is not enough: deliver the work-order behavior with tests.",
     ]
+    if reverted_paths:
+        lines.append(
+            "These files are outside the work order's ## Files list and were reverted: "
+            + ", ".join(reverted_paths)
+            + ". Do not change them again. Make the code and tests work without them, for example "
+            "by importing from the declared module directly."
+        )
     if "no_test_runner" in verify.reasons:
         lines.append(
             "Add the standard test runner for this repo's language, declared in its manifest, "
