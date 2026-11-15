@@ -151,6 +151,9 @@ jobs:
           GATEWAY_TOKEN: test-token
           RUNTIME_FAKE_PROVIDER: "true"
           TS_HARNESS_SKIP_MCP_DISCOVERY: "true"
+          # Without it every @requires_pg test (117 of them) was skipped: each creates and
+          # migrates its own database on the Postgres service above.
+          TS_HARNESS_TEST_PG_URL: postgresql://ts_harness:ci_password@localhost:5432/ts_harness_test
 
       - name: Postgres session store tests
         run: python3 -m pytest tests -q -k "postgres_session or test_postgres"

@@ -245,6 +245,13 @@ First public release.
 
 ### Fixed
 
+- Cancelling a program or a workflow left the workflows below its own running: a cancelled
+  program's release track kept waiting for its promote approval in the Inbox. A cancel now
+  reaches every running or blocked workflow below it, at any depth, with their tasks and
+  coding jobs, and audits each one with what it cascaded from.
+- CI skipped every Postgres test (117 of them, including the program, budget, coding job
+  and usage stores): `TS_HARNESS_TEST_PG_URL` was never set, though the job starts a
+  Postgres service. It is set now.
 - OpenCode edited files outside a work order's `## Files` list; the harness reverted them
   after the run, which broke tests that imported from them and spent the fix passes. Each
   run now gets an `OPENCODE_CONFIG` (outside the repository) whose edit permissions deny
