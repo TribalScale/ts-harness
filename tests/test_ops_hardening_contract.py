@@ -228,6 +228,7 @@ class OpsHardeningContractTests(unittest.TestCase):
                  "migrate-db.sh", "run_docker_compose_as_admin build", "run_docker_compose_as_admin up -d"]
         positions = [script.index(step) for step in order]
         self.assertEqual(positions, sorted(positions))
+        self.assertGreater(script.index("docker image prune -f"), script.index("wait_for_agent_runtime_health"))
 
     def test_migrate_db_script_tracks_schema_migrations(self):
         script = (REPO_ROOT / "scripts" / "ops" / "migrate-db.sh").read_text()

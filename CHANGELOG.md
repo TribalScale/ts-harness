@@ -59,8 +59,9 @@ First public release.
     analyst and marketing on GPT-6.1 Sol; comms on GPT-6 Luna; heartbeats on
     Claude Haiku 5.5. The qa-agent allowlist moves to `openai/gpt-6.1-sol`.
 - `scripts/ops/redeploy.sh` rolls a checkout onto an existing host: secrets, runtime
-  config, workspace, compose env, migrations, then rebuilt images. See
-  `docs/runbooks/redeploy.md`.
+  config, workspace, compose env, migrations, then rebuilt images. After a successful
+  deploy it prunes untagged images and build cache older than 3 days, so repeated
+  deploys do not fill the root volume. See `docs/runbooks/redeploy.md`.
 - `llm_usage.agent_id` (migration 046): the agent that made each model call. `actor`
   stays the person the work is for, which for a workflow task is the requester.
 - Model usage is recorded without the LLM proxy. Direct agent calls write

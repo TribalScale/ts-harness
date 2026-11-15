@@ -69,4 +69,12 @@ echo "--- up"
 run_docker_compose_as_admin up -d
 wait_for_agent_runtime_health redeploy
 run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
+
+# Each build leaves the previous images and their build cache behind; on a 40 GB root
+# volume a day of redeploys filled the disk and the next image export failed with
+# "no space left on device". Drop untagged images and build cache older than 3 days.
+echo "--- prune"
+docker image prune -f >/dev/null || true
+docker builder prune -f --filter "until=72h" >/dev/null || true
+df -h / | tail -1
 echo "=== redeploy done $(date -u +%FT%TZ) ==="
