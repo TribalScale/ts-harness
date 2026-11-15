@@ -97,18 +97,9 @@ OUT_OF_MEMORY = "out_of_memory"
 
 
 def _cgroup_oom_kills(root: Path = Path("/sys/fs/cgroup")) -> tuple[int, str]:
-    """(OOM kills in this container's cgroup, its memory limit) on cgroup v2; (0, "") elsewhere."""
-    try:
-        events = (root / "memory.events").read_text()
-        kills = int(next((line.split()[1] for line in events.splitlines() if line.startswith("oom_kill ")), "0"))
-    except (OSError, ValueError):
-        return 0, ""
-    try:
-        raw = (root / "memory.max").read_text().strip()
-        limit = f"{int(raw) // (1024 * 1024)} MB" if raw.isdigit() else raw
-    except OSError:
-        limit = ""
-    return kills, limit
+    from ts_harness.implementation.cgroup import oom_kills
+
+    return oom_kills(root)
 
 
 def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_root: Path = Path("/sys/fs/cgroup")) -> str:
@@ -667,6 +658,27 @@ class OpenCodeBackend:
             )
             if verify.ok:
                 return None, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
+            if "out_of_memory" in verify.reasons:
+                # A fix pass cannot make the build fit; the runner requeues the job with more memory.
+                return (
+                    CodingResult(
+                        ok=False,
+                        branch=branch,
+                        summary="Host verification ran out of memory",
+                        changed_files=list_changed_files(repo_dir, runner=self.runner),
+                        log_tail="\n".join([log, *verify_logs])[-8000:],
+                        log_path=str(log_path),
+                        error="out_of_memory: the kernel killed a host verification command for memory; "
+                        "the job is retried with more memory",
+                        security=verify.security,
+                        verification=verification_evidence(verify),
+                    ),
+                    log,
+                    fix_passes_used,
+                    changed,
+                    verify.security,
+                    verification_evidence(verify),
+                )
             # The agent cannot install host toolchains; fix passes would only burn budget.
             toolchain_only = all(r.startswith("missing_toolchain:") for r in verify.reasons)
             if fix_passes_used >= self.verification_fix_passes or toolchain_only:

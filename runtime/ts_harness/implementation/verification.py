@@ -359,6 +359,9 @@ def verify_implementation(
     warnings: list[str] = []
     logs: list[str] = []
     failed_logs: set[int] = set()
+    from ts_harness.implementation.cgroup import oom_kills
+
+    kills_before, memory_limit = oom_kills()
     checks: list[dict[str, Any]] = []
     unit_command: list[str] | None = None
     bdd_command: list[str] | None = None
@@ -514,6 +517,11 @@ def verify_implementation(
         reasons.extend(security_reasons)
         warnings = [*warnings, *scan_warnings]
         logs.append(_format_security_log(security_block))
+
+    if oom_kills()[0] > kills_before:
+        # A check failed because the kernel killed it, not because of the code.
+        reasons.insert(0, "out_of_memory")
+        warnings.append(f"the kernel killed a verification command for memory (limit {memory_limit or 'unknown'})")
 
     # Deduplicate while preserving order.
     deduped: list[str] = []

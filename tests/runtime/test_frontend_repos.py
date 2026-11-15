@@ -291,3 +291,18 @@ class RelatedTestsTests(unittest.TestCase):
             self.assertEqual(related_tests_command(repo, ["src/stats.tsx"])[1:], ["--findRelatedTests", "src/stats.tsx", "--passWithNoTests"])
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(related_tests_command(self._repo(Path(tmp), 10), ["src/stats.tsx"]))
+
+
+class VerificationOutOfMemoryTests(unittest.TestCase):
+    def test_a_kill_during_verification_is_out_of_memory(self):
+        from unittest.mock import patch
+
+        from ts_harness.implementation.verification import verify_implementation
+
+        counts = iter([(3, "2048 MB"), (4, "2048 MB")])
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _app(Path(tmp))
+            with patch("ts_harness.implementation.cgroup.oom_kills", side_effect=lambda *a: next(counts)):
+                result = verify_implementation(repo, work_order_body="chore: x", work_order_id="WO-1", changed_files=["src/x.ts"], runner=_ok)
+            self.assertEqual(result.reasons[0], "out_of_memory")
+            self.assertTrue(any("2048 MB" in w for w in result.warnings))
