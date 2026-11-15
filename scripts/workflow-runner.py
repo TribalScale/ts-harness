@@ -149,6 +149,53 @@ def qa_review_evidence(task: dict[str, Any], tasks: list[dict[str, Any]]) -> dic
     return evidence
 
 
+def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> dict[str, Any]:
+    """The latest delivery's screenshots for QA: names for the prompt, images as ``_images``.
+
+    The images come from the evidence commit the coding job pushed, so QA judges the
+    same pictures a reviewer sees on the PR. The agent loop sends ``_images`` as image
+    parts, not as JSON text.
+    """
+    delivered = [
+        item
+        for item in tasks
+        if item.get("status") == "succeeded"
+        and isinstance(item.get("output"), dict)
+        and "verify_summary" in item["output"]
+    ]
+    if not delivered:
+        return {}
+    latest = sorted(delivered, key=lambda item: str(item.get("created_at") or ""))[-1]
+    shots = latest["output"].get("screenshots") if isinstance(latest["output"].get("screenshots"), dict) else {}
+    if not shots.get("files") or not shots.get("commit") or "/" not in str(shots.get("repo") or ""):
+        return {}
+    import base64
+
+    from ts_harness.integrations.github_client import GitHubClient
+
+    owner, repo = str(shots["repo"]).split("/", 1)
+    client = github or GitHubClient.from_env()
+    images = []
+    for name in list(shots["files"])[:6]:
+        payload = client.get_file(owner, repo, str(name), ref=str(shots["commit"])) or {}
+        content = str(payload.get("content") or "").replace("\n", "")
+        if content:
+            base64.b64decode(content, validate=True)
+            if sum(len(image["url"]) for image in images) + len(content) > 6_000_000:
+                break  # the gateway takes JSON bodies up to 10 MB
+            images.append({"name": str(name), "url": f"data:image/png;base64,{content}"})
+    if not images:
+        return {}
+    return {
+        "screenshots": {
+            "files": [image["name"] for image in images],
+            "comment_url": shots.get("comment_url") or "",
+            "note": "End state of each Playwright test the change added or edited; the images follow this message.",
+        },
+        "_images": images,
+    }
+
+
 def _definition_store_root() -> Path | None:
     store_root = os.environ.get(
         "TS_HARNESS_WORKFLOW_DEFINITION_STORE",
@@ -1286,6 +1333,12 @@ class WorkflowRunner:
                 log_event("qa_evidence_error", task_id=task.get("id"), error=str(exc))
         if self._carry_forward(task, stage, task_input, dispatch_started):
             return
+        if task.get("step_name") == "qa_gate":
+            try:
+                record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+                task_input.update(qa_screenshot_input(list(record.get("tasks") or [])))
+            except Exception as exc:  # noqa: BLE001 - QA still runs on the text evidence
+                log_event("qa_screenshots_error", task_id=task.get("id"), error=str(exc))
         payload = {
             "workflow_id": task.get("workflow_id"),
             "task_id": task.get("id"),

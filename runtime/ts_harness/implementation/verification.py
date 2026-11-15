@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +23,14 @@ from ts_harness.implementation.test_env import (
     repo_runs_bdd,
     unit_test_command,
 )
-from ts_harness.implementation.test_services import integration_plan, run_integration
+from ts_harness.implementation.test_services import (
+    changed_playwright_specs,
+    integration_plan,
+    playwright_config,
+    run_integration,
+    screenshot_files,
+    screenshot_name,
+)
 
 _LOG_TAIL_CHARS = 4000
 _SHADOW_MODULES = {"pytest": ("pytest", "_pytest"), "behave": ("behave",)}
@@ -69,6 +77,8 @@ class VerifyResult:
     checks: list[dict[str, Any]] = field(default_factory=list)
     # Line coverage of the changed files when the work order asks about coverage (never blocks).
     coverage: dict[str, Any] = field(default_factory=dict)
+    # Names of the screenshots the change's Playwright specs produced (files under screenshots_dir).
+    screenshots: list[str] = field(default_factory=list)
 
 
 _EVIDENCE_TAIL = 700
@@ -90,6 +100,7 @@ def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
         "checks": list(verify.checks),
         "skipped": [name for name, skipped in (("unit", verify.skipped_unit), ("bdd", verify.skipped_bdd)) if skipped],
         "coverage": dict(verify.coverage),
+        "screenshots": list(verify.screenshots),
         "warnings": list(verify.warnings),
     }
 
@@ -107,6 +118,11 @@ def verification_summary(evidence: dict[str, Any] | None) -> str:
     if evidence.get("skipped"):
         lines.append("Not run: " + ", ".join(evidence["skipped"]) + " (not required for this repo or work order).")
     lines.extend(coverage_summary(evidence.get("coverage")))
+    if evidence.get("screenshots"):
+        lines.append(
+            f"Screenshots: {len(evidence['screenshots'])} from the Playwright tests this change added or edited "
+            "(attached to QA and linked on the PR)."
+        )
     for warning in evidence.get("warnings") or []:
         lines.append(f"Note: {warning}")
     return "\n".join(lines)
@@ -257,6 +273,10 @@ def collect_docs_text(repo_dir: Path) -> str:
     return "\n\n".join(part for part in docs_parts if part)
 
 
+def screenshots_dir(test_env: TestEnvironment) -> Path:
+    return Path(test_env.state_dir or ".") / "screenshots"
+
+
 def prepare_test_dependencies(
     repo_dir: Path,
     *,
@@ -392,6 +412,9 @@ def verify_implementation(
                 reasons.append(f"{label}_failed")
 
     warnings: list[str] = []
+    screenshots: list[str] = []
+    if test_env is not None and test_env.state_dir is not None:
+        shutil.rmtree(screenshots_dir(test_env), ignore_errors=True)
     plan = None
     if test_env is not None and changed_files is not None:
         plan = integration_plan(repo_dir, services_running=test_env.services_running)
@@ -401,7 +424,13 @@ def verify_implementation(
             # A suite that resets databases and starts the app costs minutes; run it once the cheap checks pass.
             warnings.append("integration suite not run: earlier checks failed")
         else:
+            specs = changed_playwright_specs(repo_dir, changed_files) if playwright_config(repo_dir) else []
+            if specs and test_env.state_dir is not None:
+                plan.evidence_specs = specs
+                plan.evidence_dir = str(screenshots_dir(test_env))
             result = integration_runner(repo_dir, plan, test_env.merged_env(), log_dir=test_env.state_dir)
+            if result.returncode == 0 and plan.evidence_dir:
+                screenshots = [screenshot_name(path) for path in screenshot_files(Path(plan.evidence_dir))]
             label = "integration" if plan.blocking else "integration (advisory)"
             logs.append(_format_command_log(label, command, result))
             checks.append(_check_record(label, command, result))
@@ -456,6 +485,7 @@ def verify_implementation(
         warnings=warnings,
         checks=checks,
         coverage=coverage,
+        screenshots=screenshots,
     )
 
 

@@ -82,6 +82,8 @@ class CodingResult:
     usage: list[dict[str, Any]] = field(default_factory=list)
     # Host verification of the final worktree (verification_evidence), for review and QA.
     verification: dict[str, Any] = field(default_factory=dict)
+    # Screenshots published for review and QA (publish_screenshots result).
+    screenshots: dict[str, Any] = field(default_factory=dict)
 
 
 def security_markdown(security: dict[str, Any]) -> str:

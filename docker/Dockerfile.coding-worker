@@ -15,6 +15,25 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*; \
     ls /usr/lib/postgresql/*/bin/initdb; redis-server --version
 
+# MySQL-compatible MariaDB (Debian's) and MongoDB (official server build; Debian has none)
+# for repos on those databases. MariaDB's package starts nothing at build time.
+ARG MONGODB_VERSION=8.0.32
+ARG MONGODB_SHA256_AMD64=b61cda162c6592347b7503c683145304f74c900b1c10a395520c7c24d3f8445c
+ARG MONGODB_SHA256_ARM64=8cca3993520a7f189790264ee57fb5d55a91094fb4be5f06bbbaf67c974d273f
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends mariadb-server mariadb-client; \
+    rm -rf /var/lib/apt/lists/*; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) mongo_pkg="mongodb-linux-x86_64-debian12-${MONGODB_VERSION}"; mongo_sha="$MONGODB_SHA256_AMD64" ;; \
+      arm64) mongo_pkg="mongodb-linux-aarch64-ubuntu2404-${MONGODB_VERSION}"; mongo_sha="$MONGODB_SHA256_ARM64" ;; \
+    esac; \
+    curl -fsSLo /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/${mongo_pkg}.tgz"; \
+    echo "${mongo_sha}  /tmp/mongodb.tgz" | sha256sum -c -; \
+    mkdir -p /opt/mongodb; tar -xzf /tmp/mongodb.tgz -C /opt/mongodb --strip-components=1; rm /tmp/mongodb.tgz; \
+    ln -sf /opt/mongodb/bin/mongod /usr/local/bin/mongod; \
+    mariadbd --version; mongod --version | head -1
+
 # Chromium for a frontend repo's Playwright suite: the libraries `playwright install-deps chromium`
 # lists for Debian 13, fonts for readable screenshots, and one browser build preinstalled. A repo
 # on another Playwright version fetches its own build into the same directory at job time.

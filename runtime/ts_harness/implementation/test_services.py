@@ -48,8 +48,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
+from ts_harness.implementation import db_servers
+
 CONFIG_NAMES = (".ts-harness.yml", ".ts-harness.yaml")
-SUPPORTED_SERVICES = ("postgres", "redis")
+SUPPORTED_SERVICES = ("postgres", "mysql", "mongodb", "redis")
 SERVICES_ENV = "TS_HARNESS_SERVICES"
 DEFAULT_INTEGRATION_TIMEOUT = 1200
 DEFAULT_READY_TIMEOUT = 180
@@ -58,7 +60,10 @@ _OUTPUT_LIMIT = 200_000
 
 _NODE_PG = {"pg", "pg-promise", "postgres", "pg-native", "@mikro-orm/postgresql", "@databases/pg", "slonik"}
 _NODE_REDIS = {"ioredis", "redis", "bullmq", "bull", "@keyv/redis", "cache-manager-redis-store", "cache-manager-ioredis"}
-_NODE_UNSUPPORTED = {"mysql": "mysql", "mysql2": "mysql", "mariadb": "mysql", "mongodb": "mongodb", "mongoose": "mongodb"}
+_NODE_MYSQL = {"mysql", "mysql2", "mariadb", "@mikro-orm/mysql", "@mikro-orm/mariadb"}
+_NODE_MONGO = {"mongodb", "mongoose", "@mikro-orm/mongodb", "@typegoose/typegoose"}
+_PY_MYSQL = re.compile(r"^\s*['\"]?(pymysql|mysqlclient|aiomysql|mysql-connector-python|asyncmy)\b", re.IGNORECASE | re.MULTILINE)
+_PY_MONGO = re.compile(r"^\s*['\"]?(pymongo|motor|mongoengine|beanie)\b", re.IGNORECASE | re.MULTILINE)
 _PY_PG = re.compile(r"^\s*['\"]?(psycopg2?(-binary)?|psycopg\[?|asyncpg)\b", re.IGNORECASE | re.MULTILINE)
 _PY_REDIS = re.compile(r"^\s*['\"]?redis\b", re.IGNORECASE | re.MULTILINE)
 _INTEGRATION_SCRIPTS = ("test:integration", "test:int", "test:db", "integration")
@@ -72,6 +77,21 @@ _DB_KEYS = {
     "port": ("DATABASE_PORT", "DB_PORT", "POSTGRES_PORT", "PGPORT", "TYPEORM_PORT"),
 }
 _REDIS_KEYS = {"url": ("REDIS_URL", "REDIS_URI"), "host": ("REDIS_HOST",), "port": ("REDIS_PORT",)}
+_MYSQL_KEYS = {
+    "url": ("MYSQL_URL",),
+    "user": ("MYSQL_USER",),
+    "password": ("MYSQL_PASSWORD",),
+    "name": ("MYSQL_DATABASE", "MYSQL_DB"),
+    "host": ("MYSQL_HOST",),
+    "port": ("MYSQL_PORT",),
+}
+_MONGO_KEYS = {
+    "url": ("MONGODB_URI", "MONGODB_URL", "MONGO_URI", "MONGO_URL", "MONGO_CONNECTION_STRING"),
+    "name": ("MONGODB_DB", "MONGODB_DATABASE", "MONGO_DB", "MONGO_DATABASE", "MONGO_DB_NAME"),
+    "host": ("MONGO_HOST", "MONGODB_HOST"),
+    "port": ("MONGO_PORT", "MONGODB_PORT"),
+}
+_SQL_SCHEMES = {"postgres": ("postgres://", "postgresql://"), "mysql": ("mysql://", "mysql2://", "mariadb://")}
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
 
 
@@ -172,8 +192,11 @@ def _image_service(image: str) -> str:
         return "redis"
     if base in {"mysql", "mariadb", "percona"}:
         return "mysql"
-    if base in {"mongo", "mongodb"}:
+    if base in {"mongo", "mongodb", "mongodb-community-server"}:
         return "mongodb"
+    for other in ("elasticsearch", "opensearch", "kafka", "rabbitmq", "localstack", "minio", "cassandra", "nats"):
+        if other in base:
+            return other
     return ""
 
 
@@ -194,7 +217,11 @@ def detect_services(repo_dir: Path, config: dict[str, Any] | None = None) -> tup
         wanted.add("postgres")
     if deps & _NODE_REDIS:
         wanted.add("redis")
-    other.update(service for dep, service in _NODE_UNSUPPORTED.items() if dep in deps)
+    prisma = _read(repo_dir / "prisma" / "schema.prisma")
+    if deps & _NODE_MYSQL or re.search(r'provider\s*=\s*"mysql"', prisma):
+        wanted.add("mysql")
+    if deps & _NODE_MONGO or re.search(r'provider\s*=\s*"mongodb"', prisma):
+        wanted.add("mongodb")
     python_text = "\n".join(
         _read(repo_dir / name) for name in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt", "pyproject.toml")
     )
@@ -202,6 +229,10 @@ def detect_services(repo_dir: Path, config: dict[str, Any] | None = None) -> tup
         wanted.add("postgres")
     if _PY_REDIS.search(python_text):
         wanted.add("redis")
+    if _PY_MYSQL.search(python_text):
+        wanted.add("mysql")
+    if _PY_MONGO.search(python_text):
+        wanted.add("mongodb")
     for image in compose_services(repo_dir).values():
         service = _image_service(image)
         if service in SUPPORTED_SERVICES:
@@ -256,8 +287,23 @@ def _first(values: dict[str, str], keys: tuple[str, ...]) -> str:
     return next((values[key] for key in keys if values.get(key)), "")
 
 
-def db_credentials(template: dict[str, str]) -> DbCredentials:
-    creds = DbCredentials()
+def db_credentials(template: dict[str, str], service: str = "postgres") -> DbCredentials:
+    """Role and database the repo's env template names for ``service`` (postgres or mysql)."""
+    creds = DbCredentials() if service == "postgres" else DbCredentials(user="root", password="root")
+    if service == "mysql":
+        url = _first(template, _MYSQL_KEYS["url"]) or _first(template, _DB_KEYS["url"])
+        if url.startswith(_SQL_SCHEMES["mysql"]):
+            parts = urlsplit(url)
+            creds.user = unquote(parts.username or "") or creds.user
+            creds.password = unquote(parts.password or "") or creds.password
+            creds.name = parts.path.lstrip("/").split("?", 1)[0] or creds.name
+        creds.user = _first(template, _MYSQL_KEYS["user"]) or _first(template, _DB_KEYS["user"]) or creds.user
+        creds.password = (
+            _first(template, _MYSQL_KEYS["password"]) or _first(template, _DB_KEYS["password"])
+            or (template.get("MYSQL_ROOT_PASSWORD", "") if creds.user == "root" else "") or creds.password
+        )
+        creds.name = _first(template, _MYSQL_KEYS["name"]) or _first(template, _DB_KEYS["name"]) or creds.name
+        return creds
     url = _first(template, _DB_KEYS["url"])
     if url.startswith(("postgres://", "postgresql://")):
         parts = urlsplit(url)
@@ -268,6 +314,26 @@ def db_credentials(template: dict[str, str]) -> DbCredentials:
     creds.password = _first(template, _DB_KEYS["password"]) or creds.password
     creds.name = _first(template, _DB_KEYS["name"]) or creds.name
     return creds
+
+
+def mongo_database(template: dict[str, str]) -> str:
+    for key in (*_MONGO_KEYS["url"], *_DB_KEYS["url"]):
+        value = template.get(key, "")
+        if value.startswith("mongodb://"):
+            name = urlsplit(value).path.lstrip("/").split("?", 1)[0]
+            if name:
+                return name
+    return _first(template, _MONGO_KEYS["name"]) or "app_test"
+
+
+def _rewrite_mongo_url(url: str, port: int, local_names: set[str]) -> str:
+    """The job's MongoDB runs without auth: keep the database and options, drop credentials."""
+    parts = urlsplit(url)
+    hosts = [h.rsplit(":", 1)[0].strip("[]").lower() for h in parts.netloc.rsplit("@", 1)[-1].split(",")]
+    if any(h and h not in local_names for h in hosts):
+        return url
+    query = "&".join(q for q in parts.query.split("&") if q and not q.lower().startswith(("authsource", "authmechanism")))
+    return urlunsplit(("mongodb", f"127.0.0.1:{port}", parts.path, query, parts.fragment))
 
 
 def _rewrite_url(url: str, port: int, local_names: set[str]) -> str:
@@ -287,22 +353,34 @@ def rewrite_env(
     """The template's values that change so they reach the services running in this job."""
     local_names = _LOCAL_HOSTS | {name.lower() for name in compose_names}
     changes: dict[str, str] = {}
-    pg = services.get("postgres")
-    redis = services.get("redis")
+    pg, mysql, mongo, redis = (services.get(n) for n in ("postgres", "mysql", "mongodb", "redis"))
+    sql = pg or mysql  # generic DATABASE_* keys go to the repo's SQL database
+
+    def keyed(key: str) -> dict[str, Any] | None:
+        if key.startswith(("POSTGRES_", "PG")):
+            return pg
+        if key.startswith("MYSQL_"):
+            return mysql
+        if key.startswith(("MONGO_", "MONGODB_")):
+            return mongo
+        if key.startswith("REDIS_"):
+            return redis
+        return sql
+
     for key, value in template.items():
         lowered = value.strip().lower()
-        if pg and value.startswith(("postgres://", "postgresql://")):
+        if pg and value.startswith(_SQL_SCHEMES["postgres"]):
             changes[key] = _rewrite_url(value, pg["port"], local_names)
+        elif mysql and value.startswith(_SQL_SCHEMES["mysql"]):
+            changes[key] = _rewrite_url(value, mysql["port"], local_names)
+        elif mongo and value.startswith("mongodb://"):
+            changes[key] = _rewrite_mongo_url(value, mongo["port"], local_names)
         elif redis and value.startswith(("redis://", "rediss://")):
             changes[key] = _rewrite_url(value, redis["port"], local_names)
-        elif pg and key in _DB_KEYS["host"]:
+        elif key in (*_DB_KEYS["host"], *_MYSQL_KEYS["host"], *_MONGO_KEYS["host"], *_REDIS_KEYS["host"]) and keyed(key):
             changes[key] = "127.0.0.1"
-        elif redis and key in _REDIS_KEYS["host"]:
-            changes[key] = "127.0.0.1"
-        elif pg and key in _DB_KEYS["port"]:
-            changes[key] = str(pg["port"])
-        elif redis and key in _REDIS_KEYS["port"]:
-            changes[key] = str(redis["port"])
+        elif key in (*_DB_KEYS["port"], *_MYSQL_KEYS["port"], *_MONGO_KEYS["port"], *_REDIS_KEYS["port"]) and keyed(key):
+            changes[key] = str(keyed(key)["port"])
         elif key.endswith("HOST") and lowered in {name.lower() for name in compose_names}:
             changes[key] = "127.0.0.1"
     return {key: value for key, value in changes.items() if template.get(key) != value}
@@ -522,8 +600,24 @@ def services_root(repo_dir: Path) -> Path:
     return Path(os.environ.get("TS_HARNESS_SERVICES_DIR") or "/tmp/ts-harness-services") / digest
 
 
-def _service_env(services: dict[str, dict[str, Any]], creds: DbCredentials) -> dict[str, str]:
+def _service_env(
+    services: dict[str, dict[str, Any]], creds: DbCredentials, mysql_creds: DbCredentials | None = None
+) -> dict[str, str]:
     env: dict[str, str] = {}
+    mysql = services.get("mysql")
+    if mysql and mysql_creds is not None:
+        user, password, name = (quote(v, safe="") for v in (mysql_creds.user, mysql_creds.password, mysql_creds.name))
+        url = f"mysql://{user}:{password}@127.0.0.1:{mysql['port']}/{name}"
+        env.update({"MYSQL_URL": url, "MYSQL_HOST": "127.0.0.1", "MYSQL_PORT": str(mysql["port"]),
+                    "MYSQL_USER": mysql_creds.user, "MYSQL_PASSWORD": mysql_creds.password, "MYSQL_DATABASE": mysql_creds.name})
+        if not services.get("postgres"):
+            env["DATABASE_URL"] = url
+    mongo = services.get("mongodb")
+    if mongo:
+        url = f"mongodb://127.0.0.1:{mongo['port']}/{mongo['database']}"
+        env.update({"MONGODB_URI": url, "MONGODB_URL": url, "MONGO_URI": url, "MONGO_URL": url})
+        if not services.get("postgres") and not services.get("mysql"):
+            env["DATABASE_URL"] = url
     pg = services.get("postgres")
     if pg:
         url = f"postgresql://{quote(creds.user, safe='')}:{quote(creds.password, safe='')}@127.0.0.1:{pg['port']}/{quote(creds.name, safe='')}"
@@ -581,10 +675,15 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
     template_text = _read(template_path) if template_path else ""
     template = parse_env(template_text)
     creds = db_credentials(template)
+    mysql_creds = db_credentials(template, "mysql")
     root = services_root(repo_dir)
     for name in wanted:
         if name == "postgres":
             info, message = start_postgres(root, creds, runner=runner)
+        elif name == "mysql":
+            info, message = db_servers.start_mysql(root, mysql_creds, port=free_port(3306), runner=runner)
+        elif name == "mongodb":
+            info, message = db_servers.start_mongodb(root, mongo_database(template), port=free_port(27017))
         else:
             info, message = start_redis(root, runner=runner)
         running.log.append(message)
@@ -595,7 +694,7 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
     if not running.services:
         return running
     changes = {**rewrite_env(template, running.services, set(compose_services(repo_dir))), **overrides}
-    service_env = _service_env(running.services, creds)
+    service_env = _service_env(running.services, creds, mysql_creds)
     if template_path is not None:
         _write_env_file(repo_dir, config, template_path, template_text, changes, runner, running)
     running.env = {
@@ -623,7 +722,9 @@ def _write_env_file(
 
 
 def _connection_key(key: str) -> bool:
-    return any(key in keys for keys in (*_DB_KEYS.values(), *_REDIS_KEYS.values()))
+    return any(
+        key in keys for keys in (*_DB_KEYS.values(), *_REDIS_KEYS.values(), *_MYSQL_KEYS.values(), *_MONGO_KEYS.values())
+    )
 
 
 # --- integration suite ------------------------------------------------------------------------------
@@ -637,6 +738,9 @@ class IntegrationPlan:
     timeout_seconds: int = DEFAULT_INTEGRATION_TIMEOUT
     blocking: bool = True
     source: str = "config"
+    # Screenshots for review and QA: Playwright specs the change touched, rerun with screenshots on.
+    evidence_specs: list[str] = field(default_factory=list)
+    evidence_dir: str = ""
 
 
 def integration_plan(repo_dir: Path, *, services_running: bool) -> IntegrationPlan | None:
@@ -763,9 +867,14 @@ def reset_services(env: dict[str, str], *, runner=subprocess.run) -> str:
         return ""
     if services.get("redis"):
         flush_redis(services["redis"])
+    problems = []
     if services.get("postgres"):
-        return reset_postgres(services["postgres"], runner=runner)
-    return ""
+        problems.append(reset_postgres(services["postgres"], runner=runner))
+    if services.get("mysql"):
+        problems.append(db_servers.reset_mysql(services["mysql"], runner=runner))
+    if services.get("mongodb"):
+        problems.append(db_servers.reset_mongodb(services["mongodb"]))
+    return "; ".join(p for p in problems if p)
 
 
 def run_integration(
@@ -823,6 +932,8 @@ def run_integration(
         if code != 0:
             for proc, log_path, item in procs:
                 output.append(f"log of `{item['run']}` (end):\n{_read(log_path)[-2000:]}")
+        elif plan.evidence_specs and plan.evidence_dir:
+            output.append(capture_screenshots(repo_dir, plan.evidence_specs, Path(plan.evidence_dir), env))
         return finished(code)
     finally:
         for proc, _log_path, _item in procs:
@@ -895,7 +1006,7 @@ def in_coding_worker(table: dict[int, tuple[int, str, str]] | None = None) -> bo
 def _service_pids(repo_dir: Path) -> set[int]:
     root = services_root(repo_dir)
     pids: set[int] = set()
-    for path in (root / "pgdata" / "postmaster.pid", root / "redis.pid"):
+    for path in (root / "pgdata" / "postmaster.pid", root / "redis.pid", root / "mysql.pid", root / "mongod.pid"):
         try:
             pids.add(int(_read(path).splitlines()[0].strip()))
         except (ValueError, IndexError):
@@ -936,3 +1047,77 @@ def stop_stray_processes(repo_dir: Path, *, table: dict[int, tuple[int, str, str
                 continue
         stopped.append(f"{root}: {table[root][2][:120]}")
     return stopped
+
+
+# --- screenshots ------------------------------------------------------------------------------------
+
+_SPEC_SUFFIXES = (".spec.ts", ".spec.tsx", ".spec.js", ".spec.mjs", ".test.ts", ".test.js", ".e2e.ts", ".e2e-spec.ts")
+MAX_SCREENSHOTS = 6
+EVIDENCE_CONFIG = "playwright.ts-harness-evidence.config.ts"
+
+
+def playwright_config(repo_dir: Path) -> Path | None:
+    found = sorted(Path(repo_dir).glob("playwright.config.*"))
+    return found[0] if found else None
+
+
+def changed_playwright_specs(repo_dir: Path, changed_files: list[str]) -> list[str]:
+    """Playwright specs the change added or edited (paths relative to the repo)."""
+    repo_dir = Path(repo_dir)
+    specs = []
+    for path in changed_files:
+        parts = {part.lower() for part in Path(path).parts}
+        if path.endswith(_SPEC_SUFFIXES) and parts & {"e2e", "playwright", "tests-e2e", "e2e-tests"} and (repo_dir / path).is_file():
+            specs.append(path)
+    return sorted(specs)
+
+
+def _evidence_config_text(base: Path, out_dir: Path) -> str:
+    """The repo's own config (web server, setup project, storage state) with screenshots on."""
+    return (
+        "// Written by TS Harness for one run; not part of the repository.\n"
+        f"import base from './{base.stem}';\n"
+        "const shot = { screenshot: 'on' as const, video: 'off' as const, trace: 'off' as const };\n"
+        "export default {\n"
+        "  ...base,\n"
+        f"  outputDir: {json.dumps(str(out_dir))},\n"
+        "  reporter: 'line',\n"
+        "  retries: 0,\n"
+        "  use: { ...(base.use ?? {}), ...shot },\n"
+        "  projects: (base.projects ?? []).map((project: any) => ({ ...project, use: { ...(project.use ?? {}), ...shot } })),\n"
+        "};\n"
+    )
+
+
+def capture_screenshots(repo_dir: Path, specs: list[str], out_dir: Path, env: dict[str, str], *, timeout: int = 600) -> str:
+    """Rerun ``specs`` with screenshots on; images land in ``out_dir``. Never fails verification."""
+    repo_dir = Path(repo_dir)
+    base = playwright_config(repo_dir)
+    binary = repo_dir / "node_modules" / ".bin" / "playwright"
+    if base is None or not binary.exists():
+        return "screenshots: no Playwright config or binary"
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = base.parent / EVIDENCE_CONFIG
+    wrapper.write_text(_evidence_config_text(base, out_dir), encoding="utf-8")
+    try:
+        command = shlex.join([str(binary), "test", "--config", str(wrapper), *specs])
+        code, text = _shell(command, cwd=base.parent, env=env, timeout=timeout)
+    finally:
+        wrapper.unlink(missing_ok=True)
+    shots = screenshot_files(out_dir)
+    return f"screenshots: {len(shots)} captured from {', '.join(specs)} (exit {code})" + ("" if code == 0 else f"\n{text[-1500:]}")
+
+
+def screenshot_files(out_dir: Path) -> list[Path]:
+    """At most ``MAX_SCREENSHOTS`` images, the change's own tests before setup steps."""
+    files = sorted(Path(out_dir).rglob("*.png")) if Path(out_dir).is_dir() else []
+    files.sort(key=lambda p: ("setup" in p.parent.name.lower(), str(p)))
+    return files[:MAX_SCREENSHOTS]
+
+
+def screenshot_name(path: Path) -> str:
+    """``<test folder>.png``: Playwright names the folder after the spec and test title."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", path.parent.name).strip("-")[:90] or "screenshot"
+    suffix = "" if path.stem.endswith("-1") or path.stem == "test-finished-1" else f"-{path.stem}"
+    return f"{stem}{suffix}.png"

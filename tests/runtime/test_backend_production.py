@@ -138,9 +138,9 @@ class ServiceDetectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             _write(repo / "package.json", json.dumps({"dependencies": {"pg": "8", "ioredis": "5", "mongoose": "8"}}))
-            self.assertEqual(ts.detect_services(repo), (["postgres", "redis"], ["mongodb"]))
-            _write(repo / ".ts-harness.yml", "services: [postgres, mysql]\n")
-            self.assertEqual(ts.detect_services(repo), (["postgres"], ["mysql"]))
+            self.assertEqual(ts.detect_services(repo), (["mongodb", "postgres", "redis"], []))
+            _write(repo / ".ts-harness.yml", "services: [postgres, elasticsearch]\n")
+            self.assertEqual(ts.detect_services(repo), (["postgres"], ["elasticsearch"]))
 
     def test_compose_image_alone_is_enough(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -49,7 +49,7 @@ _LOCAL_EXCLUDES = {
     "gradle": (".gradle/", "build/"),
 }
 _EXCLUDE_MARKER = "# ts-harness test environment"
-HARNESS_LOCAL_PATHS = (".opencode/",)
+HARNESS_LOCAL_PATHS = (".opencode/", "playwright.ts-harness-evidence.config.ts")
 
 
 @dataclass

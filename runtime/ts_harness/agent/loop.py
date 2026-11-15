@@ -297,21 +297,23 @@ class EnterpriseAgent:
             effort=_run_effort(agent, payload, source),
         )
         system_prompt = self._build_workflow_system_prompt(agent, payload)
+        task_input = dict(payload.get("input") or {})
+        images = task_input.pop("_images", None)
+        # Images go to the model once; validators, transcripts and logs see the input without them.
+        payload = {**payload, "input": task_input}
+        task_text = json.dumps(
+            {
+                "workflow_id": payload.get("workflow_id"),
+                "task_id": payload.get("task_id"),
+                "step_name": payload.get("step_name"),
+                "input": task_input,
+                "required_artifacts": payload.get("required_artifacts") or [],
+                "skill_hints": canonical_skill_ids(payload.get("skill_hints")),
+            }
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "workflow_id": payload.get("workflow_id"),
-                        "task_id": payload.get("task_id"),
-                        "step_name": payload.get("step_name"),
-                        "input": payload.get("input") or {},
-                        "required_artifacts": payload.get("required_artifacts") or [],
-                        "skill_hints": canonical_skill_ids(payload.get("skill_hints")),
-                    }
-                ),
-            },
+            {"role": "user", "content": _with_images(task_text, images)},
         ]
         policy_ctx = ToolPolicyContext(
             tenant_id=tenant_id,
@@ -1927,3 +1929,16 @@ def _run_effort(agent: Any, payload: dict[str, Any], source: str) -> str | None:
     if _run_model(agent, payload, source) != agent.model:
         return "low"
     return agent.effort
+
+
+def _with_images(text: str, images: Any) -> Any:
+    """Task text plus image parts (``{"name", "url"}``, data or https URLs) in Chat Completions form."""
+    parts: list[dict[str, Any]] = []
+    for image in images if isinstance(images, list) else []:
+        url = str((image or {}).get("url") or "") if isinstance(image, dict) else ""
+        if url.startswith(("data:image/", "https://")):
+            parts += [
+                {"type": "text", "text": f"Screenshot: {image.get('name') or 'image'}"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ]
+    return [{"type": "text", "text": text}, *parts] if parts else text

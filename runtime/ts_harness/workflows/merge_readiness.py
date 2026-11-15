@@ -507,6 +507,22 @@ def fan_out_base_advanced(
     return blocked
 
 
+def _delete_evidence_branch(pr_url: str, *, github: GitHubClient | None = None) -> bool:
+    """Drop the PR's screenshot branch once it merged; best effort."""
+    from ts_harness.implementation.screenshots import evidence_branch
+
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None:
+        return False
+    try:
+        github = github or GitHubClient.from_env()
+        head = str((github.get_pull(*parsed).get("head") or {}).get("ref") or "")
+        return bool(head) and bool(github.delete_branch(parsed[0], parsed[1], evidence_branch(head)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("evidence branch not deleted for %s: %s", pr_url, exc)
+        return False
+
+
 def on_merge(event: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
     """Webhook subscriber: record who merged the PR and refresh sibling PRs on the same base."""
     from ts_harness.memory.client import get_memory_client
@@ -525,6 +541,8 @@ def on_merge(event: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
             actor="github-webhook",
         )
         result = {"status": "recorded", "program_id": ref["program_id"], "merged_by": event.get("merged_by") or ""}
+    if ref is not None:
+        result["evidence_branch_deleted"] = _delete_evidence_branch(pr_url)
     try:
         result["base_advanced"] = fan_out_base_advanced(event, tenant_id=tenant_id, memory=memory)
     except Exception as exc:  # noqa: BLE001 - recording the merge must not fail on fan-out

@@ -247,6 +247,9 @@ class GitHubClient:
     def comment(self, owner: str, repo: str, number: int, body: str) -> dict[str, Any]:
         return self.request("POST", f"/repos/{owner}/{repo}/issues/{number}/comments", body={"body": body})
 
+    def update_comment(self, owner: str, repo: str, comment_id: int | str, body: str) -> dict[str, Any]:
+        return self.request("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body={"body": body})
+
     def list_pull_files(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         """Changed files with patches; GitHub caps the listing at 3000 files."""
         files: list[dict[str, Any]] = []
