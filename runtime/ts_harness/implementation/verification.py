@@ -74,8 +74,11 @@ class VerifyResult:
 _EVIDENCE_TAIL = 700
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
 def _check_record(label: str, command: list[str], result: subprocess.CompletedProcess) -> dict[str, Any]:
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    output = _ANSI.sub("", "\n".join(part for part in (result.stdout, result.stderr) if part)).strip()
     return {"check": label, "command": " ".join(command), "exit_code": result.returncode, "output_tail": output[-_EVIDENCE_TAIL:]}
 
 
@@ -646,5 +649,5 @@ def _format_command_log(
     command: list[str],
     result: subprocess.CompletedProcess,
 ) -> str:
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    output = _ANSI.sub("", "\n".join(part for part in (result.stdout, result.stderr) if part))
     return f"$ {' '.join(command)} ({label}, exit {result.returncode})\n{output}".rstrip()

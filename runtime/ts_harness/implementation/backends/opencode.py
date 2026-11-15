@@ -47,7 +47,7 @@ from ts_harness.implementation.repo import (
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
-from ts_harness.implementation.test_services import integration_plan, start_test_services
+from ts_harness.implementation.test_services import integration_plan, start_test_services, stop_stray_processes
 from ts_harness.implementation.test_env import (
     HOST_TOOLCHAINS,
     TestEnvironment,
@@ -369,6 +369,8 @@ def build_implement_prompt(
         "runner for the language you implement in, declared in that language's manifest.\n"
         "Never add a module or script that stands in for a test framework "
         "(for example pytest.py or a behave/ package).\n"
+        "Stop every server or background process you start (dev servers, mock APIs) before you finish; "
+        "the host starts its own for the e2e suite.\n"
         "Use the repo's package manager (pnpm, yarn or npm, by its lockfile) and update that lockfile "
         "with it when you add a dependency.\n"
         "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
@@ -614,6 +616,9 @@ class OpenCodeBackend:
         reverted: list[str] = []
         while True:
             reverted = sorted({*reverted, *self._revert_undeclared(repo_dir, request)})
+            strays = stop_stray_processes(repo_dir)
+            if strays:
+                log_event("coding_stray_processes_stopped", work_order_id=request.work_order_id, processes=strays)
             changed = list_changed_files(repo_dir, base_ref=base_ref, runner=self.runner)
             deps_log = (
                 install_declared_dependencies(test_env, repo_dir, runner=self.runner)

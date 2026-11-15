@@ -121,3 +121,51 @@ class PlaywrightSuiteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EvidenceTextTests(unittest.TestCase):
+    def test_terminal_colors_are_stripped(self):
+        from ts_harness.implementation.verification import _check_record
+
+        result = subprocess.CompletedProcess(["yarn", "test"], 0, stdout="\x1b[2m Tests \x1b[22m \x1b[1m\x1b[32m21 passed\x1b[39m\x1b[22m\x1b[1A\x1b[2K", stderr="")
+        self.assertEqual(_check_record("unit", ["yarn", "test"], result)["output_tail"], "Tests  21 passed")
+
+
+class StrayProcessTests(unittest.TestCase):
+    def test_leftover_servers_are_stopped_and_the_job_keeps_its_own(self):
+        import os
+
+        me = os.getpid()
+        table = {
+            1: (0, "S", "/sbin/docker-init -- python3 /app/scripts/coding-worker.py"),
+            7: (1, "S", "python3 /app/scripts/coding-worker.py"),
+            me: (7, "R", "python3 verify"),
+            300: (1, "S", "node yarn dev --port 3000"),
+            301: (300, "S", "node vite"),
+            400: (1, "S", "/usr/lib/postgresql/17/bin/postgres -D pgdata"),
+            401: (400, "S", "postgres: checkpointer"),
+            500: (1, "Z", "[chrome] <defunct>"),
+        }
+        killed = []
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            pidfile = ts.services_root(repo) / "pgdata" / "postmaster.pid"
+            _write(pidfile, "400\n/data\n")
+            try:
+                stopped = ts.stop_stray_processes(repo, table=table, kill=lambda pid, sig: killed.append(pid))
+            finally:
+                import shutil
+
+                shutil.rmtree(ts.services_root(repo), ignore_errors=True)
+        self.assertEqual(sorted(killed), [300, 301])
+        self.assertTrue(stopped[0].startswith("300: node yarn dev"))
+
+    def test_outside_a_worker_nothing_is_touched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(ts.stop_stray_processes(Path(tmp)), [])
+
+    def test_launcher_runs_workers_with_an_init(self):
+        from ts_harness.coding.launcher import LocalDockerConfig, LocalDockerLauncher
+
+        command = LocalDockerLauncher(LocalDockerConfig(), environ={}).command({"id": "job-123456789"})
+        self.assertIn("--init", command)
