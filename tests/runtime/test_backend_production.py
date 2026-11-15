@@ -216,6 +216,19 @@ class RealPostgresTests(unittest.TestCase):
                 os.environ.pop("TS_HARNESS_SERVICES_DIR", None)
 
 
+def _port_closes(port: int, seconds: float = 5) -> bool:
+    """A killed server can take a moment to release its socket; anything longer is a leak."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        with socket.socket() as sock:
+            if sock.connect_ex(("127.0.0.1", port)) != 0:
+                return True
+        time.sleep(0.1)
+    return False
+
+
 class IntegrationPlanTests(unittest.TestCase):
     def test_declared_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,8 +266,17 @@ class IntegrationPlanTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertIn("SUITE_OK", result.stdout)
             self.assertTrue((repo / "setup.txt").is_file())
-            with socket.socket() as sock:
-                self.assertNotEqual(sock.connect_ex(("127.0.0.1", port)), 0, "background server still running")
+            self.assertTrue(_port_closes(port), "background server still running")
+
+    def test_a_port_already_in_use_fails_instead_of_testing_the_old_server(self):
+        with tempfile.TemporaryDirectory() as tmp, socket.socket() as busy:
+            busy.bind(("127.0.0.1", 0))
+            busy.listen()
+            port = busy.getsockname()[1]
+            plan = ts.IntegrationPlan(command="echo SUITE", background=[{"run": "sleep 30", "wait_for": f"127.0.0.1:{port}"}])
+            result = ts.run_integration(Path(tmp), plan, {"PATH": "/usr/bin:/bin"}, log_dir=Path(tmp))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("already in use", result.stdout)
 
     def test_failed_setup_stops_before_the_suite(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -676,17 +676,46 @@ def _ready(target: str) -> bool:
         return False
 
 
-def _stop_group(proc: subprocess.Popen) -> None:
-    if proc.poll() is not None:
-        return
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-        proc.wait(timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
+def _group_alive(pgid: int) -> bool:
+    """Whether any live (non-zombie) process is left in group ``pgid``."""
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            os.killpg(pgid, 0)
+        except OSError:
+            return False
+        return True
+    for stat in proc_root.glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        # After the command name: state, ppid, pgrp.
+        if len(fields) > 2 and fields[2] == str(pgid) and fields[0] != "Z":
+            return True
+    return False
+
+
+def _stop_group(proc: subprocess.Popen, *, grace_seconds: float = 15) -> None:
+    """Stop the whole process group, not only its shell: the app it started holds the port.
+
+    Returns once no live process is left, so the next run cannot find an old server
+    already answering on the port it waits for.
+    """
+    pgid = proc.pid
+    for sig, wait in ((signal.SIGTERM, grace_seconds), (signal.SIGKILL, 5.0)):
+        try:
+            os.killpg(pgid, sig)
         except OSError:
             pass
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            proc.poll()
+            if not _group_alive(pgid):
+                proc.poll()
+                return
+            time.sleep(0.1)
+    proc.poll()
 
 
 def _shell(command: str, *, cwd: Path, env: dict[str, str], timeout: int) -> tuple[int, str]:
@@ -740,6 +769,11 @@ def run_integration(
     try:
         for index, item in enumerate(plan.background):
             log_path = log_dir / f"background-{index}.log"
+            target = str(item.get("wait_for") or "").strip()
+            if target and _ready(target):
+                # Something else already answers there; waiting would test against it, not this run.
+                output.append(f"background `{item['run']}`: {target} is already in use before it started")
+                return finished(1)
             handle = open(log_path, "w", encoding="utf-8")  # noqa: SIM115 - closed with the process
             proc = subprocess.Popen(
                 str(item["run"]), shell=True, cwd=str(repo_dir), env=env, stdout=handle, stderr=subprocess.STDOUT,
