@@ -435,3 +435,40 @@ class NodeVersionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CarriedSecurityTests(unittest.TestCase):
+    PR = "https://github.com/acme/api/pull/7"
+    SECURITY = {"secret_scan": {"tool": "gitleaks", "findings": []}, "scanned_sha": "old"}
+
+    class GitHub:
+        def __init__(self, moved, status="ahead"):
+            self.moved, self.status = moved, status
+
+        def compare(self, owner, repo, base, head):
+            return {"status": self.status, "files": [{"filename": name} for name in self.moved]}
+
+        def list_pull_files(self, owner, repo, number):
+            return [{"filename": "src/projects/projects.service.ts"}]
+
+    def _tasks(self):
+        return [
+            {"step_name": "deliver_work_order", "status": "succeeded", "created_at": "01", "output": {"security": self.SECURITY}},
+            {"step_name": "deliver_work_order", "status": "succeeded", "created_at": "02", "output": {"security": {}, "refresh_method": "server_merge"}},
+        ]
+
+    def _carry(self, github):
+        from ts_harness.workflows.merge_readiness import carried_security
+
+        head = {"pr_url": self.PR, "head_sha": "new"}
+        return carried_security(github, head, self._tasks(), "$prior.deliver_work_order.output.security")
+
+    def test_base_only_changes_carry_the_scan_to_the_new_head(self):
+        carried = self._carry(self.GitHub(["docs/testing.md"]))
+        self.assertEqual((carried["scanned_sha"], carried["carried_from_sha"]), ("new", "old"))
+
+    def test_a_change_to_a_pr_file_needs_a_new_scan(self):
+        self.assertIsNone(self._carry(self.GitHub(["src/projects/projects.service.ts"])))
+
+    def test_a_head_that_is_not_ahead_of_the_scan_is_not_carried(self):
+        self.assertIsNone(self._carry(self.GitHub([], status="diverged")))

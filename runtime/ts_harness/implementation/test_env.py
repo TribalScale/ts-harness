@@ -366,13 +366,16 @@ def prepare_test_environment(
         "npm_config_cache": str(cache / "npm"),
         "COREPACK_HOME": str(cache / "corepack"),
         "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
-        "npm_config_store_dir": str(cache / "pnpm-store"),
         "YARN_CACHE_FOLDER": str(cache / "yarn"),
         "CARGO_HOME": str(cache / "cargo"),
         "GRADLE_USER_HOME": str(cache / "gradle"),
         "MAVEN_OPTS": f"-Dmaven.repo.local={cache / 'm2'}",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
     }
+    if (Path(repo_dir) / "package.json").is_file() and node_package_manager(repo_dir) == "pnpm":
+        # pnpm reads its store from npm-style config; npm itself warns on the unknown key
+        # (and will reject it), so only pnpm repos get it.
+        env["npm_config_store_dir"] = str(cache / "pnpm-store")
     test_env = TestEnvironment(python=python, env=env, stack=detect_stack(repo_dir), state_dir=state_dir)
     merged = test_env.merged_env()
     logs: list[str] = []
