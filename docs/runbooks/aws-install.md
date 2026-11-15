@@ -117,7 +117,14 @@ export INSTALL_CONFIG=/path/to/aws-install.yaml
 `apply --plan-file` applies exactly the reviewed plan, with no re-plan and no
 `-auto-approve`. If the state changed since the plan was made, Terraform
 refuses with a stale-plan error; plan again. Without `--plan-file`, `apply`
-re-plans and applies immediately.
+saves a plan and applies it at once, unless the plan deletes or replaces anything.
+Then it stops with `FAIL APPLY_WOULD_DESTROY`, lists those resources, applies
+nothing, and leaves the plan in the state directory (`apply.tfplan`). Review it and
+apply it with `--plan-file`, or run again with `--allow-destroy`.
+
+If a resource that still exists shows as "will be created" (a refresh lost it from
+state), import it instead of applying: `terraform -chdir=infra/aws import
+-var-file=<state dir>/install.auto.tfvars.json '<address>' <id>`, then plan again.
 
 `plan --detailed-exitcode` exits `0` when nothing changes, `2` when changes are
 pending, and `1` on error.

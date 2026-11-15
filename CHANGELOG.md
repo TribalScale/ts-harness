@@ -245,6 +245,12 @@ First public release.
 
 ### Fixed
 
+- `install.sh apply` without `--plan-file` ran `terraform apply -auto-approve`, so a plan
+  that deleted resources was applied unseen. On the dev install a refresh lost the intake
+  bucket from state; the next apply planned to create it, deleted its public-access block,
+  TLS policy and other settings on the way, then failed with `BucketAlreadyExists`. Apply
+  now saves the plan, and stops with `APPLY_WOULD_DESTROY` and the list of resources when
+  it deletes or replaces anything; `--allow-destroy` or `--plan-file` proceeds.
 - With object storage on S3, the workflow runner logged "skill mirror sync failed" on every
   tick: compose gave it the backend but not the skills and workspace buckets.
 - Coding jobs never started on a single host: the launcher runs in the agent-runtime image,

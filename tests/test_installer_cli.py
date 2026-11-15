@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -388,7 +389,7 @@ def _subcommand(cmd: list[str]) -> str:
 class InstallerPipelineTests(unittest.TestCase):
     """Behaviour needed to run plan/apply from CI."""
 
-    def _run(self, argv, *, returncodes=None):
+    def _run(self, argv, *, returncodes=None, removals=None):
         calls: list[list[str]] = []
         returncodes = returncodes or {}
 
@@ -397,7 +398,8 @@ class InstallerPipelineTests(unittest.TestCase):
             rc = returncodes.get(_subcommand(list(cmd)), 0)
             return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
 
-        with mock.patch.object(install_mod, "run_terraform", side_effect=fake_run):
+        with mock.patch.object(install_mod, "run_terraform", side_effect=fake_run), \
+             mock.patch.object(install_mod, "planned_removals", return_value=list(removals or [])):
             with _ok_preflight():
                 code = install_mod.main(argv)
         return code, calls
@@ -498,14 +500,41 @@ class InstallerPipelineTests(unittest.TestCase):
         self.assertNotIn("-auto-approve", apply)
         self.assertFalse(any(c.startswith("-var-file=") for c in apply))
 
-    def test_apply_without_plan_file_keeps_auto_approve(self):
+    def test_apply_without_plan_file_plans_then_applies_that_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, calls = self._run(
                 ["apply", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp]
             )
         self.assertEqual(code, 0)
+        plan = next(c for c in calls if _subcommand(c) == "plan")
         apply = next(c for c in calls if _subcommand(c) == "apply")
-        self.assertIn("-auto-approve", apply)
+        out = next(arg for arg in plan if arg.startswith("-out="))[len("-out="):]
+        self.assertEqual(apply[-1], out)
+        self.assertNotIn("-auto-approve", apply)
+
+    def test_apply_stops_when_the_plan_deletes_anything(self):
+        removals = [("aws_s3_bucket_public_access_block.objects[\"intake\"]", ["delete"]),
+                    ("aws_s3_bucket.intake[0]", ["delete", "create"])]
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                code, calls = self._run(
+                    ["apply", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp], removals=removals
+                )
+            meta = json.loads((Path(tmp) / "aws" / "prod" / "install-metadata.json").read_text("utf-8"))
+        self.assertEqual(code, 3)
+        self.assertFalse(any(_subcommand(c) == "apply" for c in calls))
+        self.assertIn("APPLY_WOULD_DESTROY", err.getvalue())
+        self.assertIn("aws_s3_bucket.intake[0]: delete/create", err.getvalue())
+        self.assertEqual(meta["status"], "apply_blocked_destroy")
+
+    def test_allow_destroy_applies_the_reviewed_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, calls = self._run(
+                ["apply", "--cloud", "aws", "--config", str(AWS_EXAMPLE), "--state-dir", tmp, "--allow-destroy"],
+                removals=[("aws_instance.harness", ["delete", "create"])],
+            )
+        self.assertEqual(code, 0)
+        self.assertTrue(any(_subcommand(c) == "apply" for c in calls))
 
     def test_plan_detailed_exitcode_returns_2_when_changes_pending(self):
         with tempfile.TemporaryDirectory() as tmp:
