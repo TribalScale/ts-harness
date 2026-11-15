@@ -11,6 +11,8 @@ from typing import Any
 
 from ts_harness.implementation.coverage import coverage_summary, coverage_wanted, measure_coverage
 from ts_harness.implementation.security_scan import SecurityConfig, run_security_scan
+
+ONBOARD_MARKER = "<!-- ts-harness:onboard-repo -->"
 from ts_harness.implementation.test_env import (
     BDD_IN_UNIT_STACKS,
     HOST_TOOLCHAINS,
@@ -413,6 +415,13 @@ def verify_implementation(
 
     warnings: list[str] = []
     screenshots: list[str] = []
+    if ONBOARD_MARKER in work_order_body and changed_files is not None:
+        from ts_harness.implementation.repo_onboarding import repo_has_e2e_suite
+        from ts_harness.implementation.test_services import load_repo_config
+
+        declared = load_repo_config(repo_dir).get("integration")
+        if repo_has_e2e_suite(repo_dir) and not (isinstance(declared, dict) and declared.get("command")):
+            reasons.append("integration_suite_not_declared")
     if test_env is not None and test_env.state_dir is not None:
         shutil.rmtree(screenshots_dir(test_env), ignore_errors=True)
     plan = None
@@ -549,6 +558,11 @@ def build_verification_fix_prompt(
         lines.append(
             "ESLint failed on files you changed. Fix what it reports (running it with --fix is fine "
             "for formatting); do not disable rules or add eslint-disable comments."
+        )
+    if "integration_suite_not_declared" in verify.reasons:
+        lines.append(
+            "This repo runs an e2e/integration suite in CI (or has a Playwright config), but .ts-harness.yml "
+            "declares no `integration` block with a `command`. Declare it and make `ts-harness-integration` pass."
         )
     if "integration_tests_failed" in verify.reasons:
         lines.append(
