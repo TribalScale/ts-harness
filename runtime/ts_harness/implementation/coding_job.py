@@ -17,6 +17,7 @@ from typing import Any
 from ts_harness.config.bindings import check_repo_allowed, github_repo_slug, tenant_bindings
 from ts_harness.implementation.backends.base import CodingRequest
 from ts_harness.implementation.backends.opencode import OpenCodeBackend
+from ts_harness.implementation.verification import verification_summary
 from ts_harness.implementation.config import (
     implementation_config,
     load_active_runtime_config,
@@ -396,6 +397,7 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "resolved_files": result.resolved_files,
         "usage": list(getattr(result, "usage", None) or []),
         "security": result.security,
+        "verification": dict(getattr(result, "verification", None) or {}),
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",
         "repo_url": spec["repo_url"],
@@ -421,6 +423,10 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
     output = {key: result[key] for key in STAGE_OUTPUT_KEYS if result.get(key) is not None}
     output["changed_files"] = list(result.get("changed_files") or [])
     output["security"] = result.get("security") if isinstance(result.get("security"), dict) else {}
+    verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
+    if verification:
+        output["verification"] = verification
+        output["verify_summary"] = verification_summary(verification)
     if result.get("mode") == "refresh":
         output["refresh_method"] = result.get("refresh_method")
         output["resolved_files"] = list(result.get("resolved_files") or [])

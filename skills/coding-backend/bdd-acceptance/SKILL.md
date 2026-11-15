@@ -61,7 +61,11 @@ Use the target repo’s existing BDD stack if present:
 - Cucumber / Behave / pytest-bdd / Playwright-BDD
 - Existing `features/` (or project-equivalent) layout
 
-Do **not** invent a second framework when one already exists. If none exists and scenarios are derivable, add features in the repo’s conventional location (prefer `features/`) and wire the lightest matching runner for the language already in use.
+Do **not** invent a second framework when one already exists.
+
+**Repo with its own test runner but no Gherkin** (for example a NestJS or Express app with Jest or Vitest, a Go service with `go test`): do **not** add Cucumber or feature files. Cover each acceptance scenario with the repo's existing tests instead — an e2e or integration test where the repo has them (for example `test/**/*.e2e-spec.ts`), otherwise a unit test — and name each test after its scenario. The host only requires feature files in repos that already use them.
+
+**Repo with no test setup at all**: add features in the conventional location (prefer `features/`) and wire the lightest matching runner for the language in use.
 
 ## Delivery
 
@@ -70,6 +74,6 @@ Do **not** invent a second framework when one already exists. If none exists and
 
 ## Done when
 
-- Derivable acceptance behaviors for this WO have Gherkin coverage (or an explicit skip reason for non-behavioral work).
+- Derivable acceptance behaviors for this WO have test coverage: Gherkin where the repo uses it, the repo's own tests otherwise (or an explicit skip reason for non-behavioral work).
 - Scenarios stay within WO scope and use business language.
 - Steps run (or are clearly marked `@wip` with reason) via the repo’s runner.

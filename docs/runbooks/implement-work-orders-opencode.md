@@ -136,7 +136,7 @@ After OpenCode finishes, the host installs the repo's declared dependencies and 
 
 | Repo signal | Stack | Unit command | BDD |
 |---|---|---|---|
-| `package.json` with a `test` or `test:unit` script | node | `npm test` / `npm run test:unit` | `npm run test:bdd` / `cucumber` / `bdd` script |
+| `package.json` with a `test` or `test:unit` script | node | `<pm> test` / `<pm> run test:unit`, where `<pm>` is npm, pnpm or yarn (see below) | `<pm> run test:bdd` / `cucumber` / `bdd` script |
 | `go.mod` | go | `go test ./...` | `.feature` suites (godog) run inside the unit command |
 | `Cargo.toml` | cargo | `cargo test` | inside the unit command |
 | `mvnw` or `pom.xml` | maven | `./mvnw -B test`, else `mvn -B test` | inside the unit command (Cucumber JVM) |
@@ -146,10 +146,16 @@ After OpenCode finishes, the host installs the repo's declared dependencies and 
 
 A bare `tests/` or `features/` directory does not select a stack. Multi-stack monorepos use the first match.
 
+**Node package manager.** The `packageManager` field in `package.json` wins, then the lockfile: `pnpm-lock.yaml` is pnpm, `yarn.lock` is yarn, anything else npm. pnpm and yarn run through corepack (shipped with Node); the host puts `pnpm` and `yarn` shims on the work order's `PATH`, so OpenCode uses the same tool.
+
+**Type check and lint (Node).** After the tests, verification runs the repo's type check: its `typecheck`, `type-check`, `check-types`, `types:check` or `tsc` script, else `node_modules/.bin/tsc --noEmit -p tsconfig.json` (skipped for a references-only tsconfig). With an ESLint config and `node_modules/.bin/eslint`, it lints the files the work order changed, not the whole repo, so existing lint debt does not block. Failures are `typecheck_failed` and `lint_failed` and go to the fix passes like test failures.
+
+**BDD.** Gherkin feature files are required only in a repo that already uses them (feature files, a BDD script, or a Cucumber dependency) or has no test setup at all. A repo with its own runner and no Gherkin (a NestJS app with Jest, a Go service) covers a work order's Given/When/Then acceptance tests with its own tests; the agent is told not to add Cucumber there.
+
 Dependencies installed before OpenCode runs and again before each verify (only when a manifest changed):
 
 - Python: `requirements.txt`, `requirements-dev.txt`, `requirements-test.txt`, and `pip install -e .` for a `pyproject.toml` with `[project]`. Always into the work order's venv, never the runtime's site-packages.
-- Node: `npm ci` with `package-lock.json`, else `npm install`.
+- Node: `npm ci`, `pnpm install --frozen-lockfile`, or `yarn install --frozen-lockfile` (`--immutable` for yarn 2+) when the lockfile exists, else a plain install.
 - Go: `go mod download`. Cargo, Maven and Gradle fetch during the test run.
 
 Where things live, per delivery under `/workspace/dev-agent/coding-backend/<WO>-<suffix>/`:
@@ -157,7 +163,7 @@ Where things live, per delivery under `/workspace/dev-agent/coding-backend/<WO>-
 - `.ts-harness/venv/`: virtualenv with pytest and behave installed offline from `/opt/ts-harness/wheels` (pins in `docker/test-runner-requirements.txt`).
 - `.ts-harness/deps.json`: manifest hashes of the last successful installs.
 - `../.cache/`: shared Go, npm, Cargo, Gradle and Maven caches, reused across work orders.
-- `repo/.git/info/exclude`: `node_modules/` and the stack's build output (`target/`, `.gradle/`, `build/`) so installs are never committed.
+- `repo/.git/info/exclude`: `node_modules/`, the stack's build output (`target/`, `.gradle/`, `build/`), the harness's own `.opencode/` skills and config, and Python bytecode, so none of them reach the team's pull request. The repo's `.gitignore` is never edited.
 
 OpenCode runs with the same `PATH` and venv, so its own test runs match host verification. The agent-runtime image ships Go, Node.js LTS, JDK 21 with Maven and Gradle, Rust (minimal profile), make and gcc; bump versions with their checksums in `docker/Dockerfile.agent-runtime`.
 

@@ -28,7 +28,11 @@ STATUS_CONTEXT = "harness/code-review"
 SEVERITIES = ("blocker", "major", "minor", "nit")
 CATEGORIES = ("correctness", "security", "scope", "tests", "maintainability")
 BLOCKING_MAJOR_CATEGORIES = frozenset({"correctness", "security", "scope"})
-PATCH_LIMIT = 20_000
+# Per-file and whole-review patch budgets (characters). 20k per file cut a 600-line test
+# file in half and review and QA then failed the work order on what they could not see.
+PATCH_LIMIT = 60_000
+TOTAL_PATCH_BUDGET = 240_000
+MIN_FILE_PATCH = 6_000
 # Written by run_coding_backend itself (OpenCode scaffolding, artifact ignores,
 # approved planning docs), so never the implementer's scope.
 PIPELINE_WRITTEN = (
@@ -39,6 +43,31 @@ PIPELINE_WRITTEN = (
     "docs/foundry/**",
     "docs/planner/**",
 )
+
+# Test files may be added beyond a work order's ``## Files`` list: more tests are never out of
+# scope. The implementer's revert, OpenCode's edit permissions and the review's scope check
+# all use this list, so a test the implementer may write is never a review finding.
+TEST_PATHS = (
+    "test/*",
+    "tests/*",
+    "*/test/*",
+    "*/tests/*",
+    "*/__tests__/*",
+    "__tests__/*",
+    "features/*",
+    "*/features/*",
+    "*.feature",
+    "*.test.*",
+    "*.spec.*",
+    "*test_*.py",
+    "*_test.py",
+    "*_test.go",
+)
+
+
+def is_test_path(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in TEST_PATHS)
+
 
 _SCOPE_HEADING_RE = re.compile(r"^#{2,6}\s*(files|touches)\s*$", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -138,7 +167,10 @@ def undeclared_paths(changed: list[str], work_order_body: str) -> list[str]:
     return sorted(
         path
         for path in changed
-        if path and not _in_scope(path, declared) and not _excluded(path, list(PIPELINE_WRITTEN))
+        if path
+        and not _in_scope(path, declared)
+        and not _excluded(path, list(PIPELINE_WRITTEN))
+        and not is_test_path(path)
     )
 
 
@@ -158,7 +190,7 @@ def scope_findings(pr_url: str, files: list[dict[str, Any]], work_order_body: st
             "message": f"{item['filename']} is outside the work order's declared files",
         }
         for item in files
-        if not _in_scope(item["filename"], declared)
+        if not _in_scope(item["filename"], declared) and not is_test_path(item["filename"])
     ]
 
 
@@ -174,6 +206,50 @@ def _file_entry(item: dict[str, Any]) -> dict[str, Any]:
     if len(patch) > PATCH_LIMIT:
         entry["patch_truncated"] = True
     return entry
+
+
+def _added_file_patch(github: Any, owner: str, repo: str, path: str, head_sha: str) -> str:
+    """A new file's content as a patch, for files GitHub sends without one (large diffs)."""
+    import base64
+
+    try:
+        payload = github.get_file(owner, repo, path, ref=head_sha)
+    except Exception:  # noqa: BLE001 - review continues with what it has
+        return ""
+    if not isinstance(payload, dict) or payload.get("encoding") != "base64":
+        return ""
+    try:
+        text = base64.b64decode(str(payload.get("content") or "")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    lines = text.splitlines()
+    return f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join(f"+{line}" for line in lines)
+
+
+def fit_patch_budget(files: list[dict[str, Any]], budget: int = TOTAL_PATCH_BUDGET) -> None:
+    """Trim the largest patches first so the whole review fits ``budget`` characters.
+
+    Small files stay whole; every trimmed file keeps at least ``MIN_FILE_PATCH``.
+    """
+    total = sum(len(entry.get("patch") or "") for entry in files)
+    if total <= budget:
+        return
+    sizes = sorted(len(entry.get("patch") or "") for entry in files)
+    # Largest cap c with sum(min(size, c)) <= budget.
+    remaining, count, cap = budget, len(sizes), 0
+    for index, size in enumerate(sizes):
+        share = remaining // (count - index)
+        if size <= share:
+            remaining -= size
+            continue
+        cap = share
+        break
+    cap = max(cap, MIN_FILE_PATCH)
+    for entry in files:
+        patch = str(entry.get("patch") or "")
+        if len(patch) > cap:
+            entry["patch"] = patch[:cap]
+            entry["patch_truncated"] = True
 
 
 def _context(task: dict[str, Any], memory: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -230,6 +306,8 @@ def review_precheck(
         counted = []
         for item in github.list_pull_files(owner, repo, number):
             entry = {**_file_entry(item), "pr_url": pr_url}
+            if not entry["patch"] and entry["status"] == "added" and entry["additions"] and head_sha:
+                entry["patch"] = _added_file_patch(github, owner, repo, entry["filename"], head_sha)[:PATCH_LIMIT]
             if _excluded(entry["filename"], list(PIPELINE_WRITTEN)):
                 totals["pipeline_files"] += 1
                 continue
@@ -247,6 +325,7 @@ def review_precheck(
         files.extend(counted)
         findings.extend(scope_findings(pr_url, counted, work_order_body))
         findings.extend(boundary_findings(pr_url, counted, work_order_body))
+    fit_patch_budget(files)
     if over:
         raise StepBlocked(
             "diff_limit_exceeded: " + "; ".join(over),

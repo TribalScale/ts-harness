@@ -190,9 +190,11 @@ class PrecheckTests(unittest.TestCase):
         )
         files = [_file("app/pricing.py"), _file("features/wo-1-pricing.feature"), _file("features/steps/pricing_steps.py")]
         self.assertEqual(code_review.scope_findings(PR, files, body), [])
+        # Test files are in scope without acceptance tests too; other undeclared files are not.
         no_gwt = "# WO-1\n\n## Files\n- app/pricing.py\n"
-        flagged = [item["file"] for item in code_review.scope_findings(PR, files, no_gwt)]
-        self.assertEqual(flagged, ["features/wo-1-pricing.feature", "features/steps/pricing_steps.py"])
+        extra = [*files, _file("src/projects/dto/update-project.dto.spec.ts"), _file("app/billing.py")]
+        flagged = [item["file"] for item in code_review.scope_findings(PR, extra, no_gwt)]
+        self.assertEqual(flagged, ["app/billing.py"])
 
     def test_refresh_flag_follows_implement_output(self):
         tasks = [{"step_name": "deliver_work_order", "status": "succeeded", "output": {"pr_url": PR, "refresh_method": "server_merge"}, "created_at": "1"}]

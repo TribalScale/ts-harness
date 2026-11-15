@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.1
+version: 1.2.2
 ---
 
 # Governed Code Review
@@ -34,9 +34,11 @@ Then:
    including a Jira-key prefix, judge that requirement from `title`. A title
    that does not meet it is a finding.
 2. Read `input.files`: each changed file with `filename`, `status`,
-   `additions`, `deletions`, `patch` (truncated at 20k characters; see
-   `patch_truncated`) and `pr_url`. Lock files and generated code may already
-   be excluded; `input.diff_stats` has the totals.
+   `additions`, `deletions`, `patch` and `pr_url`. Very large patches are cut
+   (`patch_truncated: true`). Lock files and generated code may already be
+   excluded; `input.diff_stats` has the totals. Code you cannot see because a
+   patch was cut is not a finding: review what is visible and say in the
+   summary which files were cut.
 3. Read `input.work_order_body` and `input.work_order_ref`. Judge scope against
    its **In Scope** and **Out of Scope** sections (and a `## Files` list when
    present). `input.human_change_requests` lists changes a human reviewer

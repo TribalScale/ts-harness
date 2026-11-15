@@ -80,6 +80,8 @@ class CodingResult:
     security: dict[str, Any] = field(default_factory=dict)
     # Token usage per OpenCode session and model, for a coding worker to report with its result.
     usage: list[dict[str, Any]] = field(default_factory=list)
+    # Host verification of the final worktree (verification_evidence), for review and QA.
+    verification: dict[str, Any] = field(default_factory=dict)
 
 
 def security_markdown(security: dict[str, Any]) -> str:
@@ -99,9 +101,11 @@ def security_markdown(security: dict[str, Any]) -> str:
             lines.append(f"- Dependency audit: not run ({audit['skipped_reason']})")
         else:
             count = len(audit.get("findings") or [])
+            preexisting = int(audit.get("preexisting") or 0)
             lines.append(
                 f"- Dependency audit ({audit.get('tool')}, {audit.get('severity', 'high')}+): "
-                + ("no findings" if not count else f"{count} finding(s)")
+                + ("no new findings" if not count else f"{count} new finding(s)")
+                + (f"; {preexisting} already on the base branch" if preexisting else "")
             )
     if not lines:
         return ""

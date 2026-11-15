@@ -27,7 +27,7 @@ You are implementing **one** work order in a host-managed git worktree.
 After reading the specs above, load and follow these skills from `.opencode/skills/` only:
 
 1. **`coding-practices`** — TDD (RED-GREEN-REFACTOR), verification before claiming done, and root-cause debugging.
-2. **`bdd-acceptance`** — derive/update Gherkin scenarios from the WO and/or `docs/refinery|foundry|planner` when Given/When/Then (or equivalent AC) is derivable, scoped to this WO’s In Scope.
+2. **`bdd-acceptance`** — derive/update acceptance scenarios (Gherkin only where the repo already uses it) from the WO and/or `docs/refinery|foundry|planner` when Given/When/Then (or equivalent AC) is derivable, scoped to this WO’s In Scope.
 
 Do not load other skill packs or planning workflows. Specs under `docs/` are already approved.
 

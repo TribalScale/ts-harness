@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.1
+version: 1.2.2
 ---
 
 # Governed QA Gate
@@ -58,8 +58,19 @@ Then:
    workspace checkout that was not supplied. `input.host_security` is the
    host secret scan and dependency audit result (file and line only); cite it
    as security evidence.
+   `input.host_verify_summary` lists each command the host ran on the final
+   change (tests, type check, lint) with its exit code and the end of its
+   output; cite it as test evidence alongside CI.
+   **Unverifiable is not failed.** When a criterion cannot be judged from what
+   you were given (a patch marked `patch_truncated`, or a measurement such as
+   a coverage percentage that neither CI nor host verify reports), mark that
+   criterion `unverified` with a note saying what is missing and do not list it
+   as a defect. A revision cannot produce evidence the gate never receives, so
+   failing on it only repeats the run. Fail a PR only for a defect you can show:
+   a failed check, code that contradicts a criterion, or a required behaviour
+   with no implementation or test in a patch you can read in full.
 4. For each PR, evaluate acceptance criteria and record evidence:
-   - `acceptance_criteria`: per-criterion pass/fail with a short note.
+   - `acceptance_criteria`: per-criterion `pass`, `fail` or `unverified` with a short note.
    - `tests`: tests exercised or the host verify summary reused as evidence.
    - `defects`: blocking issues found (empty when the PR passes).
 5. Set each PR `status` to `success` or `failed`.

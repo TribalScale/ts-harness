@@ -55,6 +55,7 @@ from ts_harness.implementation.test_env import (
 )
 from ts_harness.implementation.verification import (
     build_verification_fix_prompt,
+    verification_evidence,
     verify_implementation,
 )
 from ts_harness.integrations.github_client import (
@@ -263,7 +264,7 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
     ``.opencode``), and the files a review revision cites.
     """
     from ts_harness.implementation.verification import has_gwt_acceptance
-    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, declared_paths
+    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, TEST_PATHS, declared_paths
 
     declared = declared_paths(work_order_body)
     if not declared:
@@ -282,6 +283,14 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
     if has_gwt_acceptance(work_order_body):
         allowed.append("features/**")
     allowed.extend(PIPELINE_WRITTEN)
+    # Extra tests are always in scope (code_review.TEST_PATHS); OpenCode needs ** for nesting.
+    for pattern in TEST_PATHS:
+        glob = "**/" + pattern[2:] if pattern.startswith("*/") else pattern
+        if glob.endswith("/*"):
+            glob += "*"  # a directory: everything under it, nested too
+        elif "/" not in glob:
+            glob = "**/" + glob  # a file name pattern: at any depth
+        allowed.append(glob)
     return list(dict.fromkeys(allowed))
 
 
@@ -358,6 +367,13 @@ def build_implement_prompt(
         "runner for the language you implement in, declared in that language's manifest.\n"
         "Never add a module or script that stands in for a test framework "
         "(for example pytest.py or a behave/ package).\n"
+        "Use the repo's package manager (pnpm, yarn or npm, by its lockfile) and update that lockfile "
+        "with it when you add a dependency.\n"
+        "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
+        "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
+        "report. The host runs them as well as the tests.\n"
+        "Tests that need a database or other services may not run here; still write them in the repo's "
+        "existing style so CI runs them, and keep them consistent with the code.\n"
         f"The host provides: {', '.join(HOST_TOOLCHAINS)}.\n"
     )
     from ts_harness.knowledge.prompt import render_knowledge_notes
@@ -568,10 +584,10 @@ class OpenCodeBackend:
         skills_materialized: bool,
         check_changeset: bool = True,
         test_env: TestEnvironment | None = None,
-    ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any]]:
+    ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
-        Returns (failure, log, passes, changed, security block of the last scan).
+        Returns (failure, log, passes, changed, security block of the last scan, verification evidence).
         """
         fix_passes_used = 0
         verify_logs: list[str] = []
@@ -599,7 +615,7 @@ class OpenCodeBackend:
                 "\n".join(part for part in [deps_log, verify.summary, verify.log_tail] if part)
             )
             if verify.ok:
-                return None, log, fix_passes_used, changed, verify.security
+                return None, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
             # The agent cannot install host toolchains; fix passes would only burn budget.
             toolchain_only = all(r.startswith("missing_toolchain:") for r in verify.reasons)
             if fix_passes_used >= self.verification_fix_passes or toolchain_only:
@@ -621,11 +637,13 @@ class OpenCodeBackend:
                             + f"; fix_passes_used={fix_passes_used}"
                         ),
                         security=verify.security,
+                        verification=verification_evidence(verify),
                     ),
                     log,
                     fix_passes_used,
                     changed,
                     verify.security,
+                    verification_evidence(verify),
                 )
             fix_prompt = build_verification_fix_prompt(
                 request.work_order_id,
@@ -680,11 +698,13 @@ class OpenCodeBackend:
                             + f"; fix_passes_used={fix_passes_used}"
                         ),
                         security=verify.security,
+                        verification=verification_evidence(verify),
                     ),
                     log,
                     fix_passes_used,
                     changed,
                     verify.security,
+                    verification_evidence(verify),
                 )
 
     def _head_sha(self, repo_dir: Path) -> str:
@@ -992,7 +1012,7 @@ class OpenCodeBackend:
                 )
 
             self._revert_undeclared(repo_dir, request)
-            failure, log, fix_passes_used, changed, security = self._verify_with_fixes(
+            failure, log, fix_passes_used, changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
                 binary=binary,
@@ -1075,12 +1095,6 @@ class OpenCodeBackend:
                     "Approved Refinery / Foundry / Planner specs were materialized under `docs/` "
                     "for this change and are included in the PR.\n"
                 )
-            if skills_written:
-                pr_body += (
-                    "\n## Coding-backend skills\n\n"
-                    "Enterprise coding-backend skills were copied under `.opencode/skills/` "
-                    "for OpenCode to load during implementation.\n"
-                )
             pr_url = create_pull_request(
                 repo_dir,
                 title=f"{request.work_order_id}: governed delivery",
@@ -1102,6 +1116,7 @@ class OpenCodeBackend:
                 log_path=str(log_path),
                 pr_url=pr_url,
                 security=security,
+                verification=verification,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(
@@ -1295,7 +1310,7 @@ class OpenCodeBackend:
                         error="conflict_markers_remain: " + ", ".join(remaining),
                     )
                 method = "conflict_resolution"
-            failure, log, _passes, _changed, security = self._verify_with_fixes(
+            failure, log, _passes, _changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
                 binary=binary or self._optional_binary(),
@@ -1338,6 +1353,7 @@ class OpenCodeBackend:
                 refresh_method=method,
                 resolved_files=resolved,
                 security=security,
+                verification=verification,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(

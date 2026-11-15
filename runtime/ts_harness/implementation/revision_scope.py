@@ -5,27 +5,11 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
-from ts_harness.workflows.code_review import PIPELINE_WRITTEN, is_blocking
+from ts_harness.workflows.code_review import PIPELINE_WRITTEN, is_blocking, is_test_path
 
 _PYTHON_SOURCES = ("requirements*.txt", "pyproject.toml")
 _PYTHON_LOCKS = ("poetry.lock", "uv.lock", "Pipfile.lock")
 _NODE_LOCKS = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
-_TEST_PATHS = (
-    "test/*",
-    "tests/*",
-    "*/test/*",
-    "*/tests/*",
-    "*/__tests__/*",
-    "__tests__/*",
-    "features/*",
-    "*/features/*",
-    "*.feature",
-    "*.test.*",
-    "*.spec.*",
-    "*test_*.py",
-    "*_test.py",
-    "*_test.go",
-)
 
 
 def revision_files_from_findings(findings: list[dict]) -> list[str]:
@@ -67,10 +51,6 @@ def allowed_revision_paths(cited: list[str], repo_dir: Path) -> set[str]:
 
 def _pipeline_written(path: str) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in PIPELINE_WRITTEN)
-
-
-def is_test_path(path: str) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) for pattern in _TEST_PATHS)
 
 
 def unexpected_revision_paths(changed: list[str], allowed: set[str]) -> list[str]:
