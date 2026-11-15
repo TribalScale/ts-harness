@@ -295,3 +295,71 @@ class VerifyNodeRepoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewEvidenceTests(unittest.TestCase):
+    def test_patch_budget_trims_the_largest_files_first(self):
+        from ts_harness.workflows.code_review import MIN_FILE_PATCH, fit_patch_budget
+
+        files = [{"filename": "a", "patch": "a" * 1000}, {"filename": "b", "patch": "b" * 50_000}, {"filename": "c", "patch": "c" * 50_000}]
+        fit_patch_budget(files, budget=41_000)
+        self.assertEqual(len(files[0]["patch"]), 1000)
+        self.assertNotIn("patch_truncated", files[0])
+        self.assertEqual(len(files[1]["patch"]), 20_000)
+        self.assertTrue(files[2]["patch_truncated"])
+        small = [{"filename": "x", "patch": "x" * 100_000}]
+        fit_patch_budget(small, budget=10)
+        self.assertEqual(len(small[0]["patch"]), MIN_FILE_PATCH)
+
+    def test_new_file_without_a_patch_is_fetched_from_the_head(self):
+        import base64
+
+        from ts_harness.workflows.code_review import review_precheck
+
+        class GitHub:
+            def get_pull(self, owner, repo, number):
+                return {"head": {"sha": "abc"}, "title": "WO-104"}
+
+            def list_pull_files(self, owner, repo, number):
+                return [{"filename": "src/auth/auth.service.spec.ts", "status": "added", "additions": 2, "deletions": 0}]
+
+            def get_file(self, owner, repo, path, *, ref):
+                assert ref == "abc"
+                return {"encoding": "base64", "content": base64.b64encode(b"it('a', () => {});\nit('b', () => {});").decode()}
+
+        task = {"workflow_id": "wf", "input": {"pr_url": "https://github.com/o/r/pull/38", "work_order_body": "# WO-104"}}
+        from unittest.mock import patch as mock_patch
+
+        with mock_patch("ts_harness.workflows.code_review._context", return_value=({}, [task])):
+            out = review_precheck(
+                task, {"pr_url": "https://github.com/o/r/pull/38"}, memory=None, github=GitHub(), program_defaults={}
+            )
+        self.assertEqual(out["files"][0]["patch"], "@@ -0,0 +1,2 @@\n+it('a', () => {});\n+it('b', () => {});")
+
+    def test_stage_output_carries_host_verification_for_qa(self):
+        from ts_harness.implementation.coding_job import coding_stage_output
+
+        evidence = {
+            "result": "passed",
+            "reasons": [],
+            "checks": [{"check": "unit", "command": "npm test", "exit_code": 0, "output_tail": "Tests: 37 passed"}],
+            "skipped": ["bdd"],
+        }
+        output = coding_stage_output({"ok": True, "work_order_id": "WO-104", "mode": "implement", "verification": evidence})
+        self.assertEqual(output["verification"], evidence)
+        self.assertIn("unit: `npm test` exit 0", output["verify_summary"])
+        self.assertIn("Tests: 37 passed", output["verify_summary"])
+
+    def test_verify_records_each_command(self):
+        from ts_harness.implementation.verification import verification_evidence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _package(repo, scripts={"test": "jest", "typecheck": "tsc --noEmit"})
+            _write(repo / "src" / "a.ts", "export {}")
+            result = verify_implementation(
+                repo, work_order_body=GWT_WORK_ORDER, work_order_id="WO-101", changed_files=["src/a.ts"], runner=Runner()
+            )
+            evidence = verification_evidence(result)
+            self.assertEqual([c["check"] for c in evidence["checks"]], ["unit", "typecheck"])
+            self.assertEqual(evidence["result"], "passed")

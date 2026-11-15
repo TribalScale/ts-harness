@@ -80,6 +80,8 @@ class CodingResult:
     security: dict[str, Any] = field(default_factory=dict)
     # Token usage per OpenCode session and model, for a coding worker to report with its result.
     usage: list[dict[str, Any]] = field(default_factory=list)
+    # Host verification of the final worktree (verification_evidence), for review and QA.
+    verification: dict[str, Any] = field(default_factory=dict)
 
 
 def security_markdown(security: dict[str, Any]) -> str:

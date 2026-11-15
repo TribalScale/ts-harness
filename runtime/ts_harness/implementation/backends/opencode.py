@@ -55,6 +55,7 @@ from ts_harness.implementation.test_env import (
 )
 from ts_harness.implementation.verification import (
     build_verification_fix_prompt,
+    verification_evidence,
     verify_implementation,
 )
 from ts_harness.integrations.github_client import (
@@ -575,10 +576,10 @@ class OpenCodeBackend:
         skills_materialized: bool,
         check_changeset: bool = True,
         test_env: TestEnvironment | None = None,
-    ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any]]:
+    ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
-        Returns (failure, log, passes, changed, security block of the last scan).
+        Returns (failure, log, passes, changed, security block of the last scan, verification evidence).
         """
         fix_passes_used = 0
         verify_logs: list[str] = []
@@ -606,7 +607,7 @@ class OpenCodeBackend:
                 "\n".join(part for part in [deps_log, verify.summary, verify.log_tail] if part)
             )
             if verify.ok:
-                return None, log, fix_passes_used, changed, verify.security
+                return None, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
             # The agent cannot install host toolchains; fix passes would only burn budget.
             toolchain_only = all(r.startswith("missing_toolchain:") for r in verify.reasons)
             if fix_passes_used >= self.verification_fix_passes or toolchain_only:
@@ -628,11 +629,13 @@ class OpenCodeBackend:
                             + f"; fix_passes_used={fix_passes_used}"
                         ),
                         security=verify.security,
+                        verification=verification_evidence(verify),
                     ),
                     log,
                     fix_passes_used,
                     changed,
                     verify.security,
+                    verification_evidence(verify),
                 )
             fix_prompt = build_verification_fix_prompt(
                 request.work_order_id,
@@ -687,11 +690,13 @@ class OpenCodeBackend:
                             + f"; fix_passes_used={fix_passes_used}"
                         ),
                         security=verify.security,
+                        verification=verification_evidence(verify),
                     ),
                     log,
                     fix_passes_used,
                     changed,
                     verify.security,
+                    verification_evidence(verify),
                 )
 
     def _head_sha(self, repo_dir: Path) -> str:
@@ -999,7 +1004,7 @@ class OpenCodeBackend:
                 )
 
             self._revert_undeclared(repo_dir, request)
-            failure, log, fix_passes_used, changed, security = self._verify_with_fixes(
+            failure, log, fix_passes_used, changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
                 binary=binary,
@@ -1103,6 +1108,7 @@ class OpenCodeBackend:
                 log_path=str(log_path),
                 pr_url=pr_url,
                 security=security,
+                verification=verification,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(
@@ -1296,7 +1302,7 @@ class OpenCodeBackend:
                         error="conflict_markers_remain: " + ", ".join(remaining),
                     )
                 method = "conflict_resolution"
-            failure, log, _passes, _changed, security = self._verify_with_fixes(
+            failure, log, _passes, _changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
                 binary=binary or self._optional_binary(),
@@ -1339,6 +1345,7 @@ class OpenCodeBackend:
                 refresh_method=method,
                 resolved_files=resolved,
                 security=security,
+                verification=verification,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(

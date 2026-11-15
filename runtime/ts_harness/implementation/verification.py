@@ -63,6 +63,41 @@ class VerifyResult:
     skipped_bdd: bool = False
     security: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # One entry per command the host ran: what reviewers and QA see as test evidence.
+    checks: list[dict[str, Any]] = field(default_factory=list)
+
+
+_EVIDENCE_TAIL = 700
+
+
+def _check_record(label: str, command: list[str], result: subprocess.CompletedProcess) -> dict[str, Any]:
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    return {"check": label, "command": " ".join(command), "exit_code": result.returncode, "output_tail": output[-_EVIDENCE_TAIL:]}
+
+
+def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
+    """What the host ran and how it ended, for the review and QA gates."""
+    return {
+        "result": "passed" if verify.ok else "failed",
+        "reasons": list(verify.reasons),
+        "checks": list(verify.checks),
+        "skipped": [name for name, skipped in (("unit", verify.skipped_unit), ("bdd", verify.skipped_bdd)) if skipped],
+    }
+
+
+def verification_summary(evidence: dict[str, Any] | None) -> str:
+    """Plain-text form of ``verification_evidence`` for the QA prompt."""
+    if not evidence:
+        return ""
+    lines = [f"Host verification {evidence.get('result')} on the final commit's worktree."]
+    for check in evidence.get("checks") or []:
+        lines.append(f"- {check.get('check')}: `{check.get('command')}` exit {check.get('exit_code')}")
+        tail = str(check.get("output_tail") or "").strip()
+        if tail:
+            lines.append("  output (end): " + tail.replace("\n", "\n  "))
+    if evidence.get("skipped"):
+        lines.append("Not run: " + ", ".join(evidence["skipped"]) + " (not required for this repo or work order).")
+    return "\n".join(lines)
 
 
 def looks_behavioral(work_order_body: str) -> bool:
@@ -247,6 +282,7 @@ def verify_implementation(
     reasons: list[str] = []
     logs: list[str] = []
     failed_logs: set[int] = set()
+    checks: list[dict[str, Any]] = []
     unit_command: list[str] | None = None
     bdd_command: list[str] | None = None
     skipped_unit = False
@@ -295,6 +331,7 @@ def verify_implementation(
             unit_result = _run_command(runner, unit_command, repo_dir, env=env)
             unit_ran = True
             logs.append(_format_command_log("unit", unit_command, unit_result))
+            checks.append(_check_record("unit", unit_command, unit_result))
             if unit_result.returncode != 0:
                 failed_logs.add(len(logs) - 1)
                 reasons.append("unit_tests_failed")
@@ -321,6 +358,7 @@ def verify_implementation(
             else:
                 bdd_result = _run_command(runner, bdd_command, repo_dir, env=env)
                 logs.append(_format_command_log("bdd", bdd_command, bdd_result))
+                checks.append(_check_record("bdd", bdd_command, bdd_result))
                 if bdd_result.returncode != 0:
                     failed_logs.add(len(logs) - 1)
                     reasons.append("bdd_tests_failed")
@@ -335,6 +373,7 @@ def verify_implementation(
                 continue
             result = _run_command(runner, command, repo_dir, env=env)
             logs.append(_format_command_log(label, command, result))
+            checks.append(_check_record(label, command, result))
             if result.returncode != 0:
                 failed_logs.add(len(logs) - 1)
                 reasons.append(f"{label}_failed")
@@ -376,6 +415,7 @@ def verify_implementation(
         skipped_bdd=skipped_bdd,
         security=security_block,
         warnings=warnings,
+        checks=checks,
     )
 
 

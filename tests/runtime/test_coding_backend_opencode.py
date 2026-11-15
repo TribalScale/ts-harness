@@ -1295,7 +1295,7 @@ class CodingBackendToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as repo_dir, patch(
             "ts_harness.implementation.backends.opencode.verify_implementation", side_effect=fake_verify
         ), patch("ts_harness.implementation.backends.opencode.list_changed_files", return_value=["a.py"]):
-            failure, _log, _passes, _changed, security = backend._verify_with_fixes(
+            failure, _log, _passes, _changed, security, _verification = backend._verify_with_fixes(
                 Path(repo_dir), request, binary="opencode", provider="anthropic", env={}, branch="wo/wo-7",
                 log="", log_path=Path("/tmp/log"), skills_materialized=False,
             )
@@ -1321,7 +1321,7 @@ class CodingBackendToolTests(unittest.TestCase):
         ), patch("ts_harness.implementation.backends.opencode.list_changed_files", return_value=["src/main.rs"]), patch(
             "ts_harness.implementation.backends.opencode.install_declared_dependencies", return_value="npm ci ok"
         ) as install, patch.object(backend, "_run_opencode") as run_opencode:
-            failure, _log, passes, _changed, _security = backend._verify_with_fixes(
+            failure, _log, passes, _changed, _security, _verification = backend._verify_with_fixes(
                 Path(repo_dir), request, binary="opencode", provider="anthropic", env={}, branch="wo/wo-7",
                 log="", log_path=Path("/tmp/log"), skills_materialized=False, test_env=test_env,
             )
