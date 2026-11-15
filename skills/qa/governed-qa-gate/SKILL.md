@@ -66,8 +66,9 @@ Then:
    and each changed file's: judge coverage criteria against those numbers
    (a file "not loaded by any test" is 0%).
    For a frontend change, `input.screenshots` names the screenshots attached
-   after the task message: the end state of each Playwright test the change
-   added or edited. Look at them for user-visible criteria (text, labels,
+   after the task message, from the Playwright tests the change added or
+   edited: `step-N` is the page as one of the test's assertions passed, a name
+   without a step is the end of the test (often after cleanup). Look at them for user-visible criteria (text, labels,
    empty states, layout that is clearly broken) and cite them by name. A
    screenshot shows one moment; judge behaviour over time (debounce, live
    updates) from the tests. No screenshots for a UI criterion is

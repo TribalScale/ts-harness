@@ -242,3 +242,24 @@ class OutOfMemoryTests(unittest.TestCase):
             self.skipTest(str(exc))
         self.assertEqual(module._spec_sizing({"spec": json.dumps({"repo_url": "x", "worker_memory_mb": 4096})}), {"worker_memory_mb": 4096})
         self.assertEqual(module._spec_sizing({"spec": {"repo_url": "x"}}), {})
+
+
+class FormatCheckTests(unittest.TestCase):
+    def _repo(self, root: Path, workflow: str, scripts: dict) -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"scripts": {"test": "vitest", **scripts}}))
+        _write(repo / ".github" / "workflows" / "ci.yml", workflow)
+        _write(repo / "src" / "a.tsx", "export {}")
+        _write(repo / "node_modules" / ".bin" / "prettier", "#!/bin/sh\n").chmod(0o755)
+        return repo
+
+    def test_runs_when_ci_calls_a_prettier_check_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), "steps:\n  - run: yarn test:other\n", {"test:other": "yarn prettier --list-different"})
+            checks = dict(node_static_checks(repo, ["src/a.tsx"]))
+            self.assertEqual(checks["format"][1:], ["--check", "--no-error-on-unmatched-pattern", "src/a.tsx"])
+
+    def test_not_enforced_without_ci_formatting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), "steps:\n  - run: yarn lint\n", {"format": "prettier --write ."})
+            self.assertNotIn("format", dict(node_static_checks(repo, ["src/a.tsx"])))

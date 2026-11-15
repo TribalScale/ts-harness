@@ -34,12 +34,12 @@ def comment_body(owner: str, repo: str, commit: str, names: list[str], head_sha:
         COMMENT_MARKER,
         "## Screenshots (TS Harness)",
         "",
-        f"The end state of each Playwright test this change added or edited, run on `{head_sha[:12]}` before the PR "
-        "was updated. QA receives the same images.",
+        f"From the Playwright tests this change added or edited, run on `{head_sha[:12]}`: the page as each "
+        "assertion passed (`step-N`), or the end of the test. QA receives the same images.",
         "",
     ]
     for name in names:
-        lines += [f"**{name.removesuffix('.png')}**", "", f"![{name}](https://github.com/{owner}/{repo}/blob/{commit}/{name}?raw=true)", ""]
+        lines += [f"**{name.rsplit('.', 1)[0]}**", "", f"![{name}](https://github.com/{owner}/{repo}/blob/{commit}/{name}?raw=true)", ""]
     return "\n".join(lines)
 
 

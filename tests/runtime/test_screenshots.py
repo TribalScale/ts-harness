@@ -143,3 +143,33 @@ class QaImagesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AssertionFrameTests(unittest.TestCase):
+    def _trace(self, path: Path, expects: int) -> None:
+        import zipfile
+
+        events, resources = [], {}
+        for i in range(expects):
+            call = f"call@{i}"
+            events.append({"type": "before", "callId": call, "method": "expect", "startTime": 100 * i + 10})
+            events.append({"type": "screencast-frame", "sha1": f"page-{i}.jpeg", "timestamp": 100 * i + 20})
+            events.append({"type": "after", "callId": call, "endTime": 100 * i + 30})
+            resources[f"resources/page-{i}.jpeg"] = f"frame{i}".encode()
+        events.append({"type": "screencast-frame", "sha1": "page-late.jpeg", "timestamp": 99999})
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("0-trace.trace", "\n".join(json.dumps(e) for e in events))
+            for name, data in resources.items():
+                archive.writestr(name, data)
+
+    def test_frames_at_assertions_spread_and_capped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "tests-search-chromium"
+            out.mkdir()
+            self._trace(out / "trace.zip", expects=7)
+            frames = ts.assertion_frames(out / "trace.zip", out)
+            self.assertEqual([p.read_bytes() for p in frames], [b"frame0", b"frame2", b"frame4", b"frame6"])
+            _write(out / "test-finished-1.png", PNG)
+            files = ts.screenshot_files(Path(tmp))
+            self.assertEqual([p.name for p in files], ["step-1.jpeg", "step-2.jpeg", "step-3.jpeg", "step-4.jpeg"])
+            self.assertEqual(ts.screenshot_name(files[0]), "tests-search-chromium-step-1.jpeg")

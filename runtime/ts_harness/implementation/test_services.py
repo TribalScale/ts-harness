@@ -1093,7 +1093,7 @@ def _evidence_config_text(base: Path, out_dir: Path) -> str:
     return (
         "// Written by TS Harness for one run; not part of the repository.\n"
         f"import base from './{base.stem}';\n"
-        "const shot = { screenshot: 'on' as const, video: 'off' as const, trace: 'off' as const };\n"
+        "const shot = { screenshot: 'on' as const, video: 'off' as const, trace: 'on' as const };\n"
         "export default {\n"
         "  ...base,\n"
         f"  outputDir: {json.dumps(str(out_dir))},\n"
@@ -1124,19 +1124,85 @@ def capture_screenshots(repo_dir: Path, specs: list[str], out_dir: Path, env: di
         code, text = _shell(command, cwd=base.parent, env=env, timeout=timeout)
     finally:
         wrapper.unlink(missing_ok=True)
+    for trace in sorted(out_dir.rglob("trace.zip")):
+        if "setup" not in trace.parent.name.lower():
+            assertion_frames(trace, trace.parent)
     shots = screenshot_files(out_dir)
     return f"screenshots: {len(shots)} captured from {', '.join(specs)} (exit {code})" + ("" if code == 0 else f"\n{text[-1500:]}")
 
 
+FRAMES_PER_TEST = 4
+
+
+def assertion_frames(trace_zip: Path, out_dir: Path, *, limit: int = FRAMES_PER_TEST) -> list[Path]:
+    """The page as each ``expect`` in the test passed, from the trace's screencast.
+
+    A screenshot at the end of a test shows its last state (often after cleanup); the
+    frames at assertions show what the test checked. Up to ``limit`` distinct frames,
+    spread over the test's assertions, as ``step-N.jpeg``.
+    """
+    import zipfile
+
+    try:
+        archive = zipfile.ZipFile(trace_zip)
+    except (OSError, zipfile.BadZipFile):
+        return []
+    with archive:
+        names = set(archive.namelist())
+        expects: dict[str, float] = {}
+        ends: dict[str, float] = {}
+        frames: list[tuple[float, str]] = []
+        for name in sorted(n for n in names if n.endswith(".trace") and n != "test.trace"):
+            for line in archive.read(name).decode(errors="replace").splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = event.get("type")
+                if kind == "before" and event.get("method") == "expect":
+                    expects[str(event.get("callId"))] = float(event.get("startTime") or 0)
+                elif kind == "after" and event.get("callId"):
+                    ends[str(event["callId"])] = float(event.get("endTime") or 0)
+                elif kind == "screencast-frame" and event.get("sha1"):
+                    frames.append((float(event.get("timestamp") or 0), str(event["sha1"])))
+        frames.sort()
+        picked: list[str] = []
+        for call_id, _start in sorted(expects.items(), key=lambda item: item[1]):
+            end = ends.get(call_id)
+            if end is None:
+                continue
+            shown = [sha for stamp, sha in frames if stamp <= end + 50]
+            if shown and (not picked or picked[-1] != shown[-1]):
+                picked.append(shown[-1])
+        if len(picked) > limit:
+            step = (len(picked) - 1) / (limit - 1)
+            picked = [picked[round(i * step)] for i in range(limit)]
+        written = []
+        for index, sha in enumerate(picked, start=1):
+            member = f"resources/{sha}"
+            if member in names:
+                path = out_dir / f"step-{index}.jpeg"
+                path.write_bytes(archive.read(member))
+                written.append(path)
+        return written
+
+
 def screenshot_files(out_dir: Path) -> list[Path]:
-    """At most ``MAX_SCREENSHOTS`` images, the change's own tests before setup steps."""
-    files = sorted(Path(out_dir).rglob("*.png")) if Path(out_dir).is_dir() else []
-    files.sort(key=lambda p: ("setup" in p.parent.name.lower(), str(p)))
+    """At most ``MAX_SCREENSHOTS`` images: the change's own tests first, assertion frames before end shots."""
+    if not Path(out_dir).is_dir():
+        return []
+    files = [*Path(out_dir).rglob("step-*.jpeg"), *Path(out_dir).rglob("*.png")]
+    with_frames = {p.parent for p in files if p.suffix == ".jpeg"}
+    # A test with assertion frames does not also need its end-of-test screenshot.
+    files = [p for p in files if p.suffix == ".jpeg" or p.parent not in with_frames]
+    files.sort(key=lambda p: ("setup" in p.parent.name.lower(), p.suffix != ".jpeg", str(p.parent), p.name))
     return files[:MAX_SCREENSHOTS]
 
 
 def screenshot_name(path: Path) -> str:
-    """``<test folder>.png``: Playwright names the folder after the spec and test title."""
+    """``<test folder>[-step-N].<ext>``: Playwright names the folder after the spec and test title."""
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", path.parent.name).strip("-")[:90] or "screenshot"
-    suffix = "" if path.stem.endswith("-1") or path.stem == "test-finished-1" else f"-{path.stem}"
-    return f"{stem}{suffix}.png"
+    suffix = "" if path.stem.endswith("-1") and not path.stem.startswith("step-") else f"-{path.stem}"
+    if path.stem.startswith("test-finished"):
+        suffix = ""
+    return f"{stem}{suffix}{path.suffix}"

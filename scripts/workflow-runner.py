@@ -183,14 +183,18 @@ def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> d
             base64.b64decode(content, validate=True)
             if sum(len(image["url"]) for image in images) + len(content) > 6_000_000:
                 break  # the gateway takes JSON bodies up to 10 MB
-            images.append({"name": str(name), "url": f"data:image/png;base64,{content}"})
+            mime = "image/jpeg" if str(name).endswith((".jpeg", ".jpg")) else "image/png"
+            images.append({"name": str(name), "url": f"data:{mime};base64,{content}"})
     if not images:
         return {}
     return {
         "screenshots": {
             "files": [image["name"] for image in images],
             "comment_url": shots.get("comment_url") or "",
-            "note": "End state of each Playwright test the change added or edited; the images follow this message.",
+            "note": (
+                "From the Playwright tests the change added or edited: `step-N` is the page as the test's Nth "
+                "sampled assertion passed; a name without a step is the end of the test. The images follow this message."
+            ),
         },
         "_images": images,
     }

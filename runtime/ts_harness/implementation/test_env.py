@@ -319,6 +319,11 @@ def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[
         else:
             relative = [str((repo_dir / path).relative_to(config_dir)) for path in group]
             checks.append(("lint", workspaces.in_dir(config_dir, [str(eslint), *relative])))
+    if _ci_checks_formatting(repo_dir):
+        prettier = workspaces.find_bin(repo_dir, repo_dir, "prettier")
+        formattable = [path for path in files_changed_on_disk(repo_dir, changed_files) if path.endswith(_PRETTIER_SUFFIXES)]
+        if prettier is not None and formattable:
+            checks.append(("format", [str(prettier), "--check", "--no-error-on-unmatched-pattern", *formattable]))
     if "build" in scripts and is_web_app(repo_dir) and not packages:
         # Bundlers (Vite, Next, CRA) fail on things the type check passes: unresolved
         # imports, server/client boundaries, env access at build time.
@@ -327,6 +332,34 @@ def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[
         if "build" in workspaces.package_scripts(package) and is_web_app(package):
             checks.append(("build", workspaces.workspace_run(repo_dir, manager, package, "build")))
     return checks
+
+
+_PRETTIER_SUFFIXES = (*_LINTABLE_SUFFIXES, ".json", ".css", ".scss", ".md", ".mdx", ".yml", ".yaml", ".html", ".vue")
+_PRETTIER_CHECK = re.compile(r"prettier\b[^&|;\n]*(--check|--list-different|\s-[lc]\b)")
+
+
+def files_changed_on_disk(repo_dir: Path, changed_files: list[str] | None) -> list[str]:
+    return sorted(
+        path for path in (changed_files or [])
+        if not set(Path(path).parts) & _SKIPPED_DIRS and (Path(repo_dir) / path).is_file()
+    )
+
+
+def _ci_checks_formatting(repo_dir: Path) -> bool:
+    """CI runs a Prettier check, directly or through a package script it calls.
+
+    Only then does the host check formatting: a repo with a Prettier config that CI does not
+    enforce would otherwise fail on formatting it never required.
+    """
+    workflows = "\n".join(_read_text(path) for path in (Path(repo_dir) / ".github" / "workflows").glob("*.y*ml"))
+    if not workflows:
+        return False
+    if _PRETTIER_CHECK.search(workflows):
+        return True
+    for name, body in package_scripts(repo_dir).items():
+        if _PRETTIER_CHECK.search(body) and re.search(rf"(yarn|npm run|pnpm( run)?|bun run)\s+{re.escape(name)}\b", workflows):
+            return True
+    return False
 
 
 def _eslint_config_dir(repo_dir: Path, rel_path: str) -> Path | None:

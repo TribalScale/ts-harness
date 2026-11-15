@@ -559,6 +559,11 @@ def build_verification_fix_prompt(
             "ESLint failed on files you changed. Fix what it reports (running it with --fix is fine "
             "for formatting); do not disable rules or add eslint-disable comments."
         )
+    if "format_failed" in verify.reasons:
+        lines.append(
+            "Prettier reports unformatted files you changed, and the repo's CI checks formatting. Run the repo's "
+            "Prettier with --write on exactly those files; do not reformat other files."
+        )
     if "integration_suite_not_declared" in verify.reasons:
         lines.append(
             "This repo runs an e2e/integration suite in CI (or has a Playwright config), but .ts-harness.yml "
