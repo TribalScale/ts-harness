@@ -10,6 +10,8 @@ stage when the verdict is ``block`` so ``on_block`` can send the PR back.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 import logging
 import re
 from typing import Any
@@ -208,6 +210,27 @@ def _file_entry(item: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _file_identity(pr_url: str, item: dict[str, Any]) -> tuple[str, ...]:
+    """What a PR file is at its head: name, status and blob sha (or the whole patch without one)."""
+    blob = str(item.get("sha") or "")
+    return (
+        pr_url,
+        str(item.get("filename") or ""),
+        str(item.get("previous_filename") or ""),
+        str(item.get("status") or ""),
+        blob or hashlib.sha256(str(item.get("patch") or "").encode()).hexdigest(),
+    )
+
+
+def diff_fingerprint(content: list[tuple[str, ...]]) -> str:
+    """Same value exactly when every PR changes the same files to the same content.
+
+    A merge of the base branch that leaves the PR's own files alone keeps it; a
+    conflict resolution or any edit to a reviewed file changes it.
+    """
+    return hashlib.sha256(json.dumps(sorted(content)).encode()).hexdigest()
+
+
 def _added_file_patch(github: Any, owner: str, repo: str, path: str, head_sha: str) -> str:
     """A new file's content as a patch, for files GitHub sends without one (large diffs)."""
     import base64
@@ -295,6 +318,7 @@ def review_precheck(
     findings: list[dict[str, Any]] = []
     over: list[str] = []
     totals = {"files": 0, "additions": 0, "deletions": 0, "excluded_files": 0, "pipeline_files": 0}
+    content: list[tuple[str, ...]] = []
     for pr_url in pr_urls:
         parsed = parse_github_pr_url(pr_url)
         if parsed is None:
@@ -305,6 +329,7 @@ def review_precheck(
         prs.append({"pr_url": pr_url, "head_sha": head_sha, "title": str(pull.get("title") or "")})
         counted = []
         for item in github.list_pull_files(owner, repo, number):
+            content.append(_file_identity(pr_url, item))
             entry = {**_file_entry(item), "pr_url": pr_url}
             if not entry["patch"] and entry["status"] == "added" and entry["additions"] and head_sha:
                 entry["patch"] = _added_file_patch(github, owner, repo, entry["filename"], head_sha)[:PATCH_LIMIT]
@@ -331,7 +356,14 @@ def review_precheck(
             "diff_limit_exceeded: " + "; ".join(over),
             output={"prs": prs, "diff_stats": totals, "diff_limits": limits},
         )
-    return {"prs": prs, "files": files, "diff_stats": totals, "scope_findings": findings, "refresh": refresh}
+    return {
+        "prs": prs,
+        "files": files,
+        "diff_stats": totals,
+        "scope_findings": findings,
+        "refresh": refresh,
+        "diff_fingerprint": diff_fingerprint(content),
+    }
 
 
 def is_blocking(finding: dict[str, Any]) -> bool:

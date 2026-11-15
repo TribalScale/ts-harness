@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ts_harness.implementation.coverage import coverage_summary, coverage_wanted, measure_coverage
 from ts_harness.implementation.security_scan import SecurityConfig, run_security_scan
 from ts_harness.implementation.test_env import (
     BDD_IN_UNIT_STACKS,
@@ -21,6 +22,7 @@ from ts_harness.implementation.test_env import (
     repo_runs_bdd,
     unit_test_command,
 )
+from ts_harness.implementation.test_services import integration_plan, run_integration
 
 _LOG_TAIL_CHARS = 4000
 _SHADOW_MODULES = {"pytest": ("pytest", "_pytest"), "behave": ("behave",)}
@@ -65,6 +67,8 @@ class VerifyResult:
     warnings: list[str] = field(default_factory=list)
     # One entry per command the host ran: what reviewers and QA see as test evidence.
     checks: list[dict[str, Any]] = field(default_factory=list)
+    # Line coverage of the changed files when the work order asks about coverage (never blocks).
+    coverage: dict[str, Any] = field(default_factory=dict)
 
 
 _EVIDENCE_TAIL = 700
@@ -82,6 +86,8 @@ def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
         "reasons": list(verify.reasons),
         "checks": list(verify.checks),
         "skipped": [name for name, skipped in (("unit", verify.skipped_unit), ("bdd", verify.skipped_bdd)) if skipped],
+        "coverage": dict(verify.coverage),
+        "warnings": list(verify.warnings),
     }
 
 
@@ -97,6 +103,9 @@ def verification_summary(evidence: dict[str, Any] | None) -> str:
             lines.append("  output (end): " + tail.replace("\n", "\n  "))
     if evidence.get("skipped"):
         lines.append("Not run: " + ", ".join(evidence["skipped"]) + " (not required for this repo or work order).")
+    lines.extend(coverage_summary(evidence.get("coverage")))
+    for warning in evidence.get("warnings") or []:
+        lines.append(f"Note: {warning}")
     return "\n".join(lines)
 
 
@@ -278,6 +287,7 @@ def verify_implementation(
     base_ref: str | None = None,
     which=None,
     test_env: TestEnvironment | None = None,
+    integration_runner=run_integration,
 ) -> VerifyResult:
     reasons: list[str] = []
     logs: list[str] = []
@@ -378,11 +388,36 @@ def verify_implementation(
                 failed_logs.add(len(logs) - 1)
                 reasons.append(f"{label}_failed")
 
-    security_block: dict[str, Any] = {}
     warnings: list[str] = []
+    plan = None
+    if test_env is not None and changed_files is not None:
+        plan = integration_plan(repo_dir, services_running=test_env.services_running)
+    if plan is not None:
+        command = ["sh", "-c", plan.command]
+        if plan.blocking and reasons:
+            # A suite that resets databases and starts the app costs minutes; run it once the cheap checks pass.
+            warnings.append("integration suite not run: earlier checks failed")
+        else:
+            result = integration_runner(repo_dir, plan, test_env.merged_env(), log_dir=test_env.state_dir)
+            label = "integration" if plan.blocking else "integration (advisory)"
+            logs.append(_format_command_log(label, command, result))
+            checks.append(_check_record(label, command, result))
+            if result.returncode != 0:
+                failed_logs.add(len(logs) - 1)
+                if plan.blocking:
+                    reasons.append("integration_tests_failed")
+                else:
+                    warnings.append(f"integration suite ({plan.source}) failed; advisory until declared in .ts-harness.yml")
+
+    coverage: dict[str, Any] = {}
+    if not reasons and changed_files is not None and coverage_wanted(work_order_body):
+        out_dir = (test_env.state_dir if test_env is not None and test_env.state_dir else Path(repo_dir).parent) / "coverage"
+        coverage = measure_coverage(repo_dir, changed_files, out_dir=out_dir, runner=runner, env=env, python=python)
+
+    security_block: dict[str, Any] = {}
     if security is not None:
         scan_kwargs = {"which": which} if which is not None else {}
-        security_reasons, security_block, warnings = run_security_scan(
+        security_reasons, security_block, scan_warnings = run_security_scan(
             repo_dir,
             config=security,
             base_ref=base_ref,
@@ -391,6 +426,7 @@ def verify_implementation(
             **scan_kwargs,
         )
         reasons.extend(security_reasons)
+        warnings = [*warnings, *scan_warnings]
         logs.append(_format_security_log(security_block))
 
     # Deduplicate while preserving order.
@@ -416,6 +452,7 @@ def verify_implementation(
         security=security_block,
         warnings=warnings,
         checks=checks,
+        coverage=coverage,
     )
 
 
@@ -479,6 +516,12 @@ def build_verification_fix_prompt(
         lines.append(
             "ESLint failed on files you changed. Fix what it reports (running it with --fix is fine "
             "for formatting); do not disable rules or add eslint-disable comments."
+        )
+    if "integration_tests_failed" in verify.reasons:
+        lines.append(
+            "The integration suite failed against this job's databases. Read its log below, fix the "
+            "code or the tests, and rerun it with `ts-harness-integration` until it passes. Do not skip "
+            "or delete failing tests, and do not change the repo's .ts-harness.yml to avoid them."
         )
     if "no_substantive_changes" in verify.reasons or "missing_code_or_test_changes" in verify.reasons:
         lines.append(

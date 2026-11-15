@@ -817,6 +817,50 @@ class WorkflowRunnerTests(unittest.TestCase):
 
         self.assertEqual(calls, [("started", prs), "dispatch", ("finished", "succeeded")])
 
+    def test_qa_after_a_clean_refresh_reuses_the_passing_verdict_without_the_agent(self):
+        runner_module = load_runner()
+        skeletons = runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+        pr = "https://github.com/o/r/pull/19"
+        qa_out = {"status": "success", "result": {"prs": [{"pr_url": pr, "work_item_ref": "WO-1", "status": "success"}]}}
+
+        def precheck(tid, created, head):
+            return {"id": tid, "step_name": "review_precheck", "status": "succeeded", "created_at": created,
+                    "output": {"diff_fingerprint": "fp", "prs": [{"pr_url": pr, "head_sha": head}]}}
+
+        history = [
+            precheck("p1", "01", "old"),
+            {"id": "r1", "step_name": "code_review", "status": "succeeded", "created_at": "02", "depends_on": ["p1"], "output": {"result": {}}},
+            {"id": "f1", "step_name": "finalize_code_review", "status": "succeeded", "created_at": "03", "depends_on": ["r1"]},
+            {"id": "q1", "step_name": "qa_gate", "status": "succeeded", "created_at": "04", "depends_on": ["f1"], "output": qa_out},
+            precheck("p2", "05", "new"),
+            {"id": "r2", "step_name": "code_review", "status": "succeeded", "created_at": "06", "depends_on": ["p2"], "output": {"result": {}}},
+            {"id": "f2", "step_name": "finalize_code_review", "status": "succeeded", "created_at": "07", "depends_on": ["r2"]},
+        ]
+        task = {
+            "id": "q2", "workflow_id": "workflow-1", "workflow_type": "deliver_work_order", "step_name": "qa_gate",
+            "agent_id": "qa-agent", "created_at": "08", "depends_on": ["f2"], "status": "running",
+            "input": {"files": [{"filename": "a.js"}], "prs": [{"pr_url": pr, "head_sha": "new"}]},
+        }
+        class HistoryMemory(FakeMemoryClient):
+            def get_workflow_record(self, workflow_id):
+                return {"workflow": {"id": workflow_id}, "tasks": [*history, task]}
+
+        memory = HistoryMemory(ready=[task])
+        adapter = FakeAdapter({"status": "succeeded", "output": {}})
+        workflow_runner = runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-1", skeletons={"deliver_work_order": skeletons["deliver_work_order"]}
+        )
+        published = []
+        with (
+            patch("ts_harness.workflows.qa_status.qa_started", side_effect=lambda i: self.fail("QA should not start")),
+            patch("ts_harness.workflows.qa_status.qa_finished", side_effect=lambda i, r: published.append(r) or []),
+        ):
+            workflow_runner.tick()
+
+        self.assertEqual(adapter.payloads, [])
+        self.assertEqual(published[0]["output"]["carried_forward"]["from_task_id"], "q1")
+        self.assertEqual(memory.completed[0][0], "q2")
+
     def test_runner_prepares_deployment_wait(self):
         runner_module, workflow_runner, memory, _ = self._release_runner("await_deployment_staging")
         engine = MagicMock()
