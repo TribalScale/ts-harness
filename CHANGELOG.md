@@ -26,9 +26,6 @@ First public release.
   - Repos start at the size they needed before.
   - The local launcher waits until a job's memory fits.
 
-### Fixed
-
-- Coding workers used the GitHub token from job start for API calls even after refreshing it. Jobs that crossed the token's one-hour expiry failed with 401.
 - Frontend (React) repos:
   - The coding worker ships Chromium for Playwright.
   - A repo's Playwright suite runs in host verification and through `ts-harness-integration`.
@@ -291,6 +288,8 @@ First public release.
   at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
+
+- Coding workers used the GitHub token from job start for API calls even after refreshing it. Jobs that crossed the token's one-hour expiry failed with 401.
 
 - A test file the implementer adds beyond the work order's `## Files` list is no longer a
   `major` `scope` review finding. Revisions were allowed to add tests, then review blocked
