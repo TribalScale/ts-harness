@@ -132,7 +132,7 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
         # Recreating agent-runtime gives it a new network namespace. The runner joins that
         # namespace, so the recreate helper has to include it or the mirror sync gets connection refused.
         self.assertIn("docker-compose.workflow-runner.yml", common)
-        self.assertIn("printf '%s\\n' workflow-runner", common)
+        self.assertIn("_emit_runtime_service workflow-runner", common)
 
 
 class CodingJobsComposeTests(unittest.TestCase):

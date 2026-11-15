@@ -11,6 +11,12 @@ First public release.
 
 ### Added
 
+- dev-agent runs on Claude Sonnet 5.5 at medium effort instead of Opus 5.5 at high. In an
+  A/B run of the same work order on athena, Sonnet and GPT-6.1 Sol both passed every gate
+  first time; Sonnet did it in 2 dev-agent calls, one coding run and 5.6 minutes against
+  Sol's 4 calls, two coding calls and 11.5 minutes, and both cost about a third of
+  dev-agent on Opus per task.
+
 - Failing PR checks go back to OpenCode like a code review or QA block (`verified_merge`
   1.7.0; `deliver_work_order` and `implement_jira_ticket` 1.6.0). The revision prompt
   names the failed checks and quotes the end of each failed GitHub Actions job log. Three
@@ -218,6 +224,12 @@ First public release.
 
 ### Fixed
 
+- Restarting agent-runtime (`restart_agent_runtime`, used by `sync-runtime-config.sh`)
+  left memory-api unreachable: memory-api, workflow-runner, llm-proxy and coding-launcher
+  run in agent-runtime's network namespace and lost it. They now restart with it.
+- Coding-backend usage of long OpenCode sessions was not recorded: OpenCode stops writing
+  to a pipe after 64 KiB, so `opencode export` arrived cut off. Its output now goes to a
+  temporary file.
 - A revision of an open PR started from the clone's old copy of the branch. When GitHub
   had moved the PR (a refresh merge of the base branch), the push was rejected and the
   work order blocked with `git push --force-with-lease failed: ... (stale info)`. The
