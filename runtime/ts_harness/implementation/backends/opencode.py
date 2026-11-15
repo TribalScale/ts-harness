@@ -93,9 +93,34 @@ def opencode_stall_seconds() -> float:
         return float(_OPENCODE_STALL_SECONDS_DEFAULT)
 
 
-def opencode_exit_error(completed: subprocess.CompletedProcess[str]) -> str:
+OUT_OF_MEMORY = "out_of_memory"
+
+
+def _cgroup_oom_kills(root: Path = Path("/sys/fs/cgroup")) -> tuple[int, str]:
+    """(OOM kills in this container's cgroup, its memory limit) on cgroup v2; (0, "") elsewhere."""
+    try:
+        events = (root / "memory.events").read_text()
+        kills = int(next((line.split()[1] for line in events.splitlines() if line.startswith("oom_kill ")), "0"))
+    except (OSError, ValueError):
+        return 0, ""
+    try:
+        raw = (root / "memory.max").read_text().strip()
+        limit = f"{int(raw) // (1024 * 1024)} MB" if raw.isdigit() else raw
+    except OSError:
+        limit = ""
+    return kills, limit
+
+
+def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_root: Path = Path("/sys/fs/cgroup")) -> str:
     if completed.returncode == OPENCODE_STALLED_RC:
         return "opencode stalled: no output within the stall window"
+    if completed.returncode in (-9, 137):
+        kills, limit = _cgroup_oom_kills(cgroup_root)
+        if kills:
+            return (
+                f"{OUT_OF_MEMORY}: the coding worker hit its memory limit ({limit or 'unknown'}) and the kernel "
+                "killed opencode; the job is retried with more memory"
+            )
     return f"opencode exit {completed.returncode}"
 
 

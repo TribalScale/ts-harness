@@ -216,3 +216,29 @@ class MonorepoTests(unittest.TestCase):
             self.assertEqual(ts.changed_playwright_specs(repo, changed), ["apps/web/e2e/home.spec.ts"])
             steps = [command for _m, command in _manifest_steps(repo, TestEnvironment(python="python3"))]
             self.assertTrue(steps[-1][0].endswith("apps/web/node_modules/.bin/playwright"))
+
+
+class OutOfMemoryTests(unittest.TestCase):
+    def test_kernel_kill_is_named(self):
+        from ts_harness.implementation.backends.opencode import opencode_exit_error
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root / "memory.events", "low 0\nhigh 0\nmax 12\noom 1\noom_kill 1\n")
+            _write(root / "memory.max", str(2 * 1024**3))
+            killed = subprocess.CompletedProcess(["opencode"], -9, "", "")
+            self.assertTrue(opencode_exit_error(killed, cgroup_root=root).startswith("out_of_memory: the coding worker hit its memory limit (2048 MB)"))
+            _write(root / "memory.events", "oom_kill 0\n")
+            self.assertEqual(opencode_exit_error(killed, cgroup_root=root), "opencode exit -9")
+
+    def test_job_spec_memory_wins_at_claim(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("coding_jobs_routes", Path(__file__).resolve().parents[2] / "scripts" / "memory_routes" / "coding_jobs.py")
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except ImportError as exc:  # pragma: no cover - routes need the memory-api deps
+            self.skipTest(str(exc))
+        self.assertEqual(module._spec_sizing({"spec": json.dumps({"repo_url": "x", "worker_memory_mb": 4096})}), {"worker_memory_mb": 4096})
+        self.assertEqual(module._spec_sizing({"spec": {"repo_url": "x"}}), {})

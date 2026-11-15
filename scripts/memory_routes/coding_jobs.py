@@ -184,6 +184,18 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {**_public(row), "created": True}
 
 
+def _spec_sizing(row: dict[str, Any]) -> dict[str, int]:
+    """A job's own memory size (a retry after the worker ran out of memory) wins over the project's."""
+    spec = row.get("spec")
+    if isinstance(spec, str):
+        try:
+            spec = json.loads(spec)
+        except json.JSONDecodeError:
+            spec = {}
+    memory = (spec or {}).get("worker_memory_mb") if isinstance(spec, dict) else None
+    return {"worker_memory_mb": int(memory)} if isinstance(memory, int) and memory > 0 else {}
+
+
 def _project_sizing(cur, rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
     keys = {(r["tenant_id"], r["project_id"]) for r in rows if r.get("project_id")}
     if not keys:
@@ -303,7 +315,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             )
             claimed = sorted(cur.fetchall(), key=lambda r: r["created_at"])
             sizing = _project_sizing(cur, claimed)
-            claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {})} for r in claimed]
+            claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {}), **_spec_sizing(r)} for r in claimed]
     conn.commit()
     return {
         "running": running,

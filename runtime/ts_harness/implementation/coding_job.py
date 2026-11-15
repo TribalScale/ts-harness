@@ -246,7 +246,8 @@ def build_coding_request(
     }
 
 
-_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend"}
+# worker_memory_mb sizes a retry after the worker ran out of memory; the launcher reads it.
+_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb"}
 
 
 def _note_list(value: Any) -> list[dict[str, Any]] | None:

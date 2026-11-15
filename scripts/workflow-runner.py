@@ -1423,6 +1423,8 @@ class WorkflowRunner:
         task_id = str(task["id"])
         jobs = self.memory.list_coding_jobs(task_id=task_id, unconsumed=True, limit=10)
         finished = next((j for j in jobs if j.get("status") in coding_job_stage.TERMINAL), None)
+        if finished is not None and self._retry_out_of_memory(task, task_input, finished):
+            return
         if finished is not None:
             result = coding_job_stage.dispatch_result(finished, contract, task_input)
             job_id = result.pop("coding_job_id", "")
@@ -1465,6 +1467,45 @@ class WorkflowRunner:
         )
         self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
         log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _retry_out_of_memory(self, task: dict[str, Any], task_input: dict[str, Any], finished: dict[str, Any]) -> bool:
+        """Queue the job again with twice the memory when the worker was OOM-killed (once, up to a cap)."""
+        from ts_harness.coding.launcher import parse_memory
+        from ts_harness.workflows import coding_job_stage
+
+        result = finished.get("result") if isinstance(finished.get("result"), dict) else {}
+        error = str(finished.get("error") or result.get("error") or "")
+        if finished.get("status") == "succeeded" or not error.startswith("out_of_memory"):
+            return False
+        current = int(finished.get("worker_memory_mb") or parse_memory(os.environ.get("CODING_WORKER_MEMORY") or "2g") // 2**20)
+        cap = parse_memory(os.environ.get("CODING_WORKER_MAX_MEMORY") or "6g") // 2**20
+        larger = min(current * 2, cap)
+        if larger <= current:
+            return False
+        task_id = str(task["id"])
+        try:
+            program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+        except Exception:
+            program_id = None
+        spec = {**coding_job_stage.stage_spec(task, task_input, program_id=program_id), "worker_memory_mb": larger}
+        job = self.memory.create_coding_job(
+            spec=spec,
+            workflow_id=str(task.get("workflow_id") or "") or None,
+            task_id=task_id,
+            program_id=program_id,
+            tenant_id=str(task.get("tenant_id") or "default"),
+        )
+        try:
+            self.memory.consume_coding_job(str(finished["id"]))
+        except Exception as exc:  # noqa: BLE001
+            log_event("coding_job_consume_error", task_id=task_id, job_id=finished.get("id"), error=str(exc))
+        self.memory.set_task_wait(task_id, wait_token=str(job["id"]), expected_event_type=coding_job_stage.EVENT_TYPE)
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event(
+            "coding_job_retried_with_more_memory",
+            workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"], memory_mb=larger, previous_mb=current,
+        )
+        return True
 
     def _apply_dispatch_result(
         self,

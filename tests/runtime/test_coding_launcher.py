@@ -41,7 +41,7 @@ class LocalDockerLauncherTests(unittest.TestCase):
         cfg = LocalDockerConfig(image="worker:1", network="container:abc", config_host_path="/data/rt.yaml")
         ref = LocalDockerLauncher(cfg, run=docker, environ=ENV).start(JOB, "cj1.token")
         self.assertEqual(ref, "abc123")
-        cmd, kwargs = docker.calls[0]
+        cmd, kwargs = next(call for call in docker.calls if call[0][:2] == ["docker", "run"])
         joined = " ".join(cmd)
         for expected in (
             "--rm", "--label ts-harness.coding-job=" + JOB["id"], "--cpus 2", "--memory 2g", "--pids-limit 2048",
@@ -53,6 +53,23 @@ class LocalDockerLauncherTests(unittest.TestCase):
         self.assertNotIn("cj1.token", joined)
         self.assertNotIn("SLACK_BOT_TOKEN", joined)
         self.assertEqual(kwargs["env"]["JOB_TOKEN"], "cj1.token")
+
+    def test_a_job_waits_until_its_memory_fits(self):
+        class Busy(FakeDocker):
+            def __call__(self, cmd, **kwargs):
+                if cmd[:2] == ["docker", "ps"]:
+                    self.calls.append((cmd, kwargs))
+                    return subprocess.CompletedProcess(cmd, 0, stdout="c1\n", stderr="")
+                if cmd[:3] == ["docker", "inspect", "-f"] and "HostConfig" in cmd[3]:
+                    self.calls.append((cmd, kwargs))
+                    return subprocess.CompletedProcess(cmd, 0, stdout=f"{2 * 2**30}\n", stderr="")
+                return super().__call__(cmd, **kwargs)
+
+        launcher = LocalDockerLauncher(LocalDockerConfig(), run=Busy(), environ={})
+        with unittest.mock.patch.object(launcher_mod, "host_memory_bytes", return_value=7 * 2**30):
+            with self.assertRaisesRegex(launcher_mod.CapacityError, "waiting for memory: 4096 MB wanted, 2048 MB in use"):
+                launcher.start({**JOB, "worker_memory_mb": 4096}, "t")
+            self.assertEqual(launcher.start(JOB, "t"), "abc123")  # a 2 GB job still fits
 
     def test_start_failure_raises_with_stderr(self):
         with self.assertRaisesRegex(LaunchError, "no such image"):
