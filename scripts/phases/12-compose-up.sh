@@ -221,6 +221,11 @@ fi
 # (bind-mount host tools -> /tools). A hand-rolled sudo env list previously omitted it.
 cd "$ENTERPRISE_ASSETS_DIR"
 echo "[phase:${PHASE_NAME}] Mounting coding tools from TS_HARNESS_TOOLS_ROOT_HOST=${TS_HARNESS_TOOLS_ROOT_HOST}"
+# The coding worker image builds FROM ts-harness-agent-runtime:latest and compose builds in
+# parallel; on a fresh host build the runtime image first so the worker build can find it.
+if ! docker image inspect ts-harness-agent-runtime:latest >/dev/null 2>&1; then
+    run_docker_compose_as_admin build agent-runtime
+fi
 run_docker_compose_as_admin up -d
 echo "[phase:${PHASE_NAME}] Containers started."
 

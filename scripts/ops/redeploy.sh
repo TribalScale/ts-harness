@@ -64,6 +64,10 @@ bash "$OPS_DIR/migrate-db.sh"
 reconstruct_compose_files
 cd "$ENTERPRISE_ASSETS_DIR"
 echo "--- build"
+# The coding worker image is built FROM ts-harness-agent-runtime:latest, and compose builds
+# services in parallel (depends_on does not order builds). Build agent-runtime first so the
+# worker never bakes in the previous runtime code.
+run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
 echo "--- up"
 run_docker_compose_as_admin up -d
