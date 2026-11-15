@@ -415,3 +415,22 @@ class DependencyAuditBaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             audit = audit_dependencies(Path(tmp), ["package.json"], "high", runner, lambda _n: "/usr/bin/osv-scanner")
         self.assertEqual(len(audit.findings), 1)
+
+
+class TestFileScopeTests(unittest.TestCase):
+    BODY = "# WO-102\n\n## Files\n- src/projects/projects.service.ts\n"
+
+    def test_extra_tests_are_never_reverted_or_flagged(self):
+        from ts_harness.implementation.backends.opencode import opencode_scope_paths
+        from ts_harness.workflows.code_review import undeclared_paths
+
+        changed = [
+            "src/projects/projects.service.ts",
+            "src/projects/dto/update-project.dto.spec.ts",
+            "test/admin/projects.e2e-spec.ts",
+            "src/projects/projects.controller.ts",
+        ]
+        self.assertEqual(undeclared_paths(changed, self.BODY), ["src/projects/projects.controller.ts"])
+        allowed = opencode_scope_paths(self.BODY)
+        self.assertIn("**/*.spec.*", allowed)
+        self.assertIn("test/**", allowed)

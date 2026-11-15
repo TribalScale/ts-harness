@@ -44,6 +44,31 @@ PIPELINE_WRITTEN = (
     "docs/planner/**",
 )
 
+# Test files may be added beyond a work order's ``## Files`` list: more tests are never out of
+# scope. The implementer's revert, OpenCode's edit permissions and the review's scope check
+# all use this list, so a test the implementer may write is never a review finding.
+TEST_PATHS = (
+    "test/*",
+    "tests/*",
+    "*/test/*",
+    "*/tests/*",
+    "*/__tests__/*",
+    "__tests__/*",
+    "features/*",
+    "*/features/*",
+    "*.feature",
+    "*.test.*",
+    "*.spec.*",
+    "*test_*.py",
+    "*_test.py",
+    "*_test.go",
+)
+
+
+def is_test_path(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in TEST_PATHS)
+
+
 _SCOPE_HEADING_RE = re.compile(r"^#{2,6}\s*(files|touches)\s*$", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^#{1,6}\s")
 _BULLET_RE = re.compile(r"^\s*[-*+]\s+`?([^`\s]+)`?")
@@ -142,7 +167,10 @@ def undeclared_paths(changed: list[str], work_order_body: str) -> list[str]:
     return sorted(
         path
         for path in changed
-        if path and not _in_scope(path, declared) and not _excluded(path, list(PIPELINE_WRITTEN))
+        if path
+        and not _in_scope(path, declared)
+        and not _excluded(path, list(PIPELINE_WRITTEN))
+        and not is_test_path(path)
     )
 
 
@@ -162,7 +190,7 @@ def scope_findings(pr_url: str, files: list[dict[str, Any]], work_order_body: st
             "message": f"{item['filename']} is outside the work order's declared files",
         }
         for item in files
-        if not _in_scope(item["filename"], declared)
+        if not _in_scope(item["filename"], declared) and not is_test_path(item["filename"])
     ]
 
 

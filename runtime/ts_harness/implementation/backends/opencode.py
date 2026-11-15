@@ -264,7 +264,7 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
     ``.opencode``), and the files a review revision cites.
     """
     from ts_harness.implementation.verification import has_gwt_acceptance
-    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, declared_paths
+    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, TEST_PATHS, declared_paths
 
     declared = declared_paths(work_order_body)
     if not declared:
@@ -283,6 +283,14 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
     if has_gwt_acceptance(work_order_body):
         allowed.append("features/**")
     allowed.extend(PIPELINE_WRITTEN)
+    # Extra tests are always in scope (code_review.TEST_PATHS); OpenCode needs ** for nesting.
+    for pattern in TEST_PATHS:
+        glob = "**/" + pattern[2:] if pattern.startswith("*/") else pattern
+        if glob.endswith("/*"):
+            glob += "*"  # a directory: everything under it, nested too
+        elif "/" not in glob:
+            glob = "**/" + glob  # a file name pattern: at any depth
+        allowed.append(glob)
     return list(dict.fromkeys(allowed))
 
 

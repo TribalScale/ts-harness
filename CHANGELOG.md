@@ -253,6 +253,11 @@ First public release.
 
 ### Fixed
 
+- A test file the implementer adds beyond the work order's `## Files` list is no longer a
+  `major` `scope` review finding. Revisions were allowed to add tests, then review blocked
+  them and spent another round. Test files (`*.spec.*`, `*.test.*`, `test/`, `tests/`,
+  `__tests__/`, feature files, `test_*.py`, `*_test.go`) are in scope for the revert, the
+  OpenCode edit permissions and the review alike.
 - The host dependency audit blocks only on vulnerabilities a change introduces. It
   compares the scan with the base branch (a temporary worktree) and reports the findings
   the base already had as a count in the PR body. Before, any work order that touched a
