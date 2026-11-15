@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from typing import Any
 
@@ -1160,6 +1161,8 @@ def program_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
 
 
 ARTIFACT_VALUE_MAX = 400
+# A Markdown heading at the start of a line, or at the start of a JSON string value.
+_HEADING_RE = re.compile(r'(?:^|\n|"\s?)#{1,6}\s+([^\n"]+)')
 
 
 def _artifact_overview(artifacts: dict[str, Any], *, include: list[str]) -> dict[str, Any]:
@@ -1178,7 +1181,7 @@ def _artifact_overview(artifacts: dict[str, Any], *, include: list[str]) -> dict
         if len(text) <= ARTIFACT_VALUE_MAX:
             overview[key] = value
             continue
-        headings = [line.strip("# ").strip() for line in text.replace("\\n", "\n").splitlines() if line.startswith("#")]
+        headings = [match.strip() for match in _HEADING_RE.findall(text.replace("\\n", "\n"))]
         overview[key] = {"omitted_chars": len(text), "headings": headings[:12]}
     return overview
 

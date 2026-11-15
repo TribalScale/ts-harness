@@ -474,7 +474,7 @@ class ProgramStatusArtifactsTests(unittest.TestCase):
         overview = _artifact_overview(artifacts, include=["work_orders_markdown"])
         self.assertEqual(overview["program_phase"], "implement")
         self.assertEqual(overview["work_orders_markdown"], artifacts["work_orders_markdown"])
-        self.assertEqual(overview["approved_prd"]["headings"], ["Overview", "Goals"])
+        self.assertEqual(overview["approved_prd"]["headings"], ["PRD: Reminders", "Overview", "Goals"])
         self.assertGreater(overview["approved_prd"]["omitted_chars"], 2500)
 
 
