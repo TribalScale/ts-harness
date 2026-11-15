@@ -48,3 +48,19 @@ class RuntimeRestartServicesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestartOrderTests(unittest.TestCase):
+    def test_agent_runtime_restarts_before_the_services_in_its_namespace(self):
+        text = COMMON.read_text()
+        start = text.index("with_runtime_replicas() {")
+        helpers = text[start:text.index("\n}\n", start) + 3]
+        restart = text[text.index("restart_agent_runtime() {"):]
+        restart = restart[:restart.index("\n}\n") + 3]
+        files = "docker-compose.memory-api.yml:docker-compose.workflow-runner.yml"
+        script = f"""{helpers}
+run_docker_compose_as_admin() {{ echo "$*"; }}
+{restart}
+COMPOSE_FILES_SERIALIZED="{files}" restart_agent_runtime"""
+        done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        self.assertEqual(done.stdout.splitlines(), ["restart agent-runtime", "restart memory-api workflow-runner"])

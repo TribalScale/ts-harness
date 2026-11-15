@@ -226,7 +226,7 @@ First public release.
 
 - Restarting agent-runtime (`restart_agent_runtime`, used by `sync-runtime-config.sh`)
   left memory-api unreachable: memory-api, workflow-runner, llm-proxy and coding-launcher
-  run in agent-runtime's network namespace and lost it. They now restart with it.
+  run in agent-runtime's network namespace and lost it. They now restart right after it.
 - Coding-backend usage of long OpenCode sessions was not recorded: OpenCode stops writing
   to a pipe after 64 KiB, so `opencode export` arrived cut off. Its output now goes to a
   temporary file.

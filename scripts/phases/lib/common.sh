@@ -809,10 +809,21 @@ with_runtime_replicas() {
     return 0
 }
 
+# Restart agent-runtime first, then the services in its network namespace. Restarted
+# together, a sharer that came back before agent-runtime kept the old namespace and lost
+# its network (workflow-runner then saw "connection refused" on every tick).
 restart_agent_runtime() {
-    local services=() service
-    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas agent-runtime)
-    run_docker_compose_as_admin restart "${services[@]}"
+    local runtimes=() sharers=() service
+    while IFS= read -r service; do
+        case "$service" in
+            agent-runtime|agent-runtime-2) runtimes+=("$service") ;;
+            *) sharers+=("$service") ;;
+        esac
+    done < <(with_runtime_replicas agent-runtime)
+    run_docker_compose_as_admin restart "${runtimes[@]}"
+    if [[ ${#sharers[@]} -gt 0 ]]; then
+        run_docker_compose_as_admin restart "${sharers[@]}"
+    fi
 }
 
 # secrets.env is sourced by bash, so values are shell-quoted like phase 10 writes them.
