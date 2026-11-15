@@ -567,7 +567,15 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
         running.log.append(str(config["_error"]))
     wanted, unavailable = detect_services(repo_dir, config)
     running.unavailable = list(unavailable)
+    overrides = {str(k): str(v) for k, v in (config.get("env") or {}).items()} if isinstance(config.get("env"), dict) else {}
     if not wanted:
+        # A frontend needs no database but may still need its declared env file (API URL,
+        # mocking switch) for its e2e suite.
+        if config.get("env_file"):
+            template_path = find_env_template(repo_dir, config, [])
+            if template_path is not None:
+                _write_env_file(repo_dir, config, template_path, _read(template_path), overrides, runner, running)
+            running.env = dict(overrides)
         return running
     template_path = find_env_template(repo_dir, config, wanted)
     template_text = _read(template_path) if template_path else ""
@@ -586,16 +594,10 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
             running.services[name] = info
     if not running.services:
         return running
-    overrides = {str(k): str(v) for k, v in (config.get("env") or {}).items()} if isinstance(config.get("env"), dict) else {}
     changes = {**rewrite_env(template, running.services, set(compose_services(repo_dir))), **overrides}
     service_env = _service_env(running.services, creds)
-    target = str(config.get("env_target") or ".env")
-    if template_path is not None and not (repo_dir / target).exists():
-        (repo_dir / target).write_text(render_env_file(template_text, changes), encoding="utf-8")
-        if not _git_ignored(repo_dir, target, runner):
-            _exclude_locally(repo_dir, target)
-        running.env_file = target
-        running.log.append(f"wrote {target} from {template_path.name}")
+    if template_path is not None:
+        _write_env_file(repo_dir, config, template_path, template_text, changes, runner, running)
     running.env = {
         **service_env,
         **{key: value for key, value in {**template, **changes}.items() if value and _connection_key(key)},
@@ -603,6 +605,21 @@ def start_test_services(repo_dir: Path, *, runner=subprocess.run) -> RunningServ
         SERVICES_ENV: json.dumps(running.services),
     }
     return running
+
+
+def _write_env_file(
+    repo_dir: Path, config: dict[str, Any], template_path: Path, template_text: str,
+    changes: dict[str, str], runner, running: RunningServices,
+) -> None:
+    """``.env`` from the template, only when absent, and never committed."""
+    target = str(config.get("env_target") or ".env")
+    if (repo_dir / target).exists():
+        return
+    (repo_dir / target).write_text(render_env_file(template_text, changes), encoding="utf-8")
+    if not _git_ignored(repo_dir, target, runner):
+        _exclude_locally(repo_dir, target)
+    running.env_file = target
+    running.log.append(f"wrote {target} from {template_path.name}")
 
 
 def _connection_key(key: str) -> bool:
@@ -640,9 +657,18 @@ def integration_plan(repo_dir: Path, *, services_running: bool) -> IntegrationPl
             timeout_seconds=int(block.get("timeout_seconds") or DEFAULT_INTEGRATION_TIMEOUT),
             blocking=bool(block.get("blocking", True)),
         )
+    from ts_harness.implementation.test_env import node_run_command, package_scripts, uses_playwright
+
+    if uses_playwright(repo_dir) and any(Path(repo_dir).glob("playwright.config.*")):
+        # Playwright starts the app itself through the config's webServer; with
+        # nothing declared, its result is evidence, not a gate.
+        return IntegrationPlan(
+            command=shlex.join([str(Path(repo_dir) / "node_modules" / ".bin" / "playwright"), "test", "--reporter=line"]),
+            blocking=False,
+            source="playwright",
+        )
     if not services_running:
         return None
-    from ts_harness.implementation.test_env import node_run_command, package_scripts
 
     scripts = package_scripts(repo_dir)
     script = next((name for name in _INTEGRATION_SCRIPTS if name in scripts), None)
@@ -834,3 +860,79 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+
+# --- processes the coding agent left behind ---------------------------------------------------------
+
+
+def _proc_table() -> dict[int, tuple[int, str, str]]:
+    """``{pid: (ppid, state, cmdline)}`` from /proc."""
+    table: dict[int, tuple[int, str, str]] = {}
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(")", 1)[1].split()
+            cmd = (stat.parent / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+            table[int(stat.parent.name)] = (int(fields[1]), fields[0], cmd)
+        except (OSError, ValueError, IndexError):
+            continue
+    return table
+
+
+def _ancestors(pid: int, table: dict[int, tuple[int, str, str]]) -> list[int]:
+    chain = []
+    while pid in table and pid not in chain:
+        chain.append(pid)
+        pid = table[pid][0]
+    return chain
+
+
+def in_coding_worker(table: dict[int, tuple[int, str, str]] | None = None) -> bool:
+    """True inside a one-job worker container: the coding worker script is this process or an ancestor."""
+    table = table if table is not None else _proc_table()
+    return any("coding-worker" in table[pid][2] for pid in _ancestors(os.getpid(), table))
+
+
+def _service_pids(repo_dir: Path) -> set[int]:
+    root = services_root(repo_dir)
+    pids: set[int] = set()
+    for path in (root / "pgdata" / "postmaster.pid", root / "redis.pid"):
+        try:
+            pids.add(int(_read(path).splitlines()[0].strip()))
+        except (ValueError, IndexError):
+            continue
+    return pids
+
+
+def stop_stray_processes(repo_dir: Path, *, table: dict[int, tuple[int, str, str]] | None = None, kill=os.kill) -> list[str]:
+    """Stop servers the coding agent started and left running (``yarn dev &``, a mock API).
+
+    They hold the ports the repo's e2e suite starts its own servers on, so host
+    verification would fail on "port already in use" or test a stale server. Only in a
+    worker container: everything re-parented to PID 1 is a leftover, except this job's
+    databases.
+    """
+    if table is None:
+        table = _proc_table()
+        if not in_coding_worker(table):
+            return []
+    # The worker script and this process stay; with ``docker run --init`` the worker is
+    # itself a child of PID 1, like the leftovers.
+    protected = _service_pids(repo_dir) | set(_ancestors(os.getpid(), table))
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _state, _cmd) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    stray_roots = [pid for pid, (ppid, state, _cmd) in table.items() if ppid == 1 and pid not in protected and state != "Z"]
+    stopped: list[str] = []
+    for root in stray_roots:
+        tree, frontier = [], [root]
+        while frontier:
+            pid = frontier.pop()
+            tree.append(pid)
+            frontier.extend(children.get(pid, []))
+        for pid in tree:
+            try:
+                kill(pid, signal.SIGKILL)
+            except OSError:
+                continue
+        stopped.append(f"{root}: {table[root][2][:120]}")
+    return stopped

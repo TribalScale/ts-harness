@@ -192,7 +192,8 @@ class LocalDockerLauncher:
         job_id = str(job["id"])
         cfg = self.config
         cmd = [
-            "docker", "run", "-d", "--rm",
+            # --init reaps the processes a coding run leaves behind (PID 1 is the worker script).
+            "docker", "run", "-d", "--rm", "--init",
             "--name", f"ts-coding-{job_id[:8]}",
             "--label", f"ts-harness.coding-job={job_id}",
             "--cpus", str(int(job["worker_cpu"]) / 1024) if job.get("worker_cpu") else cfg.cpus,

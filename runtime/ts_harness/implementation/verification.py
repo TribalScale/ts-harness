@@ -74,8 +74,11 @@ class VerifyResult:
 _EVIDENCE_TAIL = 700
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
 def _check_record(label: str, command: list[str], result: subprocess.CompletedProcess) -> dict[str, Any]:
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    output = _ANSI.sub("", "\n".join(part for part in (result.stdout, result.stderr) if part)).strip()
     return {"check": label, "command": " ".join(command), "exit_code": result.returncode, "output_tail": output[-_EVIDENCE_TAIL:]}
 
 
@@ -596,10 +599,29 @@ def _run_command(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     kwargs = {"env": env} if env is not None else {}
+    timeout = _command_timeout(env)
     try:
-        return runner(command, cwd=repo_dir, capture_output=True, text=True, **kwargs)
+        return runner(
+            command, cwd=repo_dir, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout, **kwargs
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = "\n".join(str(part) for part in (exc.stdout, exc.stderr) if part)
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            stdout=output[-6000:],
+            stderr=f"timed out after {timeout}s: a test left running (watch mode, an open handle or a server) "
+            "keeps the command from exiting",
+        )
     except Exception as exc:  # pragma: no cover - exercised through subprocess-like runners.
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=str(exc))
+
+
+def _command_timeout(env: dict[str, str] | None) -> int:
+    import os
+
+    raw = str((env or os.environ).get("TS_HARNESS_VERIFY_COMMAND_TIMEOUT") or "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else 1800
 
 
 def _compose_log_tail(logs: list[str], failed: set[int]) -> str:
@@ -627,5 +649,5 @@ def _format_command_log(
     command: list[str],
     result: subprocess.CompletedProcess,
 ) -> str:
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    output = _ANSI.sub("", "\n".join(part for part in (result.stdout, result.stderr) if part))
     return f"$ {' '.join(command)} ({label}, exit {result.returncode})\n{output}".rstrip()

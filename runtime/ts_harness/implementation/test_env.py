@@ -123,6 +123,18 @@ def node_run_command(repo_dir: Path, script: str) -> list[str]:
     return [manager, "run", script]
 
 
+def uses_vitest(repo_dir: Path) -> bool:
+    manifest = package_manifest(repo_dir)
+    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+    return "vitest" in deps or any("vitest" in str(cmd) for cmd in (manifest.get("scripts") or {}).values())
+
+
+def uses_playwright(repo_dir: Path) -> bool:
+    manifest = package_manifest(repo_dir)
+    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+    return "@playwright/test" in deps or "playwright" in deps
+
+
 def node_install_command(repo_dir: Path) -> tuple[list[str], list[str]]:
     """(manifests that trigger the install, command) for the repo's package manager."""
     repo_dir = Path(repo_dir)
@@ -269,7 +281,21 @@ def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[
     )
     if files and has_config and (bin_dir / "eslint").exists():
         checks.append(("lint", [str(bin_dir / "eslint"), *files]))
+    if "build" in scripts and is_web_app(repo_dir):
+        # Bundlers (Vite, Next, CRA) fail on things the type check passes: unresolved
+        # imports, server/client boundaries, env access at build time.
+        checks.append(("build", node_run_command(repo_dir, "build")))
     return checks
+
+
+_WEB_FRAMEWORKS = ("react", "react-dom", "next", "vite", "@vitejs/plugin-react", "react-scripts", "@remix-run/react", "vue", "svelte")
+
+
+def is_web_app(repo_dir: Path) -> bool:
+    """A browser app (React and friends), as opposed to a Node service or library."""
+    manifest = package_manifest(repo_dir)
+    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+    return "react-dom" in deps or "next" in deps or ("vite" in deps and any(name in deps for name in _WEB_FRAMEWORKS[:2]))
 
 
 def repo_feature_files(repo_dir: Path) -> list[Path]:
@@ -371,7 +397,14 @@ def prepare_test_environment(
         "GRADLE_USER_HOME": str(cache / "gradle"),
         "MAVEN_OPTS": f"-Dmaven.repo.local={cache / 'm2'}",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        # Playwright's HTML reporter serves the report and waits after a failure unless told not to.
+        "PLAYWRIGHT_HTML_OPEN": "never",
+        "PW_TEST_HTML_REPORT_OPEN": "never",
     }
+    if uses_vitest(repo_dir):
+        # A bare `vitest` script watches for changes and never exits outside CI (OpenCode's
+        # shell is a TTY); CI=true is what makes it run once in the team's own pipeline.
+        env["CI"] = "true"
     if (Path(repo_dir) / "package.json").is_file() and node_package_manager(repo_dir) == "pnpm":
         # pnpm reads its store from npm-style config; npm itself warns on the unknown key
         # (and will reject it), so only pnpm repos get it.
@@ -450,7 +483,12 @@ def _manifest_steps(repo_dir: Path, test_env: TestEnvironment) -> list[tuple[lis
     if re.search(r"^\[project\]", _read_text(repo_dir / "pyproject.toml"), re.MULTILINE):
         steps.append((["pyproject.toml"], [test_env.python, "-m", "pip", "install", "-q", "-e", "."]))
     if (repo_dir / "package.json").is_file():
-        steps.append(node_install_command(repo_dir))
+        manifests, command = node_install_command(repo_dir)
+        steps.append((manifests, command))
+        if uses_playwright(repo_dir):
+            # The browser build must match the repo's Playwright version; the image ships one
+            # build and this fetches another only when the repo pins a different version.
+            steps.append(([*manifests, "#playwright"], [str(repo_dir / "node_modules" / ".bin" / "playwright"), "install", "chromium"]))
     if (repo_dir / "go.mod").is_file():
         steps.append((["go.mod", "go.sum"], ["go", "mod", "download"]))
     return steps
