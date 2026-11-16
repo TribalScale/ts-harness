@@ -184,3 +184,32 @@ class HumanPrTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadPrFileTests(unittest.TestCase):
+    class GitHub:
+        def get_pull(self, owner, repo, number):
+            return {"base": {"sha": "base1"}, "head": {"sha": "head1"}}
+
+        def get_file(self, owner, repo, path, ref):
+            if path == "missing.json":
+                return None
+            return {"content": base64.b64encode(f"{path}@{ref}".encode()).decode()}
+
+    def test_reads_base_or_head_and_refuses_bad_paths(self):
+        from ts_harness.tools.file_tools import handle_read_pr_file
+
+        pr = "https://github.com/acme/web/pull/3"
+        base = handle_read_pr_file({"pr_url": pr, "path": "locales/en.json"}, github=self.GitHub())
+        self.assertEqual((base["content"], base["ref"]), ("locales/en.json@base1", "base"))
+        head = handle_read_pr_file({"pr_url": pr, "path": "a.ts", "ref": "head"}, github=self.GitHub())
+        self.assertEqual(head["content"], "a.ts@head1")
+        self.assertFalse(handle_read_pr_file({"pr_url": pr, "path": "missing.json"}, github=self.GitHub())["exists"])
+        self.assertIn("error", handle_read_pr_file({"pr_url": pr, "path": "../etc/passwd"}, github=self.GitHub()))
+        self.assertIn("error", handle_read_pr_file({"pr_url": "https://example.com/x", "path": "a"}, github=self.GitHub()))
+
+    def test_only_review_and_qa_get_it(self):
+        from ts_harness.tools.toolsets import TOOLSET_DEFINITIONS as TOOLSETS
+
+        self.assertEqual(TOOLSETS["pr-read"], {"read_pr_file"})
+        self.assertNotIn("read_pr_file", TOOLSETS["core-read"])

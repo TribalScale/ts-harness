@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.4.0
+version: 1.5.0
 ---
 
 # Governed QA Gate
@@ -73,6 +73,11 @@ Then:
    screenshot shows one moment; judge behaviour over time (debounce, live
    updates) from the tests. No screenshots for a UI criterion is
    `unverified`, not a defect.
+   **Check the base branch before calling something missing.** The patch shows
+   only what changed. When a criterion names something the patch does not add
+   (a translation key, a config entry, a helper), call `read_pr_file` with the
+   PR URL, the path and `ref: base`; if the base branch already has it, the
+   criterion is met and is not a defect.
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that

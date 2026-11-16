@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.2
+version: 1.3.0
 ---
 
 # Governed Code Review
@@ -134,3 +134,8 @@ look thorough, and do not hide real ones to pass.
 - Approving, requesting changes on, or merging PRs.
 - Editing code, pushing commits, or opening PRs.
 - Re-running CI or the test suite (CI results are already in `await_pr_checks`).
+
+## Reading beyond the diff
+
+`read_pr_file` (PR URL, path, `ref: head` or `base`) returns a whole file of the PR's repository. Use it for the code around a changed hunk, or to check whether the base branch already has what the work order asks for, before raising a finding about it.
+

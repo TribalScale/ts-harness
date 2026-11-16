@@ -9,7 +9,13 @@ from ts_harness.tools.registry import ToolDefinition, ToolRegistry
 
 def register_core_tools(registry: ToolRegistry) -> None:
     from ts_harness.tools.delegation import handle_delegate_task
-    from ts_harness.tools.file_tools import handle_patch_file, handle_read_file, handle_search_files, handle_write_file
+    from ts_harness.tools.file_tools import (
+        handle_patch_file,
+        handle_read_file,
+        handle_read_pr_file,
+        handle_search_files,
+        handle_write_file,
+    )
     from ts_harness.tools.terminal import handle_background_logs, handle_exec
     from ts_harness.agent.sessions import session_status_handler
     from ts_harness.memory.client import recall_memory_handler, workflow_update_handler
@@ -71,6 +77,27 @@ def register_core_tools(registry: ToolRegistry) -> None:
             },
             handler=lambda args, ctx: handle_read_file(args, ctx),
             toolsets=["core-read"],
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="read_pr_file",
+            description=(
+                "Read a file of a pull request's repository as it is on the PR head or on its base branch "
+                "(read-only). Use it to check what already exists on the base branch, or the full file around a "
+                "changed hunk."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pr_url": {"type": "string", "description": "The pull request URL"},
+                    "path": {"type": "string", "description": "Repository-relative file path"},
+                    "ref": {"type": "string", "enum": ["base", "head"], "description": "base branch or PR head (default base)"},
+                },
+                "required": ["pr_url", "path"],
+            },
+            handler=lambda args, ctx: handle_read_pr_file(args, ctx),
+            toolsets=["pr-read"],
         )
     )
     registry.register(
