@@ -6,6 +6,19 @@ host); they use its GitHub and memory-api credentials.
 
 ## 1. Let TS Harness write `.ts-harness.yml`
 
+**Programs do this on their own.** The first time a program reaches the implement phase, it
+checks every repository its work orders target (the project's repositories, or the configured
+default). A repository whose CI runs an e2e or integration suite, or that has a Playwright
+config, but has no `.ts-harness.yml` gets an onboarding work order, `WO-0000` (then `WO-0001`,
+... for further repositories). That repository's other work orders depend on it, so feature work
+starts once the team merges the config PR. Work orders for other repositories are not held up.
+Repositories that already have the file, or have no suite to run, are skipped. The program's
+`repo_onboarding` artifact records what was found for each repository. A repository that cannot
+be checked (for example, a clone failure) is recorded there and skipped, never blocking the program.
+
+Run the script yourself to set a repository up before any program targets it, or to preview
+the draft:
+
 ```bash
 python3 /app/scripts/onboard-repo.py https://github.com/acme/api --base dev --draft-only   # look first
 python3 /app/scripts/onboard-repo.py https://github.com/acme/api --base dev               # start it
