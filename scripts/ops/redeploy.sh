@@ -79,6 +79,11 @@ run_docker_compose_as_admin up -d
 wait_for_agent_runtime_health redeploy
 run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 
+# The system cron jobs (defined in phase 15) reach the live list only through phase 15; it skips
+# itself unless the phase script (so its job list), secrets or compose env changed.
+echo "--- phase 15-automation-cron"
+bash "$PHASES_DIR/15-automation-cron.sh"
+
 # Each build leaves the previous images and their build cache behind; on a 40 GB root
 # volume a day of redeploys filled the disk and the next image export failed with
 # "no space left on device". Drop untagged images and keep the build cache under

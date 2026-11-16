@@ -19,6 +19,7 @@ First public release.
   - The instance follows the data disk's availability zone, and Terraform never replaces the data disk over its zone. Before this, `-replace` of the instance planned to replace the data disk.
   - The Google OAuth callback follows the host's tailnet address unless set to a custom domain, and is cleared when Google OAuth is not configured.
   - Live-test tools moved into `scripts/ops/live-test/`.
+  - `redeploy.sh` runs phase 15, so system cron jobs added to it (such as `review-finished-programs` and `retry-program-phases`) reach the live cron list without a rebuild.
 
 - GitHub App webhook setup is scripted and survives host rebuilds: `scripts/github-app-webhook.py` sets the App's webhook URL and secret and reports missing events, and bootstrap phase `12b-github-webhook` (install YAML `github_app.webhook_funnel: true`) exposes only `/webhooks/github` through Tailscale Funnel on port 8443 and re-points the App at it. The GitHub App runbook documents the whole setup, including accepting new App permissions.
 
