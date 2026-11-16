@@ -604,6 +604,17 @@ class InstallerPipelineTests(unittest.TestCase):
             cfg = load_install_config(path)
         tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
         self.assertEqual((tfvars["github_app_id"], tfvars["github_app_slug"]), ("12345", "acme-harness"))
+        self.assertNotIn("github_webhook_funnel", tfvars)
+
+    def test_github_webhook_funnel_is_mapped(self):
+        text = AWS_EXAMPLE.read_text().replace(
+            "# github_app:", "github_app:\n  app_id: 12345\n  webhook_funnel: true\n# was github_app:", 1
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "aws.yaml"
+            path.write_text(text)
+            cfg = load_install_config(path)
+        self.assertIs(install_mod.generate_tfvars(cfg, cloud="aws")["github_webhook_funnel"], True)
 
     def test_run_terraform_streams_output(self):
         with mock.patch.object(install_mod.subprocess, "run") as run:

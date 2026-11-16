@@ -51,8 +51,10 @@ It stays optional in branch protection; when disabled TS Harness posts `success`
 
 ## Webhook and token
 
-Point a repo or org webhook at `POST /webhooks/github` with the secret in
-`GITHUB_WEBHOOK_SECRET`, and subscribe to these events:
+With a GitHub App, set the webhook up as in [GitHub App → Webhook](github-app.md#webhook)
+(including Tailscale Funnel for hosts without a public address). Without an App, point a repo
+or org webhook at `POST /webhooks/github` with the secret in `GITHUB_WEBHOOK_SECRET`, and
+subscribe to these events:
 
 - `pull_request` (merge detection)
 - `pull_request_review` (recomputes `harness/independent-review`)
@@ -91,7 +93,7 @@ needs, on each target repo:
 | Actions: read and write | Check results through Actions jobs; `workflow_dispatch` release triggers |
 | Deployments: read and write | Deployments API release triggers and status polling |
 | Metadata: read | Reading the repo default branch (granted to every fine-grained token) |
-| Administration: read | Reading branch protection for required contexts (required when `merge_readiness.policy.require_branch_protection` is true) |
+| Administration: read (read and write to apply protection) | Reading branch protection for required contexts (required when `merge_readiness.policy.require_branch_protection` is true). Write lets `scripts/repo-governance.py --apply` set protection; an org owner must accept the change on the installation |
 
 TS Harness only acts on repos inside the tenant binding (`github.org` and
 `repo_picker` in [system settings](system-settings.md#delivery-keys)). Releases

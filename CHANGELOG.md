@@ -11,6 +11,8 @@ First public release.
 
 ### Added
 
+- GitHub App webhook setup is scripted and survives host rebuilds: `scripts/github-app-webhook.py` sets the App's webhook URL and secret and reports missing events, and bootstrap phase `12b-github-webhook` (install YAML `github_app.webhook_funnel: true`) exposes only `/webhooks/github` through Tailscale Funnel on port 8443 and re-points the App at it. The GitHub App runbook documents the whole setup, including accepting new App permissions.
+
 - Programs onboard their repositories: on first entering the implement phase, a repository whose CI runs an e2e suite but has no `.ts-harness.yml` gets an onboarding work order (`WO-0000`), and that repository's other work orders wait for it to merge. Recorded in the `repo_onboarding` program artifact.
 
 - Rolling out to team repos:

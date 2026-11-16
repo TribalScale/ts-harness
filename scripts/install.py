@@ -187,6 +187,8 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         for key, variable in (("app_id", "github_app_id"), ("slug", "github_app_slug"), ("host", "github_app_host")):
             if github_app.get(key):
                 tfvars[variable] = str(github_app[key])
+        if "webhook_funnel" in github_app:
+            tfvars["github_webhook_funnel"] = bool(github_app["webhook_funnel"])
         image_tag = os.environ.get("TS_HARNESS_CODING_WORKER_IMAGE_TAG", "").strip()
         if image_tag:
             tfvars["coding_worker_image_tag"] = image_tag

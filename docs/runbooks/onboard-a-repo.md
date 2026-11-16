@@ -59,9 +59,9 @@ The report shows:
 
 It also requires one approval and dismisses stale approvals. Stricter existing settings are kept: more approvals, code owners, admin enforcement, extra checks.
 
-It needs the GitHub App's **Administration: Read and write** permission or a repo admin. Without it, the script prints the `gh api` command an admin can run with `--print-payload`.
+It needs the GitHub App's **Administration: Read and write** permission, accepted by an org owner on the installation (see [GitHub App → Changing the App's permissions](github-app.md#changing-the-apps-permissions)), or a repo admin. Without it, the script prints the `gh api` command an admin can run with `--print-payload`.
 
-**PRs people open by hand.** On a branch that requires the harness checks, the GitHub webhook posts `success` ("Not a TS Harness PR") on those checks for PRs that are neither on a `wo/` branch nor recorded by a program. Those PRs then follow the repo's CI and approval rules. This needs the webhook (`pull_request` events). Hosts that only poll do not see new PRs, so an admin merges them.
+**PRs people open by hand.** On a branch that requires the harness checks, the GitHub webhook posts `success` ("Not a TS Harness PR") on those checks for PRs that are neither on a `wo/` branch nor recorded by a program. Those PRs then follow the repo's CI and approval rules. This needs the App's webhook with the `pull_request` event ([GitHub App → Webhook](github-app.md#webhook)); check it with `python3 /app/scripts/github-app-webhook.py`. Hosts that only poll do not see new PRs, so an admin merges them.
 
 **Repos with no CI on pull requests.** The report flags it: PRs would merge on harness checks alone. Add a workflow that runs on `pull_request` into the branch.
 
