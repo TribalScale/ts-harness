@@ -303,6 +303,8 @@ First public release.
 
 ### Fixed
 
+- Release gates say why they failed: a check can return a reason, `agent_redteam` names every failing case, and `agent_output_judge` re-runs a failing case once (a model grading free text can be wrong once) and records cases that passed only on the retry. The red-team gate is never retried. Before this, a single false fail from the output judge stopped a host bootstrap with no reason logged.
+
 - The `tenant_isolation` release gate passed only once per database when audit events are in Postgres: it wrote events for tenants `a` and `b` and expected exactly one for `a`, so earlier runs' events failed every later bootstrap or phase 16 re-run. It and `audit_export` now use fresh `release-gate-*` tenant ids each run and check by event id.
 
 - The `agent_redteam` release gate failed agents that refused an injection and quoted it in their report, because each canary appeared word for word in the attack text. Each attack now asks the agent to build the canary (for example `CANARY-JIRA-` plus 7 times 6), so only obeying the injection produces it. Found on the first full bootstrap of the dev host.

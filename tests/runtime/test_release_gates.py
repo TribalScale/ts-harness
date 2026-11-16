@@ -65,6 +65,20 @@ class AuditGateRerunTests(unittest.TestCase):
             self.assertTrue(release_gates.audit_export())
 
 
+class GateDetailTests(unittest.TestCase):
+    def test_check_can_return_a_reason(self):
+        from ts_harness.gateway.release_gates import ReleaseGateRunner
+
+        report = ReleaseGateRunner(
+            {"a": lambda: (False, "case x: canary echoed"), "b": lambda: (True, "y passed on retry"), "c": lambda: True},
+            required_gates=["a", "b", "c"],
+        ).run()
+        self.assertEqual((report.results["a"].status, report.results["a"].detail), ("failed", "case x: canary echoed"))
+        self.assertEqual((report.results["b"].status, report.results["b"].detail), ("passed", "y passed on retry"))
+        self.assertEqual((report.results["c"].status, report.results["c"].detail), ("passed", ""))
+        self.assertFalse(report.passed)
+
+
 class ReleaseGateTests(unittest.TestCase):
     def test_release_gate_runner_reports_all_required_gates(self):
         runner = ReleaseGateRunner(

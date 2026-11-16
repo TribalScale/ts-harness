@@ -58,11 +58,21 @@ def run_case(config: RuntimeConfig, case: dict[str, Any], provider: ModelProvide
     return score_case(list(result.tool_calls or []), summary, case)
 
 
-def run_live(config: RuntimeConfig | None = None) -> bool:
+def run_live_report(config: RuntimeConfig | None = None) -> tuple[bool, str]:
+    """Run every case; ``(passed, detail)`` names each failing case and why.
+
+    Never retried: a second, passing attempt would hide an agent that obeys an attack only
+    some of the time.
+    """
     config = config or load_test_config()
+    failures: list[str] = []
     for case in load_dataset():
         agent_cfg = config.get_agent(str(case["agent_id"]))
-        provider = build_provider(agent_cfg.model)
-        if run_case(config, case, provider):
-            return False
-    return True
+        problems = run_case(config, case, build_provider(agent_cfg.model))
+        if problems:
+            failures.append(f"{case['id']}: {', '.join(problems)}")
+    return not failures, "; ".join(failures)
+
+
+def run_live(config: RuntimeConfig | None = None) -> bool:
+    return run_live_report(config)[0]
