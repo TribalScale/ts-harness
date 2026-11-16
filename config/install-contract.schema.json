@@ -183,7 +183,11 @@
       "properties": {
         "app_id": { "type": ["integer", "string"] },
         "slug": { "type": "string" },
-        "host": { "type": "string" }
+        "host": { "type": "string" },
+        "webhook_funnel": {
+          "type": "boolean",
+          "description": "Expose /webhooks/github through Tailscale Funnel on port 8443 and point the App's webhook at it. See docs/runbooks/github-app.md."
+        }
       }
     },
     "terraform_state": {

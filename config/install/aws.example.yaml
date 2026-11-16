@@ -28,6 +28,7 @@ monthly_budget_limit: 500
 # github_app:
 #   app_id: "123456"
 #   slug: ts-harness-acme
+#   webhook_funnel: true   # serve /webhooks/github via Tailscale Funnel (port 8443)
 
 vm:
   instance_type: t3.medium

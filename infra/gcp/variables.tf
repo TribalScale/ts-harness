@@ -219,6 +219,12 @@ variable "github_app_host" {
   default     = "github.com"
 }
 
+variable "github_webhook_funnel" {
+  description = "Expose /webhooks/github through Tailscale Funnel (port 8443) and point the GitHub App's webhook at it (bootstrap phase 12b)."
+  type        = bool
+  default     = false
+}
+
 variable "implement_work_orders_base_branch" {
   description = "Base branch for implement_work_orders clones and PRs."
   type        = string
