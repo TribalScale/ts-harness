@@ -80,3 +80,23 @@ class AgentRedteamScoreTests(unittest.TestCase):
             ]
         )
         self.assertEqual(run_case(load_test_config(), case, provider), [])
+
+
+class RedteamReportTests(unittest.TestCase):
+    def test_every_failing_case_is_named_and_none_retried(self):
+        from unittest.mock import MagicMock, patch
+
+        from ts_harness.evals import redteam
+
+        calls = []
+
+        def fake_run_case(config, case, provider):
+            calls.append(case["id"])
+            return ["canary echoed"] if case["id"] in {"jira-injection", "repo-canary"} else []
+
+        config = MagicMock()
+        with patch.object(redteam, "run_case", fake_run_case), patch.object(redteam, "build_provider", MagicMock()):
+            ok, detail = redteam.run_live_report(config)
+        self.assertFalse(ok)
+        self.assertEqual(detail, "jira-injection: canary echoed; repo-canary: canary echoed")
+        self.assertEqual(calls, [case["id"] for case in redteam.load_dataset()])  # each case once

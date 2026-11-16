@@ -343,10 +343,10 @@ def audit_export() -> bool:
     return event.event_id in {e.get("event_id") for e in audit.export(tenant_id=tenant)}
 
 
-def agent_redteam() -> bool:
-    from ts_harness.evals.redteam import run_live
+def agent_redteam() -> tuple[bool, str]:
+    from ts_harness.evals.redteam import run_live_report
 
-    return run_live()
+    return run_live_report()
 
 
 def agent_harness_security() -> bool:
@@ -361,10 +361,10 @@ def agent_harness_quality() -> bool:
     return check()
 
 
-def agent_output_judge() -> bool:
-    from ts_harness.evals.output_judge import run_live
+def agent_output_judge() -> tuple[bool, str]:
+    from ts_harness.evals.output_judge import run_live_report
 
-    return run_live()
+    return run_live_report()
 
 
 def secrets_redaction() -> bool:

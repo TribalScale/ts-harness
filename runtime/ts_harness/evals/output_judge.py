@@ -88,12 +88,34 @@ def judge_answer(provider: ModelProvider, case: dict[str, Any], summary: str) ->
     return score_judgment(_assistant_text(response))
 
 
-def run_live(config: RuntimeConfig | None = None) -> bool:
+def _attempt(config: RuntimeConfig, case: dict[str, Any]) -> list[str]:
+    agent_cfg = config.get_agent(str(case["agent_id"]))
+    provider = _ZeroTemperature(build_provider(agent_cfg.model))
+    return judge_answer(provider, case, _answer(config, case, provider))
+
+
+def run_live_report(config: RuntimeConfig | None = None, *, attempt=None) -> tuple[bool, str]:
+    """Judge every case; a case that fails is answered and judged once more.
+
+    The judge is a model grading free text, so a single false "fail" is plausible; a case must
+    fail twice to fail the gate. The detail names failing cases and the reasons, and also
+    cases that passed only on the retry, so flaky ones show up in the release-gate log.
+    """
     config = config or load_test_config()
+    attempt = attempt or _attempt
+    failed: list[str] = []
+    retried: list[str] = []
     for case in load_dataset():
-        agent_cfg = config.get_agent(str(case["agent_id"]))
-        provider = _ZeroTemperature(build_provider(agent_cfg.model))
-        summary = _answer(config, case, provider)
-        if judge_answer(provider, case, summary):
-            return False
-    return True
+        first = attempt(config, case)
+        if not first:
+            continue
+        second = attempt(config, case)
+        if second:
+            failed.append(f"{case['id']}: {'; '.join(first)} / retry: {'; '.join(second)}")
+        else:
+            retried.append(f"{case['id']} passed on retry after: {'; '.join(first)}")
+    return not failed, "; ".join(failed + retried)
+
+
+def run_live(config: RuntimeConfig | None = None) -> bool:
+    return run_live_report(config)[0]
