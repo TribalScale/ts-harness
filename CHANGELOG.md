@@ -11,6 +11,15 @@ First public release.
 
 ### Added
 
+- Hosts can be rebuilt from the repo and the stored install config ([Rebuild a host](docs/runbooks/rebuild-a-host.md)):
+  - `install.sh apply` stores the install YAML beside the Terraform state; `install.sh config pull|push|diff` manage it; `plan --replace` plans a rebuild.
+  - `runtime.enterprise_repo_ref` picks the branch the host clones and runs; `redeploy.sh` warns when another branch is checked out.
+  - `vm.tailscale_hostname` keeps the tailnet URL across rebuilds; `vm.tailscale_tags` and an OAuth-client auth secret avoid expiring auth keys; phase 06 removes the old offline machine with the same name and installs a pinned Tailscale version (1.104.6).
+  - On a replaced instance, the bootstrap re-runs the phases that configure the root disk (their markers live on the surviving data disk).
+  - The instance follows the data disk's availability zone, and Terraform never replaces the data disk over its zone. Before this, `-replace` of the instance planned to replace the data disk.
+  - The Google OAuth callback follows the host's tailnet address unless set to a custom domain, and is cleared when Google OAuth is not configured.
+  - Live-test tools moved into `scripts/ops/live-test/`.
+
 - GitHub App webhook setup is scripted and survives host rebuilds: `scripts/github-app-webhook.py` sets the App's webhook URL and secret and reports missing events, and bootstrap phase `12b-github-webhook` (install YAML `github_app.webhook_funnel: true`) exposes only `/webhooks/github` through Tailscale Funnel on port 8443 and re-points the App at it. The GitHub App runbook documents the whole setup, including accepting new App permissions.
 
 - Programs onboard their repositories: on first entering the implement phase, a repository whose CI runs an e2e suite but has no `.ts-harness.yml` gets an onboarding work order (`WO-0000`), and that repository's other work orders wait for it to merge. Recorded in the `repo_onboarding` program artifact.

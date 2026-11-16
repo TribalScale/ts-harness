@@ -76,6 +76,16 @@ Start from `config/install/aws.example.yaml`. Fields that must change:
   `secret_prefix` reached Terraform use `project_name`, and `validate` fails with
   `SECRET_PREFIX_CHANGED` rather than let an apply replace their secrets.
 
+- `runtime.enterprise_repo_ref`: the branch the host runs (for example `dev`);
+  default: the repository's default branch.
+- `vm.tailscale_hostname` and `vm.tailscale_tags`: a fixed tailnet name, and tags
+  for an OAuth-client auth secret, so the host's URLs survive a rebuild. See
+  [Rebuild a host](rebuild-a-host.md).
+
+`apply` stores the YAML beside the Terraform state (`install-config.yaml`);
+`./scripts/install.sh config pull|push|diff` manage it. Keep a local copy out of
+git (`config/install/*-dev.yaml` is ignored).
+
 **One environment per AWS account.** AWS resource names derive from
 `project_name` only; `environment` does not reach Terraform. Two environments
 in one account collide unless each sets a different `project_name`.
@@ -290,6 +300,7 @@ Terraform (SSM update, no instance replace) and run
 ## Related
 
 - Common workflow: [`install.md`](install.md)
+- Rebuild or replace the host: [`rebuild-a-host.md`](rebuild-a-host.md)
 - Runtime config: [`runtime-config.md`](runtime-config.md)
 - Troubleshooting: [`cloud-troubleshooting.md`](cloud-troubleshooting.md)
 - Compatibility matrix: [`../compatibility.md`](../compatibility.md)
