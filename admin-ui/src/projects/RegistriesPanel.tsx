@@ -254,6 +254,8 @@ export function RegistriesPanel({ projectId }: { projectId: string }) {
           aria-label={draft.id ? "Edit registry" : "Add registry"}
           onSubmit={(event) => {
             event.preventDefault();
+            // Same rule as the disabled Save button; don't rely on the button alone.
+            if (!draft.url.trim() || busy) return;
             void save();
           }}
         >

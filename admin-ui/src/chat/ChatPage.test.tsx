@@ -4,6 +4,7 @@ import { useState } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { ChatPage } from "./ChatPage";
+import { getAlert, findAlert } from "../test/alerts";
 
 function installMobileMediaQuery() {
   Object.defineProperty(window, "matchMedia", {
@@ -152,7 +153,7 @@ it("restores the draft after send fails", async () => {
   await userEvent.type(screen.getByLabelText("Message"), "retry me");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByDisplayValue("retry me")).toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveTextContent("provider unavailable");
+  expect(getAlert()).toHaveTextContent("provider unavailable");
 });
 
 it("keeps optimistic messages when the reloaded transcript is empty", async () => {
@@ -249,7 +250,7 @@ it("rejects a whitespace-only send", async () => {
   const box = await screen.findByLabelText("Message");
   await userEvent.type(box, "   ");
   await userEvent.keyboard("{Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent(
+  expect(await findAlert()).toHaveTextContent(
     "Enter a message or attach a file."
   );
   expect(box).toHaveValue("   ");
@@ -406,7 +407,7 @@ it("shows a blocked slash-invoke summary without an assistant bubble", async () 
   renderPage(<ChatPage onSelectSession={() => undefined} />);
   await userEvent.type(screen.getByLabelText("Message"), "/draft-prd now");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Cannot use /draft-prd: draft.");
+  expect(await findAlert()).toHaveTextContent("Cannot use /draft-prd: draft.");
   expect(screen.queryByText("Cannot use /draft-prd: draft.", { selector: ".bubble.assistant" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("Failed message")).toBeInTheDocument();
 });
@@ -602,9 +603,9 @@ it("disables send while a file is uploading", async () => {
   renderPage(<ChatPage onSelectSession={() => undefined} />);
   await userEvent.upload(screen.getByLabelText("Attach files"), fileOf("brief.txt", "hello"));
   expect(await screen.findByText("Uploading…")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabledControl();
   await act(async () => finish(jsonResponse({ pointer: POINTER }) as Response));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabledControl());
 });
 
 it("refuses a file over 20 MB without uploading it", async () => {
@@ -614,7 +615,7 @@ it("refuses a file over 20 MB without uploading it", async () => {
     screen.getByLabelText("Attach files"),
     fileOf("video.mov", "x", "video/quicktime", 25 * 1024 * 1024)
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
+  expect(await findAlert()).toHaveTextContent(
     "Files are limited to 20 MB each and 80 MB per message."
   );
   expect(fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/intake/uploads"))).toBe(false);

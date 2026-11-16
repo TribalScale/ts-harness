@@ -45,15 +45,15 @@
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.35",
-    "@astryxdesign/core": "0.7.0",
-    "@astryxdesign/theme-neutral": "0.7.0",
+    "@astryxdesign/core": "0.7.13",
+    "@astryxdesign/theme-neutral": "0.7.13",
     "@stylexjs/stylex": "0.19.1",
     "@xyflow/react": "^12.12.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@astryxdesign/cli": "0.7.0",
+    "@astryxdesign/cli": "0.7.13",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.9",

@@ -50,7 +50,7 @@ describe("RepositoriesPanel", () => {
     );
     expect(document.querySelector("datalist option")).toHaveAttribute("value", "acme/web");
     const add = screen.getByRole("button", { name: "Add" });
-    expect(add).toBeDisabled();
+    expect(add).toBeDisabledControl();
     await userEvent.type(screen.getByLabelText("Repository (owner/name)"), "acme/web");
     await userEvent.type(screen.getByLabelText("Role (optional, e.g. web or api)"), "web");
     await userEvent.click(add);

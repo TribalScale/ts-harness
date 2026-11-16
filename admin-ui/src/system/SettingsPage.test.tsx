@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { SystemPage } from "./SystemPage";
 import { SettingsPage } from "./SettingsPage";
+import { getAlert, findAlert } from "../test/alerts";
 
 function settingsPayload() {
   return {
@@ -350,7 +351,7 @@ describe("Settings page", () => {
     await screen.findByRole("heading", { name: "Identity" });
     await user.click(screen.getByRole("button", { name: "Validate" }));
     expect(await screen.findByText("duplicate email: ada@example.com")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabledControl();
   });
 
   it("shows Validated after a successful validate and refreshes Advanced YAML", async () => {
@@ -408,8 +409,9 @@ describe("Settings page", () => {
     expect(await screen.findByText(/runtime-settings draft c3d7bd12/)).toBeInTheDocument();
     expect(screen.getByText(/active 1\.0\.0/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Validate" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("revision conflict");
-    expect(screen.getByRole("alert")).toHaveClass("error");
+    expect(await findAlert()).toHaveTextContent("revision conflict");
+    // ErrorBanner: Astryx puts role="alert" on the Banner's inner element, inside the .error wrapper.
+    expect(getAlert().closest(".error")).not.toBeNull();
   });
 
   it("reloads routing and clears dirty after Activate", async () => {

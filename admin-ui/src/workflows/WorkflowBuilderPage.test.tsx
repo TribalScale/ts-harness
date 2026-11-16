@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { WorkflowBuilderPage } from "./WorkflowBuilderPage";
+import { getAlert } from "../test/alerts";
 
 function installDialogMethods() {
   HTMLDialogElement.prototype.showModal = vi.fn(function showModal(this: HTMLDialogElement) {
@@ -385,7 +386,7 @@ it("shows an activation warning when runtime reload fails", async () => {
   );
 
   await userEvent.click(await screen.findByRole("button", { name: /validate/i }));
-  await waitFor(() => expect(screen.getByRole("button", { name: /activate/i })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: /activate/i })).not.toBeDisabledControl());
   await userEvent.click(screen.getByRole("button", { name: /activate/i }));
   await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /activate draft/i }));
 
@@ -509,11 +510,11 @@ it("keeps activation disabled until validation succeeds", async () => {
   renderPage(<WorkflowBuilderPage route={{ kind: "draft", draftId: "draft-1" }} onNavigate={() => undefined} />);
 
   const activate = await screen.findByRole("button", { name: /activate/i });
-  expect(activate).toBeDisabled();
+  expect(activate).toBeDisabledControl();
 
   await userEvent.click(screen.getByRole("button", { name: /validate/i }));
 
-  await waitFor(() => expect(activate).toBeEnabled());
+  await waitFor(() => expect(activate).not.toBeDisabledControl());
 });
 
 it("only offers validation focus for stage paths", async () => {
@@ -579,11 +580,11 @@ it("disables activation after workflow-level edits until revalidated", async () 
   const activate = await screen.findByRole("button", { name: /activate/i });
   await userEvent.click(screen.getByRole("button", { name: /validate/i }));
 
-  await waitFor(() => expect(activate).toBeEnabled());
+  await waitFor(() => expect(activate).not.toBeDisabledControl());
   await userEvent.clear(screen.getByLabelText("Workflow type"));
   await userEvent.type(screen.getByLabelText("Workflow type"), "ship_feature_v2");
 
-  expect(activate).toBeDisabled();
+  expect(activate).toBeDisabledControl();
 });
 
 it("ignores a stale validate response after switching drafts", async () => {
@@ -618,7 +619,7 @@ it("ignores a stale validate response after switching drafts", async () => {
     await validate.promise;
   });
 
-  expect(screen.getByRole("button", { name: /activate/i })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /activate/i })).toBeDisabledControl();
 });
 
 it("keeps newer local edits when a save response arrives late", async () => {
@@ -708,7 +709,7 @@ it("restores dirty state when clone fails after discard confirmation", async () 
   await userEvent.click(screen.getByRole("button", { name: /clone ship_feature/i }));
 
   expect(confirm).toHaveBeenCalled();
-  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/clone failed/i));
+  await waitFor(() => expect(getAlert()).toHaveTextContent(/clone failed/i));
   expect(screen.getByLabelText("Display name")).toHaveValue("Dirty draft");
 });
 

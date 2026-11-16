@@ -274,6 +274,8 @@ function NoteForm({
       aria-label="Note form"
       onSubmit={(event) => {
         event.preventDefault();
+        // Same rule as the disabled submit button; don't rely on the button alone.
+        if (busy || !draft.title.trim() || !draft.body.trim()) return;
         onSubmit();
       }}
     >

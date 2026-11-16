@@ -6,6 +6,7 @@ import type { InboxItem } from "../api/types";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { setPermissions } from "../auth/session";
 import { InboxPage } from "./InboxPage";
+import { findAlert } from "../test/alerts";
 
 const inboxItems: InboxItem[] = [
   {
@@ -304,7 +305,7 @@ it("keeps the list visible and retries only detail loading when detail fetch fai
 
   expect(await screen.findByRole("button", { name: /Tool approval/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Workflow gate/ })).toBeInTheDocument();
-  expect(await screen.findByRole("alert")).toHaveTextContent("draft storage unavailable");
+  expect(await findAlert()).toHaveTextContent("draft storage unavailable");
   expect(screen.getByRole("button", { name: /Skill draft/ })).toBeInTheDocument();
 
   const detail = screen.getByRole("region", { name: /Skill draft detail/i });

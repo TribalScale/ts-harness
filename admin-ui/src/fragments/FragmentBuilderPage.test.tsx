@@ -136,7 +136,7 @@ it("hides mutations for non-admin roles and shows built-ins read-only", async ()
   expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "New version draft" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "New fragment" })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Fragment id")).toBeDisabled();
+  expect(screen.getByLabelText("Fragment id")).toBeDisabledControl();
 });
 
 it("hides the fragment editor when the server grants no permissions", async () => {

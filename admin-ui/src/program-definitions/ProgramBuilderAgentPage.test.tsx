@@ -144,7 +144,7 @@ it("renders draft cards with issues, links, and discarded drafts", async () => {
     "href",
     "#/inbox/skill_draft"
   );
-  expect(screen.getByRole("button", { name: "Activate all" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Activate all" })).toBeDisabledControl();
 });
 
 it("activates with the displayed revisions and offers retry after a partial failure", async () => {
@@ -187,7 +187,7 @@ it("activates with the displayed revisions and offers retry after a partial fail
 
   renderPage(<ProgramBuilderAgentPage sessionId="session-1" onNavigate={() => undefined} />);
   const activate = await screen.findByRole("button", { name: "Activate all" });
-  await waitFor(() => expect(activate).toBeEnabled());
+  await waitFor(() => expect(activate).not.toBeDisabledControl());
   await userEvent.click(activate);
 
   const steps = await screen.findByRole("list", { name: "Activation steps" });

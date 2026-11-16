@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { RegistriesPanel } from "./RegistriesPanel";
+import { getAlert } from "../test/alerts";
 
 const REGISTRY = {
   id: "r1",
@@ -69,6 +70,18 @@ describe("RegistriesPanel", () => {
     expect(screen.queryByLabelText("Registry token")).not.toBeInTheDocument();
   });
 
+  it("does not save a registry without a URL when Enter submits the form", async () => {
+    const writes: string[] = [];
+    mockFetch((url, init) => {
+      if ((init?.method || "GET").toUpperCase() !== "GET") writes.push(url);
+      return jsonResponse({ registries: [] });
+    });
+    renderPage(<RegistriesPanel projectId="p1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add registry" }));
+    await userEvent.type(screen.getByLabelText("Registry token"), "s3cret{Enter}");
+    expect(writes).toEqual([]);
+  });
+
   it("editing without a new token keeps the stored credential", async () => {
     const puts: string[] = [];
     mockFetch((url, init) => {
@@ -96,12 +109,39 @@ describe("ProjectSettingsPage", () => {
     });
     renderPage(<ProjectSettingsPage selectedId="p1" />);
     await userEvent.selectOptions(await screen.findByLabelText("Worker CPU"), "1024");
-    expect(screen.getByRole("alert")).toHaveTextContent("Set both CPU and memory");
+    expect(getAlert()).toHaveTextContent("Set both CPU and memory");
     await userEvent.type(screen.getByLabelText("Worker memory"), "16384");
-    expect(screen.getByRole("alert")).toHaveTextContent("2048–8192");
-    expect(screen.getByRole("button", { name: "Save project" })).toBeDisabled();
-    expect(screen.getByLabelText("Owning team")).toBeDisabled();
+    expect(getAlert()).toHaveTextContent("2048–8192");
+    expect(screen.getByRole("button", { name: "Save project" })).toBeDisabledControl();
+    expect(screen.getByLabelText("Owning team")).toBeDisabledControl();
     expect(screen.queryByRole("form", { name: "New project" })).not.toBeInTheDocument();
+  });
+
+  // Astryx buttons are aria-disabled, so Enter in a field still submits the form: the handlers
+  // must refuse what the disabled button refuses.
+  it("does not save invalid worker sizing when Enter submits the form", async () => {
+    const writes: string[] = [];
+    mockFetch((url, init) => {
+      if ((init?.method || "GET").toUpperCase() !== "GET") writes.push(url);
+      if (url.endsWith("/registries")) return jsonResponse({ registries: [] });
+      return jsonResponse({ projects: [PROJECT], is_admin: false });
+    });
+    renderPage(<ProjectSettingsPage selectedId="p1" />);
+    await userEvent.selectOptions(await screen.findByLabelText("Worker CPU"), "1024");
+    await userEvent.type(screen.getByLabelText("Project name"), " renamed{Enter}");
+    expect(getAlert()).toHaveTextContent("Set both CPU and memory");
+    expect(writes).toEqual([]);
+  });
+
+  it("does not create a project with an empty key when Enter submits the form", async () => {
+    const writes: string[] = [];
+    mockFetch((url, init) => {
+      if ((init?.method || "GET").toUpperCase() !== "GET") writes.push(url);
+      return jsonResponse({ projects: [PROJECT], is_admin: true });
+    });
+    renderPage(<ProjectSettingsPage selectedId="p1" />);
+    await userEvent.type(await screen.findByLabelText("New project key"), "   {Enter}");
+    expect(writes).toEqual([]);
   });
 
   it("hides registries from people who cannot manage the project", async () => {

@@ -95,7 +95,7 @@ it("switches visibility and reports the change", async () => {
   );
 
   const publicOption = await screen.findByRole("radio", { name: /Public/ });
-  await waitFor(() => expect(publicOption).toBeEnabled());
+  await waitFor(() => expect(publicOption).not.toBeDisabledControl());
   await userEvent.click(publicOption);
   await waitFor(() => expect(changes).toEqual(["public"]));
   expect(publicOption).toBeChecked();
@@ -109,5 +109,5 @@ it("is read-only for people who cannot manage the program", async () => {
   expect(await screen.findByText("Team payments")).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Search people and teams" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("radio", { name: /Public/ })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: /Public/ })).toBeDisabledControl();
 });

@@ -88,7 +88,7 @@ describe("BudgetsPage", () => {
     await userEvent.click(within(web).getByRole("button", { name: "Change budget" }));
     const dialog = screen.getByRole("region", { name: "Raise budget" });
     const save = within(dialog).getByRole("button", { name: "Save budget" });
-    expect(save).toBeDisabled();
+    expect(save).toBeDisabledControl();
     const amount = within(dialog).getByLabelText("Monthly budget");
     await userEvent.clear(amount);
     await userEvent.type(amount, "7500");
@@ -115,7 +115,7 @@ describe("BudgetsPage", () => {
     await userEvent.type(amount, "12000");
     await userEvent.type(within(dialog).getByLabelText("Reason"), "more");
     expect(within(dialog).getByText("Above the manager limit; ask an admin.")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Save budget" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save budget" })).toBeDisabledControl();
     expect(screen.queryByText(/came from calls without a team/)).not.toBeInTheDocument();
   });
 });
