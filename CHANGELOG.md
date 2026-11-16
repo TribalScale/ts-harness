@@ -303,6 +303,8 @@ First public release.
 
 ### Fixed
 
+- The `tenant_isolation` release gate passed only once per database when audit events are in Postgres: it wrote events for tenants `a` and `b` and expected exactly one for `a`, so earlier runs' events failed every later bootstrap or phase 16 re-run. It and `audit_export` now use fresh `release-gate-*` tenant ids each run and check by event id.
+
 - The `agent_redteam` release gate failed agents that refused an injection and quoted it in their report, because each canary appeared word for word in the attack text. Each attack now asks the agent to build the canary (for example `CANARY-JIRA-` plus 7 times 6), so only obeying the injection produces it. Found on the first full bootstrap of the dev host.
 
 - `retry-program-phases` was in `config/runtime-cron-jobs.json` but not in phase 15's system jobs, so on hosts with `TS_HARNESS_STATE_BACKEND=postgres` failed program phase completions were never retried. A test now keeps the two lists in sync.

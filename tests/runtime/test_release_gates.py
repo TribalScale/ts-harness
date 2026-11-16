@@ -20,6 +20,51 @@ release_gates = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_gates)
 
 
+class _PersistentAuditStore:
+    """Stands in for runtime_audit_events: events outlive each AuditWriter, like Postgres."""
+
+    def __init__(self):
+        self.rows = []
+
+    def append_audit_events(self, events):
+        self.rows.extend(dict(e) for e in events)
+        return {"accepted": len(events)}
+
+    def list_audit_events(self, *, tenant_id="", since="", until=""):
+        return [dict(r) for r in self.rows if not tenant_id or r["tenant_id"] == tenant_id]
+
+
+class AuditGateRerunTests(unittest.TestCase):
+    """The audit gates run on every bootstrap and redeploy against the same audit log."""
+
+    def test_tenant_isolation_and_audit_export_pass_again_on_a_persistent_store(self):
+        from ts_harness.audit.writer import AuditWriter
+
+        store = _PersistentAuditStore()
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=True, client=store)):
+            for _ in range(3):
+                self.assertTrue(release_gates.tenant_isolation())
+                self.assertTrue(release_gates.audit_export())
+        self.assertTrue(all(r["tenant_id"].startswith("release-gate-") for r in store.rows))
+
+    def test_tenant_isolation_catches_a_leak(self):
+        class Leaky(_PersistentAuditStore):
+            def list_audit_events(self, *, tenant_id="", since="", until=""):
+                return [dict(r) for r in self.rows]  # ignores the tenant filter
+
+        from ts_harness.audit.writer import AuditWriter
+
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=True, client=Leaky())):
+            self.assertFalse(release_gates.tenant_isolation())
+
+    def test_local_store(self):
+        from ts_harness.audit.writer import AuditWriter
+
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=False)):
+            self.assertTrue(release_gates.tenant_isolation())
+            self.assertTrue(release_gates.audit_export())
+
+
 class ReleaseGateTests(unittest.TestCase):
     def test_release_gate_runner_reports_all_required_gates(self):
         runner = ReleaseGateRunner(
