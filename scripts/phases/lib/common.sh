@@ -213,9 +213,57 @@ ensure_google_workspace_sa_mount_file() {
     fi
 }
 
+# Phases whose results live on the root disk (users, packages, firewall, SSH, Docker images and
+# containers, Tailscale, crontab, the enterprise-assets checkout). Their markers live on the data
+# disk, which outlives the instance, so a replaced instance must re-run them.
+HOST_LEVEL_PHASES=(
+    02-admin-user 03-ufw 04-ssh-harden 05-docker 06-tailscale 09-clone-enterprise
+    12-compose-up 12a-db-credential-watch 12b-github-webhook 14-channels-init
+    15-automation-cron 16-release-gates
+)
+
+# After the data disk is mounted: when it was set up by another instance (or by a host that
+# predates host-id), drop the host-level markers so this instance configures its own root disk.
+# Data-disk, database and cloud phases keep their markers. Usage: reset_markers_for_new_host <data_dir> <host_id>
+reset_markers_for_new_host() {
+    local data_dir="$1" host_id="$2" setup recorded phase
+    setup="$data_dir/.setup"
+    mkdir -p "$setup"
+    recorded="$(cat "$setup/host-id" 2>/dev/null || true)"
+    if [[ "$recorded" != "$host_id" ]] && compgen -G "$setup/phase-*.done" >/dev/null; then
+        echo "[bootstrap] Data disk was set up by ${recorded:-an earlier host}; re-running host-level phases on ${host_id}."
+        for phase in "${HOST_LEVEL_PHASES[@]}"; do
+            rm -f "$setup/phase-${phase}.done"
+        done
+        rm -f "$data_dir/.setup-complete"
+    fi
+    printf '%s\n' "$host_id" > "$setup/host-id"
+}
+
+# Google OAuth callback for deployments that use Google sign-in or Workspace OAuth.
+# Without GOOGLE_OAUTH_CLIENT_ID it is cleared. A blank, placeholder or tailnet (*.ts.net) value
+# follows this host's current tailnet name, so it stays right after a rebuild; any other URL
+# (a custom domain) is kept as set in the google-oauth-callback-url secret.
+resolve_google_oauth_callback() {
+    local current="${GOOGLE_OAUTH_CALLBACK_URL:-}" fqdn
+    if is_blank_or_placeholder "${GOOGLE_OAUTH_CLIENT_ID:-}"; then
+        export GOOGLE_OAUTH_CALLBACK_URL=""
+        return 0
+    fi
+    if is_blank_or_placeholder "$current" || [[ "$current" == https://*.ts.net/* ]]; then
+        fqdn="$(cat "${DATA_DIR}/.setup/tailscale-fqdn" 2>/dev/null || true)"
+        fqdn="${fqdn//[[:space:]]/}"
+        if [[ -n "$fqdn" ]]; then
+            export GOOGLE_OAUTH_CALLBACK_URL="https://${fqdn}/oauth/google/callback"
+        fi
+    fi
+}
+
 write_runtime_env_file() {
     local env_file="$1"
     local key value
+
+    resolve_google_oauth_callback
 
     mkdir -p "$(dirname "$env_file")"
     : > "$env_file"
@@ -432,6 +480,9 @@ INSTANCE_ENV_KEYS=(
     GITHUB_APP_SLUG
     GITHUB_APP_HOST
     GITHUB_WEBHOOK_FUNNEL
+    ENTERPRISE_REPO_REF
+    TAILSCALE_HOSTNAME
+    TAILSCALE_TAGS
     IMPLEMENT_WORK_ORDERS_BASE_BRANCH
     IMPLEMENT_JIRA_TICKET_REPO_URL
     IMPLEMENT_JIRA_TICKET_BASE_BRANCH

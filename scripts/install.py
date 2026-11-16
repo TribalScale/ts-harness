@@ -26,6 +26,7 @@ from install_checks import (
 )
 from install_contract import InstallContractError, load_install_config
 from install_post_apply import render_post_apply_next_steps
+import install_config_store
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE_BASE = REPO_ROOT / ".install"
@@ -156,6 +157,9 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "budget_alert_email": config.get("notification_email"),
             "agent_runtime_version": runtime.get("agent_runtime_version"),
             "enterprise_repo_url": runtime.get("enterprise_repo_url"),
+            "enterprise_repo_ref": runtime.get("enterprise_repo_ref"),
+            "tailscale_hostname": vm.get("tailscale_hostname"),
+            "tailscale_tags": ",".join(vm.get("tailscale_tags") or []) or None,
             "multi_agent_enabled": bool(runtime.get("multi_agent_enabled", False)),
             "workflow_runner_enabled": bool(runtime.get("workflow_runner_enabled", False)),
             "coding_jobs_enabled": bool(runtime.get("coding_jobs_enabled", False)),
@@ -257,6 +261,9 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
         "cloud_sql_availability_type": "REGIONAL" if db.get("multi_az", True) else "ZONAL",
         "agent_runtime_version": runtime.get("agent_runtime_version"),
         "enterprise_repo_url": runtime.get("enterprise_repo_url"),
+        "enterprise_repo_ref": runtime.get("enterprise_repo_ref"),
+        "tailscale_hostname": vm.get("tailscale_hostname"),
+        "tailscale_tags": ",".join(vm.get("tailscale_tags") or []) or None,
         "multi_agent_enabled": bool(runtime.get("multi_agent_enabled", False)),
         "workflow_runner_enabled": bool(runtime.get("workflow_runner_enabled", False)),
         "coding_jobs_enabled": bool(runtime.get("coding_jobs_enabled", False)),
@@ -462,6 +469,7 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
 
         if command == "plan":
             cmd = [tf, f"-chdir={tf_root}", "plan", "-input=false", *var_file_args]
+            cmd += [f"-replace={address}" for address in getattr(args, "replace", None) or []]
             if plan_file:
                 plan_file.parent.mkdir(parents=True, exist_ok=True)
                 cmd.append(f"-out={plan_file}")
@@ -517,6 +525,9 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
     write_metadata(state_dir, {**meta, "status": status, "last_command": command})
     print(f"{command} ok: cloud={args.cloud} root=infra/{args.cloud} state={state_dir}")
 
+    if not args.dry_run:
+        _sync_stored_config(args, config, command=command)
+
     if command == "apply":
         runtime = config.get("runtime") or {}
         print(
@@ -530,6 +541,59 @@ def _cmd_plan_or_apply(args: argparse.Namespace, *, command: str) -> int:
     else:
         print("Next: ./scripts/install.sh apply --cloud", args.cloud, "--config", args.config)
     return 2 if has_changes else 0
+
+
+def _sync_stored_config(args: argparse.Namespace, config: Mapping[str, Any], *, command: str) -> None:
+    """After apply, store the YAML beside the Terraform state; on plan, say if it differs."""
+    try:
+        if command == "apply":
+            uri = install_config_store.push(Path(args.config), config)
+            print(f"install config stored at {uri}")
+            return
+        uri = install_config_store.stored_config_uri(config)
+        stored = install_config_store.fetch(uri, region=str((config.get("terraform_state") or {}).get("region") or ""))
+        changes = install_config_store.diff(Path(args.config).read_text(encoding="utf-8"), stored, uri=uri)
+        if changes:
+            print(f"NOTE: {args.config} differs from the stored install config ({uri}); apply stores it.")
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"WARN INSTALL_CONFIG_STORE: {exc}", file=sys.stderr)
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """pull | push | diff the install YAML stored beside the Terraform state."""
+    path = Path(args.config)
+    if args.action == "pull" and args.source:
+        uri, region = args.source, args.region or ""
+    else:
+        try:
+            config = load_install_config(args.config)
+        except InstallContractError as exc:
+            print(f"FAIL CONFIG_INVALID: {exc}", file=sys.stderr)
+            return 2
+        uri = install_config_store.stored_config_uri(config)
+        region = str((config.get("terraform_state") or {}).get("region") or "")
+    try:
+        if args.action == "push":
+            print("stored at", install_config_store.push(path, config))
+            return 0
+        stored = install_config_store.fetch(uri, region=region)
+        if args.action == "diff":
+            changes = install_config_store.diff(path.read_text(encoding="utf-8"), stored, uri=uri)
+            print(changes or "local and stored install config match")
+            return 1 if changes else 0
+        if stored is None:
+            print(f"nothing stored at {uri}", file=sys.stderr)
+            return 1
+        if path.exists() and path.read_text(encoding="utf-8") != stored and not args.force:
+            print(f"{path} exists and differs from {uri}; run `config diff`, or pass --force", file=sys.stderr)
+            return 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(stored, encoding="utf-8")
+        print(f"wrote {path} from {uri}")
+        return 0
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"FAIL INSTALL_CONFIG_STORE: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_destroy(args: argparse.Namespace) -> int:
@@ -688,6 +752,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit 0 when there are no changes, 2 when changes are pending, 1 on error",
     )
+    p_plan.add_argument(
+        "--replace",
+        action="append",
+        default=[],
+        metavar="ADDRESS",
+        help=(
+            "Plan to replace this resource (terraform -replace), e.g. aws_instance.harness to rebuild "
+            "the host; save with --plan-file and apply it with --allow-destroy. Repeatable."
+        ),
+    )
     p_plan.set_defaults(func=cmd_plan)
 
     p_apply = sub.add_parser("apply", help="Terraform apply in the selected provider root")
@@ -712,6 +786,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Must equal the config environment name",
     )
     p_destroy.set_defaults(func=cmd_destroy)
+
+    p_config = sub.add_parser(
+        "config",
+        help="pull, push or diff the install YAML stored beside the Terraform state",
+    )
+    p_config.add_argument("action", choices=("pull", "push", "diff"))
+    p_config.add_argument("--config", required=True, help="Local install YAML path")
+    p_config.add_argument(
+        "--source",
+        default=None,
+        help="pull only: s3:// or gs:// URI of the stored YAML, when no local copy exists yet",
+    )
+    p_config.add_argument("--region", default=None, help="AWS region for --source")
+    p_config.add_argument("--force", action="store_true", help="pull: overwrite a differing local file")
+    p_config.set_defaults(func=cmd_config)
 
     p_status = sub.add_parser("status", help="Show local install metadata")
     p_status.add_argument("--state-dir", default=None)

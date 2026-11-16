@@ -37,10 +37,18 @@ if [[ -d "$ENTERPRISE_ASSETS_DIR/.git" ]]; then
     # Ensure proper ownership before git operations (may have been cloned as root in bootstrap).
     chown -R "$ADMIN_USER:$ADMIN_USER" "$ENTERPRISE_ASSETS_DIR"
     sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" remote set-url origin "$ENTERPRISE_REPO_URL"
-    sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" pull --ff-only
-    echo "[phase:${PHASE_NAME}] Enterprise assets updated."
+    if [[ -n "${ENTERPRISE_REPO_REF:-}" ]]; then
+        # Run the configured branch (install YAML runtime.enterprise_repo_ref), not whatever is checked out.
+        sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" fetch --quiet origin "$ENTERPRISE_REPO_REF"
+        sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" checkout --quiet -B "$ENTERPRISE_REPO_REF" "origin/$ENTERPRISE_REPO_REF"
+    else
+        sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" pull --ff-only
+    fi
+    echo "[phase:${PHASE_NAME}] Enterprise assets updated ($(sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" branch --show-current))."
 else
-    sudo -u "$ADMIN_USER" git clone "$ENTERPRISE_REPO_URL" "$ENTERPRISE_ASSETS_DIR"
+    BRANCH_ARGS=()
+    if [[ -n "${ENTERPRISE_REPO_REF:-}" ]]; then BRANCH_ARGS=(--branch "$ENTERPRISE_REPO_REF"); fi
+    sudo -u "$ADMIN_USER" git clone "${BRANCH_ARGS[@]}" "$ENTERPRISE_REPO_URL" "$ENTERPRISE_ASSETS_DIR"
     echo "[phase:${PHASE_NAME}] Enterprise assets cloned."
 fi
 sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" remote set-url origin "$ENTERPRISE_REPO_URL"

@@ -7,6 +7,8 @@ source "${SCRIPT_DIR_LIB}/lib/env-defaults.sh"
 
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR_LIB}/lib/common.sh"
+# Manual re-runs: TAILSCALE_HOSTNAME and TAILSCALE_TAGS persisted by the first bootstrap.
+load_instance_env
 
 
 PHASE_NAME="06-tailscale"
@@ -24,13 +26,23 @@ fi
 echo "{\"phase\":\"${PHASE_NAME}\",\"event\":\"start\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 start_ts=$(date +%s%3N)
 
-echo "[phase:${PHASE_NAME}] Installing Tailscale..."
-if command -v tailscale &>/dev/null; then
-    echo "[phase:${PHASE_NAME}] Tailscale already installed."
+# Pinned for stability: new Tailscale releases reach hosts only when this pin is raised
+# (see docs/runbooks/rebuild-a-host.md#tailscale-version). Override with TAILSCALE_VERSION.
+TAILSCALE_VERSION="${TAILSCALE_VERSION:-1.104.6}"
+installed_version="$(tailscale version 2>/dev/null | head -1 || true)"
+if [[ "$installed_version" == "$TAILSCALE_VERSION" ]]; then
+    echo "[phase:${PHASE_NAME}] Tailscale ${TAILSCALE_VERSION} already installed."
 else
-    curl -fsSL https://tailscale.com/install.sh | sh
-    echo "[phase:${PHASE_NAME}] Tailscale installed."
+    echo "[phase:${PHASE_NAME}] Installing Tailscale ${TAILSCALE_VERSION} (found: ${installed_version:-none})..."
+    if ! command -v tailscale &>/dev/null; then
+        # Adds Tailscale's apt repository (and installs the latest), then we pin below.
+        curl -fsSL https://tailscale.com/install.sh | sh
+    fi
+    apt-mark unhold tailscale >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "tailscale=${TAILSCALE_VERSION}"
+    echo "[phase:${PHASE_NAME}] Tailscale ${TAILSCALE_VERSION} installed."
 fi
+apt-mark hold tailscale >/dev/null
 
 TAILSCALE_AUTHKEY=""
 if command -v aws &>/dev/null; then
@@ -38,9 +50,33 @@ if command -v aws &>/dev/null; then
 fi
 
 TS_FQDN=""
+TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-}"
+TAILSCALE_TAGS="${TAILSCALE_TAGS:-}"
 if [[ -n "${TAILSCALE_AUTHKEY//[[:space:]]/}" ]]; then
-    tailscale up --authkey="$TAILSCALE_AUTHKEY" --accept-routes
-    echo "[phase:${PHASE_NAME}] Tailscale authenticated and connected."
+    UP_ARGS=(--accept-routes)
+    # A fixed machine name keeps the tailnet URL (console, OAuth callbacks, webhook) across rebuilds.
+    [[ -n "$TAILSCALE_HOSTNAME" ]] && UP_ARGS+=(--hostname="$TAILSCALE_HOSTNAME")
+    AUTHKEY="$TAILSCALE_AUTHKEY"
+    if [[ "$TAILSCALE_AUTHKEY" == tskey-client-* ]]; then
+        # OAuth client secret: never expires, but the machine must be tagged.
+        TAILSCALE_TAGS="${TAILSCALE_TAGS:-tag:ts-harness}"
+        [[ "$AUTHKEY" == *\?* ]] || AUTHKEY="${AUTHKEY}?ephemeral=false&preauthorized=true"
+        if [[ -n "$TAILSCALE_HOSTNAME" ]]; then
+            # Remove the previous host's offline machine so this one gets the name, not <name>-1.
+            TS_OAUTH_CLIENT_SECRET="$TAILSCALE_AUTHKEY" python3 "${SCRIPT_DIR_LIB}/../ops/tailscale-stale-device.py" \
+                --hostname "$TAILSCALE_HOSTNAME" || echo "[phase:${PHASE_NAME}] WARNING: stale-device cleanup failed; the machine may be named ${TAILSCALE_HOSTNAME}-1."
+        fi
+    fi
+    [[ -n "$TAILSCALE_TAGS" ]] && UP_ARGS+=(--advertise-tags="$TAILSCALE_TAGS")
+    if tailscale status --json 2>/dev/null | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("BackendState") == "Running" else 1)'; then
+        # Already in the tailnet (phase re-run): adjust the name without re-authenticating.
+        [[ -n "$TAILSCALE_HOSTNAME" ]] && tailscale set --hostname="$TAILSCALE_HOSTNAME"
+        echo "[phase:${PHASE_NAME}] Tailscale already connected."
+    else
+        tailscale up --authkey="$AUTHKEY" "${UP_ARGS[@]}"
+        echo "[phase:${PHASE_NAME}] Tailscale authenticated and connected."
+    fi
+    unset AUTHKEY
 
     # The admin console nginx proxies every gateway route, so the tailnet root
     # can serve the console; CONTROL_UI_ALLOWED_ORIGIN (phase 11) expects it here.
