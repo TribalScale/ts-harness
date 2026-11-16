@@ -256,6 +256,8 @@ First public release.
 
 ### Changed
 
+- Dependency updates from Dependabot #51–#53, applied on dev: Go 1.27.4 for the tools build; starlette 1.10, OpenTelemetry 1.45.2, pytest 9.2, ruff 0.17.4, google-auth 2.62.2, inspect-ai 0.3.289 and others; React 19.3.1, @assistant-ui/react 0.15.35, @xyflow/react 12.12.1 and lint/test tooling. `@astryxdesign/*` stays at 0.7.0: 0.7.13 renders disabled buttons with `aria-disabled` instead of `disabled`, which fails 21 admin UI tests and needs its own review. Dependabot now targets dev, and `@astryxdesign/*` updates arrive in their own PR.
+
 - `jira_from_prd` 2.0.0 reviews the PRD, plans the stories, waits for approval of
   the plan (reject with feedback to revise it), then files the epic, stories and
   `Blocks` links in one stage that never retries. The program records the story
