@@ -189,7 +189,7 @@ def handle_read_pr_file(args: dict, ctx: object = None, *, github: object = None
     """
     import base64
 
-    from ts_harness.integrations.github_client import GitHubClient, github_for, parse_github_pr_url
+    from ts_harness.integrations.github_client import github_for, parse_github_pr_url
 
     pr_url = str(args.get("pr_url") or "").strip()
     path = str(args.get("path") or "").strip().lstrip("/")

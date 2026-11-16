@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import yaml
 
 from ts_harness.gateway.github_webhook import _clear_harness_checks_for_human_pr
 from ts_harness.implementation import repo_onboarding as onboarding

@@ -12,8 +12,6 @@ from typing import Any
 
 from ts_harness.implementation.coverage import coverage_summary, coverage_wanted, measure_coverage
 from ts_harness.implementation.security_scan import SecurityConfig, run_security_scan
-
-ONBOARD_MARKER = "<!-- ts-harness:onboard-repo -->"
 from ts_harness.implementation.test_env import (
     BDD_IN_UNIT_STACKS,
     HOST_TOOLCHAINS,
@@ -34,6 +32,8 @@ from ts_harness.implementation.test_services import (
     screenshot_files,
     screenshot_name,
 )
+
+ONBOARD_MARKER = "<!-- ts-harness:onboard-repo -->"
 
 _LOG_TAIL_CHARS = 4000
 _SHADOW_MODULES = {"pytest": ("pytest", "_pytest"), "behave": ("behave",)}

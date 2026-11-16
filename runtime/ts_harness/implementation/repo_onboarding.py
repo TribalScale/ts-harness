@@ -11,7 +11,6 @@ suite before the PR opens. The team reviews a PR instead of writing the file.
 from __future__ import annotations
 
 import re
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,6 @@ from ts_harness.implementation.test_services import (
     compose_services,
     detect_services,
     find_env_template,
-    load_repo_config,
     playwright_config,
 )
 
