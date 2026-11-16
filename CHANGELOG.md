@@ -11,6 +11,8 @@ First public release.
 
 ### Added
 
+- Programs onboard their repositories: on first entering the implement phase, a repository whose CI runs an e2e suite but has no `.ts-harness.yml` gets an onboarding work order (`WO-0000`), and that repository's other work orders wait for it to merge. Recorded in the `repo_onboarding` program artifact.
+
 - Rolling out to team repos:
   - `scripts/onboard-repo.py` drafts `.ts-harness.yml` from a repo's CI (compose startup scripts, env template, chained package scripts, Playwright). It starts an onboarding work order whose PR only opens once the declared suite passes in a coding job.
   - `scripts/repo-governance.py` reports a base branch's protection, CI on pull requests and missing required checks, and `--apply` sets them.

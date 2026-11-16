@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ts_harness.implementation.work_order_context import (
-    parse_work_order_dependencies,
+    dependencies_from_artifacts,
     select_next_work_order_id,
 )
 from ts_harness.workflows.delivery_program import get_delivery_program_service
@@ -766,16 +766,7 @@ def _next_reentry_item(
     )
     all_ids = list(artifacts.get(remaining_key) or [])
     completed = list(artifacts.get(completed_key) or [])
-    structured = artifacts.get("work_order_dependencies")
-    dependencies: dict[str, list[str]] = {}
-    if isinstance(structured, dict):
-        dependencies = {
-            str(k): [str(d) for d in (v or [])]
-            for k, v in structured.items()
-        }
-    elif artifacts.get("work_orders_markdown"):
-        dependencies = parse_work_order_dependencies(str(artifacts["work_orders_markdown"]))
-    return select_next_work_order_id(all_ids, completed, dependencies)
+    return select_next_work_order_id(all_ids, completed, dependencies_from_artifacts(artifacts))
 
 
 def _next_reentry_wave(

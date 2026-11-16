@@ -197,6 +197,20 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return dict(metadata) if isinstance(metadata, dict) else {}
 
 
+def _with_repo_onboarding(node_id: str, artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Add onboarding work orders the first time a program enters implement (see repo_onboarding_gate)."""
+    from ts_harness.workflows.repo_onboarding_gate import should_check, with_repo_onboarding
+    from ts_harness.implementation.work_order_context import max_parallel_work_orders
+
+    if not should_check(node_id, artifacts):
+        return artifacts
+    try:
+        return with_repo_onboarding(artifacts, max_parallel=max_parallel_work_orders(_live_program_defaults()))
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("repo onboarding check skipped: %s", exc)
+        return artifacts
+
+
 def ensure_program_can_advance(program: dict[str, Any], artifacts: dict[str, Any] | None = None) -> bool:
     """Raise when the program is closed for good; return True when advancing reopens it.
 
@@ -299,6 +313,7 @@ class DeliveryProgramService:
         artifact_bag = with_project_repositories(
             self.client, artifact_bag, tenant_id=tenant_id, project_key=project_id
         )
+        artifact_bag = _with_repo_onboarding(resolved_entry, artifact_bag)
         errors = validate_entry_against_snapshot(
             effective_snapshot,
             resolved_entry,
@@ -493,6 +508,7 @@ class DeliveryProgramService:
                 merged_artifacts["planning_track"] = track
         if resolved_target != current_phase:
             merged_artifacts = seed_list_reentry(effective_snapshot, resolved_target, merged_artifacts)
+        merged_artifacts = _with_repo_onboarding(resolved_target, merged_artifacts)
         errors = validate_entry_against_snapshot(
             effective_snapshot,
             resolved_target,

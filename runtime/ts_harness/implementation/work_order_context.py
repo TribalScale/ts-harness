@@ -140,10 +140,32 @@ def select_ready_work_order_ids(
 def dependencies_from_artifacts(artifacts: dict[str, Any]) -> dict[str, list[str]]:
     structured = artifacts.get("work_order_dependencies")
     if isinstance(structured, dict):
-        return {str(k): [str(d) for d in (v or [])] for k, v in structured.items()}
-    if artifacts.get("work_orders_markdown"):
-        return parse_work_order_dependencies(str(artifacts["work_orders_markdown"]))
-    return {}
+        deps = {str(k): [str(d) for d in (v or [])] for k, v in structured.items()}
+    elif artifacts.get("work_orders_markdown"):
+        deps = parse_work_order_dependencies(str(artifacts["work_orders_markdown"]))
+    else:
+        deps = {}
+    return with_onboarding_gates(deps, artifacts)
+
+
+def with_onboarding_gates(deps: dict[str, list[str]], artifacts: dict[str, Any]) -> dict[str, list[str]]:
+    """Make each work order depend on its repository's onboarding work order (``onboarding_gates``).
+
+    A gate names ``owner/name``, or ``""`` when the program has one repository. Work orders that
+    don't name a repository wait for every gate.
+    """
+    gates = {str(k).upper(): str(v or "").lower() for k, v in (artifacts.get("onboarding_gates") or {}).items()}
+    if not gates:
+        return deps
+    named = {k: v.lower() for k, v in parse_work_order_repositories(str(artifacts.get("work_orders_markdown") or "")).items()}
+    ids = {str(wo).upper() for wo in artifacts.get("work_order_ids") or []} | {str(k).upper() for k in deps}
+    out = {str(k).upper(): list(v) for k, v in deps.items()}
+    for wo_id in ids - set(gates):
+        repo = named.get(wo_id, "")
+        for gate, gate_repo in gates.items():
+            if (not gate_repo or not repo or gate_repo == repo) and gate not in out.setdefault(wo_id, []):
+                out[wo_id].append(gate)
+    return out
 
 
 def _sections(markdown: str) -> dict[str, str]:
