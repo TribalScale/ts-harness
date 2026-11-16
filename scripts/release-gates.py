@@ -314,11 +314,21 @@ def cron_heartbeat() -> bool:
     return scheduler_ok and trigger.get("status") == "ok" and trigger.get("scheduler") == "triggered"
 
 
+def _gate_tenant(label: str) -> str:
+    # Fresh tenant ids per run: the audit log may be shared and persistent (Postgres), so
+    # events from earlier runs must not count, and these test events are easy to tell apart.
+    import uuid
+
+    return f"release-gate-{label}-{uuid.uuid4().hex[:12]}"
+
+
 def tenant_isolation() -> bool:
     audit = AuditWriter()
-    audit.append(tenant_id="a", action_type="test", actor_id="u")
-    audit.append(tenant_id="b", action_type="test", actor_id="u")
-    return len(audit.export(tenant_id="a")) == 1
+    tenant_a, tenant_b = _gate_tenant("a"), _gate_tenant("b")
+    mine = audit.append(tenant_id=tenant_a, action_type="test", actor_id="u")
+    audit.append(tenant_id=tenant_b, action_type="test", actor_id="u")
+    exported = audit.export(tenant_id=tenant_a)
+    return [e.get("event_id") for e in exported] == [mine.event_id] and all(e.get("tenant_id") == tenant_a for e in exported)
 
 
 def rbac_identity() -> bool:
@@ -328,8 +338,9 @@ def rbac_identity() -> bool:
 
 def audit_export() -> bool:
     audit = AuditWriter()
-    audit.append(tenant_id="default", action_type="export", actor_id="u")
-    return bool(audit.export(tenant_id="default"))
+    tenant = _gate_tenant("export")
+    event = audit.append(tenant_id=tenant, action_type="export", actor_id="u")
+    return event.event_id in {e.get("event_id") for e in audit.export(tenant_id=tenant)}
 
 
 def agent_redteam() -> bool:
