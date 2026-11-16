@@ -39,6 +39,8 @@ vm:
   ssh_allowed_cidrs:
     - 10.0.0.0/8
   # tailscale_authkey_secret_ref: arn:aws:secretsmanager:us-east-1:123456789012:secret:tailscale
+  # tailscale_hostname: ts-harness-prod   # default: project_name; keeps the tailnet URL stable across rebuilds
+  # tailscale_tags: ["tag:ts-harness"]   # required when the auth key is an OAuth client secret
 
 managed_db:
   instance_class: db.t3.micro
@@ -63,6 +65,7 @@ terraform_state:
 runtime:
   agent_runtime_version: "0.1.0"
   enterprise_repo_url: https://github.com/TribalScale/ts-harness.git
+  # enterprise_repo_ref: main   # branch the host runs; default: the repository's default branch
   multi_agent_enabled: true
   workflow_runner_enabled: true
   workflow_runner_poll_interval_seconds: 10

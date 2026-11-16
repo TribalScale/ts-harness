@@ -18,6 +18,10 @@ Applications → Create Application → Single Page Web Applications, name `TS H
 
 - Allowed Callback URLs: `https://<console host>/` (and `http://localhost:5173/` for local development)
 - Allowed Logout URLs and Allowed Web Origins: the same origins
+
+On a Tailscale-only host the console host is `<vm.tailscale_hostname>.<tailnet>.ts.net`. Set
+`vm.tailscale_hostname` before registering these URLs, so they stay valid when the host is rebuilt
+([Rebuild a host](rebuild-a-host.md#a-stable-tailscale-name)).
 - Refresh token rotation: on
 - Connections tab: enable only the enterprise connections from step 4
 

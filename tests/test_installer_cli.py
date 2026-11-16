@@ -33,6 +33,22 @@ from install_post_apply import (
 )
 import install as install_mod
 
+# Never reach a real bucket from tests: plan/apply sync the install YAML beside the state.
+_store_patches = [
+    mock.patch.object(install_mod.install_config_store, "push", return_value="s3://test/install-config.yaml"),
+    mock.patch.object(install_mod.install_config_store, "fetch", return_value=None),
+]
+
+
+def setUpModule():
+    for p in _store_patches:
+        p.start()
+
+
+def tearDownModule():
+    for p in _store_patches:
+        p.stop()
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AWS_EXAMPLE = REPO_ROOT / "config" / "install" / "aws.example.yaml"

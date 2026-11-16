@@ -131,6 +131,15 @@
         "tailscale_authkey_secret_ref": {
           "type": "string",
           "description": "Optional pre-existing secret reference for Tailscale auth key."
+        },
+        "tailscale_hostname": {
+          "type": "string",
+          "description": "Tailscale machine name; keeps the tailnet address stable across rebuilds. Default: project_name."
+        },
+        "tailscale_tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^tag:[a-z0-9-]+$" },
+          "description": "Tags the host advertises; required when tailscale-authkey holds an OAuth client secret. See docs/runbooks/rebuild-a-host.md."
         }
       }
     },
@@ -236,6 +245,10 @@
       "properties": {
         "agent_runtime_version": { "type": "string", "minLength": 1 },
         "enterprise_repo_url": { "type": "string", "minLength": 1 },
+        "enterprise_repo_ref": {
+          "type": "string",
+          "description": "Branch of enterprise_repo_url the host runs. Default: the repository's default branch."
+        },
         "multi_agent_enabled": { "type": "boolean" },
         "workflow_runner_enabled": { "type": "boolean" },
         "coding_jobs_enabled": {

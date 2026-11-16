@@ -25,6 +25,9 @@ locals {
     "__TF_CREDENTIALS_ENCRYPTION_KEY_ID__" = local.credentials_encryption_key_id_effective
     "__TF_INSTANCE_RESOURCE_ID__"          = ""
     "__TF_DATA_DISK_DEVICE_HINT__"         = local.data_disk_device_hint
+    "__TF_ENTERPRISE_REPO_REF__"           = var.enterprise_repo_ref
+    "__TF_TAILSCALE_HOSTNAME__"            = var.tailscale_hostname != "" ? var.tailscale_hostname : var.project_name
+    "__TF_TAILSCALE_TAGS__"                = var.tailscale_tags
   }
 
   _ud_s0  = file("${path.module}/../../scripts/gcp-startup.sh")
@@ -46,7 +49,10 @@ locals {
   _ud_s16 = replace(local._ud_s15, "__TF_INSTANCE_RESOURCE_ID__", local._ud_subs["__TF_INSTANCE_RESOURCE_ID__"])
   _ud_s17 = replace(local._ud_s16, "__TF_DATA_DISK_DEVICE_HINT__", local._ud_subs["__TF_DATA_DISK_DEVICE_HINT__"])
 
-  startup_script_rendered = local._ud_s17
+  _ud_s18                 = replace(local._ud_s17, "__TF_ENTERPRISE_REPO_REF__", local._ud_subs["__TF_ENTERPRISE_REPO_REF__"])
+  _ud_s19                 = replace(local._ud_s18, "__TF_TAILSCALE_HOSTNAME__", local._ud_subs["__TF_TAILSCALE_HOSTNAME__"])
+  _ud_s20                 = replace(local._ud_s19, "__TF_TAILSCALE_TAGS__", local._ud_subs["__TF_TAILSCALE_TAGS__"])
+  startup_script_rendered = local._ud_s20
 }
 
 resource "google_compute_instance" "harness" {

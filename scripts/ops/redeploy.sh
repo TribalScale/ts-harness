@@ -42,8 +42,13 @@ load_instance_env
 resolve_cloud_neutral_env
 export AWS_REGION="${AWS_REGION:-${CLOUD_REGION:-}}"
 
-echo "=== redeploy $(git -C "$ENTERPRISE_ASSETS_DIR" log --oneline -1) ==="
-for phase in 10-fetch-secrets 10a-hydrate-runtime-config 10b-render-workspace 11-agent-runtime-setup 11a-agents-init 12-compose-up; do
+current_branch="$(git -C "$ENTERPRISE_ASSETS_DIR" branch --show-current 2>/dev/null || true)"
+echo "=== redeploy ${current_branch:-detached} $(git -C "$ENTERPRISE_ASSETS_DIR" log --oneline -1) ==="
+if [[ -n "${ENTERPRISE_REPO_REF:-}" && "$current_branch" != "$ENTERPRISE_REPO_REF" ]]; then
+    echo "WARNING: this host is configured to run '${ENTERPRISE_REPO_REF}' (runtime.enterprise_repo_ref) but '${current_branch:-detached}' is checked out." >&2
+    echo "WARNING: fine for a live test; check out '${ENTERPRISE_REPO_REF}' and redeploy afterwards." >&2
+fi
+for phase in 10-fetch-secrets 10a-hydrate-runtime-config 10b-render-workspace 11-agent-runtime-setup 11a-agents-init 12-compose-up 12b-github-webhook; do
     echo "--- phase $phase"
     bash "$PHASES_DIR/$phase.sh"
     load_instance_env
@@ -73,6 +78,11 @@ echo "--- up"
 run_docker_compose_as_admin up -d
 wait_for_agent_runtime_health redeploy
 run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
+
+# The system cron jobs (defined in phase 15) reach the live list only through phase 15; it skips
+# itself unless the phase script (so its job list), secrets or compose env changed.
+echo "--- phase 15-automation-cron"
+bash "$PHASES_DIR/15-automation-cron.sh"
 
 # Each build leaves the previous images and their build cache behind; on a 40 GB root
 # volume a day of redeploys filled the disk and the next image export failed with

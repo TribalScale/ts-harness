@@ -594,3 +594,27 @@ variable "object_backend" {
     error_message = "object_backend must be empty, local or s3."
   }
 }
+
+variable "enterprise_repo_ref" {
+  description = "Branch of enterprise_repo_url the host clones and runs (bootstrap and phase 09). Empty means the repository's default branch."
+  type        = string
+  default     = ""
+}
+
+variable "tailscale_hostname" {
+  description = "Tailscale machine name, so the host keeps the same tailnet address after a rebuild. Empty means project_name."
+  type        = string
+  default     = ""
+}
+
+variable "tailscale_tags" {
+  description = "Comma-separated Tailscale tags the host advertises (for example tag:ts-harness). Required when tailscale-authkey holds an OAuth client secret."
+  type        = string
+  default     = ""
+}
+
+variable "host_availability_zone" {
+  description = "Zone for the data disk, which the host follows. Empty: the VPC's first public subnet zone, or the region's first zone. Existing disks keep their zone."
+  type        = string
+  default     = ""
+}

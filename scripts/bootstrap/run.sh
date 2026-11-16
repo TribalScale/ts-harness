@@ -73,6 +73,10 @@ while IFS= read -r phase_script; do
         continue
     fi
     run_phase "$phase_script"
+    if [[ "$phase_script" == "01-ebs.sh" ]] && declare -F reset_markers_for_new_host >/dev/null 2>&1; then
+        # The data disk is mounted now; its markers may belong to a replaced instance.
+        reset_markers_for_new_host "$DATA_DIR" "$(cat /etc/machine-id 2>/dev/null || hostname)"
+    fi
 done < <(bootstrap_phase_list)
 
 echo "=========================================="

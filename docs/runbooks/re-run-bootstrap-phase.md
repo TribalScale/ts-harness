@@ -23,6 +23,9 @@ sudo -u artemis git pull
 
 ## 3. Remove only the target phase marker
 
+On a replaced instance you don't need this: the bootstrap re-runs the host-level phases by itself
+(see [Rebuild a host](rebuild-a-host.md#how-the-bootstrap-handles-a-new-instance)).
+
 Example for Phase 15:
 
 ```bash
