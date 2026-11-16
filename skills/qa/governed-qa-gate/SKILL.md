@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.3.0
+version: 1.5.0
 ---
 
 # Governed QA Gate
@@ -65,6 +65,19 @@ Then:
    one, and, when the work order mentions coverage, the overall line coverage
    and each changed file's: judge coverage criteria against those numbers
    (a file "not loaded by any test" is 0%).
+   For a frontend change, `input.screenshots` names the screenshots attached
+   after the task message, from the Playwright tests the change added or
+   edited: `step-N` is the page as one of the test's assertions passed, a name
+   without a step is the end of the test (often after cleanup). Look at them for user-visible criteria (text, labels,
+   empty states, layout that is clearly broken) and cite them by name. A
+   screenshot shows one moment; judge behaviour over time (debounce, live
+   updates) from the tests. No screenshots for a UI criterion is
+   `unverified`, not a defect.
+   **Check the base branch before calling something missing.** The patch shows
+   only what changed. When a criterion names something the patch does not add
+   (a translation key, a config entry, a helper), call `read_pr_file` with the
+   PR URL, the path and `ref: base`; if the base branch already has it, the
+   criterion is met and is not a defect.
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that

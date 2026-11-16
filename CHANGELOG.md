@@ -11,6 +11,21 @@ First public release.
 
 ### Added
 
+- Rolling out to team repos:
+  - `scripts/onboard-repo.py` drafts `.ts-harness.yml` from a repo's CI (compose startup scripts, env template, chained package scripts, Playwright). It starts an onboarding work order whose PR only opens once the declared suite passes in a coding job.
+  - `scripts/repo-governance.py` reports a base branch's protection, CI on pull requests and missing required checks, and `--apply` sets them.
+  - PRs people open by hand get `success` on required harness checks.
+- MariaDB (MySQL) and MongoDB in coding jobs, detected and wired like Postgres. Each database owns only its own directories.
+- Screenshots: the Playwright specs a change touched are rerun with screenshots. The images go to an evidence branch, a PR comment, and QA as image input; the branch is deleted on merge.
+- Monorepos (npm/yarn/pnpm workspaces, Turborepo): lint, type check, build and Playwright per changed package.
+- Screenshots are taken at a test's assertions (frames from its Playwright trace), not only at its end.
+- Large repos run the tests related to the changed files on the host; CI runs the full suite.
+- A Prettier check on the changed files when CI enforces formatting. More type-check script names are recognised.
+- Out-of-memory handling for coding jobs:
+  - A kill is reported as `out_of_memory` and the job is retried with twice the memory.
+  - Repos start at the size they needed before.
+  - The local launcher waits until a job's memory fits.
+
 - Frontend (React) repos:
   - The coding worker ships Chromium for Playwright.
   - A repo's Playwright suite runs in host verification and through `ts-harness-integration`.
@@ -273,6 +288,8 @@ First public release.
   at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
+
+- Coding workers used the GitHub token from job start for API calls even after refreshing it. Jobs that crossed the token's one-hour expiry failed with 401.
 
 - A test file the implementer adds beyond the work order's `## Files` list is no longer a
   `major` `scope` review finding. Revisions were allowed to add tests, then review blocked

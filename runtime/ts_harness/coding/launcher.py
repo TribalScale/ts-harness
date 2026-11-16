@@ -221,7 +221,34 @@ class LocalDockerLauncher:
         cmd.append(cfg.image)
         return cmd
 
+    def _memory_in_use(self) -> int:
+        """Bytes reserved by the coding workers running on this host (their --memory limits)."""
+        listed = self._run(
+            ["docker", "ps", "-q", "--filter", "label=ts-harness.coding-job"], capture_output=True, text=True, timeout=30
+        )
+        ids = (listed.stdout or "").split() if listed.returncode == 0 else []
+        if not ids:
+            return 0
+        inspected = self._run(
+            ["docker", "inspect", "-f", "{{.HostConfig.Memory}}", *ids], capture_output=True, text=True, timeout=30
+        )
+        return sum(int(line) for line in (inspected.stdout or "").split() if line.isdigit())
+
+    def _check_memory(self, job: dict[str, Any]) -> None:
+        """A larger job (an out-of-memory retry) waits until it fits beside the running workers."""
+        total = host_memory_bytes()
+        if not total:
+            return
+        wanted = int(job["worker_memory_mb"]) * 2**20 if job.get("worker_memory_mb") else parse_memory(self.config.memory)
+        budget = total - parse_memory(str(self._environ.get("CODING_HOST_RESERVED_MEMORY") or "2.5g"))
+        in_use = self._memory_in_use()
+        if in_use and in_use + wanted > budget:
+            raise CapacityError(
+                f"waiting for memory: {wanted // 2**20} MB wanted, {in_use // 2**20} MB in use of {max(budget, 0) // 2**20} MB"
+            )
+
     def start(self, job: dict[str, Any], token: str) -> str:
+        self._check_memory(job)
         proc = self._run(
             self.command(job),
             capture_output=True,

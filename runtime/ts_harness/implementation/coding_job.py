@@ -246,7 +246,8 @@ def build_coding_request(
     }
 
 
-_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend"}
+# worker_memory_mb sizes a retry after the worker ran out of memory; the launcher reads it.
+_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb"}
 
 
 def _note_list(value: Any) -> list[dict[str, Any]] | None:
@@ -398,6 +399,7 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "usage": list(getattr(result, "usage", None) or []),
         "security": result.security,
         "verification": dict(getattr(result, "verification", None) or {}),
+        "screenshots": dict(getattr(result, "screenshots", None) or {}),
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",
         "repo_url": spec["repo_url"],
@@ -427,6 +429,8 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
     if verification:
         output["verification"] = verification
         output["verify_summary"] = verification_summary(verification)
+    if isinstance(result.get("screenshots"), dict) and result["screenshots"].get("files"):
+        output["screenshots"] = result["screenshots"]
     if result.get("mode") == "refresh":
         output["refresh_method"] = result.get("refresh_method")
         output["resolved_files"] = list(result.get("resolved_files") or [])

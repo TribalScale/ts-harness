@@ -193,6 +193,38 @@ integration:
 
 - Before each verification, the worker stops every process OpenCode left running (a `yarn dev &`, a mock API), except the job's databases. Otherwise the suite's own web server finds its port taken. The local launcher starts workers with `docker run --init`, so finished processes are reaped.
 
+**MySQL and MongoDB.** Besides Postgres and Redis, the worker ships MariaDB (MySQL-compatible) and MongoDB.
+
+- **MariaDB** starts for `mysql2`, `mysql`, `mariadb`, MikroORM's MySQL drivers, Prisma `provider = "mysql"`, `pymysql`/`mysqlclient`, or a `mysql`/`mariadb` compose image. The role and database come from the template, including `MYSQL_*` keys and `MYSQL_ROOT_PASSWORD` for `root`. The job exports `MYSQL_URL` and `MYSQL_*`, and `DATABASE_URL` when there is no Postgres.
+- **MongoDB** starts for `mongodb`, `mongoose`, Typegoose, Prisma `provider = "mongodb"`, `pymongo`/`motor`, or a `mongo` image. It runs as a one-node replica set `rs0`, which Prisma and transactions need, without auth. Local `mongodb://` URLs in the template are rewritten to it without credentials. `mongodb+srv` and remote URLs stay as they are. The job exports `MONGODB_URI`/`MONGO_URL`.
+- Each integration run drops and recreates the databases. Elasticsearch, Kafka and RabbitMQ are reported as unavailable.
+
+**Monorepos.** With npm, yarn or pnpm workspaces (and Turborepo or Nx on top), checks follow the changed packages:
+
+- **Lint:** changed files are grouped by the nearest ESLint config and linted from that directory.
+- **Type check:** a root type-check script runs once. Otherwise each changed package runs its own script, or `tsc --noEmit` on its tsconfig.
+- **Build:** changed web-app packages build through `turbo run build --filter=<pkg>` (dependencies first), or the workspace tool.
+- **Playwright:** a changed package's Playwright config is found and run from that package.
+- **Unit tests:** the root `test` script (for example `turbo run test`) runs as before.
+
+**Screenshots.** After the declared or detected Playwright suite passes, the host reruns only the specs the change added or edited, with traces and screenshots on. From each trace it keeps the page as it was right after an assertion passed (`step-N`, the frame painted before the next action). That's up to 4 frames per test, spread across its assertions, and they show what the test checked. A screenshot at the end of a test usually shows the state after cleanup. The end-of-test image is the fallback. It uses the repo's own config (web server, setup project, storage state) through a temporary wrapper. The images are published three ways:
+
+- **Evidence branch:** up to 6 images go on `ts-harness-evidence/<work branch>`, one parentless commit built with git plumbing, so the work branch is untouched.
+- **PR comment:** a single **Screenshots** comment, updated on revisions, links them by commit.
+- **QA:** QA receives the same images as image input.
+
+The evidence branch is deleted when the PR merges. A change without Playwright specs has no screenshots; QA treats UI criteria as `unverified` rather than failed.
+
+**Large repos.** In a repo with more than 120 test files (`TS_HARNESS_RELATED_TESTS_THRESHOLD`), host verification runs only the tests related to the changed files: `vitest related --run <files>` or `jest --findRelatedTests <files>`, keeping the arguments of the repo's test script. CI still runs the full suite on the PR, and the evidence says which ran.
+
+**Formatting.** When CI runs a Prettier check (in a workflow, or through a package script a workflow calls), the host runs `prettier --check` on the changed files too. A repo whose CI does not enforce formatting is not held to it.
+
+**Memory.** When the kernel kills OpenCode, or a verification command such as `next build`, for memory, the job fails as `out_of_memory`, not as a code failure. The runner then queues it again with twice the memory, up to `CODING_WORKER_MAX_MEMORY` (default 6g).
+
+- **Remembered size:** new jobs for a repository start with the largest memory any recent successful job for it needed.
+- **Launcher limit:** the local launcher only starts a job when its memory fits beside the running workers, within host memory minus `CODING_HOST_RESERVED_MEMORY`.
+- **ECS:** size projects with `worker_memory_mb`.
+
 **BDD.** Gherkin feature files are required only in a repo that already uses them (feature files, a BDD script, or a Cucumber dependency) or has no test setup at all. A repo with its own runner and no Gherkin (a NestJS app with Jest, a Go service) covers a work order's Given/When/Then acceptance tests with its own tests; the agent is told not to add Cucumber there.
 
 Dependencies installed before OpenCode runs and again before each verify (only when a manifest changed):
@@ -243,6 +275,8 @@ A merge into the base branch sends every open PR on it through refresh, CI, code
 | `test runner install failed` / `pip install ... failed` in `log_tail` | Wheels missing from the image or a broken requirement; the tests then fail with the import error |
 
 ## Related
+
+- [onboard-a-repo.md](onboard-a-repo.md): `.ts-harness.yml` by work order, branch protection, first work orders.
 
 - [governed-delivery-flow.md](governed-delivery-flow.md) section B2
 - Runtime config: `implementation.coding_backend`, `implementation.repos.implement_work_orders`

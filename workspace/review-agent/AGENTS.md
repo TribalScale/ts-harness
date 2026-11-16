@@ -15,12 +15,13 @@
 
 **Model:** `openai/gpt-6-astra`
 **Workspace:** `/workspace/review-agent`
-**Toolsets:** `core-read`
+**Toolsets:** `core-read`, `pr-read`
 **Skills:** `review`, `memory`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
 - read_file
 - recall_memory
+- read_pr_file
 
 **tools.deny** (from `config/ts-harness-runtime.yaml`):
 - write_file

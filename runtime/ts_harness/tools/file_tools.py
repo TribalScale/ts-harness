@@ -176,3 +176,46 @@ def handle_search_files(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[st
         if len(matches) >= limit:
             break
     return {"matches": matches}
+
+
+PR_FILE_LIMIT = 60_000
+
+
+def handle_read_pr_file(args: dict, ctx: object = None, *, github: object = None) -> dict:
+    """Read one file of a pull request's repository at the PR head or its base branch (read-only).
+
+    Review and QA see the PR diff; this answers "does the base branch already have it?"
+    (an existing translation key, a helper the change calls) without a checkout.
+    """
+    import base64
+
+    from ts_harness.integrations.github_client import github_for, parse_github_pr_url
+
+    pr_url = str(args.get("pr_url") or "").strip()
+    path = str(args.get("path") or "").strip().lstrip("/")
+    side = str(args.get("ref") or "base").strip().lower()
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None:
+        return {"error": "pr_url must be a GitHub pull request URL"}
+    if not path or ".." in path.split("/"):
+        return {"error": "path must be a repository-relative file path"}
+    if side not in {"base", "head"}:
+        return {"error": "ref must be 'base' or 'head'"}
+    owner, repo, number = parsed
+    client = github if github is not None else github_for(pr_url)
+    pull = client.get_pull(owner, repo, number)
+    ref = str(((pull.get(side) or {}).get("sha")) or "")
+    payload = client.get_file(owner, repo, path, ref=ref) if ref else None
+    if payload is None:
+        return {"path": path, "ref": side, "sha": ref, "exists": False}
+    if isinstance(payload, list):
+        return {"path": path, "ref": side, "sha": ref, "exists": True, "directory": [str(i.get("name")) for i in payload][:200]}
+    raw = base64.b64decode(str(payload.get("content") or "")).decode("utf-8", errors="replace")
+    return {
+        "path": path,
+        "ref": side,
+        "sha": ref,
+        "exists": True,
+        "content": raw[:PR_FILE_LIMIT],
+        "truncated": len(raw) > PR_FILE_LIMIT,
+    }

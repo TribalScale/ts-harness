@@ -169,3 +169,162 @@ class StrayProcessTests(unittest.TestCase):
 
         command = LocalDockerLauncher(LocalDockerConfig(), environ={}).command({"id": "job-123456789"})
         self.assertIn("--init", command)
+
+
+class MonorepoTests(unittest.TestCase):
+    def _mono(self, root: Path) -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"name": "mono", "scripts": {"test": "turbo run test"}, "packageManager": "pnpm@10.18.3"}))
+        _write(repo / "pnpm-workspace.yaml", "packages:\n  - 'apps/*'\n  - 'packages/*'\n")
+        _write(repo / "pnpm-lock.yaml")
+        _write(repo / "apps" / "web" / "package.json", json.dumps({"name": "web", "scripts": {"build": "next build", "check-types": "tsc --noEmit"}, "dependencies": {"next": "15", "react-dom": "19"}, "devDependencies": {"@playwright/test": "1.59.1"}}))
+        _write(repo / "apps" / "web" / "eslint.config.js", "export default []")
+        _write(repo / "apps" / "web" / "playwright.config.ts", "export default {}")
+        _write(repo / "apps" / "web" / "app" / "page.tsx", "export default 1")
+        _write(repo / "apps" / "web" / "e2e" / "home.spec.ts", "test")
+        _write(repo / "packages" / "logger" / "package.json", json.dumps({"name": "@repo/logger", "scripts": {"build": "tsup"}}))
+        _write(repo / "packages" / "logger" / "tsconfig.json", "{}")
+        _write(repo / "packages" / "logger" / "eslint.config.js", "export default []")
+        _write(repo / "packages" / "logger" / "src" / "index.ts", "export {}")
+        for where in ("apps/web", "packages/logger", "."):
+            for tool in ("eslint", "tsc"):
+                path = _write(repo / where / "node_modules" / ".bin" / tool, "#!/bin/sh\n")
+                path.chmod(0o755)
+        _write(repo / "node_modules" / ".bin" / "turbo", "#!/bin/sh\n").chmod(0o755)
+        _write(repo / "apps" / "web" / "node_modules" / ".bin" / "playwright", "#!/bin/sh\n").chmod(0o755)
+        return repo
+
+    def test_checks_run_per_changed_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._mono(Path(tmp))
+            checks = node_static_checks(repo, ["apps/web/app/page.tsx", "packages/logger/src/index.ts"])
+            commands = {label + ":" + " ".join(cmd[3:] if cmd[0] == "env" else cmd).replace(str(repo), "R") for label, cmd in checks}
+            self.assertIn("typecheck:pnpm --filter web run check-types", commands)
+            self.assertIn("typecheck:R/packages/logger/node_modules/.bin/tsc --noEmit -p tsconfig.json", commands)
+            self.assertIn("lint:R/apps/web/node_modules/.bin/eslint app/page.tsx", commands)
+            self.assertIn("lint:R/packages/logger/node_modules/.bin/eslint src/index.ts", commands)
+            self.assertIn("build:R/node_modules/.bin/turbo run build --filter=web --output-logs=errors-only", commands)
+            lint = next(cmd for label, cmd in checks if label == "lint")
+            self.assertEqual(lint[:2], ["env", "-C"])
+
+    def test_package_playwright_suite_and_screenshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._mono(Path(tmp))
+            changed = ["apps/web/app/page.tsx", "apps/web/e2e/home.spec.ts"]
+            plan = ts.integration_plan(repo, services_running=False, changed_files=changed)
+            self.assertIn(f"cd {repo / 'apps' / 'web'} &&", plan.command)
+            self.assertEqual(ts.changed_playwright_specs(repo, changed), ["apps/web/e2e/home.spec.ts"])
+            steps = [command for _m, command in _manifest_steps(repo, TestEnvironment(python="python3"))]
+            self.assertTrue(steps[-1][0].endswith("apps/web/node_modules/.bin/playwright"))
+
+
+class OutOfMemoryTests(unittest.TestCase):
+    def test_kernel_kill_is_named(self):
+        from ts_harness.implementation.backends.opencode import opencode_exit_error
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root / "memory.events", "low 0\nhigh 0\nmax 12\noom 1\noom_kill 1\n")
+            _write(root / "memory.max", str(2 * 1024**3))
+            killed = subprocess.CompletedProcess(["opencode"], -9, "", "")
+            self.assertTrue(opencode_exit_error(killed, cgroup_root=root).startswith("out_of_memory: the coding worker hit its memory limit (2048 MB)"))
+            _write(root / "memory.events", "oom_kill 0\n")
+            self.assertEqual(opencode_exit_error(killed, cgroup_root=root), "opencode exit -9")
+
+    def test_job_spec_memory_wins_at_claim(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("coding_jobs_routes", Path(__file__).resolve().parents[2] / "scripts" / "memory_routes" / "coding_jobs.py")
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except ImportError as exc:  # pragma: no cover - routes need the memory-api deps
+            self.skipTest(str(exc))
+        self.assertEqual(module._spec_sizing({"spec": json.dumps({"repo_url": "x", "worker_memory_mb": 4096})}), {"worker_memory_mb": 4096})
+        self.assertEqual(module._spec_sizing({"spec": {"repo_url": "x"}}), {})
+
+
+class FormatCheckTests(unittest.TestCase):
+    def _repo(self, root: Path, workflow: str, scripts: dict) -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"scripts": {"test": "vitest", **scripts}}))
+        _write(repo / ".github" / "workflows" / "ci.yml", workflow)
+        _write(repo / "src" / "a.tsx", "export {}")
+        _write(repo / "node_modules" / ".bin" / "prettier", "#!/bin/sh\n").chmod(0o755)
+        return repo
+
+    def test_runs_when_ci_calls_a_prettier_check_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), "steps:\n  - run: yarn test:other\n", {"test:other": "yarn prettier --list-different"})
+            checks = dict(node_static_checks(repo, ["src/a.tsx"]))
+            self.assertEqual(checks["format"][1:], ["--check", "--no-error-on-unmatched-pattern", "src/a.tsx"])
+
+    def test_not_enforced_without_ci_formatting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), "steps:\n  - run: yarn lint\n", {"format": "prettier --write ."})
+            self.assertNotIn("format", dict(node_static_checks(repo, ["src/a.tsx"])))
+
+
+class RelatedTestsTests(unittest.TestCase):
+    def _repo(self, root: Path, tests: int, runner: str = "vitest") -> Path:
+        repo = root / "repo"
+        _write(repo / "package.json", json.dumps({"scripts": {"test": "yarn test:app", "test:app": runner}, "devDependencies": {runner: "1"}}))
+        _write(repo / "node_modules" / ".bin" / runner, "#!/bin/sh\n").chmod(0o755)
+        _write(repo / "src" / "stats.tsx", "export {}")
+        for i in range(tests):
+            _write(repo / "src" / "t" / f"case{i}.test.tsx", "")
+        return repo
+
+    def test_large_vitest_repo_runs_related_tests(self):
+        from ts_harness.implementation.verification import related_tests_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), 130)
+            command = related_tests_command(repo, ["src/stats.tsx", "README.md"])
+            self.assertEqual(command[1:], ["related", "--run", "src/stats.tsx"])
+
+    def test_large_jest_repo_and_small_repos(self):
+        from ts_harness.implementation.verification import related_tests_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(Path(tmp), 130, runner="jest")
+            self.assertEqual(related_tests_command(repo, ["src/stats.tsx"])[1:], ["--findRelatedTests", "src/stats.tsx", "--passWithNoTests"])
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(related_tests_command(self._repo(Path(tmp), 10), ["src/stats.tsx"]))
+
+
+class VerificationOutOfMemoryTests(unittest.TestCase):
+    def test_a_kill_during_verification_is_out_of_memory(self):
+        from unittest.mock import patch
+
+        from ts_harness.implementation.verification import verify_implementation
+
+        counts = iter([(3, "2048 MB"), (4, "2048 MB")])
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _app(Path(tmp))
+            with patch("ts_harness.implementation.cgroup.oom_kills", side_effect=lambda *a: next(counts)):
+                result = verify_implementation(repo, work_order_body="chore: x", work_order_id="WO-1", changed_files=["src/x.ts"], runner=_ok)
+            self.assertEqual(result.reasons[0], "out_of_memory")
+            self.assertTrue(any("2048 MB" in w for w in result.warnings))
+
+
+class RefreshedTokenTests(unittest.TestCase):
+    def test_client_from_env_follows_the_refreshed_token(self):
+        from unittest.mock import patch
+
+        from ts_harness.integrations.github_client import github_for
+
+        seen = []
+
+        def transport(method, url, headers, data):
+            seen.append(headers["Authorization"])
+            return 200, b"{}", {}
+
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "ghs_first"}), patch("ts_harness.integrations.github_app.app_for", return_value=None):
+            client = github_for("https://github.com/acme/web", transport=transport)
+            client.get_pull("acme", "web", 1)
+            import os
+
+            os.environ["GITHUB_TOKEN"] = "ghs_second"  # the worker's refresher swapped it
+            client.get_pull("acme", "web", 1)
+        self.assertEqual(seen, ["Bearer ghs_first", "Bearer ghs_second"])

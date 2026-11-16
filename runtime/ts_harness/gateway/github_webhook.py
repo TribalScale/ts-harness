@@ -185,6 +185,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
                 "number": pr.get("number"),
                 "head_sha": str((pr.get("head") or {}).get("sha") or ""),
                 "base_branch": str((pr.get("base") or {}).get("ref") or ""),
+                "head_ref": str((pr.get("head") or {}).get("ref") or ""),
                 "author": _login(pr.get("user")),
             }
         return None
@@ -494,6 +495,48 @@ def _handle_pr_feedback(event: dict[str, Any], *, tenant_id: str, actor: str) ->
     return {"status": "rejected" if blocked else "no_rejection", "kind": event["kind"], "pr_url": pr_url, "blocked": blocked}
 
 
+HARNESS_BRANCH_PREFIX = "wo/"
+
+
+def _clear_harness_checks_for_human_pr(
+    event: dict[str, Any], *, tenant_id: str, github: Any = None, memory: Any = None
+) -> list[str]:
+    """Post ``success`` on the harness checks a base branch requires, for PRs TS Harness does not own.
+
+    With ``harness/code-review``, ``harness/qa`` and ``harness/security-scan`` required on
+    the base branch, a PR a person opened would otherwise wait forever for statuses only
+    harness deliveries post. Harness PRs (``wo/`` branches or a program's recorded PR)
+    are left alone, so they still need the real verdicts.
+    """
+    from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url
+    from ts_harness.workflows import independent_review
+
+    pr_url, head_sha = str(event.get("pr_url") or ""), str(event.get("head_sha") or "")
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None or not head_sha or str(event.get("head_ref") or "").startswith(HARNESS_BRANCH_PREFIX):
+        return []
+    try:
+        if memory is None:
+            from ts_harness.memory.client import get_memory_client
+
+            memory = get_memory_client()
+        if independent_review.owning_program(memory, pr_url, tenant_id=tenant_id) is not None:
+            return []
+        github = github or GitHubClient.from_env()
+        required = github.required_status_contexts(parsed[0], parsed[1], str(event.get("base_branch") or "")) or []
+        posted = []
+        for context in [name for name in required if name.startswith("harness/")]:
+            github.create_status(
+                parsed[0], parsed[1], head_sha, state="success", context=context,
+                description="Not a TS Harness PR: the repo's CI and reviewers apply",
+            )
+            posted.append(context)
+        return posted
+    except Exception as exc:  # noqa: BLE001 - the PR can still be handled by an admin
+        logger.warning("harness checks not cleared for %s: %s", pr_url, exc)
+        return []
+
+
 def handle_github_webhook(
     body: dict[str, Any],
     *,
@@ -529,6 +572,8 @@ def handle_github_webhook(
         result = _handle_sha_wait(event, tenant_id=tenant_id, actor=actor, ready=_deployment_ready)
     else:
         result = {"status": "notified", "kind": kind, "pr_url": event.get("pr_url")}
+        if kind == "github.pr_opened":
+            result["human_pr_statuses"] = _clear_harness_checks_for_human_pr(event, tenant_id=tenant_id)
     if subscribers:
         result["subscribers"] = subscribers
     return result

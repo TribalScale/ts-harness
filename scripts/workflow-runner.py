@@ -149,6 +149,57 @@ def qa_review_evidence(task: dict[str, Any], tasks: list[dict[str, Any]]) -> dic
     return evidence
 
 
+def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> dict[str, Any]:
+    """The latest delivery's screenshots for QA: names for the prompt, images as ``_images``.
+
+    The images come from the evidence commit the coding job pushed, so QA judges the
+    same pictures a reviewer sees on the PR. The agent loop sends ``_images`` as image
+    parts, not as JSON text.
+    """
+    delivered = [
+        item
+        for item in tasks
+        if item.get("status") == "succeeded"
+        and isinstance(item.get("output"), dict)
+        and "verify_summary" in item["output"]
+    ]
+    if not delivered:
+        return {}
+    latest = sorted(delivered, key=lambda item: str(item.get("created_at") or ""))[-1]
+    shots = latest["output"].get("screenshots") if isinstance(latest["output"].get("screenshots"), dict) else {}
+    if not shots.get("files") or not shots.get("commit") or "/" not in str(shots.get("repo") or ""):
+        return {}
+    import base64
+
+    from ts_harness.integrations.github_client import GitHubClient
+
+    owner, repo = str(shots["repo"]).split("/", 1)
+    client = github or GitHubClient.from_env()
+    images = []
+    for name in list(shots["files"])[:6]:
+        payload = client.get_file(owner, repo, str(name), ref=str(shots["commit"])) or {}
+        content = str(payload.get("content") or "").replace("\n", "")
+        if content:
+            base64.b64decode(content, validate=True)
+            if sum(len(image["url"]) for image in images) + len(content) > 6_000_000:
+                break  # the gateway takes JSON bodies up to 10 MB
+            mime = "image/jpeg" if str(name).endswith((".jpeg", ".jpg")) else "image/png"
+            images.append({"name": str(name), "url": f"data:{mime};base64,{content}"})
+    if not images:
+        return {}
+    return {
+        "screenshots": {
+            "files": [image["name"] for image in images],
+            "comment_url": shots.get("comment_url") or "",
+            "note": (
+                "From the Playwright tests the change added or edited: `step-N` is the page as the test's Nth "
+                "sampled assertion passed; a name without a step is the end of the test. The images follow this message."
+            ),
+        },
+        "_images": images,
+    }
+
+
 def _definition_store_root() -> Path | None:
     store_root = os.environ.get(
         "TS_HARNESS_WORKFLOW_DEFINITION_STORE",
@@ -567,9 +618,10 @@ class MemoryApiClient:
         status: str | None = None,
         unconsumed: bool = False,
         limit: int = 50,
+        repo_url: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": limit}
-        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status)):
+        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status), ("repo_url", repo_url)):
             if value:
                 params[key] = value
         if unconsumed:
@@ -1286,6 +1338,12 @@ class WorkflowRunner:
                 log_event("qa_evidence_error", task_id=task.get("id"), error=str(exc))
         if self._carry_forward(task, stage, task_input, dispatch_started):
             return
+        if task.get("step_name") == "qa_gate":
+            try:
+                record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+                task_input.update(qa_screenshot_input(list(record.get("tasks") or [])))
+            except Exception as exc:  # noqa: BLE001 - QA still runs on the text evidence
+                log_event("qa_screenshots_error", task_id=task.get("id"), error=str(exc))
         payload = {
             "workflow_id": task.get("workflow_id"),
             "task_id": task.get("id"),
@@ -1370,6 +1428,8 @@ class WorkflowRunner:
         task_id = str(task["id"])
         jobs = self.memory.list_coding_jobs(task_id=task_id, unconsumed=True, limit=10)
         finished = next((j for j in jobs if j.get("status") in coding_job_stage.TERMINAL), None)
+        if finished is not None and self._retry_out_of_memory(task, task_input, finished):
+            return
         if finished is not None:
             result = coding_job_stage.dispatch_result(finished, contract, task_input)
             job_id = result.pop("coding_job_id", "")
@@ -1398,6 +1458,9 @@ class WorkflowRunner:
             except CodingRequestError as exc:
                 self._apply_dispatch_result(task, stage, {"status": "blocked", "error": str(exc), "output": {}}, dispatch_started)
                 return
+            remembered = self._remembered_memory(str(spec.get("repo_url") or ""))
+            if remembered:
+                spec = {**spec, "worker_memory_mb": remembered}
             job = self.memory.create_coding_job(
                 spec=spec,
                 workflow_id=str(task.get("workflow_id") or "") or None,
@@ -1412,6 +1475,56 @@ class WorkflowRunner:
         )
         self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
         log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _remembered_memory(self, repo_url: str) -> int:
+        """Memory a recent successful job of this repo needed after running out: start there."""
+        if not repo_url:
+            return 0
+        try:
+            jobs = self.memory.list_coding_jobs(repo_url=repo_url, status="succeeded", limit=20)
+        except Exception as exc:  # noqa: BLE001 - sizing is an optimisation
+            log_event("coding_job_sizing_lookup_failed", repo_url=repo_url, error=str(exc)[:200])
+            return 0
+        return max((int(job.get("spec_memory_mb") or 0) for job in jobs or []), default=0)
+
+    def _retry_out_of_memory(self, task: dict[str, Any], task_input: dict[str, Any], finished: dict[str, Any]) -> bool:
+        """Queue the job again with twice the memory when the worker was OOM-killed (once, up to a cap)."""
+        from ts_harness.coding.launcher import parse_memory
+        from ts_harness.workflows import coding_job_stage
+
+        result = finished.get("result") if isinstance(finished.get("result"), dict) else {}
+        error = str(finished.get("error") or result.get("error") or "")
+        if finished.get("status") == "succeeded" or not error.startswith("out_of_memory"):
+            return False
+        current = int(finished.get("worker_memory_mb") or parse_memory(os.environ.get("CODING_WORKER_MEMORY") or "2g") // 2**20)
+        cap = parse_memory(os.environ.get("CODING_WORKER_MAX_MEMORY") or "6g") // 2**20
+        larger = min(current * 2, cap)
+        if larger <= current:
+            return False
+        task_id = str(task["id"])
+        try:
+            program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+        except Exception:
+            program_id = None
+        spec = {**coding_job_stage.stage_spec(task, task_input, program_id=program_id), "worker_memory_mb": larger}
+        job = self.memory.create_coding_job(
+            spec=spec,
+            workflow_id=str(task.get("workflow_id") or "") or None,
+            task_id=task_id,
+            program_id=program_id,
+            tenant_id=str(task.get("tenant_id") or "default"),
+        )
+        try:
+            self.memory.consume_coding_job(str(finished["id"]))
+        except Exception as exc:  # noqa: BLE001
+            log_event("coding_job_consume_error", task_id=task_id, job_id=finished.get("id"), error=str(exc))
+        self.memory.set_task_wait(task_id, wait_token=str(job["id"]), expected_event_type=coding_job_stage.EVENT_TYPE)
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event(
+            "coding_job_retried_with_more_memory",
+            workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"], memory_mb=larger, previous_mb=current,
+        )
+        return True
 
     def _apply_dispatch_result(
         self,

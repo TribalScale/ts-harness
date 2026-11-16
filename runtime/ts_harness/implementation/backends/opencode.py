@@ -54,8 +54,10 @@ from ts_harness.implementation.test_env import (
     install_declared_dependencies,
     prepare_test_environment,
 )
+from ts_harness.implementation.screenshots import publish_screenshots
 from ts_harness.implementation.verification import (
     build_verification_fix_prompt,
+    screenshots_dir,
     verification_evidence,
     verify_implementation,
 )
@@ -91,9 +93,25 @@ def opencode_stall_seconds() -> float:
         return float(_OPENCODE_STALL_SECONDS_DEFAULT)
 
 
-def opencode_exit_error(completed: subprocess.CompletedProcess[str]) -> str:
+OUT_OF_MEMORY = "out_of_memory"
+
+
+def _cgroup_oom_kills(root: Path = Path("/sys/fs/cgroup")) -> tuple[int, str]:
+    from ts_harness.implementation.cgroup import oom_kills
+
+    return oom_kills(root)
+
+
+def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_root: Path = Path("/sys/fs/cgroup")) -> str:
     if completed.returncode == OPENCODE_STALLED_RC:
         return "opencode stalled: no output within the stall window"
+    if completed.returncode in (-9, 137):
+        kills, limit = _cgroup_oom_kills(cgroup_root)
+        if kills:
+            return (
+                f"{OUT_OF_MEMORY}: the coding worker hit its memory limit ({limit or 'unknown'}) and the kernel "
+                "killed opencode; the job is retried with more memory"
+            )
     return f"opencode exit {completed.returncode}"
 
 
@@ -640,6 +658,27 @@ class OpenCodeBackend:
             )
             if verify.ok:
                 return None, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
+            if "out_of_memory" in verify.reasons:
+                # A fix pass cannot make the build fit; the runner requeues the job with more memory.
+                return (
+                    CodingResult(
+                        ok=False,
+                        branch=branch,
+                        summary="Host verification ran out of memory",
+                        changed_files=list_changed_files(repo_dir, runner=self.runner),
+                        log_tail="\n".join([log, *verify_logs])[-8000:],
+                        log_path=str(log_path),
+                        error="out_of_memory: the kernel killed a host verification command for memory; "
+                        "the job is retried with more memory",
+                        security=verify.security,
+                        verification=verification_evidence(verify),
+                    ),
+                    log,
+                    fix_passes_used,
+                    changed,
+                    verify.security,
+                    verification_evidence(verify),
+                )
             # The agent cannot install host toolchains; fix passes would only burn budget.
             toolchain_only = all(r.startswith("missing_toolchain:") for r in verify.reasons)
             if fix_passes_used >= self.verification_fix_passes or toolchain_only:
@@ -1129,6 +1168,7 @@ class OpenCodeBackend:
                 runner=self.runner,
                 env=git_env,
             )
+            screenshots = self._publish_screenshots(repo_dir, test_env, branch=branch, pr_url=pr_url, env=git_env)
             return CodingResult(
                 ok=True,
                 branch=branch,
@@ -1142,6 +1182,7 @@ class OpenCodeBackend:
                 pr_url=pr_url,
                 security=security,
                 verification=verification,
+                screenshots=screenshots,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(
@@ -1389,6 +1430,24 @@ class OpenCodeBackend:
                 pr_url=pr_url,
                 error=str(exc),
             )
+
+    def _publish_screenshots(
+        self, repo_dir: Path, test_env: TestEnvironment | None, *, branch: str, pr_url: str, env: dict[str, str]
+    ) -> dict[str, Any]:
+        """Screenshots from the final verification, on an evidence branch and the PR. Best effort."""
+        if test_env is None or not str(pr_url or "").startswith("https://"):
+            return {}
+        shots = screenshots_dir(test_env)
+        if not shots.is_dir():
+            return {}
+        try:
+            github = self.github or github_for(pr_url)
+            published = publish_screenshots(repo_dir, shots, work_branch=branch, pr_url=pr_url, github=github, runner=self.runner, env=env)
+        except Exception as exc:  # noqa: BLE001 - screenshots never fail a delivery
+            published = {"error": str(exc)[:300]}
+        if published.get("error"):
+            log_event("coding_screenshots_not_published", pr_url=pr_url, error=published["error"])
+        return published
 
     def _optional_binary(self) -> str:
         try:

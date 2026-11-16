@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +24,16 @@ from ts_harness.implementation.test_env import (
     repo_runs_bdd,
     unit_test_command,
 )
-from ts_harness.implementation.test_services import integration_plan, run_integration
+from ts_harness.implementation.test_services import (
+    changed_playwright_specs,
+    integration_plan,
+    playwright_config,
+    run_integration,
+    screenshot_files,
+    screenshot_name,
+)
+
+ONBOARD_MARKER = "<!-- ts-harness:onboard-repo -->"
 
 _LOG_TAIL_CHARS = 4000
 _SHADOW_MODULES = {"pytest": ("pytest", "_pytest"), "behave": ("behave",)}
@@ -69,6 +80,8 @@ class VerifyResult:
     checks: list[dict[str, Any]] = field(default_factory=list)
     # Line coverage of the changed files when the work order asks about coverage (never blocks).
     coverage: dict[str, Any] = field(default_factory=dict)
+    # Names of the screenshots the change's Playwright specs produced (files under screenshots_dir).
+    screenshots: list[str] = field(default_factory=list)
 
 
 _EVIDENCE_TAIL = 700
@@ -90,6 +103,7 @@ def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
         "checks": list(verify.checks),
         "skipped": [name for name, skipped in (("unit", verify.skipped_unit), ("bdd", verify.skipped_bdd)) if skipped],
         "coverage": dict(verify.coverage),
+        "screenshots": list(verify.screenshots),
         "warnings": list(verify.warnings),
     }
 
@@ -107,6 +121,11 @@ def verification_summary(evidence: dict[str, Any] | None) -> str:
     if evidence.get("skipped"):
         lines.append("Not run: " + ", ".join(evidence["skipped"]) + " (not required for this repo or work order).")
     lines.extend(coverage_summary(evidence.get("coverage")))
+    if evidence.get("screenshots"):
+        lines.append(
+            f"Screenshots: {len(evidence['screenshots'])} from the Playwright tests this change added or edited "
+            "(attached to QA and linked on the PR)."
+        )
     for warning in evidence.get("warnings") or []:
         lines.append(f"Note: {warning}")
     return "\n".join(lines)
@@ -257,6 +276,50 @@ def collect_docs_text(repo_dir: Path) -> str:
     return "\n\n".join(part for part in docs_parts if part)
 
 
+RELATED_TESTS_THRESHOLD = 120
+_TEST_FILE = re.compile(r"\.(test|spec)\.(ts|tsx|js|jsx|mts|cts|mjs)$")
+
+
+def count_test_files(repo_dir: Path, limit: int) -> int:
+    """Test files in the repo, counted up to ``limit`` (dependencies and build output skipped)."""
+    count = 0
+    for root, dirs, files in os.walk(repo_dir):
+        dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"}]
+        count += sum(1 for name in files if _TEST_FILE.search(name))
+        if count > limit:
+            break
+    return count
+
+
+def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> list[str] | None:
+    """For a large Vitest/Jest repo, only the tests that import the changed files.
+
+    The full suite of a repo with hundreds of test files takes most of a coding job on two
+    CPUs and reruns on every fix pass; CI still runs all of it on the PR.
+    """
+    from ts_harness.implementation.coverage import _package, _script_args
+
+    sources = [p for p in (changed_files or []) if p.endswith((".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs")) and (Path(repo_dir) / p).is_file()]
+    raw = os.environ.get("TS_HARNESS_RELATED_TESTS_THRESHOLD", "")
+    threshold = int(raw) if raw.isdigit() else RELATED_TESTS_THRESHOLD
+    if not sources or threshold <= 0 or count_test_files(Path(repo_dir), threshold) <= threshold:
+        return None
+    package = _package(repo_dir)
+    script = str((package.get("scripts") or {}).get("test") or "")
+    bin_dir = Path(repo_dir) / "node_modules" / ".bin"
+    deps = {**(package.get("devDependencies") or {}), **(package.get("dependencies") or {})}
+    if "vitest" in deps and (bin_dir / "vitest").exists():
+        args = [a for a in _script_args(script, "vitest") if a not in {"run", "--watch"}]
+        return [str(bin_dir / "vitest"), "related", "--run", *args, *sources]
+    if "jest" in deps and (bin_dir / "jest").exists():
+        return [str(bin_dir / "jest"), *_script_args(script, "jest"), "--findRelatedTests", *sources, "--passWithNoTests"]
+    return None
+
+
+def screenshots_dir(test_env: TestEnvironment) -> Path:
+    return Path(test_env.state_dir or ".") / "screenshots"
+
+
 def prepare_test_dependencies(
     repo_dir: Path,
     *,
@@ -293,8 +356,12 @@ def verify_implementation(
     integration_runner=run_integration,
 ) -> VerifyResult:
     reasons: list[str] = []
+    warnings: list[str] = []
     logs: list[str] = []
     failed_logs: set[int] = set()
+    from ts_harness.implementation.cgroup import oom_kills
+
+    kills_before, memory_limit = oom_kills()
     checks: list[dict[str, Any]] = []
     unit_command: list[str] | None = None
     bdd_command: list[str] | None = None
@@ -335,6 +402,10 @@ def verify_implementation(
     unit_ran = False
     if behavioral:
         unit_command = detect_unit_test_command(repo_dir, python=python)
+        related = related_tests_command(repo_dir, changed_files) if unit_command is not None else None
+        if related is not None:
+            unit_command = related
+            warnings.append("large repo: host ran the tests related to the changed files; CI runs the full suite")
         if unit_command is None:
             reasons.append("no_test_runner")
             skipped_unit = True
@@ -391,17 +462,32 @@ def verify_implementation(
                 failed_logs.add(len(logs) - 1)
                 reasons.append(f"{label}_failed")
 
-    warnings: list[str] = []
+    screenshots: list[str] = []
+    if ONBOARD_MARKER in work_order_body and changed_files is not None:
+        from ts_harness.implementation.repo_onboarding import repo_has_e2e_suite
+        from ts_harness.implementation.test_services import load_repo_config
+
+        declared = load_repo_config(repo_dir).get("integration")
+        if repo_has_e2e_suite(repo_dir) and not (isinstance(declared, dict) and declared.get("command")):
+            reasons.append("integration_suite_not_declared")
+    if test_env is not None and test_env.state_dir is not None:
+        shutil.rmtree(screenshots_dir(test_env), ignore_errors=True)
     plan = None
     if test_env is not None and changed_files is not None:
-        plan = integration_plan(repo_dir, services_running=test_env.services_running)
+        plan = integration_plan(repo_dir, services_running=test_env.services_running, changed_files=changed_files)
     if plan is not None:
         command = ["sh", "-c", plan.command]
         if plan.blocking and reasons:
             # A suite that resets databases and starts the app costs minutes; run it once the cheap checks pass.
             warnings.append("integration suite not run: earlier checks failed")
         else:
+            specs = changed_playwright_specs(repo_dir, changed_files) if playwright_config(repo_dir, changed_files) else []
+            if specs and test_env.state_dir is not None:
+                plan.evidence_specs = specs
+                plan.evidence_dir = str(screenshots_dir(test_env))
             result = integration_runner(repo_dir, plan, test_env.merged_env(), log_dir=test_env.state_dir)
+            if result.returncode == 0 and plan.evidence_dir:
+                screenshots = [screenshot_name(path) for path in screenshot_files(Path(plan.evidence_dir))]
             label = "integration" if plan.blocking else "integration (advisory)"
             logs.append(_format_command_log(label, command, result))
             checks.append(_check_record(label, command, result))
@@ -432,6 +518,11 @@ def verify_implementation(
         warnings = [*warnings, *scan_warnings]
         logs.append(_format_security_log(security_block))
 
+    if oom_kills()[0] > kills_before:
+        # A check failed because the kernel killed it, not because of the code.
+        reasons.insert(0, "out_of_memory")
+        warnings.append(f"the kernel killed a verification command for memory (limit {memory_limit or 'unknown'})")
+
     # Deduplicate while preserving order.
     deduped: list[str] = []
     for reason in reasons:
@@ -456,6 +547,7 @@ def verify_implementation(
         warnings=warnings,
         checks=checks,
         coverage=coverage,
+        screenshots=screenshots,
     )
 
 
@@ -519,6 +611,16 @@ def build_verification_fix_prompt(
         lines.append(
             "ESLint failed on files you changed. Fix what it reports (running it with --fix is fine "
             "for formatting); do not disable rules or add eslint-disable comments."
+        )
+    if "format_failed" in verify.reasons:
+        lines.append(
+            "Prettier reports unformatted files you changed, and the repo's CI checks formatting. Run the repo's "
+            "Prettier with --write on exactly those files; do not reformat other files."
+        )
+    if "integration_suite_not_declared" in verify.reasons:
+        lines.append(
+            "This repo runs an e2e/integration suite in CI (or has a Playwright config), but .ts-harness.yml "
+            "declares no `integration` block with a `command`. Declare it and make `ts-harness-integration` pass."
         )
     if "integration_tests_failed" in verify.reasons:
         lines.append(

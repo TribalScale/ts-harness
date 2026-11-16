@@ -162,6 +162,9 @@ class GitHubClient:
     token_provider: TokenProvider | None = None
     host: str = "github.com"
     sleep: Callable[[float], None] = time.sleep
+    # The token came from GITHUB_TOKEN: read it again per request. A coding worker refreshes
+    # that variable with a new installation token before the old one expires (an hour).
+    token_from_env: bool = False
 
     @classmethod
     def from_env(cls, *, transport: Transport | None = None) -> "GitHubClient":
@@ -171,9 +174,11 @@ class GitHubClient:
         match = _REPO_PATH_RE.match(path)
         if self.token_provider and match:
             return self.token_provider(match.group("owner"), match.group("repo"))
-        if not self.token:
+        token = os.environ.get("GITHUB_TOKEN", "").strip() if self.token_from_env else ""
+        token = token or self.token
+        if not token:
             raise GitHubError(401, "GITHUB_TOKEN is required for this call (the GitHub App only covers repositories)")
-        return self.token
+        return token
 
     def request(
         self,
@@ -246,6 +251,9 @@ class GitHubClient:
 
     def comment(self, owner: str, repo: str, number: int, body: str) -> dict[str, Any]:
         return self.request("POST", f"/repos/{owner}/{repo}/issues/{number}/comments", body={"body": body})
+
+    def update_comment(self, owner: str, repo: str, comment_id: int | str, body: str) -> dict[str, Any]:
+        return self.request("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body={"body": body})
 
     def list_pull_files(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         """Changed files with patches; GitHub caps the listing at 3000 files."""
@@ -415,6 +423,11 @@ class GitHubClient:
     def branch_protection(self, owner: str, repo: str, branch: str) -> dict[str, Any] | None:
         return self.request("GET", f"/repos/{owner}/{repo}/branches/{urllib.parse.quote(branch, safe='')}/protection", allow_404=True)
 
+    def set_branch_protection(self, owner: str, repo: str, branch: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Classic branch protection (needs admin on the repo)."""
+        quoted = urllib.parse.quote(branch, safe="")
+        return self.request("PUT", f"/repos/{owner}/{repo}/branches/{quoted}/protection", body=body)
+
     def required_status_contexts(self, owner: str, repo: str, branch: str) -> list[str] | None:
         """Return required contexts, or ``None`` when the branch is unprotected."""
         protection = self.branch_protection(owner, repo, branch)
@@ -505,6 +518,7 @@ def github_for(repo_url: str | None = None, *, transport: Transport | None = Non
         transport=transport or _urllib_transport,
         token_provider=_app_provider(app, pat) if app else None,
         host=host,
+        token_from_env=bool(pat),
     )
 
 

@@ -49,7 +49,7 @@ _LOCAL_EXCLUDES = {
     "gradle": (".gradle/", "build/"),
 }
 _EXCLUDE_MARKER = "# ts-harness test environment"
-HARNESS_LOCAL_PATHS = (".opencode/",)
+HARNESS_LOCAL_PATHS = (".opencode/", "playwright.ts-harness-evidence.config.ts")
 
 
 @dataclass
@@ -123,6 +123,17 @@ def node_run_command(repo_dir: Path, script: str) -> list[str]:
     return [manager, "run", script]
 
 
+def _playwright_bin(repo_dir: Path) -> Path:
+    """Root ``node_modules/.bin/playwright``, else the first workspace package's (pnpm does not hoist)."""
+    from ts_harness.implementation.workspaces import workspace_packages
+
+    for directory in (Path(repo_dir), *workspace_packages(repo_dir)):
+        candidate = directory / "node_modules" / ".bin" / "playwright"
+        if candidate.exists():
+            return candidate
+    return Path(repo_dir) / "node_modules" / ".bin" / "playwright"
+
+
 def uses_vitest(repo_dir: Path) -> bool:
     manifest = package_manifest(repo_dir)
     deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
@@ -130,9 +141,15 @@ def uses_vitest(repo_dir: Path) -> bool:
 
 
 def uses_playwright(repo_dir: Path) -> bool:
-    manifest = package_manifest(repo_dir)
-    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
-    return "@playwright/test" in deps or "playwright" in deps
+    """The repo, or in a monorepo any workspace package, depends on Playwright."""
+    from ts_harness.implementation.workspaces import workspace_packages
+
+    for directory in (Path(repo_dir), *workspace_packages(repo_dir)):
+        manifest = package_manifest(directory)
+        deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+        if "@playwright/test" in deps or "playwright" in deps:
+            return True
+    return False
 
 
 def node_install_command(repo_dir: Path) -> tuple[list[str], list[str]]:
@@ -234,7 +251,10 @@ def bdd_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | 
     return None
 
 
-_TYPECHECK_SCRIPTS = ("typecheck", "type-check", "check-types", "types:check", "tsc")
+_TYPECHECK_SCRIPTS = (
+    "typecheck", "type-check", "check-types", "types:check", "check:types", "test:typecheck", "lint:types",
+    "typecheck:all", "tsc",
+)
 _LINTABLE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 _ESLINT_CONFIGS = tuple(
     [f"eslint.config.{ext}" for ext in ("js", "mjs", "cjs", "ts", "mts", "cts")]
@@ -252,24 +272,38 @@ def _tsconfig_has_sources(path: Path) -> bool:
 
 
 def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[tuple[str, list[str]]]:
-    """Type check and lint for a Node repo: what its CI usually runs besides the tests.
+    """Type check, lint and (web apps) build for a Node repo: what its CI usually runs besides the tests.
 
     The type check is the repo's own script when it has one, else ``tsc --noEmit`` on its
-    tsconfig. ESLint runs on the changed files only, so lint debt elsewhere does not block.
+    tsconfig. ESLint runs on the changed files only, so lint debt elsewhere does not block,
+    from the directory of the ESLint config that governs them. In a monorepo, packages
+    without a root script are checked and built one changed package at a time.
     """
+    from ts_harness.implementation import workspaces
+
     repo_dir = Path(repo_dir)
-    if detect_stack(repo_dir) != "node":
+    if detect_stack(repo_dir) != "node" and not workspaces.is_monorepo(repo_dir):
         return []
     checks: list[tuple[str, list[str]]] = []
     scripts = package_scripts(repo_dir)
     bin_dir = repo_dir / "node_modules" / ".bin"
+    manager = node_package_manager(repo_dir)
+    packages = workspaces.changed_packages(repo_dir, changed_files or []) if workspaces.is_monorepo(repo_dir) else []
     script = next((name for name in _TYPECHECK_SCRIPTS if name in scripts), None)
     tsconfig = repo_dir / "tsconfig.json"
     if script:
         checks.append(("typecheck", node_run_command(repo_dir, script)))
+    elif packages:
+        for package in packages:
+            own = workspaces.package_scripts(package)
+            pkg_script = next((name for name in _TYPECHECK_SCRIPTS if name in own), None)
+            tsc = workspaces.find_bin(repo_dir, package, "tsc")
+            if pkg_script:
+                checks.append(("typecheck", workspaces.workspace_run(repo_dir, manager, package, pkg_script)))
+            elif (package / "tsconfig.json").is_file() and tsc is not None and _tsconfig_has_sources(package / "tsconfig.json"):
+                checks.append(("typecheck", workspaces.in_dir(package, [str(tsc), "--noEmit", "-p", "tsconfig.json"])))
     elif tsconfig.is_file() and (bin_dir / "tsc").exists() and _tsconfig_has_sources(tsconfig):
         checks.append(("typecheck", [str(bin_dir / "tsc"), "--noEmit", "-p", "tsconfig.json"]))
-    has_config = any((repo_dir / name).is_file() for name in _ESLINT_CONFIGS) or "eslintConfig" in package_manifest(repo_dir)
     files = sorted(
         {
             path
@@ -279,13 +313,82 @@ def node_static_checks(repo_dir: Path, changed_files: list[str] | None) -> list[
             and (repo_dir / path).is_file()
         }
     )
-    if files and has_config and (bin_dir / "eslint").exists():
-        checks.append(("lint", [str(bin_dir / "eslint"), *files]))
-    if "build" in scripts and is_web_app(repo_dir):
+    for config_dir, group in _eslint_groups(repo_dir, files).items():
+        eslint = workspaces.find_bin(repo_dir, config_dir, "eslint")
+        if eslint is None:
+            continue
+        if config_dir == repo_dir:
+            checks.append(("lint", [str(eslint), *group]))
+        else:
+            relative = [str((repo_dir / path).relative_to(config_dir)) for path in group]
+            checks.append(("lint", workspaces.in_dir(config_dir, [str(eslint), *relative])))
+    if _ci_checks_formatting(repo_dir):
+        prettier = workspaces.find_bin(repo_dir, repo_dir, "prettier")
+        formattable = [path for path in files_changed_on_disk(repo_dir, changed_files) if path.endswith(_PRETTIER_SUFFIXES)]
+        if prettier is not None and formattable:
+            checks.append(("format", [str(prettier), "--check", "--no-error-on-unmatched-pattern", *formattable]))
+    if "build" in scripts and is_web_app(repo_dir) and not packages:
         # Bundlers (Vite, Next, CRA) fail on things the type check passes: unresolved
         # imports, server/client boundaries, env access at build time.
         checks.append(("build", node_run_command(repo_dir, "build")))
+    for package in packages:
+        if "build" in workspaces.package_scripts(package) and is_web_app(package):
+            checks.append(("build", workspaces.workspace_run(repo_dir, manager, package, "build")))
     return checks
+
+
+_PRETTIER_SUFFIXES = (*_LINTABLE_SUFFIXES, ".json", ".css", ".scss", ".md", ".mdx", ".yml", ".yaml", ".html", ".vue")
+_PRETTIER_CHECK = re.compile(r"prettier\b[^&|;\n]*(--check|--list-different|\s-[lc]\b)")
+
+
+def files_changed_on_disk(repo_dir: Path, changed_files: list[str] | None) -> list[str]:
+    return sorted(
+        path for path in (changed_files or [])
+        if not set(Path(path).parts) & _SKIPPED_DIRS and (Path(repo_dir) / path).is_file()
+    )
+
+
+def _ci_checks_formatting(repo_dir: Path) -> bool:
+    """CI runs a Prettier check, directly or through a package script it calls.
+
+    Only then does the host check formatting: a repo with a Prettier config that CI does not
+    enforce would otherwise fail on formatting it never required.
+    """
+    workflows = "\n".join(_read_text(path) for path in (Path(repo_dir) / ".github" / "workflows").glob("*.y*ml"))
+    if not workflows:
+        return False
+    if _PRETTIER_CHECK.search(workflows):
+        return True
+    for name, body in package_scripts(repo_dir).items():
+        if _PRETTIER_CHECK.search(body) and re.search(rf"(yarn|npm run|pnpm( run)?|bun run)\s+{re.escape(name)}\b", workflows):
+            return True
+    return False
+
+
+def _eslint_config_dir(repo_dir: Path, rel_path: str) -> Path | None:
+    """The nearest directory, from the file up to the repo root, with an ESLint config."""
+    repo_dir = Path(repo_dir).resolve()
+    current = (repo_dir / rel_path).resolve().parent
+    while True:
+        if any((current / name).is_file() for name in _ESLINT_CONFIGS) or (
+            current == repo_dir and "eslintConfig" in package_manifest(repo_dir)
+        ):
+            return current
+        if current == repo_dir or current.parent == current:
+            return None
+        current = current.parent
+
+
+def _eslint_groups(repo_dir: Path, files: list[str]) -> dict[Path, list[str]]:
+    groups: dict[Path, list[str]] = {}
+    root = Path(repo_dir).resolve()
+    for path in files:
+        config_dir = _eslint_config_dir(repo_dir, path)
+        if config_dir is not None:
+            # Keep the caller's spelling of the repo path (symlinked temp dirs, mounts).
+            key = Path(repo_dir) / config_dir.relative_to(root) if config_dir != root else Path(repo_dir)
+            groups.setdefault(key, []).append(path)
+    return groups
 
 
 _WEB_FRAMEWORKS = ("react", "react-dom", "next", "vite", "@vitejs/plugin-react", "react-scripts", "@remix-run/react", "vue", "svelte")
@@ -488,7 +591,7 @@ def _manifest_steps(repo_dir: Path, test_env: TestEnvironment) -> list[tuple[lis
         if uses_playwright(repo_dir):
             # The browser build must match the repo's Playwright version; the image ships one
             # build and this fetches another only when the repo pins a different version.
-            steps.append(([*manifests, "#playwright"], [str(repo_dir / "node_modules" / ".bin" / "playwright"), "install", "chromium"]))
+            steps.append(([*manifests, "#playwright"], [str(_playwright_bin(repo_dir)), "install", "chromium"]))
     if (repo_dir / "go.mod").is_file():
         steps.append((["go.mod", "go.sum"], ["go", "mod", "download"]))
     return steps

@@ -448,18 +448,18 @@ agents:
       workspace: /workspace/qa-agent
       model: openai/gpt-6.1-sol
       skills: [qa, memory, workflows, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, run_coding_backend, delegate_task]
 
     - id: review-agent
       workspace: /workspace/review-agent
       model: openai/gpt-6-astra
       skills: [review, memory, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, delegate_task, run_coding_backend]
 
     - id: analyst-agent

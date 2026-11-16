@@ -91,6 +91,9 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
         "worker_cpu", "worker_memory_mb",
     )
     job = {key: row.get(key) for key in keys}
+    sized = _spec_sizing(row)
+    if sized:
+        job["spec_memory_mb"] = sized["worker_memory_mb"]
     for key in ("id", "workflow_id", "task_id", "program_id"):
         if job.get(key) is not None:
             job[key] = str(job[key])
@@ -182,6 +185,18 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
         )
     conn.commit()
     return {**_public(row), "created": True}
+
+
+def _spec_sizing(row: dict[str, Any]) -> dict[str, int]:
+    """A job's own memory size (a retry after the worker ran out of memory) wins over the project's."""
+    spec = row.get("spec")
+    if isinstance(spec, str):
+        try:
+            spec = json.loads(spec)
+        except json.JSONDecodeError:
+            spec = {}
+    memory = (spec or {}).get("worker_memory_mb") if isinstance(spec, dict) else None
+    return {"worker_memory_mb": int(memory)} if isinstance(memory, int) and memory > 0 else {}
 
 
 def _project_sizing(cur, rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
@@ -303,7 +318,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             )
             claimed = sorted(cur.fetchall(), key=lambda r: r["created_at"])
             sizing = _project_sizing(cur, claimed)
-            claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {})} for r in claimed]
+            claimed = [{**r, **sizing.get((r["tenant_id"], r.get("project_id")), {}), **_spec_sizing(r)} for r in claimed]
     conn.commit()
     return {
         "running": running,
@@ -666,6 +681,9 @@ def list_coding_jobs(conn, query: dict[str, Any]) -> dict[str, Any]:
         if query.get(key):
             clauses.append(f"{key} = %s")
             params.append(_uuid(query[key], key))
+    if query.get("repo_url"):
+        clauses.append("repo_url = %s")
+        params.append(str(query["repo_url"]))
     if query.get("status"):
         statuses = [s.strip() for s in str(query["status"]).split(",") if s.strip()]
         clauses.append("status = ANY(%s)")
