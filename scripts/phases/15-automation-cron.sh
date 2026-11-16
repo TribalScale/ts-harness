@@ -171,6 +171,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Retries program phase completions that failed, with backoff (up to an hour).
+    {
+        "name": "retry-program-phases",
+        "kind": "system",
+        "handler": "retry_program_phases",
+        "interval_seconds": 300,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")
 PY
