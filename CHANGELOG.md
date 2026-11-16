@@ -303,6 +303,8 @@ First public release.
 
 ### Fixed
 
+- `retry-program-phases` was in `config/runtime-cron-jobs.json` but not in phase 15's system jobs, so on hosts with `TS_HARNESS_STATE_BACKEND=postgres` failed program phase completions were never retried. A test now keeps the two lists in sync.
+
 - Coding workers used the GitHub token from job start for API calls even after refreshing it. Jobs that crossed the token's one-hour expiry failed with 401.
 
 - A test file the implementer adds beyond the work order's `## Files` list is no longer a
