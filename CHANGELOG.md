@@ -313,6 +313,12 @@ First public release.
 
 ### Fixed
 
+- Found in the end-to-end rehearsal (PRD → planning → delivery):
+  - Work-order dependencies written the way the planner template writes them (`- Depends on: WO-001` in the Context Graph) were ignored; only table rows were read. Every work order looked independent, so dependent work orders started before their foundation. Bullet and bold forms are read now.
+  - A cancelled work-order delivery counted as delivered (a child with only succeeded or cancelled steps was "succeeded"), so its work order would never be built. A cancelled child is now undelivered and the program schedules it again.
+  - The repo-onboarding check failed in the workflow runner with `No such file or directory: 'git'`; the runner image now includes git.
+  - A GitHub webhook for a workflow with nothing waiting answered 500; it is acknowledged as ignored.
+
 - Approving or rejecting a gate in the console only updated the task in the memory API. The gate's hooks never ran (for `approve_prd`, `mark_prd_approved`), and when the gate was the workflow's last step the program phase never completed: the program kept neither the approved PRD nor its design references and could not continue. Console decisions on pending gates now go through the workflow engine, like chat decisions, and keep the approver's permissions.
 
 - Images attached to a PRD request were never described: `gather_sources` runs in the workflow runner, which had no model-provider keys, so every image came back "image could not be read" (`x-api-key header is required`). The runner now gets `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and `MISTRAL_API_KEY`. An image whose description fails is still kept as a design reference.

@@ -3988,6 +3988,16 @@ async def github_webhook(request: Request) -> Response:
         if delivery_id:
             await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
         return _json(result)
+    except ValueError as exc:
+        if "no tasks awaiting external event" not in str(exc):
+            log_event("github_webhook_error", error=str(exc))
+            return _json({"error": str(exc)}, 500)
+        # An event for a workflow that is not waiting (it moved on, was revised or cancelled) is
+        # expected, not a failure: answering 500 marks the delivery failed in GitHub.
+        log_event("github_webhook_ignored", github_event=event_name, reason=str(exc))
+        if delivery_id:
+            await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
+        return _json({"status": "ignored", "reason": str(exc)})
     except Exception as exc:
         log_event("github_webhook_error", error=str(exc))
         return _json({"error": str(exc)}, 500)

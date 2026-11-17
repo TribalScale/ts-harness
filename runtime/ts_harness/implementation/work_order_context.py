@@ -12,6 +12,11 @@ _DEPENDS_ON_ROW = re.compile(
     r"\|\s*\*{0,2}Depends on\*{0,2}\s*\|\s*([^|\n]+)\|",
     re.IGNORECASE,
 )
+# The planner template writes the Context Graph as bullets: "- Depends on: WO-001, WO-002".
+_DEPENDS_ON_LINE = re.compile(
+    r"^\s*(?:[-*]\s+)?\*{0,2}Depends on\*{0,2}\s*:\s*\*{0,2}\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 _REPOSITORY_LINE = re.compile(
@@ -65,7 +70,7 @@ def parse_work_order_dependencies(markdown: str) -> dict[str, list[str]]:
         start = match.start()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
         section = text[start:end]
-        row = _DEPENDS_ON_ROW.search(section)
+        row = _DEPENDS_ON_ROW.search(section) or _DEPENDS_ON_LINE.search(section)
         if not row:
             deps[wo_id] = []
             continue
