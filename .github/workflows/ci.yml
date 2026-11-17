@@ -5,6 +5,10 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+    # `edited` covers a base change: a stacked PR moved onto dev (by hand, or by GitHub when
+    # the PR below it merges) otherwise never runs CI. It also runs on title and body edits;
+    # skipping those jobs would report "skipped", which required checks count as passing.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   secret-scan:

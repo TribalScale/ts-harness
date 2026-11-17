@@ -319,6 +319,7 @@ First public release.
 - Release gates never reached the inbox: it listed only gates on a phase's own workflow, and the promote gates are on the release tracks it starts. The memory API's child tasks now carry their ids, and the inbox lists gates waiting inside started workflows.
 - Code reviews and QA results were posted under the PAT owner's name: the workflow runner had no GitHub App credentials. Compose now passes `GITHUB_APP_*` to it.
 - `FIGMA_TOKEN` never reached the containers: the compose wrapper did not pass it, so a stored Figma token would have been ignored.
+- CI never ran on a stacked PR moved onto `dev` (a base change is an `edited` event, which CI did not listen to), so it sat blocked without checks.
 - A failed QA with defects that have no severity read "0 blocking of 1 defects"; it now says "1 defect".
 - Found in the end-to-end rehearsal (PRD → planning → delivery):
   - Work-order dependencies written the way the planner template writes them (`- Depends on: WO-001` in the Context Graph) were ignored; only table rows were read. Every work order looked independent, so dependent work orders started before their foundation. Bullet and bold forms are read now.
