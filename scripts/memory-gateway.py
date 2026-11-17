@@ -3831,7 +3831,9 @@ def get_delivery_program_status(
     phases: dict[str, Any] = {}
     active_workflow_id = None
     for phase in phase_ids:
-        member = next((wf for wf in workflows if wf.get("program_phase") == phase), None)
+        # The newest workflow of the phase: work orders are delivered in waves (one implement
+        # workflow per wave) and revisions start new workflows, so the first one is history.
+        member = next((wf for wf in reversed(workflows) if wf.get("program_phase") == phase), None)
         if member is None:
             phases[phase] = {"state": "not_started"}
             continue
