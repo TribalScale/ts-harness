@@ -24,8 +24,16 @@ def _title(key: str) -> str:
     return _DOC_TITLES.get(key) or key.removesuffix("_markdown").replace("_", " ").capitalize()
 
 
+# Plain fields that are documents: a Jira kickoff approves the ticket as the coding agent sees it.
+_BODY_FIELDS = {"work_order_body": "Ticket as the coding agent will see it"}
+
+
 def _documents(output: dict[str, Any]) -> list[dict[str, str]]:
     docs: list[dict[str, str]] = []
+    for key, title in _BODY_FIELDS.items():
+        value = output.get(key)
+        if isinstance(value, str) and value.strip():
+            docs.append({"key": key, "title": title, "markdown": value[:MAX_DOC_CHARS]})
     for holder in (output.get("result"), output.get("artifacts"), output):
         if not isinstance(holder, dict):
             continue
@@ -115,7 +123,8 @@ def build_gate_review(gate: dict[str, Any], tasks: list[dict[str, Any]]) -> dict
         review["kind"] = "release"
         review["release"] = _release(gate, tasks)
         return review
-    for task in _ancestors(gate, by_id):
+    # An agent step that is its own gate (a Jira kickoff) approves its own output first.
+    for task in [gate, *_ancestors(gate, by_id)]:
         output = task.get("output") if isinstance(task.get("output"), dict) else {}
         docs = _documents(output)
         if not docs and not output.get("summary"):

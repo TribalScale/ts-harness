@@ -73,6 +73,19 @@ class GateReviewTests(unittest.TestCase):
             {"environment": "staging", "status": "succeeded", "evidence_url": "https://github.com/o/r/actions/runs/1"},
         )
 
+    def test_a_jira_kickoff_shows_the_ticket_it_approves(self):
+        gate = {
+            "id": "hydrate",
+            "step_name": "hydrate_ticket",
+            "workflow_type": "implement_jira_ticket",
+            "approval_required": True,
+            "output": {"summary": "PR against fe-dev on acme/web", "work_order_body": "# THD-33 Comment count", "repo_url": "x"},
+        }
+        review = build_gate_review(gate, [gate])
+        self.assertEqual((review["kind"], review["from_step"]), ("documents", "hydrate_ticket"))
+        self.assertEqual(review["summary"], "PR against fe-dev on acme/web")
+        self.assertEqual(review["documents"][0]["markdown"], "# THD-33 Comment count")
+
     def test_gate_review_loads_the_gates_workflow(self):
         memory = mock.Mock()
         memory.task_program.return_value = {"workflow_id": "wf-1", "program_id": "p"}
