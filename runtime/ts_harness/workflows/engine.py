@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import json
+import functools
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ts_harness.agent.sessions import SessionRecord
 from ts_harness.memory.client import MemoryClient, get_memory_client
 from ts_harness.repo_paths import workflows_dir
+from ts_harness.storage.shared_tree import sync_definitions
 from ts_harness.workflows.hooks import build_default_registry
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.materialize import (
     list_skeleton_types,
     load_skeleton,
 )
+from ts_harness.workflows.pr_rejection import PR_CHANGES_REQUESTED_REASON, PR_CLOSED_REASON
 from ts_harness.workflows.presentation import (
     should_present_specialist_output,
 )
@@ -27,6 +30,7 @@ from ts_harness.workflows.definition_paths import (
 )
 from ts_harness.workflows.decisions import decision_request_fields
 from ts_harness.workflows.registry import HookContext, HookRegistry
+from ts_harness.workflows.workflow_locks import workflow_lock
 from ts_harness.workflows.session_compat import (
     read_source_workflow_id,
     read_workflow_phase,
@@ -49,6 +53,59 @@ def hook_engine_enabled() -> bool:
     return enabled in {"1", "true", "yes"}
 
 
+def _locked(workflow_of: Callable[..., Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Hold the workflow's write lock for the call; ``workflow_of`` picks the workflow id from the arguments."""
+
+    def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(method)
+        def wrapper(self: "WorkflowEngine", *args: Any, **kwargs: Any) -> Any:
+            with workflow_lock(self.client, workflow_of(*args, **kwargs)):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def _task_workflow(task: dict[str, Any], *_: Any, **__: Any) -> Any:
+    return (task or {}).get("workflow_id")
+
+
+def _first_workflow(workflow_id: str, *_: Any, **__: Any) -> str:
+    return workflow_id
+
+
+def _keyword_workflow(*_: Any, workflow_id: str = "", **__: Any) -> str:
+    return workflow_id
+
+
+_QUEUE_GATE_STEPS = frozenset({"hydrate_ticket", "pick_ticket"})
+
+
+def _queue_gate_rejection(client: Any, payload: dict[str, Any], gate_task: dict[str, Any]) -> bool:
+    """A queue stops when its kickoff or the ticket list is rejected."""
+    if str(gate_task.get("step_name") or "") not in _QUEUE_GATE_STEPS:
+        return False
+    workflow = payload.get("workflow") if isinstance(payload.get("workflow"), dict) else {}
+    program_id = str(workflow.get("program_id") or "").strip()
+    if not program_id or not hasattr(client, "get_program"):
+        return False
+    try:
+        program = (client.get_program(program_id) or {}).get("program") or {}
+    except Exception:
+        return False
+    metadata = program.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return False
+    artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
+    keys = artifacts.get("jira_issue_keys")
+    return (
+        isinstance(keys, list)
+        and bool(keys)
+        and all(isinstance(item, str) and item.strip() for item in keys)
+    )
+
+
 class WorkflowEngine:
     def __init__(
         self,
@@ -63,6 +120,7 @@ class WorkflowEngine:
         self._versioned_skeletons: dict[tuple[str, str], Any] = {}
         self._skeleton_dir = skeleton_dir or workflows_dir()
         self._definition_manifest_generation: int | None = None
+        sync_definitions(force=True)
         root = self._skeleton_dir
         if root.exists():
             for workflow_type in list_skeleton_types(root):
@@ -153,6 +211,7 @@ class WorkflowEngine:
 
     def reload_if_changed(self) -> bool:
         workflow_ok = True
+        sync_definitions()
         try:
             generation = self._read_manifest_generation()
         except Exception:
@@ -291,7 +350,26 @@ class WorkflowEngine:
             else self._workflow_payload(workflow_id)
         )
         version = self._definition_version_from_state(task=task, payload=state)
-        return self.skeleton(workflow_type, definition_version=version)
+        try:
+            return self.skeleton(workflow_type, definition_version=version)
+        except LookupError:
+            current = self._skeletons.get(workflow_type)
+            active = str(getattr(current, "definition_version", "") or "")
+            workflow = state.get("workflow") if isinstance(state.get("workflow"), dict) else {}
+            record_version = str(workflow.get("definition_version") or "")
+            task_version = str((task or {}).get("definition_version") or "")
+            # A task row can carry another workflow's version (for example the
+            # previous phase). When the workflow record itself matches the
+            # active file, that pin is the one that was materialized.
+            if active and active in {record_version, task_version}:
+                logger.warning(
+                    "workflow skeleton %s %s missing; using active %s from the workflow pin",
+                    workflow_type,
+                    version,
+                    active,
+                )
+                return current
+            raise
 
     def _context(
         self,
@@ -382,6 +460,7 @@ class WorkflowEngine:
         ctx.skeleton = skeleton
         return self.registry.invoke("promote", ctx)
 
+    @_locked(_keyword_workflow)
     def handle_reject(
         self,
         *,
@@ -422,6 +501,17 @@ class WorkflowEngine:
                     tenant_id=tenant_id,
                 )
             return result
+        if _queue_gate_rejection(self.client, payload, gate_task):
+            return self._fail_queue_gate(
+                workflow_id=workflow_id,
+                workflow_type=workflow_type,
+                tenant_id=tenant_id,
+                gate_task=gate_task,
+                comments=comments,
+                actor=actor,
+                payload=payload,
+                decision=decision,
+            )
         result = self.client.reject_task(
             str(gate_task["id"]),
             actor=actor,
@@ -430,6 +520,49 @@ class WorkflowEngine:
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
         return result
 
+    def _fail_queue_gate(
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: str,
+        tenant_id: str,
+        gate_task: dict[str, Any],
+        comments: str,
+        actor: str,
+        payload: dict[str, Any],
+        decision: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        result = self.client.reject_task(
+            str(gate_task["id"]),
+            actor=actor,
+            **decision_request_fields(decision, payload.get("workflow")),
+        )
+        gate_id = str(gate_task["id"])
+        for task in list(payload.get("tasks") or []):
+            task_id = str(task.get("id") or "")
+            if not task_id or task_id == gate_id:
+                continue
+            if str(task.get("status") or "") in {"pending", "running", "blocked"}:
+                self.client.cancel_task(task_id, actor=actor, reason="ticket queue stopped")
+        self.client.fail_task(gate_id, comments or "ticket queue rejected", actor=actor)
+        ctx = self._context(
+            workflow_id=workflow_id,
+            workflow_type=workflow_type,
+            tenant_id=tenant_id,
+            task=gate_task,
+            actor=actor,
+            reject_comments=comments,
+            extras={"decision": dict(decision or {})},
+        )
+        phase = self._maybe_complete_program_phase(ctx)
+        self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
+        if isinstance(result, dict):
+            result = {**result, "status": "failed"}
+            if isinstance(phase, dict):
+                result["phase"] = phase
+        return result
+
+    @_locked(_keyword_workflow)
     def handle_approve(
         self,
         *,
@@ -438,7 +571,11 @@ class WorkflowEngine:
         actor: str,
         tenant_id: str = "default",
         decision: dict[str, Any] | None = None,
+        reply_text: str = "",
+        reply_in_chat: bool = False,
     ) -> dict[str, Any]:
+        """Approve ``gate_task``. ``reply_in_chat``: the caller replies in the thread itself,
+        so phase completion returns its message instead of posting it."""
         workflow_type = str(gate_task.get("workflow_type") or "")
         ctx = self._context(
             workflow_id=workflow_id,
@@ -446,13 +583,23 @@ class WorkflowEngine:
             tenant_id=tenant_id,
             task=gate_task,
             actor=actor,
-            extras={"decision": dict(decision or {})},
+            extras={
+                "decision": dict(decision or {}),
+                "reply_text": reply_text,
+                "reply_in_chat": reply_in_chat,
+            },
         )
         result = self.registry.invoke("approve_gate", ctx)
+        # Approval gates are marked succeeded in memory and never dispatched, so
+        # this is the only path that records the phase's produces_artifacts.
+        phase_result = self._maybe_complete_program_phase(ctx)
         self._maybe_notify(ctx, "succeeded")
         self._sync_session(workflow_id, workflow_type, tenant_id, task=gate_task)
+        if isinstance(result, dict) and isinstance(phase_result, dict) and phase_result.get("status"):
+            result = {**result, "phase": phase_result}
         return result
 
+    @_locked(_task_workflow)
     def on_task_transition(
         self,
         task: dict[str, Any],
@@ -527,17 +674,28 @@ class WorkflowEngine:
                         "present_specialist_output",
                         ctx,
                     )
-                    if present_result.get("status") == "presented":
-                        self._maybe_notify(ctx, "awaiting_approval")
-                        self._sync_session(workflow_id, workflow_type, tenant_id)
-                        return present_result
-                    return present_result
                 except Exception as exc:
                     return {
                         "hook": "present_specialist_output",
                         "status": "error",
                         "error": f"specialist output presentation failed: {exc}",
                     }
+                if present_result.get("status") == "presented":
+                    self._maybe_notify(ctx, "awaiting_approval")
+                    try:
+                        self._sync_session(
+                            workflow_id,
+                            workflow_type,
+                            tenant_id,
+                            task=task,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "workflow session sync failed after presentation workflow_id=%s",
+                            workflow_id,
+                        )
+                    return present_result
+                return present_result
 
         if event == "failed":
             self._notify_parent_of_failure(workflow_id)
@@ -564,14 +722,38 @@ class WorkflowEngine:
                         f"{revise_result.get('max_revisions')})."
                     )
                 elif revise_result.get("status") == "revision_limit":
+                    from ts_harness.workflows import human_decisions
+
                     ctx.extras["error"] = (
                         f"{error or failed}\n"
                         "Automatic OpenCode revision limit reached; a human "
                         "must decide next steps."
                     )
+                    tasks = list(self._workflow_payload(workflow_id).get("tasks") or [])
+                    human_decisions.mark_awaiting_human_decision(
+                        self.client, str(task.get("id") or ""), tasks, reason="revision_limit"
+                    )
+                    ctx.extras["channel_text"] = human_decisions.revision_limit_text(
+                        label=human_decisions.work_order_label(tasks, ctx.workflow),
+                        cause=cause,
+                        feedback=ctx.reject_comments,
+                        max_revisions=int(revise_result.get("max_revisions") or 0),
+                        decisions=human_decisions.available_decisions(ctx.stage),
+                    )
+                elif revise_result.get("status") == "stopped":
+                    ctx.extras["error"] = f"{cause}; the work order is stopped."
                 notify_result = self._maybe_notify(ctx, "blocked")
                 self._sync_session(workflow_id, workflow_type, tenant_id, task=task)
-                return {**revise_result, "notify": notify_result}
+                phase_result = None
+                if revise_result.get("status") != "revising":
+                    phase_result = self._maybe_complete_program_phase(ctx)
+                result = {**revise_result, "notify": notify_result}
+                if phase_result:
+                    result["program_phase"] = phase_result
+                return result
+
+        if event == "blocked" and ctx.stage is not None:
+            self._park_failed_run_for_a_human(ctx, task, error)
 
         if event == "ready" and ctx.stage is not None and ctx.stage.wait_external:
             wait_result = self.registry.invoke("wait_external", ctx)
@@ -580,6 +762,12 @@ class WorkflowEngine:
 
         notify_result = self._maybe_notify(ctx, event)
         self._sync_session(workflow_id, workflow_type, tenant_id, task=task)
+        if event == "blocked":
+            # A child blocked for good must wake join_wave. Waits stay pending
+            # inside child_state, so this does not finish a merge or approval wait.
+            phase_result = self._maybe_complete_program_phase(ctx)
+            if isinstance(notify_result, dict) and phase_result:
+                notify_result = {**notify_result, "program_phase": phase_result}
         # Program-phase completion needs persisted task status/output. The runner
         # calls after_task_succeeded() after complete_task(); resume/recovery
         # paths pass an already-succeeded task and complete here.
@@ -588,6 +776,32 @@ class WorkflowEngine:
         if event in {"blocked", "failed"}:
             return notify_result
         return None
+
+    def _park_failed_run_for_a_human(self, ctx: HookContext, task: dict[str, Any], error: str | None) -> None:
+        """A coding run that failed for good waits for a person to re-run or stop it.
+
+        Marked as awaiting a human decision, the block no longer counts as a failed work
+        order, so the wave keeps waiting instead of failing while the run can still be fixed.
+        """
+        from ts_harness.workflows import human_decisions
+
+        if not human_decisions._reruns_on_revise(ctx.stage) or human_decisions.awaiting_human_decision(task):
+            return
+        reason = str(error or task.get("error") or "")
+        if not reason or reason.startswith(("awaiting_external:", "awaiting_tool_approval:", human_decisions.STOPPED_PREFIX)):
+            return
+        tasks = list(self._workflow_payload(ctx.workflow_id).get("tasks") or [])
+        task_id = str(task.get("id") or "")
+        human_decisions.mark_awaiting_human_decision(self.client, task_id, tasks, reason="failed_run")
+        task.setdefault("input", {})
+        if isinstance(task["input"], dict):
+            task["input"][human_decisions.HUMAN_DECISION_KEY] = {"reason": "failed_run"}
+        label = human_decisions.work_order_label(tasks, ctx.workflow)
+        ctx.extras["channel_text"] = (
+            f"{label}: the coding run failed: {reason[:600]}\n"
+            f"Reply `/revise {label} <guidance>` to run it again, or `/stop {label}` to stop the work order. "
+            "You can also decide from the admin Inbox."
+        )
 
     def notify_tool_approval_waiting(
         self,
@@ -620,6 +834,7 @@ class WorkflowEngine:
         )
         return self._maybe_notify(ctx, "awaiting_approval")
 
+    @_locked(_task_workflow)
     def after_task_succeeded(
         self,
         task: dict[str, Any],
@@ -676,14 +891,42 @@ class WorkflowEngine:
     def _maybe_complete_program_phase(self, ctx: HookContext) -> dict[str, Any] | None:
         try:
             return self.registry.invoke("complete_program_phase", ctx)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "complete_program_phase failed workflow_id=%s workflow_type=%s",
                 ctx.workflow_id,
                 ctx.workflow_type,
             )
+            self._phase_completion_failed(ctx, exc)
             return None
 
+    def _phase_completion_failed(self, ctx: HookContext, exc: Exception) -> None:
+        """Queue the program workflow for ``retry_program_phases`` and tell its chat, once.
+
+        A failure here used to be logged only: the program stayed at its phase, running,
+        with nothing to show it had stalled.
+        """
+        from ts_harness.workflows import phase_retries
+
+        workflow = ctx.workflow if isinstance(ctx.workflow, dict) else {}
+        if not workflow.get("program_id"):
+            return
+        try:
+            first = phase_retries.record_failure(
+                self.client, workflow_id=ctx.workflow_id, workflow_type=ctx.workflow_type,
+                tenant_id=ctx.tenant_id, error=str(exc),
+            )
+        except Exception:  # noqa: BLE001 - the retry record is best effort
+            logger.exception("could not queue phase completion retry workflow_id=%s", ctx.workflow_id)
+            return
+        if first:
+            ctx.extras["channel_text"] = (
+                "Moving this program to its next phase failed: "
+                f"{str(exc)[:300]}\nIt will be retried automatically every few minutes."
+            )
+            self._maybe_notify(ctx, "blocked")
+
+    @_locked(_first_workflow)
     def cancel(self, workflow_id: str, *, actor: str, tenant_id: str = "default", reason: str = "") -> dict[str, Any]:
         payload = self.client.get_workflow(workflow_id)
         workflow_type = str((payload.get("workflow") or {}).get("workflow_type") or "generic")
@@ -698,6 +941,25 @@ class WorkflowEngine:
         self._maybe_notify(ctx, "cancelled")
         return result
 
+    @_locked(_first_workflow)
+    def decide_blocked_step(
+        self,
+        workflow_id: str,
+        task_id: str,
+        action: str,
+        *,
+        actor: str,
+        guidance: str = "",
+        tenant_id: str = "default",
+    ) -> dict[str, Any]:
+        """Revise again, accept, or stop a step parked for a human decision."""
+        from ts_harness.workflows import human_decisions
+
+        return human_decisions.decide(
+            self, workflow_id, task_id, action, actor=actor, guidance=guidance, tenant_id=tenant_id
+        )
+
+    @_locked(_first_workflow)
     def resume_external(
         self,
         workflow_id: str,
@@ -751,6 +1013,7 @@ class WorkflowEngine:
                 }
         return result
 
+    @_locked(_first_workflow)
     def block_wait(
         self,
         workflow_id: str,
@@ -771,6 +1034,20 @@ class WorkflowEngine:
             dispatch_result={"output": output or task.get("output") or {}},
             error=reason,
         )
+
+    def block_case_prefixes(self, workflow_id: str, task_id: str) -> list[str]:
+        """``error_prefix`` of each ``on_block`` case on the task's stage, from its pinned definition."""
+        payload = self._workflow_payload(workflow_id)
+        task = next((item for item in payload.get("tasks") or [] if str(item.get("id")) == task_id), None)
+        workflow_type = str((task or {}).get("workflow_type") or (payload.get("workflow") or {}).get("workflow_type") or "")
+        if task is None or not workflow_type:
+            return []
+        try:
+            stage = self._skeleton_for_state(workflow_type, task=task, payload=payload).stage(str(task.get("step_name") or ""))
+        except (KeyError, LookupError):
+            return []
+        cases = (getattr(stage, "on_block", None) or {}).get("cases") or []
+        return [str(case.get("error_prefix")) for case in cases if isinstance(case, dict) and case.get("error_prefix")]
 
     def _find_task(self, workflow_id: str, task_id: str) -> dict[str, Any] | None:
         workflow_payload = self.client.get_workflow(workflow_id)
@@ -887,6 +1164,10 @@ _default_engine: WorkflowEngine | None = None
 def _revision_cause(error: str | None) -> tuple[str, str]:
     """(message for a started revision, fallback text when the limit is hit)."""
     text = str(error or "")
+    for reason, verb in ((PR_CLOSED_REASON, "closed the PR without merging"), (PR_CHANGES_REQUESTED_REASON, "requested changes")):
+        if text.startswith(reason):
+            who = text[len(reason):].strip().removeprefix("by ").strip() or "A reviewer"
+            return f"{who} {verb}", "Human-requested revision failed"
     if "stale_base" in text or "base_advanced" in text:
         return "The base branch moved; refreshing the PR", "Base branch refresh failed"
     if "code_review" in text:
@@ -905,6 +1186,8 @@ def _qa_feedback_text(
     review_feedback = str(output.get("review_feedback") or "").strip()
     if review_feedback:
         return review_feedback
+    if str(output.get("checks_state") or "") == "failure":
+        return _failed_checks_feedback(output)
     parts: list[str] = []
     result = output.get("result") if isinstance(output.get("result"), dict) else {}
     summary = str(result.get("summary") or output.get("summary") or "").strip()
@@ -923,6 +1206,17 @@ def _qa_feedback_text(
     if parts:
         return "\n".join(parts)
     return str(error or "").strip()
+
+
+def _failed_checks_feedback(output: dict[str, Any]) -> str:
+    """What OpenCode needs to fix failing CI: which checks failed and how each job's log ends."""
+    failed = [str(item) for item in output.get("failed_checks") or [] if item]
+    lines = ["The PR's CI checks failed: " + (", ".join(failed) or "see the PR checks") + "."]
+    lines.append("Fix the cause so these checks pass in CI, not only locally; CI may use a different environment.")
+    logs = output.get("failed_check_logs") if isinstance(output.get("failed_check_logs"), dict) else {}
+    for name, tail in logs.items():
+        lines.append(f"\nEnd of the log for {name}:\n{str(tail)[-4000:]}")
+    return "\n".join(lines)
 
 
 def get_workflow_engine() -> WorkflowEngine:

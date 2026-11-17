@@ -176,7 +176,10 @@ class SkillCatalog:
             self.index[key] = meta
 
     def reload(self) -> None:
-        """Reload the catalog index from disk."""
+        """Reload the catalog index from disk, rebuilding the managed mirror first if the index moved."""
+        from ts_harness.skills.repository import sync_skill_mirror
+
+        sync_skill_mirror()
         self.load()
 
     def _parse_skill(self, path: Path, root: Path | None = None) -> tuple[SkillMetadata, str]:

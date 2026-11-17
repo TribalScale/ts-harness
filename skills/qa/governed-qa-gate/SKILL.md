@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.0
+version: 1.5.0
 ---
 
 # Governed QA Gate
@@ -42,9 +42,15 @@ Then:
    If `checks_state` is `failure`, the PR whose check failed is `failed` and
    each failed check is listed in `defects`.
 3. Read `input.work_order_body` / work-item references, `input.files`, and
-   `input.host_verify_summary`. Each `input.files` entry is one changed file
+   `input.host_verify_summary`. `input.human_change_requests` lists changes a
+   human reviewer requested on this PR, oldest first. They amend the work
+   order's acceptance criteria: where one conflicts with the work order or an
+   earlier request, the latest request wins, and meeting it is not a defect. Each `input.files` entry is one changed file
    (`filename`, `patch`, `additions`, `deletions`). That patch is the
-   implementation. Judge each acceptance criterion from the patch. A missing
+   implementation. Judge each acceptance criterion from the patch. Each
+   `input.prs` entry includes `title`, the pull request title on GitHub.
+   Judge a title criterion, including a Jira-key prefix, from that field. A
+   title that does not meet the criterion is a defect. A missing
    `host_verify_summary` is not a defect and is not a reason to fail: host
    verify is supporting evidence only, and it never overrides a failed
    external check. When `checks_state` is `success`, cite those CI checks as
@@ -52,8 +58,36 @@ Then:
    workspace checkout that was not supplied. `input.host_security` is the
    host secret scan and dependency audit result (file and line only); cite it
    as security evidence.
+   `input.host_verify_summary` lists each command the host ran on the final
+   change (tests, type check, lint) with its exit code and the end of its
+   output; cite it as test evidence alongside CI. It includes the
+   `integration` suite the host ran against real databases when the repo has
+   one, and, when the work order mentions coverage, the overall line coverage
+   and each changed file's: judge coverage criteria against those numbers
+   (a file "not loaded by any test" is 0%).
+   For a frontend change, `input.screenshots` names the screenshots attached
+   after the task message, from the Playwright tests the change added or
+   edited: `step-N` is the page as one of the test's assertions passed, a name
+   without a step is the end of the test (often after cleanup). Look at them for user-visible criteria (text, labels,
+   empty states, layout that is clearly broken) and cite them by name. A
+   screenshot shows one moment; judge behaviour over time (debounce, live
+   updates) from the tests. No screenshots for a UI criterion is
+   `unverified`, not a defect.
+   **Check the base branch before calling something missing.** The patch shows
+   only what changed. When a criterion names something the patch does not add
+   (a translation key, a config entry, a helper), call `read_pr_file` with the
+   PR URL, the path and `ref: base`; if the base branch already has it, the
+   criterion is met and is not a defect.
+   **Unverifiable is not failed.** When a criterion cannot be judged from what
+   you were given (a patch marked `patch_truncated`, or a measurement such as
+   a coverage percentage that neither CI nor host verify reports), mark that
+   criterion `unverified` with a note saying what is missing and do not list it
+   as a defect. A revision cannot produce evidence the gate never receives, so
+   failing on it only repeats the run. Fail a PR only for a defect you can show:
+   a failed check, code that contradicts a criterion, or a required behaviour
+   with no implementation or test in a patch you can read in full.
 4. For each PR, evaluate acceptance criteria and record evidence:
-   - `acceptance_criteria`: per-criterion pass/fail with a short note.
+   - `acceptance_criteria`: per-criterion `pass`, `fail` or `unverified` with a short note.
    - `tests`: tests exercised or the host verify summary reused as evidence.
    - `defects`: blocking issues found (empty when the PR passes).
 5. Set each PR `status` to `success` or `failed`.

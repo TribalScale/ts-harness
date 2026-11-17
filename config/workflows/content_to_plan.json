@@ -1,6 +1,6 @@
 {
   "workflow_type": "content_to_plan",
-  "definition_version": "1.0.0",
+  "definition_version": "1.4.0",
   "display_name": "Content to approved plan",
   "contracts": {
     "repo_pick": {
@@ -83,15 +83,44 @@
       "retry": { "max_retries": 0, "timeout_seconds": 86400 }
     },
     {
+      "name": "gather_context",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["pick_repo"],
+      "barrier": {
+        "hook": "gather_bug_context",
+        "repo": "$prior.pick_repo.output.repo",
+        "default_branch": "$prior.pick_repo.output.default_branch",
+        "include_intake_sources": true,
+        "intake_sources": "$workflow.intake_sources",
+        "agent_id": "pm-agent"
+      },
+      "input_map": {
+        "knowledge_notes": "$workflow.knowledge_notes"
+      },
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": ["compare_codebase"]
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
       "name": "compare_codebase",
       "kind": "task",
       "agent_id": "pm-agent",
-      "depends_on": ["pick_repo"],
+      "depends_on": ["gather_context"],
       "allowed_agents": ["pm-agent"],
       "skill_hints": ["content-to-plan"],
       "input_map": {
-        "repo": "$prior.pick_repo.output.repo",
-        "default_branch": "$prior.pick_repo.output.default_branch"
+        "content": "$prior.pick_repo.input.summary",
+        "repo": "$prior.gather_context.output.repo",
+        "default_branch": "$prior.gather_context.output.default_branch",
+        "tree": "$prior.gather_context.output.tree",
+        "tree_truncated": "$prior.gather_context.output.tree_truncated",
+        "directories": "$prior.gather_context.output.directories",
+        "files": "$prior.gather_context.output.files",
+        "knowledge_notes": "$workflow.knowledge_notes",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     },
@@ -104,7 +133,9 @@
       "skill_hints": ["content-to-plan"],
       "present_prompt": "intake",
       "input_map": {
-        "compare_output": "$prior.compare_codebase.output"
+        "content": "$prior.pick_repo.input.summary",
+        "compare_output": "$prior.compare_codebase.output",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 3600 }
     },
@@ -132,10 +163,12 @@
       "skill_hints": ["content-to-plan"],
       "present_prompt": "approval",
       "input_map": {
+        "content": "$prior.pick_repo.input.summary",
         "clarified_requirements": "$prior.await_ready.output",
         "compare_output": "$prior.compare_codebase.output",
         "repo": "$prior.pick_repo.output.repo",
-        "default_branch": "$prior.pick_repo.output.default_branch"
+        "default_branch": "$prior.pick_repo.output.default_branch",
+        "sources": "$prior.gather_context.output.sources_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     },

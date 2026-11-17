@@ -6,6 +6,10 @@ repo's base branch as below before running governed delivery against it.
 
 ## Required status checks
 
+`scripts/repo-governance.py` reports what a base branch is missing and, with `--apply`, sets
+it (see [onboard-a-repo.md](onboard-a-repo.md#2-check-and-set-branch-protection)). It requires
+`harness/qa` as well; PRs people open by hand get `success` on the harness checks from the webhook.
+
 Protect the base branch (for example `dev` or `main`) with a ruleset or classic
 branch protection:
 
@@ -47,8 +51,10 @@ It stays optional in branch protection; when disabled TS Harness posts `success`
 
 ## Webhook and token
 
-Point a repo or org webhook at `POST /webhooks/github` with the secret in
-`GITHUB_WEBHOOK_SECRET`, and subscribe to these events:
+With a GitHub App, set the webhook up as in [GitHub App → Webhook](github-app.md#webhook)
+(including Tailscale Funnel for hosts without a public address). Without an App, point a repo
+or org webhook at `POST /webhooks/github` with the secret in `GITHUB_WEBHOOK_SECRET`, and
+subscribe to these events:
 
 - `pull_request` (merge detection)
 - `pull_request_review` (recomputes `harness/independent-review`)
@@ -56,18 +62,27 @@ Point a repo or org webhook at `POST /webhooks/github` with the secret in
 - `deployment_status` (release deploy waits)
 
 Without a public webhook, the `poll-github-merges` system job polls merges,
-checks, deployments, and wave joins every minute.
+checks, deployments, and wave joins every minute. Once a delivery has arrived
+in the last hour, polling drops to a reconciliation pass every
+`github_reconcile_interval_seconds` (15 minutes on `scale_out`).
 
 With `GITHUB_WEBHOOK_SECRET` set, deliveries without a valid
 `X-Hub-Signature-256` get 401 and deliveries without `X-GitHub-Delivery` get
 400. A delivery id that was already handled in the last 24 hours returns
 `{"status": "duplicate"}` without being processed again. Ids are recorded only
 after a delivery succeeds, so **Redeliver** in GitHub still works after a
-failure. The id cache is in memory, so a gateway restart forgets it. Without the
-secret, the endpoint requires the gateway token instead; set the secret for any
-public webhook.
+failure. Ids are kept in the database for 30 days, so restarts and other
+runtime replicas also refuse replays. Without a secret, the endpoint requires
+the gateway token instead; set a secret for any public webhook.
 
-`GITHUB_TOKEN` needs, on each target repo:
+With a [GitHub App](github-app.md), the App's webhook secret is accepted as
+well, per host (`X-GitHub-Enterprise-Host` selects an Enterprise Server
+registration).
+
+The GitHub App is the recommended credential: it mints a token per repository
+and needs no shared PAT. `GITHUB_TOKEN` (a PAT) is the legacy setup and the
+fallback for repositories the App is not installed on. The App or the token
+needs, on each target repo:
 
 | Permission | Used for |
 |---|---|
@@ -78,7 +93,7 @@ public webhook.
 | Actions: read and write | Check results through Actions jobs; `workflow_dispatch` release triggers |
 | Deployments: read and write | Deployments API release triggers and status polling |
 | Metadata: read | Reading the repo default branch (granted to every fine-grained token) |
-| Administration: read | Reading branch protection for required contexts (required when `merge_readiness.policy.require_branch_protection` is true) |
+| Administration: read (read and write to apply protection) | Reading branch protection for required contexts (required when `merge_readiness.policy.require_branch_protection` is true). Write lets `scripts/repo-governance.py --apply` set protection; an org owner must accept the change on the installation |
 
 TS Harness only acts on repos inside the tenant binding (`github.org` and
 `repo_picker` in [system settings](system-settings.md#delivery-keys)). Releases
@@ -88,9 +103,12 @@ configured. Scope the token to the bound repos as well.
 
 ## Jira account
 
-Cancel cleanup and Jira filing use `ATLASSIAN_SITE_URL`, `ATLASSIAN_EMAIL`, and
-`ATLASSIAN_API_TOKEN`. The account needs these project permissions on each
-project in `jira_filing.allowed_projects`:
+Cancel cleanup and Jira filing use an Atlassian service account with an OAuth
+client credential (`ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET`), or
+`ATLASSIAN_SITE_URL`, `ATLASSIAN_EMAIL`, and `ATLASSIAN_API_TOKEN` as a
+fallback. See [Jira service account](jira-service-account.md) for setup. The
+account needs these project permissions on each project in
+`jira_filing.allowed_projects`:
 
 | Permission | Used for |
 |---|---|
@@ -98,6 +116,7 @@ project in `jira_filing.allowed_projects`:
 | Create issues | Filing tickets from the PRD |
 | Edit issues | Adding the `harness-cancelled` label |
 | Add comments | The cancellation comment |
+| Link issues | Dependency links between work-order issues |
 | Transition issues | Closing issues when `compensation.jira: close` |
 
 Issues outside `jira_filing.allowed_projects` are skipped during cleanup.

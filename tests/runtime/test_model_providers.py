@@ -1,0 +1,562 @@
+"""Claude and GPT-6 providers, per-agent effort, and usage recording (llm_usage, agent_token_usage)."""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import unittest
+import urllib.error
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from ts_harness.agent.loop import _run_effort, _run_model
+from ts_harness.agent.provider import (
+    ANTHROPIC_CONTENT_KEY,
+    AnthropicProvider,
+    MeteredProvider,
+    OpenAICompatibleProvider,
+    ProviderEndpoint,
+    anthropic_messages_from_chat,
+    build_provider,
+)
+from ts_harness.implementation.backends.opencode_usage import record_opencode_usage, session_usage
+from ts_harness.llm_proxy.metering import Usage
+from ts_harness.llm_usage import record_usage
+
+TOOLS = [{"type": "function", "function": {"name": "read_file", "description": "Read", "parameters": {"type": "object"}}}]
+
+
+class _Response:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return json.dumps(self.body).encode()
+
+
+def _capture(*bodies):
+    sent = []
+    queue = list(bodies)
+
+    def _open(request, timeout=0):
+        sent.append({"url": request.full_url, "body": json.loads(request.data.decode()), "headers": dict(request.headers)})
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return _Response(item)
+
+    return sent, _open
+
+
+def _claude(effort="high"):
+    return AnthropicProvider(
+        ProviderEndpoint(provider="anthropic", model="claude-opus-5-5", base_url="https://api.test/v1",
+                         api_key="k", api_mode="anthropic", effort=effort)
+    )
+
+
+CLAUDE_TOOL_TURN = {
+    "model": "claude-opus-5-5",
+    "stop_reason": "tool_use",
+    "content": [
+        {"type": "thinking", "thinking": "", "signature": "sig-1"},
+        {"type": "text", "text": "Reading it."},
+        {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "a.py"}},
+    ],
+    "usage": {"input_tokens": 1200, "output_tokens": 80, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 900},
+}
+
+
+class ClaudeProviderTests(unittest.TestCase):
+    def test_request_has_no_temperature_and_carries_effort_cache_and_tools(self):
+        sent, opener = _capture(CLAUDE_TOOL_TURN)
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            _claude().chat([{"role": "system", "content": "be brief"}, {"role": "user", "content": "hi"}], tools=TOOLS)
+        body = sent[0]["body"]
+        self.assertNotIn("temperature", body)
+        self.assertNotIn("thinking", body)
+        self.assertEqual(body["output_config"], {"effort": "high"})
+        self.assertEqual(body["cache_control"], {"type": "ephemeral"})
+        self.assertEqual(body["system"], "be brief")
+        self.assertEqual(body["tools"][0]["name"], "read_file")
+        self.assertEqual(body["model"], "claude-opus-5-5")
+        self.assertGreaterEqual(body["max_tokens"], 16000)
+
+    def test_tool_use_comes_back_as_tool_calls_with_usage(self):
+        sent, opener = _capture(CLAUDE_TOOL_TURN)
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            result = _claude().chat([{"role": "user", "content": "hi"}], tools=TOOLS)
+        message = result["choices"][0]["message"]
+        self.assertEqual(message["content"], "Reading it.")
+        call = message["tool_calls"][0]
+        self.assertEqual((call["id"], call["function"]["name"]), ("toolu_1", "read_file"))
+        self.assertEqual(json.loads(call["function"]["arguments"]), {"path": "a.py"})
+        self.assertEqual(result["usage"]["input_tokens"], 1200)
+        self.assertEqual(message[ANTHROPIC_CONTENT_KEY][0]["signature"], "sig-1")
+
+    def test_the_tool_loop_replays_claude_blocks_and_groups_tool_results(self):
+        assistant = {"role": "assistant", "content": "Reading it.", "tool_calls": [], ANTHROPIC_CONTENT_KEY: CLAUDE_TOOL_TURN["content"]}
+        system, messages = anthropic_messages_from_chat(
+            [
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "hi"},
+                assistant,
+                {"role": "tool", "tool_call_id": "toolu_1", "content": "print(1)"},
+                {"role": "tool", "tool_call_id": "toolu_2", "content": "ok"},
+            ]
+        )
+        self.assertEqual(system, "s")
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user"])
+        self.assertEqual(messages[1]["content"], CLAUDE_TOOL_TURN["content"])
+        self.assertEqual([b["tool_use_id"] for b in messages[2]["content"]], ["toolu_1", "toolu_2"])
+
+    def test_openai_shaped_history_becomes_tool_use_blocks(self):
+        _system, messages = anthropic_messages_from_chat(
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\": \"b\"}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "x"},
+                {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}]},
+            ]
+        )
+        self.assertEqual(messages[1]["content"], [{"type": "tool_use", "id": "c1", "name": "read_file", "input": {"path": "b"}}])
+        self.assertEqual(messages[2]["content"][0]["type"], "tool_result")
+        self.assertEqual(messages[2]["content"][1]["source"], {"type": "base64", "media_type": "image/png", "data": "QUJD"})
+
+    def test_a_rejected_thinking_replay_is_retried_without_thinking(self):
+        error = urllib.error.HTTPError(
+            "u", 400, "bad", {}, io.BytesIO(b'{"error":{"message":"messages.1.content.0: Invalid `signature` in `thinking` block."}}')
+        )
+        sent, opener = _capture(error, {"content": [{"type": "text", "text": "done"}], "usage": {}})
+        history = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "", ANTHROPIC_CONTENT_KEY: CLAUDE_TOOL_TURN["content"]},
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "x"},
+        ]
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            result = _claude().chat(history)
+        self.assertEqual(result["choices"][0]["message"]["content"], "done")
+        self.assertIn("thinking", [b["type"] for b in sent[0]["body"]["messages"][1]["content"]])
+        self.assertNotIn("thinking", [b["type"] for b in sent[1]["body"]["messages"][1]["content"]])
+
+    def test_a_refusal_says_so(self):
+        sent, opener = _capture({"stop_reason": "refusal", "stop_details": {"category": "cyber"}, "content": [], "usage": {}})
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            result = _claude().chat([{"role": "user", "content": "hi"}])
+        self.assertIn("declined", result["choices"][0]["message"]["content"])
+
+
+class Gpt6ProviderTests(unittest.TestCase):
+    def _openai(self, model, effort=None):
+        return OpenAICompatibleProvider(
+            ProviderEndpoint(provider="openai", model=model, base_url="https://api.test/v1", api_key="k", effort=effort)
+        )
+
+    def test_every_gpt_6_model_uses_the_responses_api_with_its_effort(self):
+        for model, effort, expected in (("gpt-6.1-sol", None, "low"), ("gpt-6-luna", "medium", "medium"), ("gpt-6-astra", "max", "high")):
+            sent, opener = _capture({"output": [], "usage": {"input_tokens": 10, "output_tokens": 2}})
+            with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+                result = self._openai(model, effort).chat([{"role": "user", "content": "hi"}], tools=TOOLS)
+            with self.subTest(model=model):
+                self.assertTrue(sent[0]["url"].endswith("/responses"))
+                self.assertEqual(sent[0]["body"]["reasoning"], {"effort": expected})
+                self.assertNotIn("temperature", sent[0]["body"])
+                self.assertEqual(result["usage"]["input_tokens"], 10)
+
+    def test_claude_only_keys_never_reach_openai(self):
+        sent, opener = _capture({"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            self._openai("gpt-4o").chat([{"role": "assistant", "content": "x", ANTHROPIC_CONTENT_KEY: []}])
+        self.assertNotIn(ANTHROPIC_CONTENT_KEY, sent[0]["body"]["messages"][0])
+
+
+class _FakeCursor:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params=None):
+        self.log.append((" ".join(sql.split()), params))
+
+
+class _FakeConn(_FakeCursor):
+    def cursor(self):
+        return _FakeCursor(self.log)
+
+
+class UsageRecordingTests(unittest.TestCase):
+    def test_one_call_writes_llm_usage_and_agent_token_usage(self):
+        log = []
+        scope = {"tenant": "default", "agent": "pm-agent", "workflow": "wf-1", "task": None}
+        with patch("ts_harness.llm_usage.pricing", return_value=provider_mod_pricing()):
+            ok = record_usage(scope, provider="anthropic", model="claude-opus-5-5",
+                              usage=Usage(input_tokens=1000, output_tokens=100, cache_read_tokens=2000),
+                              connect=lambda: _FakeConn(log))
+        self.assertTrue(ok)
+        llm, agent = log
+        self.assertIn("INSERT INTO llm_usage", llm[0])
+        self.assertEqual((llm[1]["actor"], llm[1]["input"], llm[1]["output"]), ("pm-agent", 3000, 100))
+        self.assertEqual(llm[1]["agent"], "pm-agent")
+        self.assertIn("agent_id", llm[0])
+        self.assertAlmostEqual(llm[1]["cost"], (1000 * 4 + 100 * 20 + 2000 * 0.2) / 1_000_000)
+        self.assertIn("INSERT INTO agent_token_usage", agent[0])
+        self.assertEqual(agent[1][:5], ("pm-agent", "anthropic", "claude-opus-5-5", 3000, 100))
+
+    def test_nothing_is_written_through_the_proxy_or_without_a_database(self):
+        with patch.dict(os.environ, {"LLM_PROXY_URL": "http://proxy", "LLM_PROXY_SECRET": "s", "TS_HARNESS_SESSION_DB_URL": "postgresql://x"}):
+            self.assertFalse(record_usage({}, provider="openai", model="gpt-6.1-sol", usage=Usage(input_tokens=1)))
+        with patch.dict(os.environ, {"TS_HARNESS_SESSION_DB_URL": "", "LLM_USAGE_DB_URL": ""}):
+            self.assertFalse(record_usage({}, provider="openai", model="gpt-6.1-sol", usage=Usage(input_tokens=1)))
+
+    def test_direct_calls_are_metered_with_their_scope(self):
+        env = {"TS_HARNESS_SESSION_DB_URL": "postgresql://x", "LLM_PROXY_URL": "", "LLM_PROXY_SECRET": ""}
+        with patch.dict(os.environ, env):
+            provider = build_provider("anthropic/claude-sonnet-5-5", scope={"agent": "orchestrator"}, effort="medium")
+        self.assertIsInstance(provider, MeteredProvider)
+        self.assertEqual(provider.endpoint.effort, "medium")
+        provider.inner = SimpleNamespace(chat=lambda *a, **k: {"choices": [{"message": {}}], "usage": {"input_tokens": 7, "output_tokens": 3}})
+        with patch("ts_harness.llm_usage.record_usage") as record:
+            provider.chat([{"role": "user", "content": "hi"}])
+        args, kwargs = record.call_args
+        self.assertEqual(args[0], {"agent": "orchestrator"})
+        self.assertEqual((kwargs["provider"], kwargs["model"]), ("anthropic", "claude-sonnet-5-5"))
+        self.assertEqual((kwargs["usage"].input_tokens, kwargs["usage"].output_tokens), (7, 3))
+
+
+def provider_mod_pricing():
+    from ts_harness.llm_proxy.metering import ModelPrice
+
+    return {"anthropic/claude-opus-5-5": ModelPrice(4, 20, 0.2)}
+
+
+class HeartbeatModelTests(unittest.TestCase):
+    def test_heartbeats_run_on_their_own_model_at_low_effort(self):
+        agent = SimpleNamespace(model="anthropic/claude-opus-5-5", effort="high",
+                                heartbeat=SimpleNamespace(model="anthropic/claude-haiku-5-5"))
+        beat = {"step_name": "heartbeat"}
+        self.assertEqual(_run_model(agent, beat, "cron"), "anthropic/claude-haiku-5-5")
+        self.assertEqual(_run_effort(agent, beat, "cron"), "low")
+        self.assertEqual(_run_model(agent, beat, "workflow"), "anthropic/claude-opus-5-5")  # only the scheduler
+        self.assertEqual(_run_effort(agent, {"step_name": "draft_prd"}, "workflow"), "high")
+
+
+OPENCODE_EXPORT = {
+    "messages": [
+        {"info": {"role": "user"}},
+        {"info": {"role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-5-5", "cost": 0.5,
+                  "tokens": {"input": 1000, "output": 200, "reasoning": 50, "cache": {"read": 4000, "write": 300}}}},
+        {"info": {"role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-5-5", "cost": 0.25,
+                  "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}}}},
+    ]
+}
+
+
+class OpencodeUsageTests(unittest.TestCase):
+    def test_session_totals_per_model(self):
+        totals = session_usage(OPENCODE_EXPORT)
+        self.assertEqual(totals[("anthropic", "claude-sonnet-5-5")],
+                         {"input": 1310, "output": 255, "cache_read": 4000, "cost": 0.75})
+
+    def test_only_sessions_from_this_run_in_this_repo_are_recorded(self):
+        repo = Path("/tmp/repo-a")
+        sessions = [
+            {"id": "new", "created": 2000, "directory": "/tmp/repo-a"},
+            {"id": "old", "created": 500, "directory": "/tmp/repo-a"},
+            {"id": "other", "created": 3000, "directory": "/tmp/repo-b"},
+        ]
+        calls = []
+
+        def run_json(cmd, *, env, cwd):
+            calls.append(cmd[1:])
+            return sessions if cmd[1] == "session" else OPENCODE_EXPORT
+
+        recorded = []
+        written = record_opencode_usage(
+            binary="opencode", env={}, repo_dir=repo, since_ms=1000, scope={"agent": "coding-backend"},
+            run_json=run_json, record=lambda scope, **kw: recorded.append((scope, kw)) or True,
+        )
+        self.assertEqual(written, 1)
+        self.assertEqual(calls, [["session", "list", "--format", "json", "-n", "50"], ["export", "new"]])
+        scope, kw = recorded[0]
+        self.assertEqual(scope, {"agent": "coding-backend"})
+        self.assertEqual((kw["provider"], kw["model"], kw["session_id"]), ("anthropic", "claude-sonnet-5-5", "new"))
+        self.assertEqual(kw["usage"].cache_read_tokens, 4000)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class OpencodeRunMeteringTests(unittest.TestCase):
+    """implement() reads back the OpenCode run it made, in implement and in conflict-refresh mode."""
+
+    def _backend(self, mode):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+
+        def run(request):
+            oc._note_opencode_run("/tools/opencode", {"X": "1"}, "/tmp/repo")
+            return SimpleNamespace(ok=True, mode=request.mode)
+
+        backend._implement = run
+        backend.refresh = run
+        return backend
+
+    def test_both_modes_record_the_run(self):
+        for mode in ("implement", "refresh"):
+            request = SimpleNamespace(mode=mode, program_id="p", delivery_workflow_id="wf", requested_by="u@x")
+            with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+                result = self._backend(mode).implement(request)
+            with self.subTest(mode=mode):
+                self.assertEqual(result.mode, mode)
+                kwargs = record.call_args.kwargs
+                self.assertEqual((kwargs["binary"], str(kwargs["repo_dir"])), ("/tools/opencode", "/tmp/repo"))
+                self.assertEqual(kwargs["scope"]["agent"], "coding-backend")
+
+    def test_a_run_without_opencode_records_nothing(self):
+        from ts_harness.implementation.backends import opencode as oc
+
+        backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
+        backend.refresh = lambda request: SimpleNamespace(ok=True)
+        with patch("ts_harness.implementation.backends.opencode.record_opencode_usage") as record:
+            backend.implement(SimpleNamespace(mode="refresh"))
+        record.assert_not_called()
+
+
+class SessionsListTests(unittest.TestCase):
+    def test_newest_sessions_first_with_a_limit(self):
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, get_session_store, reset_session_store
+        from ts_harness.tools.workflow_tools import sessions_list_handler
+
+        reset_session_store(SessionStore())
+        self.addCleanup(reset_session_store, SessionStore())
+        store = get_session_store()
+        for i in range(30):
+            store.save(SessionRecord(session_id=f"s{i:02d}", routing_key=f"rk{i}", tenant_id="default",
+                                     agent_id="pm-agent" if i % 2 else "orchestrator", source="web",
+                                     started_at=f"2026-11-{1 + i % 28:02d}T00:00:{i:02d}Z"))
+        ctx = SimpleNamespace(tenant_id="default")
+        out = sessions_list_handler({}, ctx)
+        self.assertEqual((out["total"], out["returned"]), (30, 20))
+        started = [row["started_at"] for row in out["sessions"]]
+        self.assertEqual(started, sorted(started, reverse=True))
+        self.assertNotIn("metadata", out["sessions"][0])
+        pm = sessions_list_handler({"agent_id": "pm-agent", "limit": 500}, ctx)
+        self.assertEqual((pm["total"], pm["returned"]), (15, 15))
+
+    def test_large_metadata_is_named_not_returned(self):
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, get_session_store, reset_session_store
+        from ts_harness.tools.workflow_tools import sessions_list_handler
+
+        reset_session_store(SessionStore())
+        self.addCleanup(reset_session_store, SessionStore())
+        get_session_store().save(SessionRecord(
+            session_id="s1", routing_key="rk", tenant_id="default", agent_id="orchestrator", source="web",
+            metadata={"program_id": "p-1", "workflow_phase": "prd", "approved_artifact": {"prd": "x" * 50000},
+                      "review_artifact": "y" * 5000, "pending_workflow": {}},
+        ))
+        row = sessions_list_handler({}, SimpleNamespace(tenant_id="default"))["sessions"][0]
+        self.assertEqual(row["metadata"], {"program_id": "p-1", "workflow_phase": "prd"})
+        self.assertEqual(row["metadata_omitted"], ["approved_artifact", "review_artifact"])
+
+
+class CodingRunSlotsTests(unittest.TestCase):
+    def test_in_process_runs_wait_for_a_slot(self):
+        import threading
+        import time as _time
+
+        from ts_harness.implementation import coding_job
+
+        coding_job._RUN_SLOTS = None
+        self.addCleanup(setattr, coding_job, "_RUN_SLOTS", None)
+        running, peak = [0], [0]
+        lock = threading.Lock()
+
+        class Backend:
+            def implement(self, request):
+                with lock:
+                    running[0] += 1
+                    peak[0] = max(peak[0], running[0])
+                _time.sleep(0.05)
+                with lock:
+                    running[0] -= 1
+                return SimpleNamespace(branch="b", pr_url=None)
+
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": "1"}), \
+             patch.object(coding_job, "_backend_from_config", return_value=Backend()), \
+             patch.object(coding_job, "coding_request_from_spec", return_value=None), \
+             patch.object(coding_job, "_result_dict", create=True):
+            threads = [threading.Thread(target=self._run, args=(coding_job,)) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(peak[0], 1)
+
+    def test_unset_fits_the_host(self):
+        from ts_harness.implementation import coding_job
+
+        coding_job._RUN_SLOTS = None
+        self.addCleanup(setattr, coding_job, "_RUN_SLOTS", None)
+        with patch.dict(os.environ, {"CODING_INPROCESS_MAX_RUNNING": ""}), \
+             patch("ts_harness.coding.launcher.host_memory_bytes", return_value=int(7.7 * 1024**3)):
+            slots = coding_job._run_slots()
+        self.assertEqual(slots._initial_value, 3)  # (7.7 - 2.5) GB / 1.5 GB, capped at 3
+
+    @staticmethod
+    def _run(coding_job):
+        try:
+            coding_job.run_coding_request({"repo_url": "r"}, record_refs=False)
+        except Exception:  # noqa: BLE001 - only the overlap is under test
+            pass
+
+
+class OpencodeJsonOutputTests(unittest.TestCase):
+    def test_large_output_is_read_whole_from_a_file(self):
+        import sys
+
+        from ts_harness.implementation.backends.opencode_usage import _run_json
+
+        script = "import json,sys; sys.stdout.write(json.dumps({'messages': ['x' * 200000]}))"
+        data = _run_json([sys.executable, "-c", script], env={"PATH": os.environ.get("PATH", "")}, cwd=".")
+        self.assertEqual(len(data["messages"][0]), 200000)
+
+    def test_a_failing_command_raises_with_its_error(self):
+        import sys
+
+        from ts_harness.implementation.backends.opencode_usage import _run_json
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            _run_json([sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(2)"], env={"PATH": os.environ.get("PATH", "")}, cwd=".")
+
+
+class OpenAIReasoningReplayTests(unittest.TestCase):
+    def test_reasoning_items_go_back_with_their_tool_calls(self):
+        first = {"output": [
+            {"type": "reasoning", "id": "rs_1", "summary": [], "content": None, "encrypted_content": "enc-1"},
+            {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "read_file", "arguments": "{}", "status": "completed"},
+        ], "usage": {}}
+        second = {"output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}], "usage": {}}
+        sent, opener = _capture(first, second)
+        provider = OpenAICompatibleProvider(ProviderEndpoint(provider="openai", model="gpt-6.1-sol", base_url="https://api.test/v1", api_key="k"))
+        messages = [{"role": "user", "content": "go"}]
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            reply = provider.chat(messages, tools=TOOLS)["choices"][0]["message"]
+            messages += [reply, {"role": "tool", "tool_call_id": "call_1", "content": "file"}]
+            provider.chat(messages, tools=TOOLS)
+        self.assertEqual(sent[0]["body"]["store"], False)
+        self.assertEqual(sent[0]["body"]["include"], ["reasoning.encrypted_content"])
+        replayed = sent[1]["body"]["input"]
+        self.assertEqual([item.get("type") for item in replayed], [None, "reasoning", "function_call", "function_call_output"])
+        self.assertEqual(replayed[1], {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "enc-1"})
+        self.assertNotIn("status", replayed[2])
+
+    def test_without_reasoning_the_old_tool_call_shape_is_used(self):
+        sent, opener = _capture({"output": [{"type": "function_call", "call_id": "c", "name": "read_file", "arguments": "{}"}], "usage": {}})
+        provider = OpenAICompatibleProvider(ProviderEndpoint(provider="openai", model="gpt-6-luna", base_url="https://api.test/v1", api_key="k"))
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            reply = provider.chat([{"role": "user", "content": "go"}], tools=TOOLS)["choices"][0]["message"]
+        self.assertNotIn("_openai_output", reply)
+
+
+class ProgramStatusArtifactsTests(unittest.TestCase):
+    def test_long_artifacts_become_size_and_headings_unless_asked_for(self):
+        from ts_harness.tools.workflow_tools import _artifact_overview
+
+        prd = "# PRD: Reminders\n\n## Overview\n" + "text " * 500 + "\n## Goals\n- one"
+        artifacts = {"program_phase": "implement", "approved_prd": {"result": {"prd_markdown": prd}},
+                     "work_orders_markdown": "# Work Orders\n" + "x" * 5000}
+        overview = _artifact_overview(artifacts, include=["work_orders_markdown"])
+        self.assertEqual(overview["program_phase"], "implement")
+        self.assertEqual(overview["work_orders_markdown"], artifacts["work_orders_markdown"])
+        self.assertEqual(overview["approved_prd"]["headings"], ["PRD: Reminders", "Overview", "Goals"])
+        self.assertGreater(overview["approved_prd"]["omitted_chars"], 2500)
+
+
+class ChatHistoryCompactionTests(unittest.TestCase):
+    def test_long_earlier_turns_are_cut_the_same_way_every_time(self):
+        from ts_harness.agent.transcript import compact_history
+
+        prd = "# PRD\\n" + "line\\n" * 2000
+        history = [
+            {"role": "user", "content": "x" * 10000},
+            {"role": "assistant", "content": prd},
+            {"role": "tool", "tool_call_id": "c", "content": "y" * 5000},
+            {"role": "assistant", "content": "short"},
+        ]
+        once = compact_history(history)
+        self.assertEqual(once, compact_history(history))
+        self.assertEqual(once[0]["content"], history[0]["content"])
+        self.assertTrue(once[1]["content"].startswith("# PRD"))
+        self.assertLess(len(once[1]["content"]), 1800)
+        self.assertIn("program_status include_artifacts", once[2]["content"])
+        self.assertEqual(once[3], history[3])
+
+
+class WorkflowStatusTaskTests(unittest.TestCase):
+    def test_task_inputs_and_outputs_are_summarised(self):
+        from ts_harness.tools.workflow_tools import _task_overview
+
+        task = {"id": "t", "step_name": "deliver_wave", "status": "succeeded", "error": None,
+                "input": {"work_order_id": "WO-1", "planner_artifacts": {"work_orders_markdown": "# WO\n" + "x" * 9000}},
+                "output": {"pr_url": "https://github.com/o/r/pull/1"}, "notes": "y" * 2000}
+        overview = _task_overview(task)
+        self.assertEqual(overview["step_name"], "deliver_wave")
+        self.assertEqual(overview["input"]["work_order_id"], "WO-1")
+        self.assertEqual(overview["input"]["planner_artifacts"]["headings"], ["WO"])
+        self.assertEqual(overview["output"], task["output"])
+        self.assertEqual(overview["notes"], {"omitted_chars": 2000})
+
+
+class OpencodeIsolationTests(unittest.TestCase):
+    def test_each_workspace_gets_its_own_data_directory_outside_it(self):
+        import tempfile
+
+        from ts_harness.implementation.backends.opencode import opencode_data_env
+
+        a, b = tempfile.mkdtemp(), tempfile.mkdtemp()
+        env_a, env_b = opencode_data_env(a), opencode_data_env(b)
+        self.assertNotEqual(env_a["XDG_DATA_HOME"], env_b["XDG_DATA_HOME"])
+        self.assertEqual(env_a, opencode_data_env(a))
+        self.assertFalse(env_a["XDG_DATA_HOME"].startswith(str(Path(a).resolve())))
+
+    def test_a_worker_collects_usage_rows_for_its_result(self):
+        rows = []
+        sessions = [{"id": "s1", "created": 2000, "directory": "/tmp/repo-x"}]
+        export = {"messages": [{"info": {"role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-5-5",
+                                         "cost": 0.1, "tokens": {"input": 100, "output": 10, "reasoning": 0, "cache": {"read": 50, "write": 0}}}}]}
+        with patch.dict(os.environ, {"TS_HARNESS_SESSION_DB_URL": "", "LLM_USAGE_DB_URL": "", "LLM_PROXY_URL": ""}):
+            written = record_opencode_usage(binary="opencode", env={}, repo_dir=Path("/tmp/repo-x"), since_ms=1000,
+                                            scope={}, run_json=lambda cmd, **kw: sessions if cmd[1] == "session" else export,
+                                            collect=rows)
+        self.assertEqual(written, 1)
+        self.assertEqual({k: rows[0][k] for k in ("provider", "model", "input_tokens", "output_tokens", "cache_read_tokens", "session_id")},
+                         {"provider": "anthropic", "model": "claude-sonnet-5-5", "input_tokens": 100, "output_tokens": 10,
+                          "cache_read_tokens": 50, "session_id": "s1"})
+
+
+class CodingCapacityTests(unittest.TestCase):
+    def test_workers_fit_the_host_memory(self):
+        from ts_harness.coding.launcher import local_worker_limit, parse_memory
+
+        gib = 1024**3
+        self.assertEqual(parse_memory("1536m"), 1536 * 1024**2)
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(3.8 * gib)), 1)   # t3.medium
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(7.7 * gib)), 2)   # t3.large
+        self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(15.6 * gib)), 3)  # t3.xlarge, capped
+        self.assertEqual(local_worker_limit(3, "2g", environ={"CODING_HOST_RESERVED_MEMORY": "6g"}, total_bytes=int(7.7 * gib)), 1)

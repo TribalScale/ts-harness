@@ -17,14 +17,15 @@
 - bug_triage — classify, prioritize, and document bugs
 - governed_qa_gate — post-PR acceptance and evidence gate before merge wait
 
-**Model:** `openai/gpt-6-astra`
+**Model:** `openai/gpt-6.1-sol`
 **Workspace:** `/workspace/qa-agent`
-**Toolsets:** `core-read`
+**Toolsets:** `core-read`, `pr-read`
 **Skills:** `qa`, `memory`, `workflows`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
 - read_file
 - recall_memory
+- read_pr_file
 
 **tools.deny** (from `config/ts-harness-runtime.yaml`):
 - write_file

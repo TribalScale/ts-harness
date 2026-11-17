@@ -1,0 +1,61 @@
+name: Build coding worker (AWS)
+
+# Builds agent-runtime, then the coding-worker image on top of it, and pushes
+# the worker to ECR tagged with the commit SHA. Deploy with
+# coding_worker_image_tag set to that SHA (deploy-aws.yml input).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub Environment holding AWS_DEPLOY_ROLE_ARN and AWS_REGION"
+        type: choice
+        options:
+          - dev
+          - prod
+      opencode_version:
+        description: "opencode-ai npm version baked into the image"
+        type: string
+        default: "latest"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-plan
+    env:
+      REPOSITORY: ${{ vars.PROJECT_NAME || 'ts-harness' }}-coding-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build agent-runtime base
+        run: docker build -f docker/Dockerfile.agent-runtime -t ts-harness-agent-runtime:latest .
+
+      - name: Build and push coding worker
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          OPENCODE_VERSION: ${{ inputs.opencode_version }}
+        run: |
+          image="$REGISTRY/$REPOSITORY:$GITHUB_SHA"
+          docker build -f docker/Dockerfile.coding-worker \
+            --build-arg AGENT_RUNTIME_IMAGE=ts-harness-agent-runtime:latest \
+            --build-arg OPENCODE_VERSION="$OPENCODE_VERSION" \
+            -t "$image" .
+          docker push "$image"
+          {
+            echo "## Coding worker image"
+            echo "\`$image\`"
+            echo
+            echo "Deploy with coding_worker_image_tag = \`$GITHUB_SHA\`."
+          } >> "$GITHUB_STEP_SUMMARY"

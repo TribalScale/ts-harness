@@ -39,6 +39,7 @@ KNOWN_NODE_KEYS = frozenset(
         "input_bindings",
         "completion_adapter",
         "terminal",
+        "may_end",
         "reentry",
         "complete_channel_text",
         "await_children",
@@ -111,6 +112,9 @@ class ProgramNode:
     input_bindings: list[dict[str, Any]] = field(default_factory=list)
     completion_adapter: str = ""
     terminal: bool = False
+    # The program may stop after this node: it is marked succeeded and the next
+    # steps are offered instead of started.
+    may_end: bool = False
     reentry: dict[str, Any] | None = None
     complete_channel_text: str | None = None
     await_children: bool = False
@@ -321,6 +325,9 @@ def _load_node(raw: dict[str, Any]) -> ProgramNode:
     terminal = raw.get("terminal")
     if not isinstance(terminal, bool):
         raise ValueError("terminal must be a boolean")
+    may_end = raw.get("may_end", False)
+    if not isinstance(may_end, bool):
+        raise ValueError("may_end must be a boolean")
     complete_channel_text = raw.get("complete_channel_text")
     if complete_channel_text is not None and not isinstance(complete_channel_text, str):
         raise ValueError("complete_channel_text must be a string")
@@ -336,6 +343,7 @@ def _load_node(raw: dict[str, Any]) -> ProgramNode:
         input_bindings=bindings,
         completion_adapter=completion_adapter,
         terminal=terminal,
+        may_end=may_end,
         reentry=_load_reentry(raw.get("reentry"), "reentry"),
         complete_channel_text=complete_channel_text,
         await_children=await_children,
@@ -470,6 +478,8 @@ def _node_to_payload(node: ProgramNode) -> dict[str, Any]:
         "completion_adapter": node.completion_adapter,
         "terminal": node.terminal,
     }
+    if node.may_end:
+        payload["may_end"] = True
     if node.reentry is not None:
         payload["reentry"] = copy.deepcopy(node.reentry)
     if node.complete_channel_text is not None:

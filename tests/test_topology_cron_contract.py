@@ -141,7 +141,7 @@ class TopologyCronContractTests(unittest.TestCase):
         self.assertIn("poll_github_merges", phase)
         self.assertIn("interval_seconds", phase)
         self.assertLess(
-            phase.index("Writing runtime scheduler config"),
+            phase.index('python3 "$MERGE_CRON"'),
             phase.index("Restarting agent-runtime"),
         )
 

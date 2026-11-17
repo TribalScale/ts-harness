@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ts_harness.config.schema import (
+    AGENT_EFFORT_LEVELS,
     FORBIDDEN_GATE_MODELS,
     GATE_AGENT_IDS,
     AgentConfig,
@@ -31,6 +32,7 @@ ALLOWED_AGENT = (
     "default",
     "delegatable",
     "sandbox_mode",
+    "effort",
 )
 SOUL_MAX_CHARS = 500
 
@@ -94,6 +96,7 @@ def overlay_object_to_agent(agent_id: str, obj: dict[str, Any]) -> AgentConfig:
         soul=_soul_value(obj),
         default=False,
         sandbox_mode=str(obj.get("sandbox_mode") or "off"),
+        effort=str(obj.get("effort")).lower() if str(obj.get("effort") or "").lower() in AGENT_EFFORT_LEVELS else None,
     )
 
 
@@ -313,12 +316,14 @@ def apply_agents_to_config(
 def write_overlay_agents_md(
     agent_id: str, obj: dict[str, Any], *, workspace_root: Path
 ) -> Path:
+    from ts_harness.storage.workspace import workspace_store
+
     display_name = str(obj.get("display_name") or agent_id)
     soul = str(obj.get("soul") or "")
     model = str(obj.get("model") or "")
-    dest = Path(workspace_root) / agent_id / "AGENTS.md"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
+    store = workspace_store(agent_id, root=workspace_root)
+    store.write_text(
+        "AGENTS.md",
         (
             f"# {display_name} ({agent_id})\n\n"
             f"**Soul:** {soul}\n\n"
@@ -327,9 +332,8 @@ def write_overlay_agents_md(
             "This specialist is overlay-managed. It is not defined in "
             "ts-harness-runtime.yaml.\n"
         ),
-        encoding="utf-8",
     )
-    return dest
+    return Path(store.display_path("AGENTS.md"))
 
 
 def _workspace_root(runtime: Any) -> Path:

@@ -240,6 +240,7 @@ cloud_get_instance_resource_id() {
 #   "dimensions": {"InstanceId": "i-xxx"},
 #   "metrics": [{"name":"GatewayHealthy","value":1,"unit":"None"}]
 # }
+# A metric may carry its own "dimensions", merged over the top-level ones.
 cloud_publish_runtime_metrics() {
     local json_file="${1:?json_file required}"
     local region="${CLOUD_REGION:-${AWS_REGION:-us-east-1}}"
@@ -264,9 +265,6 @@ from pathlib import Path
 path, aws_bin, region, namespace = sys.argv[1:5]
 payload = json.loads(Path(path).read_text(encoding="utf-8"))
 dims = payload.get("dimensions") or {}
-dim_args = []
-for key, value in dims.items():
-    dim_args.append(f"{key}={value}")
 metrics = payload.get("metrics") or []
 failures = []
 for metric in metrics:
@@ -275,6 +273,7 @@ for metric in metrics:
     unit = metric.get("unit") or "None"
     if name is None or value is None:
         continue
+    dim_args = [f"{k}={v}" for k, v in {**dims, **(metric.get("dimensions") or {})}.items()]
     cmd = [
         aws_bin,
         "cloudwatch",

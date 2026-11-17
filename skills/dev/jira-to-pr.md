@@ -13,23 +13,24 @@ Map Slack/OIDC email → `identity.jira_account_ids`. Never match display names.
 
 ## Pick
 
-1. If the user already pasted `TFS-184` (or similar), skip the wizard and set `jira_issue_key`.
+1. If the user already pasted `PROJ-184` (or similar), skip the wizard and set `jira_issue_key`.
 2. Otherwise query assigned work with configured statuses (default `To Do`, `Open`, `Ready for Dev`, `In Progress`). Not `statusCategory != Done`.
 3. List **projects that appear in those issues**, not project membership.
 4. After they pick a project, show a flat list grouped by epic:
 
 ```text
-Project: TFS
+Project: PROJ
 
-Epic TFS-100 — Checkout rewrite
-  TFS-184  Add cart retry     To Do        WO-003
-  TFS-190  Tax edge cases     In Progress  WO-005  (blocked)
+Epic PROJ-100 — Checkout rewrite
+  PROJ-184  Add cart retry     To Do        WO-003
+  PROJ-190  Tax edge cases     In Progress  WO-005  (blocked)
 
-Reply with a ticket key (TFS-184), or paste a key anytime to skip this list.
+Reply with a ticket key (PROJ-184), or paste a key anytime to skip this list.
 ```
 
 5. Show all assigned tickets, including human-written ones. Hide Blocked from the list. An explicit off-list key still works; warn if status is odd.
-6. When `pick_ticket` completes, return `jira_issue_description` (the issue description text) with `jira_issue_key`. If the description has a `Program:` pointer, this program becomes a child of that program. Tickets without a pointer still run and show `owner_program: none`.
+6. When `jira_issue_keys` is present, a queue is already frozen. Show that order and `queue_exclusions` verbatim. Return `jira_issue_keys` and `jira_issue_key` (the first key) unchanged. Do not reorder, drop, or add keys.
+7. When `pick_ticket` completes, return `jira_issue_description` (the issue description text) with `jira_issue_key`. If the description has a `Program:` pointer, this program becomes a child of that program. Tickets without a pointer still run and show `owner_program: none`.
 
 ## Hydrate and implement
 
@@ -38,5 +39,5 @@ Reply with a ticket key (TFS-184), or paste a key anytime to skip this list.
 3. Resolve PR **base branch**: engineer override → pointer `@branch` → allowlist `default_branch` → runtime repo match → **`dev`**. Confirm “PR against `dev` on `org/repo`”. Use `main` only if explicit.
 4. If open `is blocked by` links remain, warn and require confirm.
 5. Materialize FRDs / blueprints / the WO into `docs/` for `implement-work-order`.
-6. Implement **only this ticket**. Feature branch `feat/TFS-184-…`. Pass `repo_url` + `base_branch` into coding backend; do not let a generic `main` wipe `dev`.
-7. After merge, ask if they want the remaining list. Do not auto-start the next ticket.
+6. Implement **only this ticket**. Feature branch `feat/PROJ-184-…`. Pass `repo_url` + `base_branch` into coding backend; do not let a generic `main` wipe `dev`.
+7. A confirmed queue starts the next ticket after this one merges. A named key stops after this pull request. If there is no queue, ask if they want the remaining list. Do not start a ticket they did not confirm.

@@ -3,7 +3,7 @@
 # Local machines without trivy exit 0. CI uses aquasecurity/trivy-action and fails on findings.
 set -euo pipefail
 
-IMAGE="${1:-docker-agent-runtime}"
+IMAGE="${1:-ts-harness-agent-runtime:latest}"
 
 if ! command -v trivy >/dev/null 2>&1; then
   echo "trivy is not installed; skipping image scan of ${IMAGE}"

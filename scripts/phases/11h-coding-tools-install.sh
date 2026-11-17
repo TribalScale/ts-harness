@@ -156,6 +156,10 @@ install_via_npm() {
     fi
     echo "[phase:${PHASE_NAME}] Installing opencode-ai@${OPENCODE_VERSION} via npm -> ${INSTALL_DIR}"
     npm install --prefix "$INSTALL_DIR" "opencode-ai@${OPENCODE_VERSION}"
+    # npm 12 skips install scripts unless allowed; OpenCode's postinstall fetches its binary.
+    if [[ -f "$INSTALL_DIR/node_modules/opencode-ai/postinstall.mjs" ]]; then
+        (cd "$INSTALL_DIR/node_modules/opencode-ai" && node postinstall.mjs)
+    fi
     local npm_bin="${INSTALL_DIR}/node_modules/.bin/opencode"
     if [[ ! -x "$npm_bin" ]]; then
         npm_bin="$(find "${INSTALL_DIR}/node_modules" -type f -name opencode 2>/dev/null | head -n 1 || true)"

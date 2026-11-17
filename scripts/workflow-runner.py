@@ -21,15 +21,19 @@ New in this revision:
 
 from __future__ import annotations
 
+from concurrent.futures import Executor, ThreadPoolExecutor
+import contextvars
 import json
 import os
 from pathlib import Path
 import signal
+import socket
 import sys
 import threading
 import time
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -48,7 +52,9 @@ from ts_harness.workflows.definition_paths import (  # noqa: E402
     list_history_paths_for_version,
     safe_component,
 )
+from ts_harness.storage.shared_tree import sync_definitions  # noqa: E402
 from ts_harness.workflows.wait_deadlines import wait_deadlines  # noqa: E402
+from ts_harness.workflows.workflow_locks import suspended, workflow_lock  # noqa: E402
 from ts_harness.tools.approvals import AWAITING_TOOL_APPROVAL_PREFIX  # noqa: E402
 
 
@@ -93,6 +99,22 @@ class RunnerMetrics:
 
 
 _runner_metrics = RunnerMetrics()
+
+
+def _job_duration_seconds(job: dict[str, Any]) -> float | None:
+    from datetime import datetime
+
+    def parse(value: Any) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+        except ValueError:
+            return None
+
+    finished = parse(job.get("finished_at"))
+    started = parse(job.get("started_at")) or parse(job.get("claimed_at")) or parse(job.get("created_at"))
+    if finished is None or started is None:
+        return None
+    return max((finished - started).total_seconds(), 0.0)
 _loaded_versioned_skeletons: dict[
     tuple[str, str],
     workflow_definitions.WorkflowSkeleton,
@@ -125,6 +147,57 @@ def qa_review_evidence(task: dict[str, Any], tasks: list[dict[str, Any]]) -> dic
         if value not in (None, "", [], {}):
             evidence[key] = value
     return evidence
+
+
+def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> dict[str, Any]:
+    """The latest delivery's screenshots for QA: names for the prompt, images as ``_images``.
+
+    The images come from the evidence commit the coding job pushed, so QA judges the
+    same pictures a reviewer sees on the PR. The agent loop sends ``_images`` as image
+    parts, not as JSON text.
+    """
+    delivered = [
+        item
+        for item in tasks
+        if item.get("status") == "succeeded"
+        and isinstance(item.get("output"), dict)
+        and "verify_summary" in item["output"]
+    ]
+    if not delivered:
+        return {}
+    latest = sorted(delivered, key=lambda item: str(item.get("created_at") or ""))[-1]
+    shots = latest["output"].get("screenshots") if isinstance(latest["output"].get("screenshots"), dict) else {}
+    if not shots.get("files") or not shots.get("commit") or "/" not in str(shots.get("repo") or ""):
+        return {}
+    import base64
+
+    from ts_harness.integrations.github_client import GitHubClient
+
+    owner, repo = str(shots["repo"]).split("/", 1)
+    client = github or GitHubClient.from_env()
+    images = []
+    for name in list(shots["files"])[:6]:
+        payload = client.get_file(owner, repo, str(name), ref=str(shots["commit"])) or {}
+        content = str(payload.get("content") or "").replace("\n", "")
+        if content:
+            base64.b64decode(content, validate=True)
+            if sum(len(image["url"]) for image in images) + len(content) > 6_000_000:
+                break  # the gateway takes JSON bodies up to 10 MB
+            mime = "image/jpeg" if str(name).endswith((".jpeg", ".jpg")) else "image/png"
+            images.append({"name": str(name), "url": f"data:{mime};base64,{content}"})
+    if not images:
+        return {}
+    return {
+        "screenshots": {
+            "files": [image["name"] for image in images],
+            "comment_url": shots.get("comment_url") or "",
+            "note": (
+                "From the Playwright tests the change added or edited: `step-N` is the page as the test's Nth "
+                "sampled assertion passed; a name without a step is the end of the test. The images follow this message."
+            ),
+        },
+        "_images": images,
+    }
 
 
 def _definition_store_root() -> Path | None:
@@ -426,6 +499,21 @@ class MemoryApiClient:
         )
         return bool(result.get("claimed"))
 
+    def claim_ready_tasks(self, *, runner: str, lane: str, limit: int, lease_seconds: int) -> list[dict[str, Any]]:
+        body = {"runner": runner, "lane": lane, "limit": limit, "lease_seconds": lease_seconds}
+        return list(self._request("POST", "/workflow/claim-batch", body).get("tasks") or [])
+
+    def renew_task_lease(self, task_id: str, *, runner: str, lease_seconds: int) -> bool:
+        body = {"runner": runner, "lease_seconds": lease_seconds}
+        return bool(self._request("POST", f"/workflow/tasks/{task_id}/renew-lease", body).get("renewed"))
+
+    def acquire_workflow_lock(self, workflow_id: str, *, owner: str, ttl_seconds: int) -> bool:
+        body = {"owner": owner, "ttl_seconds": ttl_seconds}
+        return bool(self._request("POST", f"/workflow/{workflow_id}/lock", body).get("acquired"))
+
+    def release_workflow_lock(self, workflow_id: str, *, owner: str) -> bool:
+        return bool(self._request("POST", f"/workflow/{workflow_id}/unlock", {"owner": owner}).get("released"))
+
     def record_runtime_task(self, task_id: str, runtime_task_id: str) -> None:
         self._request(
             "POST",
@@ -519,6 +607,33 @@ class MemoryApiClient:
     def get_workflow_record(self, workflow_id: str) -> dict[str, Any]:
         return self._request("GET", f"/workflows/{workflow_id}")
 
+    def task_program(self, task_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/workflow/tasks/{urllib.parse.quote(str(task_id), safe='')}/program")
+
+    def list_coding_jobs(
+        self,
+        *,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        status: str | None = None,
+        unconsumed: bool = False,
+        limit: int = 50,
+        repo_url: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        for key, value in (("task_id", task_id), ("workflow_id", workflow_id), ("status", status), ("repo_url", repo_url)):
+            if value:
+                params[key] = value
+        if unconsumed:
+            params["unconsumed"] = "true"
+        return list(self._request("GET", f"/coding-jobs?{urllib.parse.urlencode(params)}").get("jobs") or [])
+
+    def create_coding_job(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/coding-jobs/create", {**body, "actor": "workflow-runner"})
+
+    def consume_coding_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
+
 
 # ---------------------------------------------------------------------------
 # Gateway adapter
@@ -593,6 +708,8 @@ class WorkflowRunner:
         leader_election: LeaderElection | None = None,
         runtime_url: str | None = None,
         stop_requested: threading.Event | None = None,
+        executor: Executor | None = None,
+        lane_caps: dict[str, int] | None = None,
     ):
         if stale_policy not in {"block", "fail"}:
             raise ValueError("stale_policy must be 'block' or 'fail'")
@@ -617,16 +734,34 @@ class WorkflowRunner:
         self.runtime_url = (runtime_url or "").rstrip("/")
         # Track workflow_ids we've already created records for this process lifetime.
         self._created_workflows: set[str] = set()
+        # None dispatches inline on the tick thread (unit tests); main() passes a pool.
+        self._executor = executor
+        # Only agent turns run in parallel. Task transitions and hooks hold this lock,
+        # so two workers never update workflow state at the same time.
+        self._state_lock = threading.Lock()
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[str, str] = {}
+        # With lane caps the runner claims batches per lane; other runners may share the database.
+        self.lane_caps = dict(lane_caps or {})
+        self._inflight_lanes: dict[str, str] = {}
+        self._lease_renewed: dict[str, float] = {}
 
     def tick(self) -> None:
+        if self._lanes_enabled():
+            try:
+                self._tick_lanes()
+            finally:
+                self._touch_tick_file()
+            return
         try:
             if not self._leader.try_become_leader():
                 log_event("leader_election_lost", runner_id=self.runner_id)
                 return
 
             log_event("ticked", runner_id=self.runner_id)
-            self.reload_if_changed()
-            self._sweep_stale()
+            with self._state_lock:
+                self.reload_if_changed()
+                self._sweep_stale()
             if not self._runtime_ready():
                 log_event("runtime_not_ready", runner_id=self.runner_id)
                 return
@@ -636,41 +771,149 @@ class WorkflowRunner:
                     break
                 if self._should_skip_retry_backoff(task):
                     continue
+                workflow_id = str(task.get("workflow_id") or "")
+                if workflow_id and self._workflow_in_flight(workflow_id):
+                    continue
                 if not self._limiter.try_acquire():
                     log_event("concurrency_limit_reached", runner_id=self.runner_id)
                     break
                 if not self.memory.claim_task(task, self.runner_id, self.lease_seconds):
                     self._limiter.release()
                     continue
-                from ts_harness.observability.logging import new_trace_id, trace_id_var
-
-                trace_token = trace_id_var.set(new_trace_id())
-                try:
-                    log_event(
-                        "claimed",
-                        workflow_id=task.get("workflow_id"),
-                        task_id=task.get("id"),
-                        agent_id=task.get("agent_id"),
-                    )
-                    _runner_metrics.inc("runner_tasks_claimed")
-                    try:
-                        try:
-                            self._ensure_workflow_record(task)
-                            self._dispatch_task(task)
-                        except Exception as exc:
-                            log_event(
-                                "dispatch_exception",
-                                workflow_id=task.get("workflow_id"),
-                                task_id=task.get("id"),
-                                error=str(exc),
-                            )
-                            self._recover_claimed_task(task, str(exc))
-                    finally:
-                        self._limiter.release()
-                finally:
-                    trace_id_var.reset(trace_token)
+                with self._inflight_lock:
+                    self._inflight[str(task.get("id") or "")] = workflow_id
+                    self._lease_renewed[str(task.get("id") or "")] = time.monotonic()
+                self._submit(task)
+            self._renew_leases()
         finally:
             self._touch_tick_file()
+
+    def _lanes_enabled(self) -> bool:
+        return bool(self.lane_caps) and callable(getattr(self.memory, "claim_ready_tasks", None))
+
+    def _tick_lanes(self) -> None:
+        """Claim up to each lane's free slots; only the leader sweeps stale tasks."""
+        leader = self._leader.try_become_leader()
+        log_event("ticked", runner_id=self.runner_id, leader=leader)
+        with self._state_lock:
+            self.reload_if_changed()
+            if leader:
+                self._sweep_stale()
+        self._renew_leases()
+        if not self._runtime_ready():
+            log_event("runtime_not_ready", runner_id=self.runner_id)
+            return
+        for lane, cap in self.lane_caps.items():
+            if self.stop_requested.is_set():
+                log_event("runner_stop_requested", runner_id=self.runner_id)
+                break
+            with self._inflight_lock:
+                room = cap - sum(1 for value in self._inflight_lanes.values() if value == lane)
+            if room <= 0:
+                continue
+            try:
+                tasks = self.memory.claim_ready_tasks(
+                    runner=self.runner_id, lane=lane, limit=room, lease_seconds=self.lease_seconds
+                )
+            except Exception as exc:
+                log_event("claim_batch_failed", runner_id=self.runner_id, lane=lane, error=str(exc))
+                continue
+            for task in tasks:
+                task_id = str(task.get("id") or "")
+                with self._inflight_lock:
+                    self._inflight[task_id] = str(task.get("workflow_id") or "")
+                    self._inflight_lanes[task_id] = lane
+                    self._lease_renewed[task_id] = time.monotonic()
+                self._submit(task)
+
+    def _submit(self, task: dict[str, Any]) -> None:
+        if self._executor is None:
+            self._run_claimed_task(task)
+        else:
+            self._executor.submit(contextvars.copy_context().run, self._run_claimed_task, task)
+
+    def _renew_leases(self) -> None:
+        """Extend the lease of tasks running here every third of the lease, so the leader never sweeps them."""
+        renew = getattr(self.memory, "renew_task_lease", None)
+        if not callable(renew):
+            return
+        interval = max(5.0, self.lease_seconds / 3)
+        now = time.monotonic()
+        with self._inflight_lock:
+            due = [task_id for task_id, at in self._lease_renewed.items() if now - at >= interval]
+        for task_id in due:
+            try:
+                renewed = renew(task_id, runner=self.runner_id, lease_seconds=self.lease_seconds)
+            except Exception as exc:
+                log_event("lease_renew_failed", task_id=task_id, error=str(exc))
+                continue
+            with self._inflight_lock:
+                if task_id in self._lease_renewed:
+                    self._lease_renewed[task_id] = now
+            if not renewed:
+                log_event("lease_lost", runner_id=self.runner_id, task_id=task_id)
+
+    def _workflow_in_flight(self, workflow_id: str) -> bool:
+        with self._inflight_lock:
+            return workflow_id in self._inflight.values()
+
+    def _task_in_flight(self, task_id: str) -> bool:
+        with self._inflight_lock:
+            return task_id in self._inflight
+
+    def _run_claimed_task(self, task: dict[str, Any]) -> None:
+        from ts_harness.observability.logging import new_trace_id, trace_id_var
+
+        trace_token = trace_id_var.set(new_trace_id())
+        try:
+            log_event(
+                "claimed",
+                workflow_id=task.get("workflow_id"),
+                task_id=task.get("id"),
+                agent_id=task.get("agent_id"),
+            )
+            _runner_metrics.inc("runner_tasks_claimed")
+            with self._state_lock:
+                try:
+                    with workflow_lock(self.memory, task.get("workflow_id")):
+                        self._ensure_workflow_record(task)
+                        self._dispatch_task(task)
+                except Exception as exc:
+                    log_event(
+                        "dispatch_exception",
+                        workflow_id=task.get("workflow_id"),
+                        task_id=task.get("id"),
+                        error=str(exc),
+                    )
+                    self._recover_claimed_task(task, str(exc))
+        finally:
+            task_id = str(task.get("id") or "")
+            with self._inflight_lock:
+                self._inflight.pop(task_id, None)
+                self._lease_renewed.pop(task_id, None)
+                lane = self._inflight_lanes.pop(task_id, None)
+            if lane is None:
+                self._limiter.release()
+            trace_id_var.reset(trace_token)
+
+    def _dispatch_unlocked(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run the agent turn without the state lock so other workers can record results."""
+        self._state_lock.release()
+        try:
+            with suspended(self.memory, payload.get("workflow_id")):
+                return self.adapter.dispatch(payload)
+        finally:
+            self._state_lock.acquire()
+
+    def shutdown(self) -> None:
+        if self._executor is None:
+            return
+        with self._inflight_lock:
+            inflight = len(self._inflight)
+        log_event("runner_draining", runner_id=self.runner_id, inflight=inflight)
+        # In-flight agent turns keep running in agent-runtime; their tasks are swept
+        # once the lease expires, as after any runner restart.
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _runtime_ready(self) -> bool:
         """Return True when agent-runtime healthz is reachable, or gate is disabled."""
@@ -714,6 +957,7 @@ class WorkflowRunner:
         return True
 
     def reload_if_changed(self) -> bool:
+        sync_definitions()
         try:
             generation = read_definition_manifest_generation()
         except Exception as exc:
@@ -800,6 +1044,10 @@ class WorkflowRunner:
     def _sweep_stale(self) -> None:
         for task in self.memory.list_stale_tasks():
             task_id = task["id"]
+            # A long agent turn outlives its lease while ticks continue; only
+            # tasks no worker here is running are abandoned.
+            if self._task_in_flight(str(task_id)):
+                continue
             if self.stale_policy == "fail":
                 self.memory.fail_task(task_id, "task lease expired")
                 event = "failed"
@@ -976,6 +1224,18 @@ class WorkflowRunner:
         )
         self._resume_ready_wait(task, work_order_waves.CHILD_EVENT, prepared.get("ready"))
 
+    def _prepare_upstream_wait(self, task: dict[str, Any], config: dict[str, Any]) -> None:
+        from ts_harness.workflows import release_tracks
+
+        prepared = release_tracks.prepare_upstream_wait(task, config, memory=_workflow_engine().client)
+        log_event(
+            "upstream_wait_prepared",
+            workflow_id=task.get("workflow_id"),
+            task_id=task.get("id"),
+            pending=prepared["options"]["pending"],
+        )
+        self._resume_ready_wait(task, release_tracks.UPSTREAM_EVENT, prepared.get("ready"))
+
     def _resume_ready_wait(self, task: dict[str, Any], event_type: str, ready: dict[str, Any] | None) -> None:
         if not ready:
             return
@@ -991,6 +1251,12 @@ class WorkflowRunner:
     def _dispatch_task(self, task: dict[str, Any]) -> None:
         dispatch_started = time.time()
         stage = self._stage_for_task(task)
+
+        from ts_harness.workflows import human_decisions
+
+        if human_decisions.accepted(task):
+            self._complete_succeeded(task, human_decisions.accepted_output(task), event="human_accepted")
+            return
 
         if stage is not None and stage.barrier:
             self._handle_barrier(task)
@@ -1019,6 +1285,8 @@ class WorkflowRunner:
                     self._prepare_release_wait(task, stage.wait_external)
                 elif stage.wait_external.get("children"):
                     self._prepare_children_wait(task, stage.wait_external)
+                elif stage.wait_external.get("upstream"):
+                    self._prepare_upstream_wait(task, stage.wait_external)
             except Exception as exc:
                 from ts_harness.integrations.github_client import classify_github_wait_error
 
@@ -1053,12 +1321,29 @@ class WorkflowRunner:
 
         contract = self._contract_for_task(task, stage)
         task_input = dict(task.get("input") or {})
+        if stage is not None and stage.input_map:
+            task_input = self._fill_stage_inputs(task, stage, task_input)
+
+        from ts_harness.workflows import coding_job_stage
+
+        if stage is not None and stage.execution == "coding_job" and coding_job_stage.enabled():
+            self._dispatch_coding_job(task, stage, task_input, contract, dispatch_started)
+            return
+
         if task.get("step_name") == "qa_gate" and not task_input.get("files"):
             try:
                 record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
                 task_input.update(qa_review_evidence(task, list(record.get("tasks") or [])))
             except Exception as exc:
                 log_event("qa_evidence_error", task_id=task.get("id"), error=str(exc))
+        if self._carry_forward(task, stage, task_input, dispatch_started):
+            return
+        if task.get("step_name") == "qa_gate":
+            try:
+                record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+                task_input.update(qa_screenshot_input(list(record.get("tasks") or [])))
+            except Exception as exc:  # noqa: BLE001 - QA still runs on the text evidence
+                log_event("qa_screenshots_error", task_id=task.get("id"), error=str(exc))
         payload = {
             "workflow_id": task.get("workflow_id"),
             "task_id": task.get("id"),
@@ -1073,11 +1358,181 @@ class WorkflowRunner:
             or ([] if stage is None else stage.skill_hints),
             "contract": contract or {},
             "definition_version": task.get("definition_version"),
+            "usage_scope": {"team_id": task.get("team_id"), "requested_by": task.get("requested_by")},
         }
         if stage is not None and stage.tool_allow is not None:
             payload["tool_allow"] = list(stage.tool_allow)
-        result = self.adapter.dispatch(payload)
+        max_turns = (stage.retry or {}).get("max_turns") if stage is not None else None
+        if isinstance(max_turns, int) and not isinstance(max_turns, bool) and max_turns > 0:
+            payload["max_turns"] = max_turns
+        if stage is not None:
+            # An expand stage's planning call proposes tasks; its effects belong to the children.
+            payload["external_effects"] = [] if stage.kind == "expand" else list(stage.allowed_external_effects)
+        is_qa = task.get("step_name") == "qa_gate"
+        if is_qa:
+            self._publish_qa_status(task, "qa_started", task_input)
+        result = self._dispatch_unlocked(payload)
         log_event("dispatched", workflow_id=payload["workflow_id"], task_id=payload["task_id"])
+        if is_qa:
+            self._publish_qa_status(task, "qa_finished", task_input, result)
+        self._apply_dispatch_result(task, stage, result, dispatch_started)
+
+    def _carry_forward(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage | None,
+        task_input: dict[str, Any],
+        dispatch_started: float,
+    ) -> bool:
+        """Settle code review or QA with its last passing verdict when the PR diff is unchanged."""
+        from ts_harness.workflows import carry_forward
+
+        if str(task.get("step_name") or "") not in carry_forward.CARRY_STEPS:
+            return False
+        if os.environ.get("TS_HARNESS_CARRY_FORWARD_VERDICTS", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return False
+        try:
+            record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+            output = carry_forward.carried_output(task, task_input, list(record.get("tasks") or []))
+        except Exception as exc:  # noqa: BLE001 - fall back to running the agent
+            log_event("carry_forward_error", task_id=task.get("id"), error=str(exc))
+            return False
+        if output is None:
+            return False
+        log_event(
+            "verdict_carried_forward",
+            workflow_id=task.get("workflow_id"),
+            task_id=task.get("id"),
+            step_name=task.get("step_name"),
+            from_task_id=output["carried_forward"]["from_task_id"],
+        )
+        _runner_metrics.inc("runner_verdicts_carried_forward")
+        result = {"status": "succeeded", "output": output}
+        if task.get("step_name") == "qa_gate":
+            self._publish_qa_status(task, "qa_finished", task_input, result)
+        self._apply_dispatch_result(task, stage, result, dispatch_started)
+        return True
+
+    def _dispatch_coding_job(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage,
+        task_input: dict[str, Any],
+        contract: dict[str, Any] | None,
+        dispatch_started: float,
+    ) -> None:
+        """Use the task's finished coding job, or queue one and park the task until it ends."""
+        from ts_harness.implementation.coding_job import CodingRequestError
+        from ts_harness.workflows import coding_job_stage
+
+        task_id = str(task["id"])
+        jobs = self.memory.list_coding_jobs(task_id=task_id, unconsumed=True, limit=10)
+        finished = next((j for j in jobs if j.get("status") in coding_job_stage.TERMINAL), None)
+        if finished is not None and self._retry_out_of_memory(task, task_input, finished):
+            return
+        if finished is not None:
+            result = coding_job_stage.dispatch_result(finished, contract, task_input)
+            job_id = result.pop("coding_job_id", "")
+            log_event("coding_job_result", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job_id, status=result["status"])
+            _runner_metrics.inc(f"runner_coding_jobs_{finished.get('status')}")
+            duration = _job_duration_seconds(finished)
+            if duration is not None:
+                _runner_metrics.observe("runner_coding_job_seconds", duration)
+            try:
+                self._apply_dispatch_result(task, stage, result, dispatch_started)
+            finally:
+                try:
+                    self.memory.consume_coding_job(job_id)
+                except Exception as exc:
+                    log_event("coding_job_consume_error", task_id=task_id, job_id=job_id, error=str(exc))
+            return
+
+        job = next((j for j in jobs if j.get("status") in coding_job_stage.ACTIVE), None)
+        if job is None:
+            try:
+                program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+            except Exception:
+                program_id = None
+            try:
+                spec = coding_job_stage.stage_spec(task, task_input, program_id=program_id)
+            except CodingRequestError as exc:
+                self._apply_dispatch_result(task, stage, {"status": "blocked", "error": str(exc), "output": {}}, dispatch_started)
+                return
+            remembered = self._remembered_memory(str(spec.get("repo_url") or ""))
+            if remembered:
+                spec = {**spec, "worker_memory_mb": remembered}
+            job = self.memory.create_coding_job(
+                spec=spec,
+                workflow_id=str(task.get("workflow_id") or "") or None,
+                task_id=task_id,
+                program_id=program_id,
+                tenant_id=str(task.get("tenant_id") or "default"),
+            )
+        self.memory.set_task_wait(
+            task_id,
+            wait_token=str(job["id"]),
+            expected_event_type=coding_job_stage.EVENT_TYPE,
+        )
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _remembered_memory(self, repo_url: str) -> int:
+        """Memory a recent successful job of this repo needed after running out: start there."""
+        if not repo_url:
+            return 0
+        try:
+            jobs = self.memory.list_coding_jobs(repo_url=repo_url, status="succeeded", limit=20)
+        except Exception as exc:  # noqa: BLE001 - sizing is an optimisation
+            log_event("coding_job_sizing_lookup_failed", repo_url=repo_url, error=str(exc)[:200])
+            return 0
+        return max((int(job.get("spec_memory_mb") or 0) for job in jobs or []), default=0)
+
+    def _retry_out_of_memory(self, task: dict[str, Any], task_input: dict[str, Any], finished: dict[str, Any]) -> bool:
+        """Queue the job again with twice the memory when the worker was OOM-killed (once, up to a cap)."""
+        from ts_harness.coding.launcher import parse_memory
+        from ts_harness.workflows import coding_job_stage
+
+        result = finished.get("result") if isinstance(finished.get("result"), dict) else {}
+        error = str(finished.get("error") or result.get("error") or "")
+        if finished.get("status") == "succeeded" or not error.startswith("out_of_memory"):
+            return False
+        current = int(finished.get("worker_memory_mb") or parse_memory(os.environ.get("CODING_WORKER_MEMORY") or "2g") // 2**20)
+        cap = parse_memory(os.environ.get("CODING_WORKER_MAX_MEMORY") or "6g") // 2**20
+        larger = min(current * 2, cap)
+        if larger <= current:
+            return False
+        task_id = str(task["id"])
+        try:
+            program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+        except Exception:
+            program_id = None
+        spec = {**coding_job_stage.stage_spec(task, task_input, program_id=program_id), "worker_memory_mb": larger}
+        job = self.memory.create_coding_job(
+            spec=spec,
+            workflow_id=str(task.get("workflow_id") or "") or None,
+            task_id=task_id,
+            program_id=program_id,
+            tenant_id=str(task.get("tenant_id") or "default"),
+        )
+        try:
+            self.memory.consume_coding_job(str(finished["id"]))
+        except Exception as exc:  # noqa: BLE001
+            log_event("coding_job_consume_error", task_id=task_id, job_id=finished.get("id"), error=str(exc))
+        self.memory.set_task_wait(task_id, wait_token=str(job["id"]), expected_event_type=coding_job_stage.EVENT_TYPE)
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event(
+            "coding_job_retried_with_more_memory",
+            workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"], memory_mb=larger, previous_mb=current,
+        )
+        return True
+
+    def _apply_dispatch_result(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage | None,
+        result: dict[str, Any],
+        dispatch_started: float,
+    ) -> None:
         runtime_task_id = result.get("runtime_task_id")
         if runtime_task_id:
             self.memory.record_runtime_task(task["id"], runtime_task_id)
@@ -1293,6 +1748,7 @@ class WorkflowRunner:
                             task,
                             "blocked",
                             error=error,
+                            dispatch_result=result,
                         )
                         log_event(
                             "terminal_block_notified",
@@ -1379,7 +1835,25 @@ class WorkflowRunner:
                 log_event("barrier_block_hook_error", task_id=task.get("id"), error=str(exc))
             return
 
-        output = dict(agg.get("output") or {})
+        self._complete_succeeded(task, dict(agg.get("output") or {}), event="barrier_completed")
+
+    def _publish_qa_status(self, task: dict[str, Any], action: str, *args: Any) -> None:
+        from ts_harness.workflows import qa_status
+
+        try:
+            warnings = getattr(qa_status, action)(*args)
+        except Exception as exc:  # noqa: BLE001 - the status is informational
+            warnings = [str(exc)]
+        if warnings:
+            log_event(
+                "qa_status_warning",
+                workflow_id=task.get("workflow_id"),
+                task_id=task.get("id"),
+                warnings=warnings,
+            )
+
+    def _complete_succeeded(self, task: dict[str, Any], output: dict[str, Any], *, event: str) -> None:
+        """Complete a step the runner settled itself (system step or human accept) and run its hooks."""
         result = {"status": "succeeded", "output": output}
         try:
             from ts_harness.workflows.engine import (
@@ -1395,7 +1869,7 @@ class WorkflowRunner:
 
         self.memory.complete_task(task["id"], output)
         log_event(
-            "barrier_completed",
+            event,
             workflow_id=task.get("workflow_id"),
             task_id=task.get("id"),
             pr_count=len(output.get("pr_urls") or []),
@@ -1417,6 +1891,30 @@ class WorkflowRunner:
                 task_id=task.get("id"),
                 error=str(exc),
             )
+
+    def _fill_stage_inputs(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage,
+        task_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
+
+        try:
+            client = _workflow_engine().client
+            filled = fill_missing_inputs(client, {**task, "input": task_input}, stage)
+            if filled != task_input:
+                client.patch_task_input(str(task.get("id")), filled, actor="workflow-runner")
+                log_event(
+                    "stage_inputs_filled",
+                    workflow_id=task.get("workflow_id"),
+                    task_id=task.get("id"),
+                    keys=sorted(set(filled) - set(task_input)),
+                )
+            return filled
+        except Exception as exc:
+            log_event("stage_inputs_fill_error", task_id=task.get("id"), error=str(exc))
+            return task_input
 
     def _contract_for_task(
         self,
@@ -1602,12 +2100,23 @@ def build_adapter() -> Any:
     raise RuntimeError(f"unsupported WORKFLOW_RUNNER_ADAPTER: {adapter_name}")
 
 
+def max_concurrent_dispatches(batch_size: int) -> int:
+    return max(1, int(os.environ.get("WORKFLOW_RUNNER_MAX_CONCURRENT", str(batch_size))))
+
+
+def runner_lane_caps() -> dict[str, int]:
+    """Per-lane slots from WORKFLOW_RUNNER_LANE_CAPS or the deployment profile; ``off`` keeps list-then-claim."""
+    raw = os.environ.get("WORKFLOW_RUNNER_LANE_CAPS", "").strip()
+    if raw.lower() == "off":
+        return {}
+    from ts_harness.config.deployment_profile import parse_lane_caps, resolve_setting
+
+    return parse_lane_caps(raw or str(resolve_setting("lane_caps")))
+
+
 def build_concurrency_limiter(batch_size: int) -> ConcurrencyLimiter:
     redis_url = os.environ.get("REDIS_URL") or os.environ.get("TS_HARNESS_REDIS_URL")
-    max_concurrent = int(
-        os.environ.get("WORKFLOW_RUNNER_MAX_CONCURRENT", str(batch_size))
-    )
-    return ConcurrencyLimiter(limit=max_concurrent, redis_url=redis_url)
+    return ConcurrencyLimiter(limit=max_concurrent_dispatches(batch_size), redis_url=redis_url)
 
 
 def build_leader_election(runner_id: str, memory: Any = None) -> LeaderElection:
@@ -1650,6 +2159,7 @@ def run_until_stopped(
                 pass
         if stop_requested.wait(interval):
             break
+    runner.shutdown()
     log_event("runner_shutdown", runner_id=runner.runner_id)
 
 
@@ -1657,10 +2167,16 @@ def main() -> None:
     if os.environ.get("WORKFLOW_RUNNER_ENABLED", "false").lower() != "true":
         print("workflow-runner disabled", flush=True)
         return
+    from ts_harness.storage.backend import apply_mirror_paths
+
+    for name, value in apply_mirror_paths().items():
+        log_event("runner_storage_mirror_path", variable=name, path=value)
+    sync_definitions(force=True)
     skeleton_dir = Path(os.environ.get("WORKFLOW_DEFINITIONS_DIR", "/config/workflows"))
     skeletons = load_workflow_skeletons(skeleton_dir)
-    runner_id = os.environ.get("WORKFLOW_RUNNER_ID", "workflow-runner")
+    runner_id = os.environ.get("WORKFLOW_RUNNER_ID") or f"workflow-runner-{socket.gethostname()}"
     batch_size = int(os.environ.get("WORKFLOW_RUNNER_BATCH_SIZE", "5"))
+    lane_caps = runner_lane_caps()
     runtime_url = (
         os.environ.get("AGENT_RUNTIME_URL") or "http://127.0.0.1:18789"
     )
@@ -1678,6 +2194,11 @@ def main() -> None:
         skeleton_dir=skeleton_dir,
         concurrency_limiter=build_concurrency_limiter(batch_size),
         runtime_url=runtime_url,
+        executor=ThreadPoolExecutor(
+            max_workers=sum(lane_caps.values()) if lane_caps else max_concurrent_dispatches(batch_size),
+            thread_name_prefix="dispatch",
+        ),
+        lane_caps=lane_caps,
     )
     stop_requested = threading.Event()
     runner.stop_requested = stop_requested

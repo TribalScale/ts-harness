@@ -77,6 +77,12 @@ export function ChatPage({
   }
 
   function openSession(id: string) {
+    const session = sessions.find((item) => item.session_id === id);
+    const key = String(session?.binding_key || "").trim();
+    if (key) {
+      sessionStorage.setItem("ec_web_binding", key);
+      setBindingKey(key);
+    }
     setListOpen(false);
     onSelectSession(id);
   }

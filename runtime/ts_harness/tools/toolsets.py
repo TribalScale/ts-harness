@@ -10,6 +10,8 @@ from ts_harness.connectors.tool_names import registered_google_workspace_tool_na
 TOOLSET_DEFINITIONS = {
     "core-read": {"recall_memory", "read_file", "session_status", "read_skill_reference"},
     "core-write": {"write_file", "patch_file"},
+    # Review and QA: read files of the PR under review at its head or base (GitHub, read-only).
+    "pr-read": {"read_pr_file"},
     "terminal": {"exec"},
     "workflow": {"workflow_update"},
     "mcp": set(),
@@ -19,6 +21,7 @@ TOOLSET_DEFINITIONS = {
     "delegation": {"delegate_task", "propose_delegate_task"},
     "channel-chat": {"propose_delegate_task"},
     "program-builder": {"builder_catalog", "propose_program_bundle"},
+    "knowledge-notes": {"propose_knowledge_note"},
 }
 
 

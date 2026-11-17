@@ -15,9 +15,9 @@
 - jira_ticket_creation — create work in approved Jira projects after PRD approval
 - backlog_grooming — propose priority, labels, and sequencing
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-opus-5-5`
 **Workspace:** `/workspace/pm-agent`
-**Toolsets:** `core-read`, `workflow`, `google-workspace-docs`
+**Toolsets:** `core-read`, `workflow`, `google-workspace-docs`, `jira-read`, `jira-write`
 **Skills:** `pm`, `memory-api`, `workflows`, `governed-workflows`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):
@@ -34,7 +34,7 @@
 | Allowed | Not Allowed |
 | --- | --- |
 | Draft and iterate on PRDs | Commit roadmap decisions without human review |
-| Create epics/stories in TFS from an explicitly approved PRD | Create tickets outside TFS |
+| Create epics/stories in the tenant's allowed Jira projects from an explicitly approved PRD | Create tickets outside the tenant's allowed Jira projects (jira_filing.allowed_projects) |
 | Query existing backlog for duplicates | Approve or merge engineering work |
 
 **Requires human approval for:**

@@ -1,7 +1,9 @@
 """GitHub REST client used by merge polling, merge readiness, release and compensation.
 
-Authenticates with the ``GITHUB_TOKEN`` personal access token. The transport is
-injectable so tests never touch the network.
+``github_for`` authenticates each repository call with a GitHub App
+installation token for that repository when an App is registered for the
+host, and falls back to the ``GITHUB_TOKEN`` personal access token otherwise.
+The transport is injectable so tests never touch the network.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -27,9 +30,16 @@ _REPO_RE = re.compile(
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
-Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
+# Returns (status, body) or (status, body, headers).
+Transport = Callable[[str, str, dict[str, str], bytes | None], tuple]
+TokenProvider = Callable[[str, str], str]
+_REPO_PATH_RE = re.compile(r"^/repos/(?P<owner>[^/]+)/(?P<repo>[^/?]+)")
+MAX_RETRY_WAIT = 60
+RATE_LIMITS: dict[str, dict[str, Any]] = {}
 
 SUCCESS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+# Published by stages that run after the checks wait, so they cannot gate it unless named as required.
+LATER_GATE_CONTEXTS = frozenset({"harness/independent-review", "harness/code-review", "harness/qa"})
 PENDING_STATES = frozenset({"pending", "queued", "in_progress", "requested", "waiting", "expected"})
 
 
@@ -70,28 +80,105 @@ def parse_repo_slug(repo: str) -> tuple[str, str] | None:
     return match.group("owner"), match.group("repo")
 
 
-def _urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes]:
+def repo_host(repo_url: str | None) -> str:
+    """Host of an https or ssh GitHub URL; empty for ``owner/repo`` or nothing."""
+    raw = str(repo_url or "").strip()
+    if raw.startswith("git@"):
+        return raw[4:].split(":", 1)[0].lower()
+    if "://" in raw:
+        return (urllib.parse.urlparse(raw).hostname or "").lower()
+    return ""
+
+
+def _urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes, dict[str, str]]:
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.status, resp.read()
+            return resp.status, resp.read(), {k.lower(): v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as exc:
         detail = exc.read() if hasattr(exc, "read") else str(exc).encode()
-        return exc.code, detail or b""
+        response_headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
+        return exc.code, detail or b"", response_headers
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_POST_STEP_RE = re.compile(r"^(?:##\[group\])?(?:Post job cleanup\.|Post )")
+_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401 - urllib hook
+        return None
+
+
+def _download_job_log(url: str, headers: dict[str, str]) -> bytes:
+    """Ask GitHub for the log, then fetch the signed URL it redirects to without the token."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=20) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location") if exc.code in {301, 302, 303, 307, 308} else None
+        if not location:
+            raise
+    with urllib.request.urlopen(urllib.request.Request(location, headers={"User-Agent": USER_AGENT}), timeout=30) as resp:
+        return resp.read()[-200_000:]
+
+
+def _record_rate_limit(host: str, headers: dict[str, str]) -> None:
+    remaining = headers.get("x-ratelimit-remaining")
+    if remaining is None:
+        return
+    entry = {
+        "remaining": int(remaining),
+        "limit": int(headers.get("x-ratelimit-limit") or 0),
+        "reset": int(headers.get("x-ratelimit-reset") or 0),
+        "observed_at": int(time.time()),
+    }
+    RATE_LIMITS[host] = entry
+    from ts_harness.observability import prometheus
+
+    if prometheus.PROMETHEUS_AVAILABLE:
+        prometheus.github_rate_limit_remaining.labels(host=host).set(entry["remaining"])
+
+
+def _retry_wait(status: int, headers: dict[str, str], now: float) -> float | None:
+    """Seconds to wait before retrying a throttled call, or None when it is not throttling."""
+    if status not in (403, 429):
+        return None
+    retry_after = headers.get("retry-after")
+    if retry_after and retry_after.strip().isdigit():
+        return min(float(retry_after), MAX_RETRY_WAIT)
+    if headers.get("x-ratelimit-remaining") == "0" and headers.get("x-ratelimit-reset"):
+        return min(max(float(headers["x-ratelimit-reset"]) - now, 1.0), MAX_RETRY_WAIT)
+    return 5.0 if status == 429 else None
 
 
 @dataclass
 class GitHubClient:
-    token: str
+    token: str = ""
     api_base: str = API_BASE
     transport: Transport = _urllib_transport
+    token_provider: TokenProvider | None = None
+    host: str = "github.com"
+    sleep: Callable[[float], None] = time.sleep
+    # The token came from GITHUB_TOKEN: read it again per request. A coding worker refreshes
+    # that variable with a new installation token before the old one expires (an hour).
+    token_from_env: bool = False
 
     @classmethod
     def from_env(cls, *, transport: Transport | None = None) -> "GitHubClient":
-        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        return github_for(None, transport=transport)
+
+    def _token_for(self, path: str) -> str:
+        match = _REPO_PATH_RE.match(path)
+        if self.token_provider and match:
+            return self.token_provider(match.group("owner"), match.group("repo"))
+        token = os.environ.get("GITHUB_TOKEN", "").strip() if self.token_from_env else ""
+        token = token or self.token
         if not token:
-            raise GitHubError(401, "GITHUB_TOKEN is required")
-        return cls(token=token, transport=transport or _urllib_transport)
+            raise GitHubError(401, "GITHUB_TOKEN is required for this call (the GitHub App only covers repositories)")
+        return token
 
     def request(
         self,
@@ -106,7 +193,7 @@ class GitHubClient:
         if query:
             url = f"{url}?{urllib.parse.urlencode({k: v for k, v in query.items() if v is not None})}"
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {self._token_for(path)}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": USER_AGENT,
@@ -115,7 +202,15 @@ class GitHubClient:
         if body is not None:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
-        status, raw = self.transport(method, url, headers, data)
+        for attempt in range(3):
+            response = self.transport(method, url, headers, data)
+            status, raw = response[0], response[1]
+            response_headers = response[2] if len(response) > 2 else {}
+            _record_rate_limit(self.host, response_headers)
+            wait = _retry_wait(status, response_headers, time.time()) if attempt < 2 else None
+            if wait is None:
+                break
+            self.sleep(wait)
         if status == 404 and allow_404:
             return None
         if status >= 400:
@@ -132,11 +227,33 @@ class GitHubClient:
     def list_reviews(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         return list(self.request("GET", f"/repos/{owner}/{repo}/pulls/{number}/reviews", query={"per_page": 100}) or [])
 
+    def list_review_comments(self, owner: str, repo: str, number: int, review_id: int | str) -> list[dict[str, Any]]:
+        path = f"/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/comments"
+        return list(self.request("GET", path, query={"per_page": 100}) or [])
+
+    def list_issue_comments(self, owner: str, repo: str, number: int, *, since: str | None = None) -> list[dict[str, Any]]:
+        path = f"/repos/{owner}/{repo}/issues/{number}/comments"
+        return list(self.request("GET", path, query={"per_page": 100, "since": since}) or [])
+
+    def get_issue(self, owner: str, repo: str, number: int) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{owner}/{repo}/issues/{number}")
+
+    def get_commit(self, owner: str, repo: str, sha: str) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{owner}/{repo}/commits/{sha}")
+
+    def collaborator_permission(self, owner: str, repo: str, username: str) -> str:
+        """``admin``, ``maintain``, ``write``, ``triage``, ``read`` or ``none``."""
+        payload = self.request("GET", f"/repos/{owner}/{repo}/collaborators/{username}/permission", allow_404=True)
+        return str((payload or {}).get("role_name") or (payload or {}).get("permission") or "none")
+
     def close_pull(self, owner: str, repo: str, number: int) -> dict[str, Any]:
         return self.request("PATCH", f"/repos/{owner}/{repo}/pulls/{number}", body={"state": "closed"})
 
     def comment(self, owner: str, repo: str, number: int, body: str) -> dict[str, Any]:
         return self.request("POST", f"/repos/{owner}/{repo}/issues/{number}/comments", body={"body": body})
+
+    def update_comment(self, owner: str, repo: str, comment_id: int | str, body: str) -> dict[str, Any]:
+        return self.request("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body={"body": body})
 
     def list_pull_files(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         """Changed files with patches; GitHub caps the listing at 3000 files."""
@@ -232,6 +349,52 @@ class GitHubClient:
             )
         return jobs
 
+    def job_log_tail(self, owner: str, repo: str, job_id: int | str, *, max_lines: int = 80) -> str:
+        """The last lines of a GitHub Actions job log, without colour codes or timestamps.
+
+        The API answers with a redirect to a signed download URL, which must be fetched
+        without the GitHub token. Returns "" when the log is unavailable.
+        """
+        path = f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        headers = {
+            "Authorization": f"Bearer {self._token_for(path)}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": USER_AGENT,
+        }
+        try:
+            raw = _download_job_log(f"{self.api_base}{path}", headers)
+        except Exception:  # noqa: BLE001 - feedback is best effort
+            return ""
+        lines = []
+        for line in raw.decode(errors="replace").splitlines():
+            line = _ANSI_RE.sub("", line)
+            line = _LOG_TIMESTAMP_RE.sub("", line).rstrip()
+            if _POST_STEP_RE.match(line):
+                break  # checkout and runner cleanup follow; the failure is above
+            if line.strip():
+                lines.append(line)
+        return "\n".join(lines[-max_lines:])
+
+    def failed_check_logs(self, owner: str, repo: str, ref: str, names: list[str]) -> dict[str, str]:
+        """Log tails of the failed GitHub Actions jobs among ``names`` on ``ref``."""
+        wanted = {name for name in names if name}
+        logs: dict[str, str] = {}
+        try:
+            runs = self.check_runs(owner, repo, ref)
+        except GitHubError:
+            return logs
+        for run in runs:
+            name = str(run.get("name") or "")
+            if name not in wanted or name in logs or run.get("conclusion") not in {"failure", "timed_out"}:
+                continue
+            if not run.get("id"):
+                continue
+            tail = self.job_log_tail(owner, repo, run["id"])
+            if tail:
+                logs[name] = tail
+        return logs
+
     def create_status(
         self,
         owner: str,
@@ -259,6 +422,11 @@ class GitHubClient:
 
     def branch_protection(self, owner: str, repo: str, branch: str) -> dict[str, Any] | None:
         return self.request("GET", f"/repos/{owner}/{repo}/branches/{urllib.parse.quote(branch, safe='')}/protection", allow_404=True)
+
+    def set_branch_protection(self, owner: str, repo: str, branch: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Classic branch protection (needs admin on the repo)."""
+        quoted = urllib.parse.quote(branch, safe="")
+        return self.request("PUT", f"/repos/{owner}/{repo}/branches/{quoted}/protection", body=body)
 
     def required_status_contexts(self, owner: str, repo: str, branch: str) -> list[str] | None:
         """Return required contexts, or ``None`` when the branch is unprotected."""
@@ -315,6 +483,60 @@ class GitHubClient:
         return list(self.request("GET", f"/repos/{owner}/{repo}/deployments/{deployment_id}/statuses") or [])
 
 
+def _app_provider(app: Any, pat: str) -> TokenProvider:
+    from ts_harness.integrations.github_app import NotInstalled
+
+    def provider(owner: str, repo: str) -> str:
+        try:
+            return app.repo_token(owner, repo)
+        except NotInstalled as exc:
+            if pat:
+                return pat
+            raise GitHubError(403, str(exc)) from exc
+
+    return provider
+
+
+def _default_host() -> str:
+    from ts_harness.integrations.github_app import DEFAULT_HOST
+
+    return (os.environ.get("GITHUB_APP_HOST") or DEFAULT_HOST).strip().lower()
+
+
+def github_for(repo_url: str | None = None, *, transport: Transport | None = None) -> GitHubClient:
+    """Client for the repository's host: App installation tokens when registered, else the PAT."""
+    from ts_harness.integrations.github_app import api_base_for_host, app_for
+
+    host = repo_host(repo_url) or _default_host()
+    pat = os.environ.get("GITHUB_TOKEN", "").strip()
+    app = app_for(host)
+    if app is None and not pat:
+        raise GitHubError(401, "GITHUB_TOKEN is required (or register a GitHub App)")
+    return GitHubClient(
+        token=pat,
+        api_base=api_base_for_host(host),
+        transport=transport or _urllib_transport,
+        token_provider=_app_provider(app, pat) if app else None,
+        host=host,
+        token_from_env=bool(pat),
+    )
+
+
+def repo_token(repo_url: str) -> str:
+    """Token for git over https to ``repo_url``: an installation token, else the PAT, else empty."""
+    from ts_harness.integrations.github_app import NotInstalled, app_for
+
+    pat = os.environ.get("GITHUB_TOKEN", "").strip()
+    parsed = parse_repo_slug(repo_url)
+    app = app_for(repo_host(repo_url) or _default_host()) if parsed else None
+    if app is None:
+        return pat
+    try:
+        return app.repo_token(*parsed)
+    except NotInstalled:
+        return pat
+
+
 def summarize_checks(
     combined: dict[str, Any] | None,
     check_runs: list[dict[str, Any]] | None,
@@ -324,7 +546,8 @@ def summarize_checks(
     """Collapse statuses and check runs into ``success``, ``pending`` or ``failure``.
 
     With ``required`` set, only those names count and a missing one is pending.
-    Without it, every check reported on the ref counts and an empty set is pending.
+    Without it, every check reported on the ref counts (except ``LATER_GATE_CONTEXTS``)
+    and an empty set is pending.
     """
     checks: dict[str, str] = {}
     for status in (combined or {}).get("statuses") or []:
@@ -341,7 +564,7 @@ def summarize_checks(
             conclusion = str(run.get("conclusion") or "").lower()
             checks[name] = "success" if conclusion in SUCCESS_CONCLUSIONS else "failure"
 
-    names = list(required) if required else sorted(checks)
+    names = list(required) if required else sorted(n for n in checks if n not in LATER_GATE_CONTEXTS)
     results = {name: checks.get(name, "missing") for name in names}
     failed = sorted(n for n, s in results.items() if s in {"failure", "error"})
     pending = sorted(n for n, s in results.items() if s in PENDING_STATES or s == "missing")

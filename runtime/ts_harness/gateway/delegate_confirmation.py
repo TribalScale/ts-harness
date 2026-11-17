@@ -133,6 +133,8 @@ def set_pending_workflow(
     input_data: dict | None = None,
     program_type: str | None = None,
 ) -> None:
+    from ts_harness.gateway.intake_pointers import session_pointers, with_pending_sources
+
     metadata = dict(session.metadata or {})
     pending = {
         "workflow_type": workflow_type,
@@ -141,9 +143,20 @@ def set_pending_workflow(
     }
     if program_type:
         pending["program_type"] = program_type
+    # The model cannot drop attachments: they come from the session, not the tool call.
+    pending = with_pending_sources(pending, session_pointers(metadata), workflow=True)
     metadata["pending_workflow"] = pending
     session.metadata = metadata
     get_session_store().save(session)
+
+
+def _drop_intake_pointers(session: SessionRecord) -> None:
+    """A declined proposal releases its attachments so they don't ride along on the next one."""
+    from ts_harness.gateway.intake_pointers import SESSION_KEY, clear_pointers
+
+    if SESSION_KEY in (session.metadata or {}):
+        session.metadata = clear_pointers(dict(session.metadata or {}))
+        get_session_store().save(session)
 
 
 def apply_workflow_confirmation_to_session(
@@ -151,6 +164,8 @@ def apply_workflow_confirmation_to_session(
 ) -> None:
     if confirmation.clear_pending:
         clear_pending_workflow(session)
+    if confirmation.cancelled:
+        _drop_intake_pointers(session)
 
 
 def apply_confirmation_to_session(session: SessionRecord, confirmation: DelegateConfirmation) -> None:
@@ -348,6 +363,9 @@ def set_pending_program(
         pending["project_id_source"] = project_id_source
     if link_program_ids:
         pending["link_program_ids"] = list(link_program_ids)
+    from ts_harness.gateway.intake_pointers import session_pointers, with_pending_sources
+
+    pending = with_pending_sources(pending, session_pointers(session.metadata), workflow=False)
     metadata = write_pending_program(dict(session.metadata or {}), pending)
     session.metadata = metadata
     get_session_store().save(session)
@@ -358,6 +376,8 @@ def apply_program_confirmation_to_session(
 ) -> None:
     if confirmation.clear_pending:
         clear_pending_program(session)
+    if confirmation.cancelled:
+        _drop_intake_pointers(session)
 
 
 @dataclass

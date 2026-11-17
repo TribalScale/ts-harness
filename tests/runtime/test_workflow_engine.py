@@ -39,6 +39,18 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(args[1], "blocked")
         self.assertIn("base_advanced", kwargs["error"])
 
+    def test_block_case_prefixes_follow_the_pinned_definition(self):
+        current = load_skeleton("deliver_work_order").definition_version
+        for version, expected in (
+            (current, ["external_blocked:github.pr_changes_requested", "external_blocked:github.pr_closed"]),
+            ("0.0.1-missing", []),
+        ):
+            with self.subTest(version=version):
+                task = {"id": "w1", "step_name": "await_human_merge", "status": "blocked", "definition_version": version}
+                self.client.get_workflow.return_value = {"workflow": {"workflow_type": "deliver_work_order"}, "tasks": [task]}
+                self.assertEqual(self.engine.block_case_prefixes("wf-1", "w1"), expected)
+        self.assertEqual(self.engine.block_case_prefixes("wf-1", "other"), [])
+
     def test_block_wait_blocks_and_runs_on_block(self):
         task = {"id": "w1", "workflow_id": "wf-1", "step_name": "await_human_merge", "status": "blocked"}
         self.client.get_workflow.return_value = {"workflow": {}, "tasks": [task]}
@@ -54,6 +66,12 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(_revision_cause("barrier_blocked: stale_base: x")[0], "The base branch moved; refreshing the PR")
         self.assertEqual(_revision_cause("barrier_blocked: code_review_blocked: 2")[0], "Code review blocked the PR")
         self.assertEqual(_revision_cause(None)[0], "QA rejected the PR")
+        self.assertEqual(
+            _revision_cause("external_blocked:github.pr_changes_requested by alice"),
+            ("alice requested changes", "Human-requested revision failed"),
+        )
+        self.assertEqual(_revision_cause("external_blocked:github.pr_closed by bob")[0], "bob closed the PR without merging")
+        self.assertEqual(_revision_cause("external_blocked:github.pr_closed")[0], "A reviewer closed the PR without merging")
         self.assertEqual(_qa_feedback_text({}, {"output": {"review_feedback": "fix it"}}, None), "fix it")
 
     def test_handle_reject_falls_back_without_on_reject(self):
@@ -78,6 +96,60 @@ class WorkflowEngineTests(unittest.TestCase):
             actor="orchestrator",
         )
         self.assertEqual(result["approval_status"], "rejected")
+
+    def test_rejecting_a_queue_kickoff_fails_the_task(self):
+        tasks = [
+            {"id": "gate-1", "step_name": "hydrate_ticket", "status": "pending"},
+            {"id": "deliver-1", "step_name": "deliver_work_order", "status": "pending"},
+        ]
+
+        def get_workflow(workflow_id):
+            return {
+                "workflow": {
+                    "id": workflow_id,
+                    "workflow_type": "implement_jira_ticket",
+                    "program_id": "prog-1",
+                    "program_phase": "implement",
+                },
+                "tasks": tasks,
+            }
+
+        def cancel_task(task_id, *, actor, reason=""):
+            for task in tasks:
+                if task["id"] == task_id:
+                    task["status"] = "cancelled"
+            return {}
+
+        def fail_task(task_id, error, *, actor):
+            for task in tasks:
+                if task["id"] == task_id:
+                    task["status"] = "failed"
+            return {}
+
+        self.client.get_workflow.side_effect = get_workflow
+        self.client.get_program.return_value = {
+            "program": {
+                "id": "prog-1",
+                "metadata": {"artifacts": {"jira_issue_keys": ["PROJ-1", "PROJ-2"]}},
+            }
+        }
+        self.client.reject_task.return_value = {"id": "gate-1", "approval_status": "rejected"}
+        self.client.cancel_task.side_effect = cancel_task
+        self.client.fail_task.side_effect = fail_task
+        result = self.engine.handle_reject(
+            workflow_id="wf-1",
+            gate_task={
+                "id": "gate-1",
+                "workflow_type": "implement_jira_ticket",
+                "step_name": "hydrate_ticket",
+            },
+            comments="stop",
+            actor="orchestrator",
+        )
+        self.client.fail_task.assert_called_once()
+        self.client.cancel_task.assert_called_once()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["phase"]["status"], "phase_failed")
 
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
     def test_handle_reject_revise_on_reject(self, mock_bulk):

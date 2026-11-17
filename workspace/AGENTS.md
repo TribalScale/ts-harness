@@ -36,6 +36,8 @@ Stage sequences live in workflow skeletons (do not duplicate here):
 - `jira_from_prd` → `config/workflows/jira_from_prd.json`
 - `pick_assigned_jira` → `config/workflows/pick_assigned_jira.json`
 - `prd_request` → `config/workflows/prd_request.json`
+- `release_track` → `config/workflows/release_track.json`
+- `review_program_notes` → `config/workflows/review_program_notes.json`
 - `rfp_request` → `config/workflows/rfp_request.json`
 - `rollback_release` → `config/workflows/rollback_release.json`
 - `work_orders_from_prd` → `config/workflows/work_orders_from_prd.json`

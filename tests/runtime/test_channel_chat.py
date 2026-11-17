@@ -123,6 +123,22 @@ class ChannelChatTests(unittest.TestCase):
         self.assertIn("Draft / Revise PRD mode", prompt)
         self.assertIn("prd_markdown", prompt)
         self.assertIn("Do not ask for more intake information", prompt)
+        self.assertIn("clarified_requirements.initial_request", prompt)
+        self.assertIn("'Technical Constraints' section", prompt)
+
+    def test_work_orders_stage_prompt_keeps_prd_constraints(self):
+        config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")
+        agent = EnterpriseAgent(config, build_default_registry(), provider=FakeProvider([]))
+        prompt = agent._build_workflow_system_prompt(
+            config.get_agent("pm-agent"),
+            {
+                "step_name": "plan_work_orders",
+                "skill_hints": ["prd-to-work-orders-governed"],
+                "input": {"stage": "planner"},
+            },
+        )
+        self.assertIn("Governed work-orders stage mode", prompt)
+        self.assertIn("Carry every technical constraint the PRD states", prompt)
 
     def test_intake_workflow_prompt_requires_clarifying_questions(self):
         config = load_runtime_config(

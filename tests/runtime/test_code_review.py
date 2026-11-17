@@ -62,11 +62,26 @@ class PrecheckTests(unittest.TestCase):
         output = code_review.review_precheck(
             TASK, PRECHECK_CONFIG, memory=_memory(), github=_github([_file("src/a.py", 5, 2)]), program_defaults={}
         )
-        self.assertEqual(output["prs"], [{"pr_url": PR, "head_sha": "h1"}])
+        self.assertEqual(output["prs"], [{"pr_url": PR, "head_sha": "h1", "title": ""}])
         self.assertEqual(output["diff_stats"]["additions"], 5)
         self.assertEqual(output["files"][0]["pr_url"], PR)
         self.assertEqual(output["scope_findings"], [])
         self.assertFalse(output["refresh"])
+
+    def test_precheck_keeps_the_pull_request_title(self):
+        github = _github([_file("README.md", 1, 0)])
+        github.get_pull.return_value = {
+            "title": "THD-32 Add knowledge notes proof to README",
+            "head": {"sha": "h1"},
+            "base": {"ref": "dev"},
+        }
+        output = code_review.review_precheck(
+            TASK, PRECHECK_CONFIG, memory=_memory(), github=github, program_defaults={}
+        )
+        self.assertEqual(
+            output["prs"],
+            [{"pr_url": PR, "head_sha": "h1", "title": "THD-32 Add knowledge notes proof to README"}],
+        )
 
     def test_excludes_do_not_count_toward_limits(self):
         files = [_file("src/a.py", 10), _file("package-lock.json", 5000), _file("web/yarn.lock", 900), _file("x/generated/y.ts", 900)]
@@ -175,9 +190,11 @@ class PrecheckTests(unittest.TestCase):
         )
         files = [_file("app/pricing.py"), _file("features/wo-1-pricing.feature"), _file("features/steps/pricing_steps.py")]
         self.assertEqual(code_review.scope_findings(PR, files, body), [])
+        # Test files are in scope without acceptance tests too; other undeclared files are not.
         no_gwt = "# WO-1\n\n## Files\n- app/pricing.py\n"
-        flagged = [item["file"] for item in code_review.scope_findings(PR, files, no_gwt)]
-        self.assertEqual(flagged, ["features/wo-1-pricing.feature", "features/steps/pricing_steps.py"])
+        extra = [*files, _file("src/projects/dto/update-project.dto.spec.ts"), _file("app/billing.py")]
+        flagged = [item["file"] for item in code_review.scope_findings(PR, extra, no_gwt)]
+        self.assertEqual(flagged, ["app/billing.py"])
 
     def test_refresh_flag_follows_implement_output(self):
         tasks = [{"step_name": "deliver_work_order", "status": "succeeded", "output": {"pr_url": PR, "refresh_method": "server_merge"}, "created_at": "1"}]

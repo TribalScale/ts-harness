@@ -26,10 +26,13 @@ class CodingRequest:
     requested_by: str | None = None
     requested_by_github_login: str | None = None
     program_id: str | None = None
+    delivery_workflow_id: str | None = None
     decision_id: str | None = None
     mode: str = "implement"
     review_feedback: str | None = None
     revision_files: list[str] | None = None
+    human_change_requests: list[str] | None = None
+    knowledge_notes: list[dict[str, Any]] | None = None
 
 
 def attribution_markdown(request: CodingRequest) -> str:
@@ -75,6 +78,12 @@ class CodingResult:
     refresh_method: str | None = None
     resolved_files: list[str] = field(default_factory=list)
     security: dict[str, Any] = field(default_factory=dict)
+    # Token usage per OpenCode session and model, for a coding worker to report with its result.
+    usage: list[dict[str, Any]] = field(default_factory=list)
+    # Host verification of the final worktree (verification_evidence), for review and QA.
+    verification: dict[str, Any] = field(default_factory=dict)
+    # Screenshots published for review and QA (publish_screenshots result).
+    screenshots: dict[str, Any] = field(default_factory=dict)
 
 
 def security_markdown(security: dict[str, Any]) -> str:
@@ -94,9 +103,11 @@ def security_markdown(security: dict[str, Any]) -> str:
             lines.append(f"- Dependency audit: not run ({audit['skipped_reason']})")
         else:
             count = len(audit.get("findings") or [])
+            preexisting = int(audit.get("preexisting") or 0)
             lines.append(
                 f"- Dependency audit ({audit.get('tool')}, {audit.get('severity', 'high')}+): "
-                + ("no findings" if not count else f"{count} finding(s)")
+                + ("no new findings" if not count else f"{count} new finding(s)")
+                + (f"; {preexisting} already on the base branch" if preexisting else "")
             )
     if not lines:
         return ""

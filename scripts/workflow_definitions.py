@@ -8,6 +8,7 @@ import copy
 from dataclasses import dataclass, field, replace
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 import warnings
@@ -70,9 +71,12 @@ KNOWN_STAGE_KEYS = frozenset(
         "barrier",
         "present_output",
         "present_prompt",
+        "present_body",
         "contract_ref",
         "allowed_contracts",
         "output_schema",
+        "execution",
+        "lane",
     }
 )
 
@@ -111,6 +115,7 @@ class Stage:
     barrier: dict[str, Any] = field(default_factory=dict)
     present_output: bool | None = None
     present_prompt: str = ""
+    present_body: str = ""
     contract_ref: str = ""
     allowed_contracts: list[str] = field(default_factory=list)
     output_schema: dict[str, Any] = field(default_factory=dict)
@@ -119,6 +124,44 @@ class Stage:
     tool_allow: list[str] | None = None
     # Name of the fragment include this stage was expanded from, if any.
     origin: str = ""
+    # "agent" dispatches to the runtime; "coding_job" queues a coding worker.
+    execution: str = "agent"
+    # Claim lane override; empty means the default from stage_lane().
+    lane: str = ""
+
+
+STAGE_EXECUTIONS = frozenset({"agent", "coding_job"})
+
+
+def _stage_execution(raw: dict[str, Any], name: str, kind: str) -> str:
+    execution = str(raw.get("execution") or "agent").strip()
+    if execution not in STAGE_EXECUTIONS:
+        raise ValueError(f"stage '{name}' execution must be one of {sorted(STAGE_EXECUTIONS)}")
+    if execution == "coding_job" and (kind != "task" or raw.get("wait_external") or raw.get("barrier")):
+        raise ValueError(f"stage '{name}' execution coding_job needs a plain task stage")
+    return execution
+
+
+STAGE_LANES = frozenset({"fast", "agent", "coding"})
+
+
+def _stage_lane_override(raw: dict[str, Any], name: str) -> str:
+    lane = str(raw.get("lane") or "").strip()
+    if lane and lane not in STAGE_LANES:
+        raise ValueError(f"stage '{name}' lane must be one of {sorted(STAGE_LANES)}")
+    return lane
+
+
+def stage_lane(stage: Stage) -> str:
+    """Claim lane: ``coding`` for coding jobs, ``fast`` for barriers, waits and approvals, else ``agent``."""
+    lane = getattr(stage, "lane", "")
+    if lane:
+        return lane
+    if getattr(stage, "execution", "agent") == "coding_job":
+        return "coding"
+    if any(getattr(stage, key, None) for key in ("barrier", "wait_external", "join", "approval_required")):
+        return "fast"
+    return "agent"
 
 
 APPROVAL_POLICY_KEYS = frozenset(
@@ -366,7 +409,51 @@ def freeze_contract(raw: dict[str, Any], *, name: str = "", context: str = "cont
     outcome = raw.get("outcome")
     resolved["outcome"] = _validate_outcome(outcome, context) if outcome is not None else None
 
+    presentation = raw.get("presentation")
+    if presentation is not None:
+        if not isinstance(presentation, dict):
+            raise ValueError(f"{context} presentation must be an object")
+        _reject_unknown_keys(presentation, frozenset({"body", "title", "questions"}), f"{context} presentation")
+        resolved["presentation"] = {
+            key: _presentation_path(presentation.get(key), f"{context} presentation.{key}")
+            for key in ("body", "title")
+            if presentation.get(key) is not None
+        }
+        questions = presentation.get("questions")
+        if questions is not None:
+            if questions not in PRESENTATION_QUESTION_MODES:
+                raise ValueError(f"{context} presentation.questions must be one of: first, all")
+            resolved["presentation"]["questions"] = questions
+
     return copy.deepcopy(resolved)
+
+
+# How an intake gate shows its questions in chat: the first one (a conversation, one
+# question per message) or all of them (one round, e.g. with recommended answers).
+PRESENTATION_QUESTION_MODES = ("first", "all")
+_PRESENTATION_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def _presentation_path(value: Any, context: str) -> str:
+    """A dotted path into the stage output, such as ``result.prd_markdown``."""
+    if value is None or value == "":
+        return ""
+    text = str(value).strip() if isinstance(value, str) else ""
+    if not _PRESENTATION_PATH_RE.match(text):
+        raise ValueError(f"{context} must be a dotted field path such as result.prd_markdown")
+    return text
+
+
+MAX_STAGE_TURNS = 64
+
+
+def _max_turns(value: Any, context: str) -> dict[str, int]:
+    """Model turns one task attempt may take; absent keeps the agent default."""
+    if value is None:
+        return {}
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_STAGE_TURNS:
+        raise ValueError(f"{context} must be an integer from 1 to {MAX_STAGE_TURNS}")
+    return {"max_turns": value}
 
 
 def _load_contracts(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -441,6 +528,7 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
         retry={
             "max_retries": int(retry["max_retries"]),
             "timeout_seconds": int(retry["timeout_seconds"]),
+            **_max_turns(retry.get("max_turns"), f"stage '{name}' retry.max_turns"),
         },
         approval_required=approval_required,
         plan_approval_required=plan_approval_required,
@@ -454,6 +542,7 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
         barrier=_optional_dict(raw.get("barrier")),
         present_output=_optional_bool(raw.get("present_output")),
         present_prompt=str(raw.get("present_prompt") or "").strip().lower(),
+        present_body=_presentation_path(raw.get("present_body"), f"stage '{name}' present_body"),
         contract_ref=contract_ref,
         allowed_contracts=allowed_contracts,
         output_schema=output_schema,
@@ -461,6 +550,8 @@ def _load_stage(raw: dict[str, Any]) -> Stage:
             raw.get("approval"), stage_name=name, approval_required=approval_required
         ),
         tool_allow=_optional_tool_allow(raw, name),
+        execution=_stage_execution(raw, name, kind),
+        lane=_stage_lane_override(raw, name),
     )
 
 
@@ -532,6 +623,9 @@ def _contract_to_payload(contract: dict[str, Any]) -> dict[str, Any]:
     outcome = contract.get("outcome")
     if outcome is not None:
         payload["outcome"] = copy.deepcopy(outcome)
+    presentation = contract.get("presentation")
+    if presentation:
+        payload["presentation"] = dict(presentation)
     return payload
 
 
@@ -566,8 +660,14 @@ def _stage_to_payload(stage: Stage) -> dict[str, Any]:
         payload["approval"] = copy.deepcopy(stage.approval)
     if stage.present_output is not None:
         payload["present_output"] = stage.present_output
+    if stage.present_body:
+        payload["present_body"] = stage.present_body
     if stage.tool_allow is not None:
         payload["tool_allow"] = list(stage.tool_allow)
+    if stage.execution != "agent":
+        payload["execution"] = stage.execution
+    if stage.lane:
+        payload["lane"] = stage.lane
     return payload
 
 

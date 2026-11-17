@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh managed DB password from the live cloud secret into compose-env,
-# secrets.env, and runtime .env, then recreate memory-api.
+# secrets.env, and runtime .env, then recreate agent-runtime and memory-api.
 set -euo pipefail
 
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,20 +67,23 @@ set -a
 # shellcheck disable=SC1090
 source "$COMPOSE_ENV"
 set +a
+TS_HARNESS_SESSION_DB_URL="$(session_db_url)"
+export TS_HARNESS_SESSION_DB_URL
 
-cd "$ENTERPRISE_DOCKER_DIR"
-COMPOSE=(docker compose --env-file "$RUNTIME_ENV"
-    -f docker-compose.memory-api.yml
-    -f docker-compose.agent-runtime.yml
-    -f docker-compose.workflow-runner.yml
-    -f docker-compose.admin-ui.yml)
+reconstruct_compose_files
+cd "$ENTERPRISE_ASSETS_DIR"
 
-echo "=== Recreate memory-api ==="
-"${COMPOSE[@]}" up -d --no-deps --force-recreate memory-api
-sleep 4
+# agent-runtime, workflow-runner and llm-proxy hold the DB password in the session
+# URL and memory-api holds it directly; the helper recreates every service that
+# shares agent-runtime's network namespace, plus replicas.
+echo "=== Recreate DB consumers ==="
+recreate_ts_harness_services agent-runtime memory-api
+if ! wait_for_agent_runtime_health sync-compose-db-env; then
+    exit 1
+fi
 
 echo "=== Verify DB connectivity from memory-api ==="
-docker exec docker-memory-api-1 python3 -c "
+run_docker_compose_as_admin exec -T memory-api python3 -c "
 import os, psycopg
 with psycopg.connect(
     host=os.environ['TS_HARNESS_DB_HOST'],

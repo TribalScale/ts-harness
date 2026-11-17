@@ -44,6 +44,7 @@ function ProgramNodeCard({ data }: NodeProps<ProgramGraphNode>) {
       )}
       {data.startable && <small>startable</small>}
       {data.terminal && <small>terminal</small>}
+      {data.may_end && <small>may end</small>}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -136,6 +137,7 @@ export function ProgramCanvas({
       produces_artifacts: [],
       input_bindings: [],
       terminal,
+      may_end: false,
       startable: graph.nodes.length === 0,
       completion_adapter: "",
     };
@@ -305,6 +307,7 @@ export function ProgramCanvas({
                     {node.data.label}
                     {node.data.startable ? " startable" : ""}
                     {node.data.terminal ? " terminal" : ""}
+                    {node.data.may_end ? " may end" : ""}
                   </button>
                 </li>
               ))}

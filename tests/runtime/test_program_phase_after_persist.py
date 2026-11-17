@@ -38,6 +38,31 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
             )
         complete.assert_not_called()
 
+    def test_terminal_block_asks_the_parent_join_to_finish(self):
+        client = MagicMock()
+        registry = build_default_registry()
+        engine = WorkflowEngine(client=client, registry=registry)
+        with patch.object(
+            engine,
+            "_maybe_complete_program_phase",
+            return_value={"status": "child_finished"},
+        ) as complete:
+            with patch.object(engine, "_maybe_notify", return_value={"status": "skipped"}):
+                engine.on_task_transition(
+                    {
+                        "id": "t-deliver",
+                        "workflow_id": "wf-child",
+                        "workflow_type": "deliver_work_order",
+                        "tenant_id": "default",
+                        "step_name": "deliver_work_order",
+                        "status": "blocked",
+                        "agent_id": "dev-agent",
+                    },
+                    "blocked",
+                    error="git clone failed: repository not found",
+                )
+        complete.assert_called_once()
+
     def test_after_task_succeeded_invokes_phase_complete(self):
         client = MagicMock()
         registry = build_default_registry()
@@ -176,6 +201,134 @@ class ProgramPhaseAfterPersistTests(unittest.TestCase):
         client.complete_workflow.assert_called_once()
         kwargs = client.complete_workflow.call_args.kwargs
         self.assertEqual(kwargs.get("superseded_by"), "wf-impl")
+
+    def test_handle_approve_records_the_phase_and_the_intake_reply(self):
+        client = MagicMock()
+        client.acquire_workflow_lock.return_value = True
+        client.get_workflow.return_value = {
+            "workflow": {
+                "id": "wf-bug",
+                "workflow_type": "bug_to_plan",
+                "definition_version": "1.4.0",
+                "program_id": "prog-1",
+            },
+            "tasks": [
+                {
+                    "id": "gate-1",
+                    "workflow_id": "wf-bug",
+                    "workflow_type": "bug_to_plan",
+                    "step_name": "await_ready",
+                    "definition_version": "1.4.0",
+                    "status": "succeeded",
+                    "approval_required": True,
+                }
+            ],
+        }
+        client.approve_task.return_value = {
+            "status": "succeeded",
+            "approval_status": "approved",
+        }
+        gate = {
+            "id": "gate-1",
+            "workflow_id": "wf-bug",
+            "workflow_type": "bug_to_plan",
+            "step_name": "await_ready",
+            "definition_version": "1.4.0",
+            "status": "pending",
+            "approval_required": True,
+            "input": {},
+        }
+        registry = build_default_registry()
+        engine = WorkflowEngine(client=client, registry=registry)
+        reply = "Steps are already in the report. ready, draft the bug"
+        with patch.object(
+            engine,
+            "_maybe_complete_program_phase",
+            return_value={"status": "phase_completed"},
+        ) as complete:
+            result = engine.handle_approve(
+                workflow_id="wf-bug",
+                gate_task=gate,
+                actor="orchestrator",
+                reply_text=reply,
+            )
+        complete.assert_called_once()
+        self.assertEqual(result["phase"]["status"], "phase_completed")
+        output = client.approve_task.call_args.kwargs["output"]
+        self.assertEqual(output["reply_text"], reply)
+
+    def test_missing_version_uses_the_active_skeleton_when_the_record_matches(self):
+        client = MagicMock()
+        engine = WorkflowEngine(client=client, registry=build_default_registry())
+        skeleton = engine._skeleton_for_state(
+            "bug_work_order",
+            payload={
+                "workflow": {
+                    "workflow_type": "bug_work_order",
+                    "definition_version": "1.0.0",
+                },
+                "tasks": [
+                    {
+                        "id": "draft-1",
+                        "step_name": "draft_work_order",
+                        "definition_version": "1.3.0",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(str(skeleton.definition_version), "1.0.0")
+        with self.assertRaises(LookupError):
+            engine._skeleton_for_state(
+                "bug_work_order",
+                payload={
+                    "workflow": {"definition_version": "1.3.0"},
+                    "tasks": [{"definition_version": "1.3.0"}],
+                },
+            )
+
+    def test_presented_draft_is_kept_when_session_sync_fails(self):
+        client = MagicMock()
+        client.acquire_workflow_lock.return_value = True
+        task = {
+            "id": "draft-1",
+            "workflow_id": "wf-wo",
+            "workflow_type": "bug_work_order",
+            "tenant_id": "default",
+            "step_name": "draft_work_order",
+            "agent_id": "pm-agent",
+            "definition_version": "1.0.0",
+            "status": "running",
+        }
+        client.get_workflow.return_value = {
+            "workflow": {
+                "id": "wf-wo",
+                "workflow_type": "bug_work_order",
+                "definition_version": "1.0.0",
+            },
+            "tasks": [task],
+        }
+        engine = WorkflowEngine(client=client, registry=build_default_registry())
+
+        def invoke(name, ctx):
+            if name == "present_specialist_output":
+                return {"hook": name, "status": "presented"}
+            return {"hook": name, "status": "skipped"}
+
+        with patch.object(engine.registry, "invoke", side_effect=invoke):
+            with patch.object(
+                engine,
+                "_sync_session",
+                side_effect=LookupError(
+                    "workflow skeleton version not found: "
+                    "workflow_type=bug_work_order definition_version=1.2.0"
+                ),
+            ):
+                result = engine.on_task_transition(
+                    task,
+                    "succeeded",
+                    dispatch_result={"status": "succeeded", "output": {"work_orders_markdown": "# WO-001"}},
+                )
+        self.assertEqual(result["status"], "presented")
 
 
 if __name__ == "__main__":

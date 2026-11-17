@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import unittest
 import uuid
 from pathlib import Path
@@ -102,7 +103,7 @@ class CreateAsChildTests(unittest.TestCase):
         self.assertEqual(result["root_program_id"], self.parent_id)
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
         self.assertIn("parent_program_id, root_program_id", insert[0])
-        self.assertEqual(insert[1][-2:], (self.parent_id, self.parent_id))
+        self.assertEqual(insert[1][-4:-2], (self.parent_id, self.parent_id))
         audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
         self.assertIn("program_child_attached", audits)
 
@@ -125,7 +126,7 @@ class CreateAsChildTests(unittest.TestCase):
         result = self.gateway.create_delivery_program(conn, {"summary": "root", "entry_phase": "prd"})
         self.assertIsNone(result["parent_program_id"])
         insert = cursor.sql_matching("INSERT INTO delivery_programs")[0]
-        self.assertEqual(insert[1][-2:], (None, None))
+        self.assertEqual(insert[1][-4:-2], (None, None))
 
 
 class AdoptParentPatchTests(unittest.TestCase):
@@ -195,6 +196,39 @@ class CascadeCancelTests(unittest.TestCase):
         self.assertFalse(cursor.sql_matching("WITH RECURSIVE tree"))
 
 
+def allowed_audit_actions() -> set[str]:
+    """Action types allowed by the newest migration that redefines the audit log check."""
+    migrations = sorted((Path(__file__).resolve().parents[2] / "database" / "migrations").glob("*.sql"))
+    latest = [path for path in migrations if "ADD CONSTRAINT session_audit_log_action_type_check" in path.read_text()][-1]
+    check = latest.read_text().split("ADD CONSTRAINT session_audit_log_action_type_check", 1)[1].split(");", 1)[0]
+    return set(re.findall(r"'([a-z_]+)'", check))
+
+
+class CompleteProgramTests(unittest.TestCase):
+    def setUp(self):
+        self.gateway = load_gateway()
+
+    def test_marks_a_running_program_succeeded_and_audits(self):
+        program_id = str(uuid.uuid4())
+        cursor = RoutedCursor([("SET status = 'succeeded'", {"id": program_id})])
+        conn = FakeConnection(cursor)
+        result = self.gateway.complete_delivery_program(conn, program_id, {"actor": "workflow-runner", "phase": "file_jira"})
+        self.assertEqual(result, {"program_id": program_id, "updated": True})
+        update = cursor.sql_matching("SET status = 'succeeded'")[0]
+        self.assertIn("status IN ('running', 'blocked')", update[0])
+        audits = [call[1][2] for call in cursor.sql_matching("INSERT INTO session_audit_log")]
+        self.assertEqual(audits, ["delivery_program_patched"])
+        self.assertIn(audits[0], allowed_audit_actions())
+        self.assertTrue(conn.committed)
+
+    def test_leaves_a_finished_program_alone(self):
+        program_id = str(uuid.uuid4())
+        cursor = RoutedCursor([])
+        result = self.gateway.complete_delivery_program(FakeConnection(cursor), program_id, {})
+        self.assertEqual(result, {"program_id": program_id, "updated": False})
+        self.assertFalse(cursor.sql_matching("INSERT INTO session_audit_log"))
+
+
 class ExternalRefTests(unittest.TestCase):
     def setUp(self):
         self.gateway = load_gateway()
@@ -238,8 +272,9 @@ class RollupTests(unittest.TestCase):
             {"id": "c1", "status": "running", "artifacts": {"pr_urls": ["https://x/pull/1"]}},
             {"id": "c2", "status": "succeeded", "artifacts": {"pr_url": "https://x/pull/2"}},
         ]
+        waiting = {"id": "t1", "step_name": "await_merge", "status": "blocked", "error": "awaiting_external:github.merge"}
         statuses = {
-            "c1": {"status": "blocked", "waiting_on": {"kind": "external"}},
+            "c1": {"status": "blocked", "active_workflow_id": "wf-c1", "active_workflow": {"id": "wf-c1"}, "active_tasks": [waiting]},
             "c2": {"status": "succeeded"},
         }
         with mock.patch.object(
@@ -250,8 +285,14 @@ class RollupTests(unittest.TestCase):
             rollup = self.gateway._child_rollup(None, children)
         self.assertEqual(rollup["active_child_count"], 1)
         self.assertEqual(rollup["children"][0]["status"], "blocked")
-        self.assertEqual(rollup["children"][0]["waiting_on"], {"kind": "external"})
+        self.assertEqual(rollup["children"][0]["active_tasks"], [waiting])
         self.assertEqual(rollup["children"][1]["pr_urls"], ["https://x/pull/2"])
+
+        from ts_harness.workflows.operability import with_operability
+
+        child = with_operability({"children": rollup["children"]})["children"][0]
+        self.assertEqual(child["waiting_on"]["event_type"], "github.merge")
+        self.assertEqual(child["active_step"], "await_merge")
 
 
 class PointerAdoptionTests(unittest.TestCase):

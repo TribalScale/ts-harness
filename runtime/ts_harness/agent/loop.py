@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable
 import json
 import os
@@ -31,11 +32,84 @@ from ts_harness.workflows.artifacts import (
     work_orders_artifacts_failure_reason,
 )
 from ts_harness.workflows import stage_contracts
+from ts_harness.workflows.prd_checks import check_prd
 
 # Cap in-loop repairs so a bad model response can self-correct before the
 # runner marks the task blocked / retries the whole dispatch.
 _MAX_WORKFLOW_OUTPUT_REPAIRS = 2
 _WORKFLOW_MEMORY_TOOLS = frozenset({"recall_memory", "remember_memory", "forget_memory"})
+
+# Step guidance for prd_request. Both stages have output contracts, so this text is
+# added on the contract path too; the skills (prd-intake, prd-drafter) carry the detail.
+PRD_INTAKE_MODE = (
+    "\nClarifying Intake mode (follow the prd-intake skill):\n"
+    "- Ask 3 to 7 clarifying questions needed to draft the PRD. Do not draft, "
+    "outline, or review the PRD in this step.\n"
+    "- Facts are your job: input.sources, when present, is what the requester "
+    "attached (files, Drive documents, image descriptions) as markdown. Never ask "
+    "for anything it or a recalled prior decision already states; ask once about "
+    "each source marked Could not be read or listed under Not read.\n"
+    "- End each question with 'Recommended: <a concrete answer and why>', worded "
+    "so that 'yes' accepts it.\n"
+    "- Return JSON with summary, questions, confidence, warnings, and "
+    "follow_up_needed. Put each question as a string in the top-level questions "
+    "array; do not put the PRD body in summary or artifacts.\n"
+)
+PRD_DRAFT_MODE = (
+    "\nDraft / Revise PRD mode (follow the prd-drafter skill):\n"
+    "- Use input.clarified_requirements and input.intake_output as the source of "
+    "truth.\n"
+    "- input.clarified_requirements.initial_request is the requester's own request "
+    "and clarified_requirements.answers are their answers to the intake questions. "
+    "A 'yes' accepts the recommended answers. Every requirement, named item, "
+    "number, and technology in them must appear in the PRD; answers refine the "
+    "request and win on conflict.\n"
+    "- Keep stated specifics exact (frameworks, named assets or entities, "
+    "intervals, limits, storage, validation rules). Never replace them with "
+    "generic wording.\n"
+    "- Add a 'Requirements' section listing each stated requirement as a checklist "
+    "item, and a 'Technical Constraints' section listing every technology, "
+    "platform, storage, and data choice the requester stated.\n"
+    "- Record each intake answer under Decisions and each unanswered gap you filled "
+    "under Assumptions. Give every FR a priority: Must, Should or Could.\n"
+    "- Do not ask for more intake information unless a critical blocker is "
+    "explicitly marked unknown.\n"
+    "- Return JSON with result.prd_title, result.prd_status='Draft', "
+    "result.prd_markdown, confidence, warnings, and follow_up_needed. Put the full "
+    "PRD only in result.prd_markdown; no preamble, next-step instructions, or "
+    "markdown code fences outside the JSON.\n"
+)
+
+
+# A recommendation that cites the request means the question was already answered there.
+_RESTATED_QUESTION = re.compile(
+    r"\bas (?:already )?(?:stated|mentioned|specified|noted|described|requested|given)"
+    r"(?: in the (?:brief|request|constraints|sources?|document|attachment))?\b"
+    r"|\bper the (?:brief|request|constraints|attached)\b"
+    r"|\b(?:the )?(?:brief|request|constraints) (?:already )?(?:says|states|specifies)\b",
+    re.IGNORECASE,
+)
+
+
+def _stated_request_text(payload: dict[str, Any]) -> str:
+    """What the requester wrote for a PRD draft: the request, their answers and the shared sources."""
+    task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+    clarified = task_input.get("clarified_requirements")
+    clarified = clarified if isinstance(clarified, dict) else {}
+    answers = clarified.get("answers")
+    if isinstance(answers, list):
+        answers = "\n".join(str(item) for item in answers)
+    parts = [clarified.get("initial_request"), answers, task_input.get("sources")]
+    return "\n\n".join(str(part) for part in parts if isinstance(part, str) and part.strip())
+
+
+def _prd_stage_mode(skill_hints: list[str]) -> str:
+    """PRD step guidance for a stage whose hints name a PRD skill, else empty."""
+    if "prd-intake" in skill_hints:
+        return PRD_INTAKE_MODE
+    if "prd-drafter" in skill_hints:
+        return PRD_DRAFT_MODE
+    return ""
 
 
 def _ensure_tool_call_id(call: dict[str, Any]) -> str:
@@ -69,6 +143,48 @@ def _close_tool_calls(
         _append_tool_message(messages, pending, '{"skipped": true}')
 
 
+_LAST_UPDATED_RE = re.compile(r"(\*\*Last updated:\*\*[ \t]*)([^·\n]*?)([ \t]*(?:·|$))", re.MULTILINE)
+
+
+def _finalize_prd_output(output: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Stamp the real date and derive the summary from the PRD, not from the model's talk."""
+    result = output.get("result") if isinstance(output.get("result"), dict) else None
+    holder = result if result is not None and result.get("prd_markdown") else output
+    markdown = holder.get("prd_markdown")
+    if not isinstance(markdown, str) or not markdown.strip():
+        return output
+    today = str((payload.get("input") or {}).get("today") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", today):
+        today = datetime.now(timezone.utc).date().isoformat()
+    stamped = _LAST_UPDATED_RE.sub(lambda m: f"{m.group(1)}{today}{m.group(3)}", markdown, count=1)
+    title = str(holder.get("prd_title") or "").strip()
+    if not title:
+        heading = re.search(r"^#\s+(?:PRD:\s*)?(.+)$", stamped, re.MULTILINE)
+        title = heading.group(1).strip() if heading else "PRD"
+    profile = str(holder.get("prd_profile") or "").strip().lower()
+    verb = "Revised" if str(payload.get("step_name") or "").startswith("revise") else "Drafted"
+    summary = f"{verb} PRD: {title}" + (f" ({profile} profile)" if profile in {"lite", "full"} else "")
+    output = dict(output)
+    if holder is result:
+        output["result"] = {**result, "prd_markdown": stamped}
+    else:
+        output["prd_markdown"] = stamped
+    output["summary"] = summary
+    return output
+
+
+def _proposal_formatter(tool_name: str):
+    from ts_harness.gateway.channel_confirmations import PROPOSAL_FORMATTERS
+
+    return PROPOSAL_FORMATTERS.get(tool_name)
+
+
+def with_confirmation_prompt(text: str) -> str:
+    from ts_harness.gateway.channel_confirmations import with_confirmation_prompt as _with_prompt
+
+    return _with_prompt(text)
+
+
 @dataclass
 class AgentRunResult:
     status: str
@@ -91,6 +207,12 @@ def _stage_tool_allow(payload: dict[str, Any]) -> set[str] | None:
     if "tool_allow" not in payload or payload["tool_allow"] is None:
         return None
     return {str(name) for name in payload["tool_allow"] if str(name or "").strip()}
+
+
+def _stage_external_effects(payload: dict[str, Any]) -> set[str] | None:
+    if "external_effects" not in payload or payload["external_effects"] is None:
+        return None
+    return {str(name) for name in payload["external_effects"] if str(name or "").strip()}
 
 
 class EnterpriseAgent:
@@ -161,23 +283,37 @@ class EnterpriseAgent:
             )
 
         payload = self._normalize_work_orders_dispatch_payload(payload)
-        provider = self._provider_override or build_provider(agent.model)
+        usage_scope = payload.get("usage_scope") if isinstance(payload.get("usage_scope"), dict) else {}
+        provider = self._provider_override or build_provider(
+            _run_model(agent, payload, source),
+            scope={
+                "tenant": tenant_id,
+                "team": usage_scope.get("team_id"),
+                "user": usage_scope.get("requested_by"),
+                "workflow": payload.get("workflow_id"),
+                "task": payload.get("task_id"),
+                "agent": agent_id,
+            },
+            effort=_run_effort(agent, payload, source),
+        )
         system_prompt = self._build_workflow_system_prompt(agent, payload)
+        task_input = dict(payload.get("input") or {})
+        images = task_input.pop("_images", None)
+        # Images go to the model once; validators, transcripts and logs see the input without them.
+        payload = {**payload, "input": task_input}
+        task_text = json.dumps(
+            {
+                "workflow_id": payload.get("workflow_id"),
+                "task_id": payload.get("task_id"),
+                "step_name": payload.get("step_name"),
+                "input": task_input,
+                "required_artifacts": payload.get("required_artifacts") or [],
+                "skill_hints": canonical_skill_ids(payload.get("skill_hints")),
+            }
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "workflow_id": payload.get("workflow_id"),
-                        "task_id": payload.get("task_id"),
-                        "step_name": payload.get("step_name"),
-                        "input": payload.get("input") or {},
-                        "required_artifacts": payload.get("required_artifacts") or [],
-                        "skill_hints": canonical_skill_ids(payload.get("skill_hints")),
-                    }
-                ),
-            },
+            {"role": "user", "content": _with_images(task_text, images)},
         ]
         policy_ctx = ToolPolicyContext(
             tenant_id=tenant_id,
@@ -189,6 +325,7 @@ class EnterpriseAgent:
             model_id=agent.model,
             linked_workflow_id=str(payload.get("workflow_id") or "") or None,
             stage_tool_allow=_stage_tool_allow(payload),
+            stage_external_effects=_stage_external_effects(payload),
             approval_resumable=(
                 source == "workflow"
                 and not is_subagent
@@ -246,15 +383,6 @@ class EnterpriseAgent:
                     opa_client=get_opa_client(),
                     tool_args=args,
                 )
-                get_tool_audit_log().record(
-                    tenant_id=policy_ctx.tenant_id,
-                    agent_id=policy_ctx.agent_id,
-                    tool_name=approval.tool_name,
-                    decision=decision.decision,
-                    policy_id=decision.policy_id,
-                    correlation_id=correlation_id,
-                    args=args,
-                )
                 if decision.decision != "allow":
                     content = {
                         "error": decision.reason,
@@ -276,6 +404,17 @@ class EnterpriseAgent:
                     except Exception as exc:  # noqa: BLE001
                         detail = redact_tool_error(str(exc), level=decision.redaction_level)
                         content = {"error": "tool execution failed", "detail": detail}
+                        result = None
+                executed = content.get("result") if isinstance(content, dict) else None
+                self._record_tool_decision(
+                    policy_ctx,
+                    tool_name=approval.tool_name,
+                    decision=decision,
+                    correlation_id=correlation_id,
+                    args=args,
+                    result=executed if decision.decision == "allow" else None,
+                    result_text=json.dumps(content, default=str),
+                )
             queue.consume(approval.approval_id)
             call = {
                 "id": f"approval-{approval.approval_id}",
@@ -326,7 +465,9 @@ class EnterpriseAgent:
         except KeyError as exc:
             return AgentRunResult(status="blocked", error=str(exc), runtime_task_id=runtime_task_id)
 
-        provider = self._provider_override or build_provider(agent.model)
+        provider = self._provider_override or build_provider(
+            agent.model, scope={"tenant": tenant_id, "user": actor_email, "agent": agent_id}, effort=agent.effort
+        )
         phase = workflow_phase or prd_phase
         system_prompt = self._build_channel_system_prompt(
             agent,
@@ -338,9 +479,9 @@ class EnterpriseAgent:
         )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         if history:
-            from ts_harness.agent.transcript import repair_tool_history
+            from ts_harness.agent.transcript import compact_history, repair_tool_history
 
-            messages.extend(repair_tool_history(history))
+            messages.extend(compact_history(repair_tool_history(history)))
         if system_context:
             messages.append({"role": "system", "content": system_context})
         messages.append({"role": "user", "content": text})
@@ -430,8 +571,12 @@ class EnterpriseAgent:
         tool_audit: list[dict[str, Any]] = []
         output_repairs = 0
         channel_summary_repairs = 0
+        awaiting_confirmation = False
+        max_turns = parse_payload.get("max_turns")
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            max_turns = self.max_iterations
 
-        for _ in range(self.max_iterations):
+        for _ in range(max_turns):
             if self._interrupt_reason:
                 reason = self._interrupt_reason
                 self._interrupt_reason = None
@@ -484,6 +629,8 @@ class EnterpriseAgent:
                                 "Done. I completed that step but did not write a summary."
                             ),
                         }
+                    if awaiting_confirmation:
+                        output = {**output, "summary": with_confirmation_prompt(str(output.get("summary") or ""))}
                 else:
                     output = self._parse_output(content, parse_payload)
                     contract = self._contract_for_payload(parse_payload)
@@ -515,9 +662,11 @@ class EnterpriseAgent:
                     else:
                         validation_error = None
                     if validation_error:
+                        # A failed coding tool cannot be repaired by rewriting JSON.
                         if (
                             parse_mode == "workflow"
                             and output_repairs < _MAX_WORKFLOW_OUTPUT_REPAIRS
+                            and not stage_contracts.coding_tool_failure_message(tool_audit)
                         ):
                             output_repairs += 1
                             messages.append(
@@ -606,16 +755,8 @@ class EnterpriseAgent:
                     opa_client=get_opa_client(),
                     tool_args=dispatch_args,
                 )
-                get_tool_audit_log().record(
-                    tenant_id=policy_ctx.tenant_id,
-                    agent_id=policy_ctx.agent_id,
-                    tool_name=tool_name,
-                    decision=decision.decision,
-                    policy_id=decision.policy_id,
-                    correlation_id=correlation_id,
-                    args=dispatch_args,
-                )
                 result: Any = None
+                result_text = ""
                 if decision.decision == "approval_required":
                     resumable = parse_mode == "workflow" and policy_ctx.approval_resumable
                     approval = get_approval_queue().request(
@@ -644,6 +785,15 @@ class EnterpriseAgent:
                         }
                     )
                     if resumable:
+                        self._record_tool_decision(
+                            policy_ctx,
+                            tool_name=tool_name,
+                            decision=decision,
+                            correlation_id=correlation_id,
+                            args=dispatch_args,
+                            result=None,
+                            result_text=result_text,
+                        )
                         tool_audit.append(
                             {"tool": tool_name, "args": args, "decision": decision.decision}
                         )
@@ -679,19 +829,30 @@ class EnterpriseAgent:
                             session.metadata = dict(session.metadata or {})
                             session.metadata.pop("pending_tool_approval", None)
                             get_session_store().save(session)
-                        if tool_name == "propose_start_workflow" and policy_ctx.channel_ingress:
-                            if isinstance(result, dict) and result.get("status") == "awaiting_confirmation":
-                                from ts_harness.gateway.channel_confirmations import (
-                                    format_workflow_proposal_message,
+                        if (
+                            policy_ctx.channel_ingress
+                            and isinstance(result, dict)
+                            and result.get("status") == "awaiting_confirmation"
+                        ):
+                            awaiting_confirmation = True
+                            formatter = _proposal_formatter(tool_name)
+                            if formatter is not None:
+                                self._record_tool_decision(
+                                    policy_ctx,
+                                    tool_name=tool_name,
+                                    decision=decision,
+                                    correlation_id=correlation_id,
+                                    args=dispatch_args,
+                                    result=result,
+                                    result_text=result_text,
                                 )
-
                                 session.status = "completed"
                                 get_session_store().save(session)
                                 _close_tool_calls(messages, tool_calls, call, result_text)
                                 return AgentRunResult(
                                     status="succeeded",
                                     output={
-                                        "summary": format_workflow_proposal_message(result),
+                                        "summary": formatter(result),
                                         **result,
                                     },
                                     runtime_task_id=runtime_task_id,
@@ -705,6 +866,15 @@ class EnterpriseAgent:
                     except Exception as exc:  # noqa: BLE001
                         detail = redact_tool_error(str(exc), level=decision.redaction_level)
                         result_text = json.dumps({"error": "tool execution failed", "detail": detail})
+                self._record_tool_decision(
+                    policy_ctx,
+                    tool_name=tool_name,
+                    decision=decision,
+                    correlation_id=correlation_id,
+                    args=dispatch_args,
+                    result=result,
+                    result_text=result_text,
+                )
                 record = {
                     "tool": tool_name,
                     "args": args,
@@ -767,6 +937,12 @@ class EnterpriseAgent:
         required_artifacts = list(payload.get("required_artifacts") or [])
         hints = ", ".join(skill_hints) or "none"
         artifacts = ", ".join(required_artifacts) or "none"
+        handoff = ""
+        if agent.id == "orchestrator" and payload.get("workflow_id"):
+            handoff = (
+                "Later stages are assigned by the workflow. "
+                "Return this step's output and do not start other agents.\n"
+            )
         extra = ""
         contract = self._contract_for_payload(payload)
         if contract is not None:
@@ -780,6 +956,8 @@ class EnterpriseAgent:
                 f"{payload.get('_skill_prompt', '')}\n"
                 "Complete the assigned workflow step. Return JSON with keys "
                 "summary and artifacts when done.\n"
+                f"{handoff}"
+                f"{_prd_stage_mode(skill_hints)}"
                 f"\n{stage_contracts.summarize_stage_contract(contract)}\n"
             )
             task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
@@ -794,23 +972,13 @@ class EnterpriseAgent:
                     "open a new one.\n"
                     f"- QA feedback:\n{qa_feedback}\n"
                 )
-            return prompt
+            return self._append_knowledge_notes(prompt, payload)
         if (
-            "clarify-requirements" in skill_hints
+            "prd-intake" in skill_hints
             or "clarified_requirements" in required_artifacts
             or payload.get("step_name") == "intake"
         ):
-            extra = (
-                "\nClarifying Intake mode:\n"
-                "- Ask concise clarifying questions needed to draft the PRD.\n"
-                "- Do not draft, outline, or review the PRD in this step.\n"
-                "- Prefer 3-7 questions covering audience, scope, must-have "
-                "features, constraints, success metrics, and launch timing.\n"
-                "- Return JSON with summary, questions, confidence, warnings, "
-                "and follow_up_needed.\n"
-                "- Put each question as a string in the top-level questions "
-                "array; do not put the PRD body in summary or artifacts.\n"
-            )
+            extra = PRD_INTAKE_MODE
         elif (
             "prd-to-work-orders" in skill_hints
             and "prd-to-work-orders-governed" not in skill_hints
@@ -837,7 +1005,12 @@ class EnterpriseAgent:
                 "\nGoverned work-orders stage mode:\n"
                 f"- Execute exactly one stage: {stage or 'from input.stage'}.\n"
                 "- Use input.approved_prd and optional prior-stage artifacts as source truth.\n"
+                "- Carry every technical constraint the PRD states (frameworks, "
+                "storage, named entities, intervals, limits) into this stage's "
+                "artifacts word for word; never drop or generalize one.\n"
                 "- Do not call recall_memory / remember_memory; the payload is complete.\n"
+                "- If you hit a repo-specific trap that is not in Project notes, "
+                "call propose_knowledge_note once.\n"
                 "- Do not summarize or restate the PRD; produce new stage artifacts.\n"
                 f"- artifacts must include distinct bodies for: {expected_keys}.\n"
                 "- Return JSON with summary, artifacts (*_markdown keys), confidence, "
@@ -858,20 +1031,9 @@ class EnterpriseAgent:
                 "- Return JSON with work_order_id and pr_url from the tool result.\n"
                 "- Fail the stage if work_order_body or pr_url is missing.\n"
             )
-        elif "draft-prd" in skill_hints or "prd_draft" in required_artifacts:
-            extra = (
-                "\nDraft / Revise PRD mode:\n"
-                "- Use input.clarified_requirements and input.intake_output "
-                "as the source of truth.\n"
-                "- Do not ask for more intake information unless a critical "
-                "blocker is explicitly marked unknown.\n"
-                "- Produce a complete draft PRD in Markdown.\n"
-                "- Return JSON with result.prd_title, result.prd_status='Draft', "
-                "result.prd_markdown, confidence, warnings, and follow_up_needed.\n"
-                "- Put the full PRD only in result.prd_markdown; do not add preamble, "
-                "next-step instructions, or markdown code fences outside the JSON.\n"
-            )
-        return (
+        elif "prd-drafter" in skill_hints or "prd_draft" in required_artifacts:
+            extra = PRD_DRAFT_MODE
+        prompt = (
             f"You are {agent.id}, an enterprise specialist agent.\n"
             f"{_soul_paragraph(agent)}"
             f"Workspace: {agent.workspace}\n"
@@ -880,8 +1042,19 @@ class EnterpriseAgent:
             f"{payload.get('_skill_prompt', '')}\n"
             "Complete the assigned workflow step. Return JSON with keys "
             "summary and artifacts when done.\n"
+            f"{handoff}"
             f"{extra}"
         )
+        return self._append_knowledge_notes(prompt, payload)
+
+    def _append_knowledge_notes(self, prompt: str, payload: dict[str, Any]) -> str:
+        from ts_harness.knowledge.prompt import render_knowledge_notes
+
+        task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+        block = render_knowledge_notes(task_input.get("knowledge_notes"))
+        if not block:
+            return prompt
+        return prompt.rstrip() + "\n\n" + block
 
     def _build_channel_system_prompt(
         self,
@@ -967,10 +1140,13 @@ class EnterpriseAgent:
         text = (content or "").strip()
         parsed = self._parse_json_object(text)
         if parsed is not None:
-            return self._normalize_work_orders_output(
-                self._sanitize_prd_output(parsed, payload),
+            return self._attach_prd_checks(
+                self._normalize_work_orders_output(
+                    self._sanitize_prd_output(parsed, payload),
+                    payload,
+                    raw_text=text,
+                ),
                 payload,
-                raw_text=text,
             )
         output = {
             "summary": text,
@@ -1002,7 +1178,36 @@ class EnterpriseAgent:
                 "Normalized Markdown PRD response without JSON wrapper."
             ]
             output["follow_up_needed"] = False
-        return self._normalize_work_orders_output(output, payload, raw_text=text)
+        return self._attach_prd_checks(
+            self._normalize_work_orders_output(output, payload, raw_text=text),
+            payload,
+        )
+
+    def _attach_prd_checks(self, output: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        """Add ``prd_checks`` (mechanical findings) to a drafted or revised PRD.
+
+        On a prd-intake step, drop questions whose own recommendation says the request
+        already answers them ("as stated in the constraints"): the requester should never be
+        asked what they already wrote. At least one question is kept for the contract.
+        """
+        if "prd-intake" in canonical_skill_ids(payload.get("skill_hints")):
+            questions = output.get("questions")
+            if isinstance(questions, list) and len(questions) > 1:
+                kept = [q for q in questions if not (isinstance(q, str) and _RESTATED_QUESTION.search(q))]
+                if kept and len(kept) < len(questions):
+                    output = {**output, "questions": kept}
+            return output
+        if not self._requires_prd_output(payload):
+            return output
+        markdown = ""
+        for source in (output.get("result"), output, output.get("artifacts")):
+            if isinstance(source, dict) and isinstance(source.get("prd_markdown"), str):
+                markdown = source["prd_markdown"]
+                if markdown.strip():
+                    break
+        if not markdown.strip():
+            return output
+        return {**output, "prd_checks": check_prd(markdown, stated=_stated_request_text(payload))}
 
     def _parse_json_object(self, text: str) -> dict[str, Any] | None:
         candidates = [text]
@@ -1068,7 +1273,7 @@ class EnterpriseAgent:
                     artifact_markdown
                 )
                 output["result"] = updated
-        return output
+        return _finalize_prd_output(output, payload)
 
     def _requires_prd_output(self, payload: dict[str, Any]) -> bool:
         required_artifacts = {
@@ -1078,7 +1283,7 @@ class EnterpriseAgent:
         step_name = str(payload.get("step_name") or "")
         return (
             "prd_draft" in required_artifacts
-            or "draft-prd" in skill_hints
+            or "prd-drafter" in skill_hints
             or step_name in {"draft_prd", "revise_prd"}
         )
 
@@ -1090,7 +1295,7 @@ class EnterpriseAgent:
         step_name = str(payload.get("step_name") or "")
         return (
             "clarified_requirements" in required_artifacts
-            or "clarify-requirements" in skill_hints
+            or "prd-intake" in skill_hints
             or step_name == "intake"
         )
 
@@ -1128,6 +1333,29 @@ class EnterpriseAgent:
             and pr_url.strip().startswith("http")
         )
 
+    def _record_tool_decision(
+        self,
+        policy_ctx: ToolPolicyContext,
+        *,
+        tool_name: str,
+        decision: Any,
+        correlation_id: str | None,
+        args: dict[str, Any],
+        result: Any,
+        result_text: str,
+    ) -> None:
+        """Persist the tool decision after the call, so the result is on the row."""
+        get_tool_audit_log().record(
+            tenant_id=policy_ctx.tenant_id,
+            agent_id=policy_ctx.agent_id,
+            tool_name=tool_name,
+            decision=decision.decision,
+            policy_id=decision.policy_id,
+            correlation_id=correlation_id,
+            args=args,
+            result_preview=self._tool_audit_preview(tool_name, result, result_text),
+        )
+
     @staticmethod
     def _tool_audit_preview(tool_name: str, result: Any, result_text: str) -> str:
         """Build a short audit preview that stays valid JSON for key tools."""
@@ -1163,6 +1391,9 @@ class EnterpriseAgent:
         tool_calls: list[dict[str, Any]] | None,
     ) -> str | None:
         """Require pr_url to come from a successful run_coding_backend result."""
+        failure = stage_contracts.coding_tool_failure_message(tool_calls)
+        if failure:
+            return failure
         if not self._has_deliver_work_order_output(output):
             return (
                 "deliver_work_order output must include work_order_id and "
@@ -1489,25 +1720,29 @@ class EnterpriseAgent:
         questions: list[str] = []
         current: list[str] = []
 
+        def flush() -> None:
+            joined = " ".join(current).strip()
+            if "?" in joined:
+                questions.append(joined)
+            current.clear()
+
         for raw_line in (text or "").splitlines():
             line = raw_line.strip()
             if not line:
                 continue
-            cleaned = re.sub(r"^(?:[-*]\s+|\d+[.)]\s+)", "", line).strip()
+            item = re.match(r"^(?:[-*]\s+|\d+[.)]\s+)", line)
+            cleaned = line[item.end() :].strip() if item else line
             if not cleaned:
                 continue
-            if current:
+            if item:
+                flush()
                 current.append(cleaned)
-                if "?" in cleaned:
-                    questions.append(" ".join(current).strip())
-                    current = []
-                continue
-            if "?" not in cleaned:
-                continue
-            prefix, _, remainder = cleaned.partition("?")
-            questions.append(f"{prefix.strip()}?")
-            if remainder.strip():
-                current = [remainder.strip()]
+            elif current and "?" not in " ".join(current):
+                current.append(cleaned)
+            elif "?" in cleaned:
+                flush()
+                current.append(cleaned[: cleaned.rindex("?") + 1])
+        flush()
 
         return [question for question in questions if len(question) > 3]
 
@@ -1675,3 +1910,35 @@ class EnterpriseAgent:
             "draft_prd output must include result.prd_markdown "
             "with the complete PRD markdown"
         )
+
+
+def _is_heartbeat(payload: dict[str, Any], source: str) -> bool:
+    return source == "cron" and payload.get("step_name") == "heartbeat"
+
+
+def _run_model(agent: Any, payload: dict[str, Any], source: str) -> str:
+    """Heartbeats run on ``heartbeat.model`` when one is set; everything else on the agent's model."""
+    heartbeat = getattr(agent, "heartbeat", None)
+    if _is_heartbeat(payload, source) and heartbeat is not None and heartbeat.model:
+        return str(heartbeat.model)
+    return agent.model
+
+
+def _run_effort(agent: Any, payload: dict[str, Any], source: str) -> str | None:
+    """A heartbeat on its own model is a light check: low effort, not the agent's."""
+    if _run_model(agent, payload, source) != agent.model:
+        return "low"
+    return agent.effort
+
+
+def _with_images(text: str, images: Any) -> Any:
+    """Task text plus image parts (``{"name", "url"}``, data or https URLs) in Chat Completions form."""
+    parts: list[dict[str, Any]] = []
+    for image in images if isinstance(images, list) else []:
+        url = str((image or {}).get("url") or "") if isinstance(image, dict) else ""
+        if url.startswith(("data:image/", "https://")):
+            parts += [
+                {"type": "text", "text": f"Screenshot: {image.get('name') or 'image'}"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ]
+    return [{"type": "text", "text": text}, *parts] if parts else text

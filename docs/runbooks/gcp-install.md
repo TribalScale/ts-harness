@@ -6,8 +6,10 @@ optional Cloud SQL) via the unified installer.
 ## Prerequisites
 
 - Terraform `>= 1.5`, `gcloud` authenticated to a project with billing
-- Remote state bucket (GCS) matching `terraform_state` in the install YAML
-- Copy `infra/gcp/backend.tf.example` → `infra/gcp/backend.tf` for remote state
+- Python `3.11` with `pyyaml` and `jsonschema`
+- Remote state bucket (GCS) matching `terraform_state` in the install YAML.
+  `infra/gcp/backend.tf` is an empty `backend "gcs" {}` block; the installer
+  passes `bucket` and `prefix` (from `terraform_state.key`) at `terraform init`.
 - Install config with `cloud_provider: gcp` and `gcp_project_id`
   (start from `config/install/gcp.example.yaml`)
 

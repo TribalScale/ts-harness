@@ -26,8 +26,9 @@ fi
 echo "{\"phase\":\"${PHASE_NAME}\",\"event\":\"start\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 start_ts=$(date +%s%3N)
 
-# Source secrets and compose env (provides TS_HARNESS_DB_* and TS_HARNESS_DB_PASSWORD).
-for env_file in "$SECRETS_ENV" "$COMPOSE_ENV"; do
+# Compose env provides TS_HARNESS_DB_*; secrets.env is sourced last so a
+# re-fetched password wins over the copy compose-env.sh kept.
+for env_file in "$COMPOSE_ENV" "$SECRETS_ENV"; do
     if [[ ! -f "$env_file" ]]; then
         echo "[phase:${PHASE_NAME}] ERROR: $env_file not found — prior phase did not complete" >&2
         exit 1

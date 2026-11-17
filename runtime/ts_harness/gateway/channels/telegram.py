@@ -20,10 +20,11 @@ class TelegramAdapter(BaseChannelAdapter):
         return MessageEvent(
             channel="telegram",
             tenant_id=tenant_id,
-            text=str(message.get("text", "")),
+            text=str(message.get("text") or message.get("caption") or ""),
             sender_id=str(message.get("from", {}).get("id", "unknown")),
             thread_id=str(message.get("chat", {}).get("id", "")),
             metadata=payload,
+            attachments=telegram_file_pointers(message),
         )
 
     def send(self, args: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
@@ -39,3 +40,33 @@ class TelegramAdapter(BaseChannelAdapter):
             "tenant_id": tenant_id,
             "message_id": response.get("result", {}).get("message_id") or response.get("id"),
         }
+
+
+def telegram_file_pointers(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """A ``document``, or the largest ``photo`` size, as a ``telegram_file`` pointer."""
+    document = message.get("document")
+    if isinstance(document, dict) and document.get("file_id"):
+        return [
+            {
+                "kind": "telegram_file",
+                "file_id": str(document["file_id"]),
+                "file_unique_id": str(document.get("file_unique_id") or ""),
+                "name": str(document.get("file_name") or "attachment"),
+                "mime": str(document.get("mime_type") or ""),
+                "size": int(document.get("file_size") or 0),
+            }
+        ]
+    photos = [p for p in message.get("photo") or [] if isinstance(p, dict) and p.get("file_id")]
+    if not photos:
+        return []
+    largest = max(photos, key=lambda p: (int(p.get("file_size") or 0), int(p.get("width") or 0)))
+    return [
+        {
+            "kind": "telegram_file",
+            "file_id": str(largest["file_id"]),
+            "file_unique_id": str(largest.get("file_unique_id") or ""),
+            "name": "photo.jpg",
+            "mime": "image/jpeg",
+            "size": int(largest.get("file_size") or 0),
+        }
+    ]

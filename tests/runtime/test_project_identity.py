@@ -9,11 +9,11 @@ class ProjectIdentityTests(unittest.TestCase):
     def test_jira_wins_over_repo(self):
         project_id, source = infer_project_id(
             {
-                "jira_project_key": "tfs",
+                "jira_project_key": "proj",
                 "repo_url": "https://github.com/acme/payments.git",
             }
         )
-        self.assertEqual(project_id, "TFS")
+        self.assertEqual(project_id, "PROJ")
         self.assertEqual(source, "inferred_jira")
 
     def test_repo_used_when_no_jira_key(self):
@@ -35,7 +35,7 @@ class ProjectIdentityTests(unittest.TestCase):
         self.assertEqual(infer_project_id(None), (None, None))
 
     def test_normalize_uppercases_jira_keys(self):
-        self.assertEqual(normalize_project_id("tfs"), "TFS")
+        self.assertEqual(normalize_project_id("proj"), "PROJ")
         self.assertEqual(normalize_project_id("acme/payments"), "acme/payments")
         with self.assertRaises(ValueError):
             normalize_project_id("  ")

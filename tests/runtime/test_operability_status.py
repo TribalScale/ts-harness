@@ -74,6 +74,26 @@ class OperabilityStatusTests(unittest.TestCase):
         self.assertTrue(status["lease"]["expired"])
         self.assertIn("stale_lease", status["recommended_action"])
 
+    def test_a_waiting_step_with_an_old_lease_is_not_stale(self):
+        now = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+        status = build_operability_status(
+            workflow={"definition_version": "3.0.0", "status": "running"},
+            tasks=[
+                {
+                    "id": "t-join",
+                    "step_name": "join_tracks",
+                    "status": "blocked",
+                    "error": "awaiting_external:workflow.child_terminal",
+                    "lock_expires_at": (now - timedelta(hours=3)).isoformat(),
+                    "updated_at": (now - timedelta(hours=3)).isoformat(),
+                }
+            ],
+            artifacts={},
+            now=now,
+        )
+        self.assertIsNone(status["lease"])
+        self.assertNotIn("stale_lease", str(status["recommended_action"]))
+
 
 class CompensateOnFailureTests(unittest.TestCase):
     def test_technical_failure_triggers_compensation_once(self):
@@ -140,3 +160,28 @@ class CompensateOnFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChildStepsTests(unittest.TestCase):
+    def test_a_parent_waiting_on_children_names_the_pending_approval(self):
+        from ts_harness.workflows.operability import with_operability
+
+        raw = {
+            "active_workflow_id": "wf-release",
+            "artifacts": {},
+            "active_workflow": {"definition_version": "3.0.0", "status": "running"},
+            "active_tasks": [
+                {"id": "t1", "step_name": "plan_release_tracks", "status": "succeeded"},
+                {"id": "t2", "step_name": "join_tracks", "status": "blocked", "error": "awaiting_external:workflow.child_terminal"},
+            ],
+            "active_child_tasks": [
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "await_ci_on_sha", "status": "succeeded"},
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "approve_promote_staging", "status": "pending", "approval_required": True},
+                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "trigger_deploy_staging", "status": "pending"},
+            ],
+        }
+        status = with_operability(raw)
+        self.assertEqual(status["waiting_on"]["children"],
+                         [{"workflow_id": "c1", "workflow_type": "release_track", "step": "approve_promote_staging", "waiting_for": "approval"}])
+        self.assertEqual(status["recommended_action"], "approve_promote_staging")
+        self.assertNotIn("active_child_tasks", status)

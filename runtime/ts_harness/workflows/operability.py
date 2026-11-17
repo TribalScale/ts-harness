@@ -164,7 +164,9 @@ def build_operability_status(
         recommended_action = "wait_for_agent_or_inspect_runtime_task"
 
     lease = None
-    if active:
+    # Only a running task holds a lease. A blocked or pending task can keep the expiry of
+    # its last run, which read as a stale lease on a step that was simply waiting.
+    if active and str(active.get("status") or "") == "running":
         expires = _parse_dt(active.get("lock_expires_at"))
         if expires is not None:
             expired = expires <= current
@@ -229,3 +231,75 @@ def build_operability_status(
         "compensation": compensation,
         "failed_stage": artifacts.get("failed_stage"),
     }
+
+
+_CHILD_KEYS = ("waiting_on", "last_error", "active_step")
+
+
+_SETTLED = {"succeeded", "cancelled", "skipped", "superseded"}
+
+
+def child_steps(child_tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each running child workflow's current step and what it waits for."""
+    current: dict[str, dict[str, Any]] = {}
+    for task in child_tasks:
+        workflow_id = str(task.get("workflow_id") or "")
+        if workflow_id in current or str(task.get("status") or "") in _SETTLED:
+            continue
+        status = str(task.get("status") or "")
+        error = str(task.get("error") or "")
+        if status == "pending" and task.get("approval_required"):
+            waiting_for = "approval"
+        elif error.startswith("awaiting_external:"):
+            waiting_for = error.split(":", 1)[1].split()[0]
+        elif status == "blocked":
+            waiting_for = "decision"
+        else:
+            waiting_for = status
+        current[workflow_id] = {
+            "workflow_id": workflow_id,
+            "workflow_type": task.get("workflow_type"),
+            "step": task.get("step_name"),
+            "waiting_for": waiting_for,
+        }
+    return list(current.values())
+
+
+def _from_raw(status: dict[str, Any]) -> dict[str, Any]:
+    tasks = status.pop("active_tasks", None)
+    workflow = status.pop("active_workflow", None)
+    child_tasks = status.pop("active_child_tasks", None)
+    if not status.get("active_workflow_id") or (tasks is None and workflow is None):
+        return {}
+    artifacts = status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
+    derived = build_operability_status(workflow=dict(workflow or {}), tasks=list(tasks or []), artifacts=artifacts)
+    waiting_on = derived.get("waiting_on") if isinstance(derived.get("waiting_on"), dict) else {}
+    if waiting_on.get("event_type") == "workflow.child_terminal" and child_tasks:
+        steps = child_steps(list(child_tasks))
+        waiting_on = {**waiting_on, "children": steps}
+        derived["waiting_on"] = waiting_on
+        approvals = [step for step in steps if step["waiting_for"] == "approval"]
+        if approvals:
+            step = str(approvals[0]["step"] or "")
+            derived["recommended_action"] = step if step.startswith("approve") else f"approve_{step}"
+        elif any(step["waiting_for"] == "decision" for step in steps):
+            derived["recommended_action"] = "decide_blocked_child_step"
+    return derived
+
+
+def with_operability(status: dict[str, Any] | None) -> dict[str, Any]:
+    """Add the operability fields to a program status from the memory API, which returns raw tasks."""
+    status = dict(status or {})
+    status.update(_from_raw(status))
+    children = status.get("children")
+    if isinstance(children, list):
+        enriched = []
+        for child in children:
+            child = dict(child) if isinstance(child, dict) else child
+            if isinstance(child, dict):
+                derived = _from_raw(child)
+                child.pop("artifacts", None)
+                child.update({key: derived[key] for key in _CHILD_KEYS if derived.get(key)})
+            enriched.append(child)
+        status["children"] = enriched
+    return status

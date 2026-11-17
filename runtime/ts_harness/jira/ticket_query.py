@@ -112,15 +112,18 @@ def format_ticket_list(
         lines.append("")
         lines.append("Reply with a ticket key, or paste a key anytime to skip this list.")
         return "\n".join(lines)
+    example_key = ""
     for group in grouped:
         lines.append(f"Epic {group['epic']}")
         for issue in group["issues"]:
             key = str(issue.get("key") or "").strip()
+            example_key = example_key or key
             pointer = pointers.get(key) if isinstance(pointers.get(key), dict) else {}
             wo = str((pointer or {}).get("work_order_id") or issue.get("work_order_id") or "").strip()
             extra = f"  {wo}" if wo else ""
             flag = "  (blocked)" if key in blocked else ""
             lines.append(f"  {key}  {_issue_summary(issue)}     {_issue_status(issue)}{extra}{flag}")
         lines.append("")
-    lines.append("Reply with a ticket key (TFS-184), or paste a key anytime to skip this list.")
+    example = f" ({example_key})" if example_key else ""
+    lines.append(f"Reply with a ticket key{example}, or paste a key anytime to skip this list.")
     return "\n".join(lines)

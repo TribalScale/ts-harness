@@ -16,8 +16,25 @@ identity:
   client_id: "{{OIDC_CLIENT_ID}}"
   authorization_endpoint: "{{OIDC_AUTHORIZATION_ENDPOINT}}"
   token_endpoint: "{{OIDC_TOKEN_ENDPOINT}}"
+  # preset: auth0 | entra | google | okta | generic (empty keeps legacy defaults)
+  preset: "{{OIDC_PRESET}}"
+  token_type: "{{OIDC_TOKEN_TYPE}}"
+  groups_claim: "{{OIDC_GROUPS_CLAIM}}"
+  roles_claim: "{{OIDC_ROLES_CLAIM}}"
+  allowed_domains: "{{OIDC_ALLOWED_DOMAINS}}"
+  # token (default) | microsoft_graph | google_directory: where sign-in groups come from
+  groups_source: "{{OIDC_GROUPS_SOURCE}}"
+  # seen_users (default) | auth0_management | scim | microsoft_graph | google_directory
+  directory: "{{IDENTITY_DIRECTORY}}"
   scim_enabled: false
   jira_account_ids: {}
+
+# single_host: one EC2 host (default). scale_out: Fargate coding workers and
+# replicated services. overrides set individual topology settings, e.g.
+# {coding_max_running: 5}.
+deployment:
+  profile: "{{DEPLOYMENT_PROFILE}}"
+  overrides: {}
 
 tenants:
   - id: default
@@ -105,7 +122,7 @@ policy:
     review-agent:
       - openai/gpt-6-astra
     qa-agent:
-      - openai/gpt-6-astra
+      - openai/gpt-6.1-sol
 
 implementation:
   coding_backend: opencode
@@ -148,6 +165,17 @@ toolsets:
   workflow:
     - workflow_update
   mcp: []
+  jira-read:
+    - mcp-atlassian-atlassian_search
+    - mcp-atlassian-jira_search
+    - mcp-atlassian-jira_get_issue
+    - mcp-atlassian-jira_get_all_projects
+  jira-write:
+    - mcp-atlassian-jira_create_issue
+    - mcp-atlassian-jira_batch_create_issues
+    - mcp-atlassian-jira_create_issue_link
+    - mcp-atlassian-jira_add_comment
+    - mcp-atlassian-jira_update_issue
   google-workspace: []
   google-workspace-docs:
     - google_workspace_drive_search
@@ -172,6 +200,8 @@ toolsets:
     - workflow_status
   skill-authoring:
     - propose_skill
+  knowledge-notes:
+    - propose_knowledge_note
   program-builder:
     - builder_catalog
     - propose_program_bundle
@@ -263,7 +293,7 @@ routing:
     - id: jira_to_pr
       program_type: jira_to_pr
       entry_phase: pick
-      signals: ["my tickets", "pick up my jira", "implement TFS-"]
+      signals: ["my tickets", "pick up my jira", "implement the rest", "implement all", "implement [a-z][a-z0-9]+-\\d+"]
       orchestrator_hint: >
         User wants the decoupled implement program. Call propose_start_program
         with program_type=jira_to_pr. If they pasted a ticket key, use
@@ -289,13 +319,21 @@ mcp_servers:
     transport: stdio
     command: mcporter
     enabled: true
+    env:
+      ATLASSIAN_SITE_URL: "secret:ATLASSIAN_SITE_URL"
+      ATLASSIAN_CLOUD_ID: "secret:ATLASSIAN_CLOUD_ID"
+      ATLASSIAN_CLIENT_ID: "secret:ATLASSIAN_CLIENT_ID"
+      ATLASSIAN_CLIENT_SECRET: "secret:ATLASSIAN_CLIENT_SECRET"
+      ATLASSIAN_EMAIL: "secret:ATLASSIAN_EMAIL"
+      ATLASSIAN_API_TOKEN: "secret:ATLASSIAN_API_TOKEN"
 
 agents:
   list:
     - id: orchestrator
       default: true
       workspace: /workspace/orchestrator
-      model: openai/gpt-4o
+      model: anthropic/claude-sonnet-5-5
+      effort: medium
       skills:
         - orchestrator
         - memory-api
@@ -310,9 +348,12 @@ agents:
         - delegation
         - channel-chat
         - workflow-promotion
+        - jira-read
+        - knowledge-notes
       tools:
         allow:
           - recall_memory
+          - propose_knowledge_note
           - read_file
           - session_status
           - remember_memory
@@ -362,7 +403,7 @@ agents:
           - sales-agent
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -374,16 +415,17 @@ agents:
 
     - id: dev-agent
       workspace: /workspace/dev-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-sonnet-5-5
+      effort: medium
       skills: [dev, memory, workflows, integrate, governed-workflows]
-      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read, knowledge-notes]
       tools:
-        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill, propose_knowledge_note]
         deny: [delegate_task]
 
     - id: ops-agent
       workspace: /workspace/ops-agent
-      model: openai/gpt-4o
+      model: openai/gpt-6.1-sol
       skills: [ops, memory]
       toolsets: [core-read, terminal, skill-authoring]
       tools:
@@ -391,7 +433,7 @@ agents:
         deny: [write_file, patch_file, delegate_task]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: slack
         to: "channel:{{SLACK_OPS_CHANNEL}}"
         lightContext: true
@@ -404,25 +446,25 @@ agents:
 
     - id: qa-agent
       workspace: /workspace/qa-agent
-      model: openai/gpt-6-astra
+      model: openai/gpt-6.1-sol
       skills: [qa, memory, workflows, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, run_coding_backend, delegate_task]
 
     - id: review-agent
       workspace: /workspace/review-agent
       model: openai/gpt-6-astra
       skills: [review, memory, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, delegate_task, run_coding_backend]
 
     - id: analyst-agent
       workspace: /workspace/analyst-agent
-      model: openai/gpt-4o-mini
+      model: openai/gpt-6.1-sol
       skills: [memory]
       toolsets: [core-read, terminal]
       tools:
@@ -431,22 +473,23 @@ agents:
 
     - id: pm-agent
       workspace: /workspace/pm-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-opus-5-5
+      effort: high
       skills: [pm, memory-api, workflows, governed-workflows]
       connector_bindings:
         google-workspace: pm
-      toolsets: [core-read, workflow, google-workspace-docs]
+      toolsets: [core-read, workflow, google-workspace-docs, jira-read, jira-write]
       tools:
         allow: [read_file, recall_memory, workflow_update]
         deny: [exec, write_file, patch_file, delegate_task]
 
     - id: comms-agent
       workspace: /workspace/comms-agent
-      model: openai/gpt-4o-mini
+      model: openai/gpt-6-luna
       skills: [comms, memory-api]
       connector_bindings:
         google-workspace: comms
-      toolsets: [core-read, channel, google-workspace]
+      toolsets: [core-read, channel, google-workspace, jira-read]
       tools:
         allow:
           - read_file
@@ -468,6 +511,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec]
       heartbeat:
         every: 30m
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -479,7 +523,7 @@ agents:
 
     - id: marketing-agent
       workspace: /workspace/marketing-agent
-      model: openai/gpt-4o
+      model: openai/gpt-6.1-sol
       skills: [memory-api]
       connector_bindings:
         google-workspace: marketing
@@ -498,7 +542,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec, google_workspace_gmail_send]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -510,7 +554,8 @@ agents:
 
     - id: sales-agent
       workspace: /workspace/sales-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-sonnet-5-5
+      effort: medium
       skills: [memory-api, clarify-rfp, draft-rfp]
       connector_bindings:
         google-workspace: sales
@@ -532,7 +577,7 @@ agents:
         deny: [write_file, patch_file, delegate_task, exec]
       heartbeat:
         every: 30m
-        model: openai/gpt-4o-mini
+        model: anthropic/claude-haiku-5-5
         target: none
         lightContext: true
         isolatedSession: true
@@ -544,8 +589,23 @@ agents:
 
     - id: builder-agent
       workspace: /workspace/builder-agent
-      model: openai/gpt-4o
+      model: anthropic/claude-opus-5-5
+      effort: high
       skills: [program-builder]
       toolsets: [core-read, program-builder, skill-authoring]
       tools:
         deny: [exec, write_file, patch_file, delegate_task]
+
+# USD per million tokens, for llm_usage.cost_usd (budgets, spend reports). Read by the runtime
+# and by llm-proxy. Keys match provider/model, then model, then the longest prefix*. Models not
+# listed record zero cost, except coding-backend runs, which fall back to OpenCode's own figure.
+llm_pricing:
+  "anthropic/claude-opus-5-5":   {input_per_mtok: 4,    output_per_mtok: 20,  cache_read_per_mtok: 0.2}
+  "anthropic/claude-sonnet-5-5": {input_per_mtok: 2,    output_per_mtok: 10,  cache_read_per_mtok: 0.1}
+  "anthropic/claude-haiku-5-5":  {input_per_mtok: 0.1,  output_per_mtok: 0.5, cache_read_per_mtok: 0.01}
+  "openai/gpt-6-astra":          {input_per_mtok: 10,   output_per_mtok: 50,  cache_read_per_mtok: 1}
+  "openai/gpt-6.1-sol":          {input_per_mtok: 2,    output_per_mtok: 10,  cache_read_per_mtok: 0.2}
+  "openai/gpt-6.1-terra":        {input_per_mtok: 1,    output_per_mtok: 5,   cache_read_per_mtok: 0.1}
+  "openai/gpt-6-luna":           {input_per_mtok: 0.1,  output_per_mtok: 0.5, cache_read_per_mtok: 0.01}
+  "openai/gpt-4o":               {input_per_mtok: 2.5,  output_per_mtok: 10,  cache_read_per_mtok: 1.25}
+  "openai/gpt-4o-mini":          {input_per_mtok: 0.15, output_per_mtok: 0.6, cache_read_per_mtok: 0.075}

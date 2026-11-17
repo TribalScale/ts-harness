@@ -11,6 +11,9 @@ LEGACY_SKILL_ALIASES: dict[str, str] = {
     "ts-source-work-order-governed": "source-work-order-governed",
     "ts-verified-merge": "verified-merge",
     "ts-verified-merge-governed": "verified-merge-governed",
+    # prd_request hints before the PRD skills had these names (prd_request < 1.6.0).
+    "clarify-requirements": "prd-intake",
+    "draft-prd": "prd-drafter",
 }
 
 

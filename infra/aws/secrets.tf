@@ -9,14 +9,21 @@ locals {
     "gateway-token"                       = { consumers = ["gateway"] }
     "memory-api-token"                    = { consumers = ["gateway"] }
     "sandbox-worker-token"                = { consumers = ["gateway"] }
+    "coding-job-secret"                   = { consumers = ["gateway"] }
+    "llm-proxy-secret"                    = { consumers = ["gateway"] }
     "tailscale-authkey"                   = { consumers = ["gateway"] }
     "github-token"                        = { consumers = ["dev-agent"] }
+    "github-app-private-key"              = { consumers = ["gateway"] }
+    "github-app-webhook-secret"           = { consumers = ["gateway"] }
     "coding-backend-api-key"              = { consumers = ["dev-agent"] }
     "coding-backend-provider"             = { consumers = ["dev-agent"] }
     "coding-backend-model"                = { consumers = ["dev-agent"] }
     "jira-token"                          = { consumers = ["pm-agent"] }
     "jira-url"                            = { consumers = ["pm-agent"] }
     "jira-username"                       = { consumers = ["pm-agent"] }
+    "jira-client-id"                      = { consumers = ["gateway"] }
+    "jira-client-secret"                  = { consumers = ["gateway"] }
+    "jira-cloud-id"                       = { consumers = ["gateway"] }
     "telegram-token"                      = { consumers = ["orchestrator"] }
     "discord-token"                       = { consumers = ["orchestrator"] }
     "slack-bot-token"                     = { consumers = ["orchestrator", "comms-agent"] }
@@ -64,6 +71,8 @@ locals {
       "agent-credentials-kms-key-id" = aws_kms_alias.agent_credentials.name
       "memory-api-token"             = random_password.memory_api_token.result
       "sandbox-worker-token"         = random_password.sandbox_worker_token.result
+      "coding-job-secret"            = random_password.coding_job_secret.result
+      "llm-proxy-secret"             = random_password.llm_proxy_secret.result
     }
   )
 }
@@ -78,9 +87,19 @@ resource "random_password" "sandbox_worker_token" {
   special = false
 }
 
+resource "random_password" "coding_job_secret" {
+  length  = 48
+  special = false
+}
+
+resource "random_password" "llm_proxy_secret" {
+  length  = 48
+  special = false
+}
+
 resource "aws_secretsmanager_secret" "harness" {
   for_each = local.all_secrets
-  name     = "${var.project_name}/${each.key}"
+  name     = "${local.secret_prefix_effective}/${each.key}"
 
   tags = {
     Name      = "${var.project_name}-${each.key}"

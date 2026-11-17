@@ -1,8 +1,10 @@
 version: 2
 # Minor and patch updates only; major upgrades are planned by hand.
+# PRs target dev (the integration branch); main only receives promotions from dev.
 updates:
   - package-ecosystem: uv
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -15,6 +17,7 @@ updates:
 
   - package-ecosystem: npm
     directory: /admin-ui
+    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -22,11 +25,17 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     groups:
+      # The design system changes component behavior between minors (0.7.13 made disabled
+      # buttons aria-disabled instead of disabled); it gets its own PR so it never blocks the rest.
+      astryx:
+        patterns: ["@astryxdesign/*"]
       admin-ui-minor:
         update-types: [minor, patch]
+        exclude-patterns: ["@astryxdesign/*"]
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     ignore:
@@ -38,6 +47,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /docker
+    target-branch: dev
     schedule:
       interval: weekly
     ignore:

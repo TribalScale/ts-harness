@@ -597,6 +597,18 @@ export function ProgramInspector({
               />
               <span>Terminal</span>
             </label>
+            {!nodeDraft.terminal && (
+              <label className="check-row">
+                <input
+                  aria-label="Program may end here"
+                  type="checkbox"
+                  checked={Boolean(nodeDraft.may_end)}
+                  disabled={readOnly}
+                  onChange={(e) => updateNode({ may_end: e.target.checked })}
+                />
+                <span>Program may end here</span>
+              </label>
+            )}
             <label className="form-field">
               <span>Default workflow</span>
               <select

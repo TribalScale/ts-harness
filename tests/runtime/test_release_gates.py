@@ -20,6 +20,65 @@ release_gates = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_gates)
 
 
+class _PersistentAuditStore:
+    """Stands in for runtime_audit_events: events outlive each AuditWriter, like Postgres."""
+
+    def __init__(self):
+        self.rows = []
+
+    def append_audit_events(self, events):
+        self.rows.extend(dict(e) for e in events)
+        return {"accepted": len(events)}
+
+    def list_audit_events(self, *, tenant_id="", since="", until=""):
+        return [dict(r) for r in self.rows if not tenant_id or r["tenant_id"] == tenant_id]
+
+
+class AuditGateRerunTests(unittest.TestCase):
+    """The audit gates run on every bootstrap and redeploy against the same audit log."""
+
+    def test_tenant_isolation_and_audit_export_pass_again_on_a_persistent_store(self):
+        from ts_harness.audit.writer import AuditWriter
+
+        store = _PersistentAuditStore()
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=True, client=store)):
+            for _ in range(3):
+                self.assertTrue(release_gates.tenant_isolation())
+                self.assertTrue(release_gates.audit_export())
+        self.assertTrue(all(r["tenant_id"].startswith("release-gate-") for r in store.rows))
+
+    def test_tenant_isolation_catches_a_leak(self):
+        class Leaky(_PersistentAuditStore):
+            def list_audit_events(self, *, tenant_id="", since="", until=""):
+                return [dict(r) for r in self.rows]  # ignores the tenant filter
+
+        from ts_harness.audit.writer import AuditWriter
+
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=True, client=Leaky())):
+            self.assertFalse(release_gates.tenant_isolation())
+
+    def test_local_store(self):
+        from ts_harness.audit.writer import AuditWriter
+
+        with patch.object(release_gates, "AuditWriter", lambda: AuditWriter(shared=False)):
+            self.assertTrue(release_gates.tenant_isolation())
+            self.assertTrue(release_gates.audit_export())
+
+
+class GateDetailTests(unittest.TestCase):
+    def test_check_can_return_a_reason(self):
+        from ts_harness.gateway.release_gates import ReleaseGateRunner
+
+        report = ReleaseGateRunner(
+            {"a": lambda: (False, "case x: canary echoed"), "b": lambda: (True, "y passed on retry"), "c": lambda: True},
+            required_gates=["a", "b", "c"],
+        ).run()
+        self.assertEqual((report.results["a"].status, report.results["a"].detail), ("failed", "case x: canary echoed"))
+        self.assertEqual((report.results["b"].status, report.results["b"].detail), ("passed", "y passed on retry"))
+        self.assertEqual((report.results["c"].status, report.results["c"].detail), ("passed", ""))
+        self.assertFalse(report.passed)
+
+
 class ReleaseGateTests(unittest.TestCase):
     def test_release_gate_runner_reports_all_required_gates(self):
         runner = ReleaseGateRunner(
@@ -45,6 +104,7 @@ class ReleaseGateTests(unittest.TestCase):
                 "prd_request_smoke": lambda: True,
                 "continue_bridge_smoke": lambda: True,
                 "continue_delivery_smoke": lambda: True,
+                "program_may_end_smoke": lambda: True,
                 "intent_routing_smoke": lambda: True,
                 "workflow_runner_import_smoke": lambda: True,
                 "skeleton_hooks_registered": lambda: True,
@@ -241,6 +301,22 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_workflow_runner_import_smoke_uses_installed_layout(self):
         self.assertTrue(release_gates.workflow_runner_import_smoke())
+
+    def test_session_smokes_never_touch_the_session_database(self):
+        # On a deployed host TS_HARNESS_SESSION_DB_URL points at the live database. The
+        # in-process smokes reuse fixed session ids and routing keys, so writing them
+        # there collides with earlier runs and leaves fake sessions behind.
+        from ts_harness.agent import sessions
+
+        with patch.dict(os.environ, {"TS_HARNESS_SESSION_DB_URL": "postgresql://gate@127.0.0.1:1/none"}), \
+                patch.object(sessions.SessionStore, "_connect", side_effect=AssertionError("session database used")):
+            try:
+                self.assertTrue(release_gates.prd_request_smoke())
+                self.assertTrue(release_gates.continue_delivery_smoke())
+                self.assertTrue(release_gates.continue_bridge_smoke())
+                self.assertIsNone(sessions.get_session_store().db_url)
+            finally:
+                sessions.reset_session_store(sessions.SessionStore())
 
     def test_delivery_program_gate_loads_default_definition_and_pinned_workflows(self):
         source = Path(release_gates.__file__).read_text(encoding="utf-8")

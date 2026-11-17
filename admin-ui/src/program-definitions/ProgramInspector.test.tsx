@@ -78,6 +78,37 @@ it("updates program, node, and edge fields through callbacks", async () => {
   );
 });
 
+it("offers 'Program may end here' only on non-terminal nodes", async () => {
+  const onNodeChange = vi.fn();
+  const view = renderPage(
+    <ProgramInspector
+      definition={definition}
+      selectedNode={node}
+      catalog={catalog}
+      readOnly={false}
+      onProgramChange={vi.fn()}
+      onNodeChange={onNodeChange}
+      onEdgeChange={vi.fn()}
+    />
+  );
+  await userEvent.click(screen.getByLabelText("Program may end here"));
+  expect(onNodeChange).toHaveBeenLastCalledWith(expect.objectContaining({ may_end: true }));
+  view.unmount();
+
+  renderPage(
+    <ProgramInspector
+      definition={definition}
+      selectedNode={{ ...node, terminal: true }}
+      catalog={catalog}
+      readOnly={false}
+      onProgramChange={vi.fn()}
+      onNodeChange={vi.fn()}
+      onEdgeChange={vi.fn()}
+    />
+  );
+  expect(screen.queryByLabelText("Program may end here")).toBeNull();
+});
+
 it("draft can switch repo section to custom and add a repo", async () => {
   const onProgramChange = vi.fn();
   renderPage(

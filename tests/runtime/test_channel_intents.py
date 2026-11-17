@@ -100,13 +100,27 @@ class ChannelIntentTests(unittest.TestCase):
         cases = [
             "show my tickets",
             "pick up my jira for this sprint",
-            "implement TFS-184",
+            "implement the rest",
+            "implement all",
+            "implement all my tickets",
         ]
         for text in cases:
             intent = classify_channel_intent(text, {}, config=self.config)
             self.assertEqual(intent.kind, "jira_to_pr", msg=text)
             self.assertEqual(intent.program_type, "jira_to_pr")
-            self.assertEqual(intent.entry_phase, "pick")
+            self.assertEqual(intent.entry_phase, "pick", msg=text)
+
+        named = classify_channel_intent("implement PROJ-184", {}, config=self.config)
+        self.assertEqual(named.kind, "jira_to_pr")
+        self.assertEqual(named.entry_phase, "implement")
+        self.assertEqual(named.artifacts, {"jira_issue_key": "PROJ-184"})
+        other = classify_channel_intent("please implement pay2-42 today", {}, config=self.config)
+        self.assertEqual(other.entry_phase, "implement")
+        self.assertEqual(other.artifacts, {"jira_issue_key": "PAY2-42"})
+
+        for text in ("implement retries in checkout", "implement step-by-step logging"):
+            intent = classify_channel_intent(text, {}, config=self.config)
+            self.assertNotEqual(intent.kind, "jira_to_pr", msg=text)
 
         defect = classify_channel_intent("fix bug in checkout retry", {}, config=self.config)
         self.assertEqual(defect.kind, "bug_to_jira")
@@ -141,6 +155,25 @@ class ChannelIntentTests(unittest.TestCase):
 
         question = classify_channel_intent("what error did we see", {}, config=self.config)
         self.assertNotEqual(question.kind, "bug_to_jira")
+
+    def test_program_edge_signal_proposes_the_next_phase(self):
+        metadata = {
+            "program_id": "prog-1",
+            "program_type": "bug_to_jira_work_orders",
+            "program_phase": "work_order",
+            "workflow_id": "wf-wo",
+            "workflow_type": "bug_work_order",
+            "mode": "bridge_linked",
+        }
+        intent = classify_channel_intent("ok, file these tickets", metadata, config=self.config)
+        self.assertEqual(intent.kind, "program_advance")
+        self.assertEqual(intent.entry_phase, "file_jira")
+        self.assertEqual(intent.program_type, "bug_to_jira_work_orders")
+
+        other = classify_channel_intent("approve", metadata, config=self.config)
+        self.assertEqual(other.kind, "workflow_gate")
+        wrong_phase = classify_channel_intent("file these tickets", {**metadata, "program_phase": "bug_intake"})
+        self.assertEqual(wrong_phase.kind, "workflow_gate")
 
     def test_direct_respond_for_status_questions(self):
         intent = classify_channel_intent("what agents do we have?", {}, config=self.config)

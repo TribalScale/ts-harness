@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Iterator
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 from ts_harness.agent.loop import EnterpriseAgent
 from ts_harness.agent.provider import FakeProvider
 from ts_harness.agent.sessions import get_session_store
+from ts_harness.gateway.service_lease import scheduler_lease
 from ts_harness.audit.writer import AuditWriter
 from ts_harness.config.reload import default_lkg_path, reload_runtime_config
 from ts_harness.secrets.resolver import SecretResolver
@@ -25,6 +27,7 @@ from ts_harness.gateway.health import build_health_report
 from ts_harness.gateway.channels.router import get_channel_router
 from ts_harness.gateway.channels.slack_socket import SlackSocketListener
 from ts_harness.gateway.scheduler import Scheduler
+from ts_harness.routing.intents import REQUEST_TEXT_LIMIT
 from ts_harness.memory.client import get_memory_client
 from ts_harness.observability.logging import log_event
 from ts_harness.observability.metrics import MetricsRegistry
@@ -165,6 +168,9 @@ class RuntimeState:
         self.audit = AuditWriter(os.environ.get("TS_HARNESS_AUDIT_LOG") or None)
         self.metrics = MetricsRegistry()
         self.policy = PolicyEngine(self.config)
+        from ts_harness.skills.repository import sync_skill_mirror
+
+        sync_skill_mirror(force=True)
         self.skill_catalog = SkillCatalog.default()
         self.skill_catalog.load()
         configure_tool_audit(
@@ -206,11 +212,15 @@ class RuntimeState:
         self._session_locks: dict[str, threading.Lock] = {}
         self._session_locks_guard = threading.Lock()
         self._start_sandbox_reaper()
+        self._start_intake_sweeper()
+        self._start_definitions_watcher()
         self.mcp = get_mcp_manager()
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
+        from ts_harness.config.mcp_settings import resolve_mcp_secret_refs
+
         for name, server_cfg in self.config.mcp_servers.items():
             if server_cfg.get("enabled", True):
-                self.mcp.register_server(name, server_cfg)
+                self.mcp.register_server(name, resolve_mcp_secret_refs(server_cfg, self.secret_resolver))
                 if not skip_mcp:
                     self.mcp.discover_tools(name)
         if not skip_mcp:
@@ -234,18 +244,23 @@ class RuntimeState:
                 actor_id="scheduler",
                 payload=event,
             ),
+            leader=scheduler_lease().held,
+            cron_path=Path(os.environ.get("TS_HARNESS_CRON_CONFIG", "config/runtime-cron-jobs.json")),
         )
         self.scheduler.start()
         self.slack_socket = SlackSocketListener(self)
         self.slack_socket.start()
 
-    def _session_lock(self, session_id: str) -> threading.Lock:
+    @contextmanager
+    def _session_lock(self, session_id: str) -> Iterator[None]:
+        """One turn per session at a time: in this process, then across replicas."""
         with self._session_locks_guard:
             lock = self._session_locks.get(session_id)
             if lock is None:
                 lock = threading.Lock()
                 self._session_locks[session_id] = lock
-            return lock
+        with lock, get_session_store().turn_lock(session_id):
+            yield
 
     def _slack_socket_health(self) -> tuple[str | None, str | None]:
         health = self.slack_socket.health()
@@ -347,6 +362,86 @@ class RuntimeState:
         )
         self.metrics.inc("agent_runs")
 
+    def _settings_generations(self) -> dict[str, int]:
+        from ts_harness.workflows.agents_overlay_store import agents_overlay_store_root
+        from ts_harness.workflows.mcp_settings_store import mcp_settings_store_root
+        from ts_harness.workflows.routing_definition_store import routing_definition_store_root
+        from ts_harness.workflows.runtime_settings_store import runtime_settings_store_root
+
+        out: dict[str, int] = {}
+        for name, root in (
+            ("settings", runtime_settings_store_root()),
+            ("routing", routing_definition_store_root()),
+            ("mcp", mcp_settings_store_root()),
+            ("agents", agents_overlay_store_root()),
+        ):
+            try:
+                out[name] = int(json.loads((root / "active" / "manifest.json").read_text(encoding="utf-8")).get("generation") or 0)
+            except (OSError, ValueError, AttributeError):
+                out[name] = 0
+        return out
+
+    def apply_shared_definition_changes(self) -> list[str]:
+        """Pull the shared definitions tree and reload whatever another replica activated."""
+        from ts_harness.storage.shared_tree import sync_definitions
+
+        if not sync_definitions():
+            return []
+        current = self._settings_generations()
+        changed = [name for name, gen in current.items() if gen != self._seen_settings_generations.get(name)]
+        self._seen_settings_generations = current
+        for name in changed:
+            try:
+                if name == "settings":
+                    from ts_harness.config.runtime_settings import reload_runtime_settings_into_runtime
+
+                    reload_runtime_settings_into_runtime(self)
+                elif name == "routing":
+                    from ts_harness.gateway.routing_definitions_bff import reload_routing_into_runtime
+
+                    reload_routing_into_runtime(self)
+                elif name == "mcp":
+                    from ts_harness.config.mcp_settings import reload_mcp_settings_into_runtime
+
+                    if reload_mcp_settings_into_runtime(self):
+                        self.rebuild_mcp_runtime()
+                elif name == "agents":
+                    from ts_harness.config.agents_overlay import reload_agents_overlay_into_runtime
+
+                    reload_agents_overlay_into_runtime(self)
+                log_event("runtime_shared_definitions_reloaded", store=name)
+            except Exception as exc:  # noqa: BLE001
+                log_event("runtime_shared_definitions_reload_failed", store=name, error=str(exc)[:300])
+        return changed
+
+    def apply_shared_skill_changes(self) -> bool:
+        """Rebuild the managed skill mirror and reload the catalog when another replica approved or rejected."""
+        from ts_harness.skills.repository import sync_skill_mirror
+
+        if not sync_skill_mirror():
+            return False
+        try:
+            self.skill_catalog.load()
+            log_event("runtime_shared_skills_reloaded")
+        except Exception as exc:  # noqa: BLE001
+            log_event("runtime_shared_skills_reload_failed", error=str(exc)[:300])
+        return True
+
+    def _start_definitions_watcher(self) -> None:
+        from ts_harness.storage.backend import shared_state_enabled
+
+        self._seen_settings_generations = self._settings_generations()
+        if not shared_state_enabled():
+            return
+        interval = float(os.environ.get("TS_HARNESS_SHARED_SYNC_SECONDS") or 2)
+
+        def loop() -> None:
+            while not self._shutdown.wait(interval):
+                self.apply_shared_definition_changes()
+                self.apply_shared_skill_changes()
+
+        threading.Thread(target=loop, daemon=True, name="ts-harness-definitions-sync").start()
+
     def _start_sandbox_reaper(self) -> None:
         if os.environ.get("SANDBOX_REAPER_ENABLED", "false").lower() != "true":
             return
@@ -358,6 +453,30 @@ class RuntimeState:
                 self._shutdown.wait(300)
 
         threading.Thread(target=loop, daemon=True, name="ec-sandbox-reaper").start()
+
+    def _start_intake_sweeper(self) -> None:
+        """Expire local intake uploads. S3 and GCS buckets expire ``intake/`` with a lifecycle rule."""
+        from ts_harness.storage.backend import StorageConfigError, object_backend
+
+        try:
+            if object_backend() != "local":
+                return
+        except StorageConfigError:
+            return
+
+        def loop() -> None:
+            from ts_harness.intake.blobs import intake_store, sweep_local_intake
+
+            while not self._shutdown.is_set():
+                try:
+                    removed = sweep_local_intake(intake_store())
+                    if removed:
+                        log_event("intake_sweep", removed=removed)
+                except Exception as exc:  # noqa: BLE001 - a failed sweep retries next hour
+                    log_event("intake_sweep_failed", error=str(exc))
+                self._shutdown.wait(3600)
+
+        threading.Thread(target=loop, daemon=True, name="ts-harness-intake-sweep").start()
 
     def rebuild_mcp_runtime(self) -> dict[str, Any]:
         skip_mcp = os.environ.get("TS_HARNESS_SKIP_MCP_DISCOVERY", "").lower() == "true"
@@ -620,17 +739,47 @@ class RuntimeState:
         )
         return result
 
-    def handle_session_message(self, body: dict[str, Any], auth) -> dict[str, Any]:
-        req = normalize_runtime_body(body, default_tenant=self.config.gateway.default_tenant_id)
-        channel = body.get("channel", "slack")
-        agent_id = self.config.bindings.get(channel, self.config.default_agent().id)
-        agent_cfg = self.config.get_agent(agent_id)
-        session = get_session_store().get_or_create(
-            tenant_id=req.tenant_id,
+    def _session_for_message(
+        self,
+        body: dict[str, Any],
+        *,
+        tenant_id: str,
+        channel: str,
+        agent_id: str,
+    ):
+        """Route a chat post to the open session when the client names one.
+
+        Admin chat keeps a single browser binding and also sends ``session_id``
+        for the thread on screen. The binding can still point at an older
+        conversation, so the named session wins.
+        """
+        store = get_session_store()
+        requested = str(body.get("session_id") or "").strip()
+        if requested:
+            existing = store.get(requested)
+            if existing is not None and existing.tenant_id == tenant_id:
+                return existing
+        return store.get_or_create(
+            tenant_id=tenant_id,
             source=channel,
             agent_id=agent_id,
             channel=channel,
             thread_id=body.get("thread_id"),
+        )
+
+    def handle_session_message(
+        self, body: dict[str, Any], auth, *, channel_attachments: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """``channel_attachments`` come only from ``handle_channel_webhook`` (signed channel events)."""
+        req = normalize_runtime_body(body, default_tenant=self.config.gateway.default_tenant_id)
+        channel = body.get("channel", "slack")
+        agent_id = self.config.bindings.get(channel, self.config.default_agent().id)
+        agent_cfg = self.config.get_agent(agent_id)
+        session = self._session_for_message(
+            body,
+            tenant_id=req.tenant_id,
+            channel=channel,
+            agent_id=agent_id,
         )
         with self._session_lock(session.session_id):
             return self._handle_session_message_locked(
@@ -641,6 +790,7 @@ class RuntimeState:
                 channel=channel,
                 agent_id=agent_id,
                 agent_cfg=agent_cfg,
+                channel_attachments=channel_attachments,
             )
 
     def _handle_session_message_locked(
@@ -653,6 +803,7 @@ class RuntimeState:
         channel: str,
         agent_id: str,
         agent_cfg,
+        channel_attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         from ts_harness.agent.transcript import get_transcript_store
         from ts_harness.gateway.delegate_confirmation import (
@@ -667,19 +818,22 @@ class RuntimeState:
             resolve_program_confirmation,
             resolve_workflow_confirmation,
         )
-        from ts_harness.routing.intents import classify_channel_intent
+        from ts_harness.routing.intents import ChannelIntent, classify_channel_intent
 
         metadata = dict(session.metadata or {})
-        metadata.update(
-            {
-                "channel": channel,
-                "channel_id": body.get("channel_id") or metadata.get("channel_id") or channel,
-                "thread_id": body.get("thread_id") or metadata.get("thread_id"),
-            },
-        )
-        binding_key = str(body.get("binding_key") or metadata.get("binding_key") or "").strip()
-        if binding_key:
-            metadata["binding_key"] = binding_key
+        metadata["channel"] = channel
+        # An open chat posts its own session id. A stale browser binding must
+        # not retarget that chat onto a different thread.
+        if not str(metadata.get("channel_id") or "").strip():
+            metadata["channel_id"] = body.get("channel_id") or channel
+        if not str(metadata.get("thread_id") or "").strip():
+            incoming_thread = str(body.get("thread_id") or "").strip()
+            if incoming_thread:
+                metadata["thread_id"] = incoming_thread
+        if not str(metadata.get("binding_key") or "").strip():
+            binding_key = str(body.get("binding_key") or "").strip()
+            if binding_key:
+                metadata["binding_key"] = binding_key
         session.metadata = metadata
         get_session_store().save(session)
 
@@ -697,6 +851,14 @@ class RuntimeState:
             if metadata.get("actor_email") != actor_email:
                 metadata["actor_email"] = actor_email
                 session.metadata = metadata
+                get_session_store().save(session)
+
+        if channel == "slack" and getattr(self.config.identity, "provider", "static") == "oidc":
+            from ts_harness.gateway.directory_links import link_channel_session
+
+            linked = link_channel_session(dict(session.metadata or {}), actor_email, auth.tenant_id)
+            if linked != (session.metadata or {}):
+                session.metadata = linked
                 get_session_store().save(session)
 
         raw_user = str((body.get("actor") or {}).get("actor_id") or auth.actor_id or "")
@@ -727,6 +889,7 @@ class RuntimeState:
         session = get_session_store().get(session.session_id) or session
 
         from ts_harness.gateway.channel_confirmations import (
+            detach_finished_program_for_new_request,
             execute_confirmed_bridge,
             execute_confirmed_program_advance,
             execute_confirmed_program_start,
@@ -735,9 +898,13 @@ class RuntimeState:
             execute_workflow_tool_approval_reply,
             format_workflow_tool_approval_ack,
             should_intercept_workflow_tool_approval_reply,
+            execute_stuck_step_command,
+            format_stuck_step_ack,
+            parse_stuck_step_command,
             execute_bridge_workflow_proposal,
             execute_governed_workflow_proposal,
             execute_intake_response,
+            execute_program_advance_proposal,
             execute_workflow_gate_response,
             execute_workflow_artifact_query,
             execute_workflow_artifact_provenance_query,
@@ -746,6 +913,7 @@ class RuntimeState:
             format_bridge_proposal_message,
             format_bridge_started_message,
             format_intake_response_ack,
+            format_program_advance_proposal_message,
             format_program_advanced_message,
             format_program_started_message,
             format_tool_approval_ack,
@@ -767,6 +935,17 @@ class RuntimeState:
             should_auto_explain_workflow_artifact,
             should_intercept_tool_approval_reply,
         )
+
+        if detach_finished_program_for_new_request(session, user_text, config=self.config):
+            session = get_session_store().get(session.session_id) or session
+
+        from ts_harness.gateway.intake_pointers import with_reply_sources
+
+        session, user_text, attachment_note, reply_sources = self._collect_intake_pointers(
+            session, body, user_text=user_text, tenant_id=req.tenant_id, channel_attachments=channel_attachments
+        )
+        # What a workflow records as the answer: the user's words plus any files read from them.
+        answer_text = with_reply_sources(user_text, reply_sources)
 
         denied_reply = next(
             (
@@ -891,6 +1070,45 @@ class RuntimeState:
                 "session_id": session.session_id,
                 "output": {**decision_result, "summary": summary},
             }
+        if parse_stuck_step_command(user_text) is not None:
+            try:
+                stuck_result = execute_stuck_step_command(
+                    session,
+                    user_text=user_text,
+                    actor_id=auth.actor_id,
+                    channel=channel,
+                    auth=auth,
+                    actor_email=actor_email,
+                    config=self.config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                stuck_result = {"error": str(exc)}
+            summary = format_stuck_step_ack(stuck_result)
+            get_transcript_store().append_turn(
+                session.session_id,
+                user_text=user_text,
+                assistant_messages=[{"role": "assistant", "content": summary}],
+            )
+            self.audit.append(
+                tenant_id=req.tenant_id,
+                action_type="stuck_step_decided",
+                actor_id=auth.actor_id,
+                correlation_id=req.correlation_id,
+                payload={
+                    "session_id": session.session_id,
+                    "channel": channel,
+                    "action": stuck_result.get("action"),
+                    "work_order": stuck_result.get("work_order"),
+                    "status": stuck_result.get("status"),
+                    "error": stuck_result.get("error"),
+                    "actor_email": actor_email,
+                },
+            )
+            return {
+                "status": "succeeded",
+                "session_id": session.session_id,
+                "output": {**stuck_result, "summary": summary},
+            }
         if workflow_confirmation.confirmed:
             try:
                 start_result = execute_confirmed_workflow_start(
@@ -992,7 +1210,7 @@ class RuntimeState:
                     tenant_id=req.tenant_id,
                     agent_id=agent_id,
                     source=channel,
-                    user_text=user_text,
+                    user_text=answer_text,
                 )
             except Exception as exc:  # noqa: BLE001
                 intake_result = {"error": str(exc)}
@@ -1032,6 +1250,7 @@ class RuntimeState:
                     agent_id=agent_id,
                     source=channel,
                     user_text=user_text,
+                    answer_text=answer_text,
                     provider=provider,
                     use_llm_fallback=True,
                 )
@@ -1040,7 +1259,7 @@ class RuntimeState:
             if gate_result.get("status") == "none":
                 gate_result = {
                     "status": "ambiguous",
-                    "summary": format_approval_gate_clarification(),
+                    "summary": gate_result.get("summary") or format_approval_gate_clarification(),
                 }
             summary = format_workflow_gate_response_ack(
                 gate_result,
@@ -1279,6 +1498,47 @@ class RuntimeState:
         session.metadata = metadata
         get_session_store().save(session)
 
+        if intent.kind == "program_advance":
+            try:
+                proposal = execute_program_advance_proposal(
+                    session,
+                    intent,
+                    tenant_id=req.tenant_id,
+                    agent_id=agent_id,
+                    source=channel,
+                )
+            except Exception as exc:  # noqa: BLE001
+                proposal = {"error": str(exc)}
+            if proposal.get("status") == "not_ready":
+                intent = ChannelIntent(kind="workflow_gate", summary=intent.summary)
+            else:
+                session = get_session_store().get(session.session_id) or session
+                summary = format_program_advance_proposal_message(proposal)
+                get_transcript_store().append_turn(
+                    session.session_id,
+                    user_text=user_text,
+                    assistant_messages=[{"role": "assistant", "content": summary}],
+                )
+                self.audit.append(
+                    tenant_id=req.tenant_id,
+                    action_type="program_advance_proposed",
+                    actor_id=auth.actor_id,
+                    correlation_id=req.correlation_id,
+                    payload={
+                        "session_id": session.session_id,
+                        "program_id": proposal.get("program_id"),
+                        "target_phase": proposal.get("target_phase"),
+                        "channel": channel,
+                        "error": proposal.get("error"),
+                        "auto_proposed": True,
+                    },
+                )
+                return {
+                    "status": "succeeded",
+                    "session_id": session.session_id,
+                    "output": {**proposal, "summary": summary},
+                }
+
         if should_auto_propose_program(intent, session.metadata or {}):
             try:
                 proposal = execute_governed_program_proposal(
@@ -1288,7 +1548,8 @@ class RuntimeState:
                     source=channel,
                     program_type=str(intent.program_type),
                     entry_phase=intent.entry_phase,
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
+                    artifacts=intent.artifacts,
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}
@@ -1328,7 +1589,7 @@ class RuntimeState:
                     agent_id=agent_id,
                     source=channel,
                     workflow_type=str(intent.workflow_type),
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}
@@ -1397,7 +1658,7 @@ class RuntimeState:
                     tenant_id=req.tenant_id,
                     agent_id=agent_id,
                     source=channel,
-                    summary=str(intent.summary or user_text).strip()[:240],
+                    summary=str(intent.summary or user_text).strip()[:REQUEST_TEXT_LIMIT],
                 )
             except Exception as exc:  # noqa: BLE001
                 proposal = {"error": str(exc)}
@@ -1983,6 +2244,9 @@ class RuntimeState:
                 tenant_id=req.tenant_id,
             )
             skill_invoke = "none"
+        if attachment_note:
+            model_text = f"{model_text}\n\n{attachment_note}"
+        model_text = with_reply_sources(model_text, reply_sources)
         skill_bundle = self.skill_catalog.build_prompt_bundle(skills)
         transcript = get_transcript_store()
         history = transcript.load_messages(session.session_id)
@@ -2184,6 +2448,68 @@ class RuntimeState:
             "error": result.error,
         }
 
+    def _collect_intake_pointers(
+        self,
+        session,
+        body: dict[str, Any],
+        *,
+        user_text: str,
+        tenant_id: str,
+        channel_attachments: list[dict[str, Any]] | None,
+    ) -> tuple[Any, str, str, str]:
+        """Attachments on this message; return (session, text, note for the agent, reply sources).
+
+        Before a start, they are held on the session for the first task. In a thread already
+        linked to a program or workflow (a clarify reply, PRD intake answers), they are read
+        now and returned as markdown. Callers keep ``text`` (the user's words) for routing and
+        the transcript, and add the sources only to the recorded answer and the agent's input,
+        so a document's wording never steers routing. A message that is only files gets
+        placeholder text so it still has a summary.
+        """
+        from ts_harness.gateway.intake_pointers import (
+            FILES_ONLY_TEXT,
+            attachment_note,
+            message_pointers,
+            remember_pointers,
+            resolve_reply_sources,
+        )
+        from ts_harness.workflows.session_compat import read_program_id
+
+        metadata = dict(session.metadata or {})
+        pointers = message_pointers(body, tenant_id=tenant_id, text=user_text, channel_attachments=channel_attachments)
+        if not pointers:
+            return session, user_text, "", ""
+        if read_program_id(metadata) or metadata.get("workflow_id"):
+            started = time.time()
+            try:
+                sources_text = resolve_reply_sources(
+                    pointers, tenant_id=tenant_id, workflow_type=metadata.get("workflow_type")
+                )
+            except Exception as exc:  # noqa: BLE001 - the reply still goes through without the files
+                log_event("intake_reply_sources_failed", session_id=session.session_id, error=str(exc))
+                sources_text = ""
+            log_event(
+                "intake_reply_sources",
+                session_id=session.session_id,
+                pointers=len(pointers),
+                chars=len(sources_text),
+                ms=int((time.time() - started) * 1000),
+            )
+            return session, user_text if user_text.strip() else FILES_ONLY_TEXT, "", sources_text
+        metadata, added = remember_pointers(metadata, pointers)
+        if added:
+            session.metadata = metadata
+            get_session_store().save(session)
+            log_event(
+                "intake_pointers_held",
+                session_id=session.session_id,
+                added=len(added),
+                refused=sum(1 for p in added if p.get("error")),
+            )
+        if not user_text.strip():
+            user_text = FILES_ONLY_TEXT
+        return session, user_text, attachment_note(added), ""
+
     def handle_channel_webhook(self, channel: str, body: dict[str, Any], auth) -> dict[str, Any]:
         if channel == "slack" and body.get("type") == "url_verification":
             return {"status": "challenge", "challenge": body.get("challenge", "")}
@@ -2203,7 +2529,11 @@ class RuntimeState:
             "sender_email": sender_email,
             "actor": {"actor_id": event.sender_id, "auth_provider": channel},
         }
-        result = self.handle_session_message(message_body, auth)
+        if channel == "discord" and event.attachments:
+            from ts_harness.intake.connectors import start_discord_prefetch
+
+            start_discord_prefetch(event.attachments, tenant_id=event.tenant_id)
+        result = self.handle_session_message(message_body, auth, channel_attachments=event.attachments)
         result["channel"] = channel
         if result.get("status") == "blocked" and result.get("error") == "max iterations exceeded":
             reply_text = (
@@ -2246,7 +2576,17 @@ def get_runtime() -> RuntimeState:
                 "config/ts-harness-runtime.yaml.tmpl",
             )
             _RUNTIME = RuntimeState(config_path)
+            _register_group_resolvers(_RUNTIME.config)
         return _RUNTIME
+
+
+def _register_group_resolvers(config: Any) -> None:
+    try:
+        from ts_harness.identity_directory import register_group_resolvers
+
+        register_group_resolvers(config)
+    except Exception as exc:  # noqa: BLE001 - sign-in falls back to token groups
+        log_event("group_resolver_registration_failed", error=str(exc))
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -2256,6 +2596,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return
 
     def _read_json(self) -> dict[str, Any]:
+        from ts_harness.gateway.intake_uploads import BodyTooLarge, json_body_too_large
+
+        if json_body_too_large(self.path, self.headers.get("Content-Length")):
+            raise BodyTooLarge()
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length else b"{}"
         self._last_raw_body = raw
@@ -2431,10 +2775,53 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         self._send(404, {"error": "not found"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def _handle_intake_upload(self) -> None:
+        from ts_harness.gateway.intake_uploads import UploadRejected, store_from_file, upload_request
+        from ts_harness.gateway.rate_limit import check_admin_rate_limit
+        from urllib.parse import parse_qs, urlsplit
+
         try:
             self._check_origin()
-            body = self._read_json()
+            auth = self._authenticate({})
+            check_admin_rate_limit(self.client_address[0] if self.client_address else "unknown")
+        except AuthError as exc:
+            self._send(exc.status, {"error": str(exc)})
+            return
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            upload = upload_request(
+                (query.get("name") or [None])[0],
+                self.headers.get("Content-Type"),
+                self.headers.get("Content-Length"),
+            )
+            pointer = store_from_file(self.rfile, upload, tenant_id=auth.tenant_id)
+        except UploadRejected as exc:
+            self.close_connection = True
+            self._send(exc.status, {"error": str(exc)})
+            return
+        except Exception as exc:  # noqa: BLE001 - storage misconfiguration or outage
+            log_event("intake_upload_failed", tenant_id=auth.tenant_id, error=str(exc))
+            self.close_connection = True
+            self._send(503, {"error": "the file could not be stored"})
+            return
+        log_event("intake_upload", tenant_id=auth.tenant_id, size=pointer["size"], mime=pointer["mime"])
+        get_runtime().metrics.inc("intake_upload")
+        self._send(200, {"pointer": pointer})
+
+    def do_POST(self) -> None:  # noqa: N802
+        from ts_harness.gateway.intake_uploads import UPLOAD_PATH, BodyTooLarge, max_json_body_bytes
+
+        if self.path.split("?", 1)[0] == UPLOAD_PATH:
+            self._handle_intake_upload()
+            return
+        try:
+            self._check_origin()
+            try:
+                body = self._read_json()
+            except BodyTooLarge:
+                self.close_connection = True
+                self._send(413, {"error": f"request body is larger than {max_json_body_bytes() // (1024 * 1024)} MB"})
+                return
             if self.path == "/admin/auth/session":
                 from ts_harness.gateway.browser_session import open_browser_session
 
@@ -2557,18 +2944,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.path == "/webhooks/github":
                 from ts_harness.gateway.github_webhook import (
                     delivery_already_handled,
-                    github_webhook_secret,
+                    delivery_host,
                     handle_github_webhook,
                     remember_delivery,
-                    verify_github_signature,
+                    verify_delivery,
+                    webhook_secrets,
                 )
 
-                secret = github_webhook_secret()
+                host = delivery_host(dict(self.headers.items()))
+                secrets = webhook_secrets(host)
                 delivery_id = str(self.headers.get("X-GitHub-Delivery", "") or "").strip()
-                if secret:
+                event_name = str(self.headers.get("X-GitHub-Event", "") or "")
+                if secrets:
                     signature = self.headers.get("X-Hub-Signature-256", "")
                     raw = getattr(self, "_last_raw_body", b"")
-                    if not verify_github_signature(raw, signature, secret):
+                    if not verify_delivery(raw, signature, secrets):
                         self._send(401, {"error": "invalid github signature"})
                         return
                     if not delivery_id:
@@ -2580,6 +2970,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 result = handle_github_webhook(
                     body,
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
+                    event_name=event_name,
+                    host=host,
                 )
                 runtime.audit.append(
                     tenant_id=str(body.get("tenant_id") or runtime.config.gateway.default_tenant_id),
@@ -2589,7 +2981,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 )
                 runtime.metrics.inc("github_webhook")
                 if delivery_id:
-                    remember_delivery(delivery_id)
+                    remember_delivery(delivery_id, host=host, event=event_name)
                 self._send(200, result)
                 return
             if self.path.startswith("/channels/"):
@@ -2627,6 +3019,12 @@ def main() -> None:
     config_path = os.environ.get("TS_HARNESS_CONFIG", "config/ts-harness-runtime.yaml.tmpl")
     # Ensure token is available for config validation during boot.
     os.environ.setdefault("GATEWAY_TOKEN", token)
+    from ts_harness.storage.backend import apply_mirror_paths, validate_storage_config
+
+    for warning in validate_storage_config():
+        log_event("runtime_storage_warning", message=warning)
+    for name, value in apply_mirror_paths().items():
+        log_event("runtime_storage_mirror_path", variable=name, path=value)
     runtime = get_runtime()
     if not runtime.config.gateway.token:
         runtime.config.gateway.token = token

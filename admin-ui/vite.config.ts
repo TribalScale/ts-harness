@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         "/healthz": proxy,
         "/admin": proxy,
         "/session": proxy,
+        "/intake": proxy,
         "/cron": proxy,
         "/workflow": proxy,
       },

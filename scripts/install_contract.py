@@ -114,6 +114,19 @@ def validate_install_config(
         if not has_gcp_project:
             raise InstallContractError("gcp_project_id is required when cloud_provider=gcp")
 
+    if provider == "gcp" and config.get("deployment_profile", "single_host") == "scale_out":
+        raise InstallContractError(
+            "deployment_profile=scale_out is only supported on aws; use single_host on gcp"
+        )
+    scale_out = config.get("scale_out") or {}
+    if provider == "gcp" and scale_out:
+        raise InstallContractError("scale_out settings are only supported on aws")
+    if (
+        config.get("deployment_profile", "single_host") == "scale_out"
+        and scale_out.get("network_mode", "vpc") != "vpc"
+    ):
+        raise InstallContractError("deployment_profile=scale_out requires scale_out.network_mode=vpc")
+
     managed_db = config.get("managed_db")
     if not isinstance(managed_db, Mapping) or not managed_db:
         raise InstallContractError("managed_db configuration is required for install")
@@ -140,17 +153,15 @@ def validate_install_config(
         raise InstallContractError(
             "Ambiguous terraform state location: S3 backend requires region"
         )
+    if backend != "s3" and state.get("lock_table"):
+        raise InstallContractError(
+            "terraform_state.lock_table is only valid for S3 backends"
+        )
 
     runtime = config.get("runtime") or {}
     if isinstance(runtime, Mapping) and str(runtime.get("identity_provider") or "static") == "oidc":
-        for key in (
-            "oidc_issuer",
-            "oidc_audience",
-            "oidc_jwks_url",
-            "oidc_client_id",
-            "oidc_authorization_endpoint",
-            "oidc_token_endpoint",
-        ):
+        # The JWKS URL and login endpoints come from the issuer's discovery document when empty.
+        for key in ("oidc_issuer", "oidc_audience", "oidc_client_id"):
             if not str(runtime.get(key) or "").strip():
                 raise InstallContractError(
                     f"{key} is required when runtime.identity_provider=oidc"

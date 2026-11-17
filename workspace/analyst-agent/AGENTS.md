@@ -15,7 +15,7 @@
 - trend_analysis — identify patterns in time-series data
 - cost_analysis — analyze AWS costs and utilization
 
-**Model:** `openai/gpt-4o-mini`
+**Model:** `openai/gpt-6.1-sol`
 **Workspace:** `/workspace/analyst-agent`
 **Toolsets:** `core-read`, `terminal`
 **Skills:** `memory`

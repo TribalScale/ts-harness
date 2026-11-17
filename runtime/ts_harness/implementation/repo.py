@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 
-def work_order_branch_name(work_order_id: str) -> str:
+def delivery_suffix(delivery_workflow_id: str | None) -> str:
+    """Short id that keeps one delivery's branch and workspace apart from another's."""
+    return re.sub(r"[^a-zA-Z0-9-]+", "", str(delivery_workflow_id or "")).lower()[:8]
+
+
+def work_order_branch_name(work_order_id: str, delivery_workflow_id: str | None = None) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(work_order_id or "").strip()).strip("-").lower()
-    return f"wo/{slug or 'work-order'}"
+    suffix = delivery_suffix(delivery_workflow_id)
+    return f"wo/{slug or 'work-order'}" + (f"-{suffix}" if suffix else "")
 
 
 def github_authenticated_url(repo_url: str, token: str | None = None) -> str:
@@ -32,6 +39,33 @@ def github_authenticated_url(repo_url: str, token: str | None = None) -> str:
     if parsed.port:
         netloc = f"{netloc}:{parsed.port}"
     return urlunparse(parsed._replace(netloc=netloc))
+
+
+WORKSPACE_OWNER_FILE = ".ts-harness-owner"
+
+
+def claim_workspace(workspace_dir: Path, owner: str) -> bool:
+    """Bind ``workspace_dir`` to one delivery workflow; return True if an old clone was dropped.
+
+    Workspaces are keyed by work-order id, which repeats across programs. A
+    clone left by another delivery (or one with no owner) carries that
+    delivery's ``wo/*`` commits, so it is removed and recloned from base.
+    Retries and revisions of the same delivery keep their clone.
+    """
+    owner = str(owner or "").strip()
+    if not owner:
+        return False
+    marker = workspace_dir / WORKSPACE_OWNER_FILE
+    current = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    if current == owner:
+        return False
+    repo_dir = workspace_dir / "repo"
+    dropped = repo_dir.exists()
+    if dropped:
+        shutil.rmtree(repo_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_text(owner + "\n", encoding="utf-8")
+    return dropped
 
 
 def ensure_repo_clone(
@@ -199,14 +233,70 @@ def _has_merge_base(
     return completed.returncode == 0 and bool((completed.stdout or "").strip())
 
 
+def _fetch_branch(repo_dir: Path, branch: str, *, runner=subprocess.run, env: dict[str, str] | None = None):
+    """Update ``origin/<branch>`` even in a single-branch clone, whose default refspec skips it."""
+    kwargs = {"env": env} if env is not None else {}
+    return runner(
+        ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        **kwargs,
+    )
+
+
+def _is_ancestor(repo_dir: Path, older: str, newer: str, *, runner=subprocess.run) -> bool:
+    done = runner(
+        ["git", "-C", str(repo_dir), "merge-base", "--is-ancestor", older, newer],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+def _catch_up_with_remote(repo_dir: Path, branch: str, *, runner=subprocess.run) -> None:
+    """Bring the checked-out PR branch level with GitHub before a revision builds on it.
+
+    The PR can move on GitHub after this clone last pushed it: a server-side refresh merge
+    of the base branch, or a person's commit. Building on the old local tip made the next
+    push non-fast-forward, and the forced push would have dropped those commits. Local
+    commits not yet pushed are kept: the remote is merged in, and when that conflicts the
+    remote tip wins.
+    """
+    remote = f"origin/{branch}"
+    if _fetch_branch(repo_dir, branch, runner=runner).returncode != 0:
+        return  # the branch is gone or unreachable; the push reports it
+    if _is_ancestor(repo_dir, remote, branch, runner=runner):
+        return  # local already contains the remote tip
+    if _is_ancestor(repo_dir, branch, remote, runner=runner):
+        _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
+        return
+    _configure_commit_identity(repo_dir, runner=runner)  # the merge commit needs one
+    merged = runner(
+        ["git", "-C", str(repo_dir), "merge", "--no-edit", remote],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merged.returncode != 0:
+        runner(["git", "-C", str(repo_dir), "merge", "--abort"], capture_output=True, text=True, check=False)
+        _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
+
+
 def create_work_branch(
     repo_dir: Path,
     *,
     branch: str,
     base_branch: str,
     runner=subprocess.run,
+    from_remote: bool = False,
 ) -> None:
     """Check out the work-order branch from the refreshed base tip.
+
+    With ``from_remote`` (revising an open PR), a branch missing locally starts
+    from ``origin/<branch>`` so the revision builds on the PR's commits instead
+    of replacing them.
 
     Retries previously used ``git checkout -B``, which reset ``wo/*`` to the
     current HEAD (usually base) and orphaned successful Implement commits after
@@ -217,9 +307,29 @@ def create_work_branch(
     """
     start_point = _origin_base_ref(repo_dir, base_branch, runner=runner)
 
+    if from_remote and not _local_branch_exists(repo_dir, branch, runner=runner):
+        fetched = runner(
+            ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if fetched.returncode == 0:
+            _checkout(
+                repo_dir,
+                "-b",
+                branch,
+                f"origin/{branch}",
+                runner=runner,
+                action=f"git checkout {branch} from origin/{branch}",
+            )
+            return
+
     if _local_branch_exists(repo_dir, branch, runner=runner):
         if _has_merge_base(repo_dir, branch, start_point, runner=runner):
             _checkout(repo_dir, branch, runner=runner, action=f"git checkout {branch}")
+            if from_remote:
+                _catch_up_with_remote(repo_dir, branch, runner=runner)
             return
         # Stale/unrelated wo/* tip — drop it so we can recreate from origin/base.
         _checkout(
@@ -294,16 +404,24 @@ def list_changed_files(repo_dir: Path, *, base_ref: str | None = None, runner=su
 
 
 def _ensure_python_artifact_gitignore(repo_dir: Path) -> None:
-    gitignore = Path(repo_dir) / ".gitignore"
+    """Ignore Python bytecode from verification runs in this clone only.
+
+    This used to append to the repo's ``.gitignore``, which put Python lines into every
+    pull request, Node repos included. The clone-local exclude file keeps them out of
+    commits without touching the team's files.
+    """
+    info = Path(repo_dir) / ".git" / "info"
+    if not (Path(repo_dir) / ".git").is_dir():
+        return
+    exclude = info / "exclude"
     required = ("__pycache__/", "*.py[cod]", ".pytest_cache/")
-    existing = ""
-    if gitignore.is_file():
-        existing = gitignore.read_text(encoding="utf-8")
+    existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
     missing = [line for line in required if line not in existing.splitlines()]
     if not missing:
         return
+    info.mkdir(parents=True, exist_ok=True)
     prefix = "" if (not existing or existing.endswith("\n")) else "\n"
-    gitignore.write_text(existing + prefix + "\n".join(missing) + "\n", encoding="utf-8")
+    exclude.write_text(existing + prefix + "\n".join(missing) + "\n", encoding="utf-8")
 
 
 def _discard_junk_worktree_noise(repo_dir: Path, *, runner=subprocess.run) -> None:
@@ -390,13 +508,23 @@ def push_branch(
     branch: str,
     runner=subprocess.run,
     env: dict[str, str] | None = None,
+    remote_url: str = "",
 ) -> None:
     """Push ``branch`` to origin; retry with ``--force-with-lease`` on NFF rejects.
 
     Work-order branches are rewritten across deliver retries (new Implement commit
     from the same base). A plain push fails when an older tip already exists on
     origin; force-with-lease updates the remote without a blind ``--force``.
+    ``remote_url`` replaces origin first, because installation tokens embedded
+    at clone time expire after an hour.
     """
+    if remote_url:
+        runner(
+            ["git", "-C", str(repo_dir), "remote", "set-url", "origin", remote_url],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     completed = runner(
         ["git", "-C", str(repo_dir), "push", "-u", "origin", branch],
         capture_output=True,
@@ -410,21 +538,25 @@ def push_branch(
     if not _is_non_fast_forward(completed.stderr or "", completed.stdout or ""):
         raise RuntimeError(f"git push failed: {detail[-2000:]}")
 
-    # Refresh the remote-tracking tip used by --force-with-lease, then retry.
-    runner(
-        ["git", "-C", str(repo_dir), "fetch", "origin", branch, "--depth", "1"],
+    # Lease against the tip just fetched. A bare --force-with-lease finds the expected tip
+    # through the remote's fetch refspec, which a single-branch clone lacks for this branch,
+    # so it always failed with "stale info".
+    _fetch_branch(repo_dir, branch, runner=runner, env=env)
+    tip = runner(
+        ["git", "-C", str(repo_dir), "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"],
         capture_output=True,
         text=True,
         check=False,
-        env=env,
     )
+    expected = (tip.stdout or "").strip() if tip.returncode == 0 else ""
+    lease = f"--force-with-lease={branch}:{expected}" if expected else "--force-with-lease"
     leased = runner(
         [
             "git",
             "-C",
             str(repo_dir),
             "push",
-            "--force-with-lease",
+            lease,
             "-u",
             "origin",
             branch,

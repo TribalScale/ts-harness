@@ -28,6 +28,8 @@ bootstrap_phase_list() {
 11e-preflight-embeddings.sh
 11f-check-embedding-dim.sh
 12-compose-up.sh
+12a-db-credential-watch.sh
+12b-github-webhook.sh
 13-memory-db-init.sh
 14-channels-init.sh
 15-automation-cron.sh

@@ -9,6 +9,7 @@ from urllib.parse import quote
 from ts_harness.gateway.auth import AuthContext
 from ts_harness.gateway.cron_store import (
     cron_config_path,
+    editing_cron_file,
     load_cron_file,
     save_cron_file,
     validate_cron_job,
@@ -25,31 +26,39 @@ def auth_config_payload(runtime: Any) -> dict[str, Any]:
         "yes",
     }
     if getattr(identity, "provider", "static") == "oidc":
+        from ts_harness.gateway.identity_presets import identity_setting, uses_legacy_endpoints
+        from ts_harness.gateway.oidc_discovery import discover
+
         issuer = (identity.issuer or "").rstrip("/")
         client_id = (
             getattr(identity, "client_id", None)
             or os.environ.get("OIDC_CLIENT_ID")
             or ""
         )
-        authz = (
-            getattr(identity, "authorization_endpoint", None)
-            or os.environ.get("OIDC_AUTHORIZATION_ENDPOINT")
-            or (f"{issuer}/authorize" if issuer else "")
+        authz = getattr(identity, "authorization_endpoint", None) or os.environ.get(
+            "OIDC_AUTHORIZATION_ENDPOINT"
         )
-        token_ep = (
-            getattr(identity, "token_endpoint", None)
-            or os.environ.get("OIDC_TOKEN_ENDPOINT")
-            or (f"{issuer}/oauth/token" if issuer else "")
-        )
+        token_ep = getattr(identity, "token_endpoint", None) or os.environ.get("OIDC_TOKEN_ENDPOINT")
+        jwks_url = identity.jwks_url
+        legacy = uses_legacy_endpoints(identity)
+        if issuer and not legacy and not (authz and token_ep and jwks_url):
+            doc = discover(identity.issuer)
+            authz = authz or doc.get("authorization_endpoint")
+            token_ep = token_ep or doc.get("token_endpoint")
+            jwks_url = jwks_url or doc.get("jwks_uri")
+        if legacy and issuer:
+            authz = authz or f"{issuer}/authorize"
+            token_ep = token_ep or f"{issuer}/oauth/token"
         return {
             "mode": "oidc",
             "issuer": identity.issuer,
             "client_id": client_id,
-            "authorization_endpoint": authz,
-            "token_endpoint": token_ep,
+            "authorization_endpoint": authz or "",
+            "token_endpoint": token_ep or "",
             "audience": identity.audience,
+            "token_type": identity_setting(identity, "token_type"),
             "scopes": (os.environ.get("OIDC_SCOPES") or "openid profile email").split(),
-            "jwks_url": identity.jwks_url,
+            "jwks_url": jwks_url,
             "allow_static_fallback": allow_static
             and os.environ.get("TS_HARNESS_OIDC_STATIC_FALLBACK", "false").lower()
             in {"1", "true", "yes"},
@@ -94,7 +103,9 @@ def build_inbox(
     if is_admin(auth, runtime):
         try:
             from ts_harness.skills.authoring import list_drafts
+            from ts_harness.skills.repository import sync_skill_mirror
 
+            sync_skill_mirror()
             drafts = list_drafts(skills_root)
         except Exception:
             drafts = []
@@ -112,7 +123,7 @@ def build_inbox(
                 }
             )
 
-    for approval in list(get_approval_queue()._requests.values()):
+    for approval in get_approval_queue().list_pending():
         data = approval.__dict__ if hasattr(approval, "__dict__") else dict(approval)
         approval_id = str(data.get("approval_id") or data.get("id") or "")
         if data.get("status") not in {None, "pending"}:
@@ -129,10 +140,15 @@ def build_inbox(
             }
         )
 
+    from ts_harness.gateway.program_access import list_actor_params
+
     try:
-        listed = memory.list_programs(tenant_id=auth.tenant_id, status=None, limit=100, offset=0)
+        listed = memory.list_programs(
+            tenant_id=auth.tenant_id, status=None, limit=100, offset=0, actor_params=list_actor_params(auth)
+        )
     except Exception:
         listed = {"programs": []}
+    approvable = _approvable_program_filter(memory, auth)
     for program in list(listed.get("programs") or []):
         program_id = str(program.get("id") or "")
         if not program_id:
@@ -146,9 +162,21 @@ def build_inbox(
         waiting = status.get("waiting_on") or {}
         if waiting.get("kind") != "approval":
             continue
+        if not approvable(program_id):
+            continue
         match = waiting.get("match") or {}
         task_id = str(match.get("task_id") or "")
         step = str(match.get("step_name") or status.get("active_step") or "gate")
+        meta = {
+            "program_id": program_id,
+            "task_id": task_id,
+            "step_name": step,
+            "waiting_on": waiting,
+            "recommended_action": status.get("recommended_action"),
+        }
+        checks = _gate_draft_checks(memory, str(status.get("active_workflow_id") or ""))
+        if checks is not None:
+            meta["prd_checks"] = checks
         items.append(
             {
                 "type": "workflow_gate",
@@ -157,18 +185,155 @@ def build_inbox(
                 "subtitle": f"Program {program.get('display_name') or program.get('summary') or program_id}",
                 "created_at": waiting.get("since"),
                 "href": f"/#/inbox/workflow_gate/{quote(task_id or program_id, safe='')}",
-                "meta": {
-                    "program_id": program_id,
-                    "task_id": task_id,
-                    "step_name": step,
-                    "waiting_on": waiting,
-                    "recommended_action": status.get("recommended_action"),
-                },
+                "meta": meta,
             }
         )
 
+    items.extend(_stuck_step_items(memory, auth, approvable))
+    items.extend(_knowledge_note_items(memory, auth, runtime))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+def _gate_draft_checks(memory: Any, workflow_id: str) -> list[str] | None:
+    """The automatic PRD checks on the draft a gate is approving, or None when it has none.
+
+    ``draft_prd`` and ``revise_prd`` outputs carry ``prd_checks``; the newest one is the
+    draft in front of the reviewer. Other gates have no such output and get None.
+    """
+    if not workflow_id:
+        return None
+    try:
+        tasks = list((memory.get_workflow(workflow_id) or {}).get("tasks") or [])
+    except Exception:
+        return None
+    drafts = [
+        task
+        for task in tasks
+        if isinstance(task.get("output"), dict) and isinstance(task["output"].get("prd_checks"), list)
+    ]
+    if not drafts:
+        return None
+    latest = max(drafts, key=lambda task: str(task.get("updated_at") or task.get("created_at") or ""))
+    return [str(item) for item in latest["output"]["prd_checks"] if str(item).strip()]
+
+
+_STUCK_REASONS = {"revision_limit": "Revision limit reached"}
+
+
+def _knowledge_note_items(memory: Any, auth: AuthContext, runtime: Any) -> list[dict[str, Any]]:
+    """Proposed notes the actor can approve. Org, promotion and exception notes are admin-only."""
+    from ts_harness.gateway.knowledge_access import can_see_proposal
+
+    try:
+        listed = memory.list_knowledge_notes(tenant_id=auth.tenant_id or "default", status="proposed")
+    except Exception:
+        return []
+    notes = listed.get("notes") if isinstance(listed, dict) else None
+    if not isinstance(notes, list):
+        return []
+    config = getattr(runtime, "config", None)
+    projects: dict[str, dict[str, Any]] = {}
+    items = []
+    for note in notes:
+        project = None
+        project_id = str(note.get("project_id") or "")
+        if project_id:
+            if project_id not in projects:
+                try:
+                    projects[project_id] = memory.get_project(project_id)
+                except Exception:
+                    projects[project_id] = {}
+            project = projects[project_id] or None
+        if not can_see_proposal(auth, config, note, project):
+            continue
+        meta: dict[str, Any] = {"note": note, "evidence": note.get("evidence") or []}
+        revision_of = str(note.get("revision_of") or "")
+        if revision_of and hasattr(memory, "get_knowledge_note"):
+            try:
+                meta["target"] = memory.get_knowledge_note(revision_of)
+            except Exception:
+                meta["target"] = None
+        action = str(note.get("proposal_action") or "add")
+        items.append(
+            {
+                "type": "knowledge_note",
+                "id": str(note.get("id") or ""),
+                "title": str(note.get("title") or "Knowledge note"),
+                "subtitle": f"{note.get('scope') or 'note'} · {action}",
+                "created_at": note.get("updated_at") or note.get("created_at"),
+                "href": f"/#/inbox/knowledge_note/{quote(str(note.get('id') or ''), safe='')}",
+                "meta": meta,
+            }
+        )
+    return items
+
+
+def _approvable_program_filter(memory: Any, auth: AuthContext, need: str = "approve") -> Any:
+    """Predicate: does this actor have *need* on the program? Always true unless enforcing."""
+    from ts_harness.gateway.program_access import (
+        ProgramAccessDenied,
+        access_mode,
+        actor_context,
+        check_program_access,
+    )
+
+    actor = actor_context(auth)
+    if actor is None or access_mode() != "enforce":
+        return lambda program_id: True
+    cache: dict[str, bool] = {}
+
+    def approvable(program_id: str | None) -> bool:
+        if not program_id:
+            return True
+        if program_id not in cache:
+            try:
+                check_program_access(
+                    memory, program_id, actor, need, tenant_id=str(auth.tenant_id or "default"), route="inbox"
+                )
+                cache[program_id] = True
+            except ProgramAccessDenied:
+                cache[program_id] = False
+        return cache[program_id]
+
+    return approvable
+
+
+def _stuck_step_items(memory: Any, auth: AuthContext, approvable: Any = None) -> list[dict[str, Any]]:
+    """Steps parked for a human to revise again, accept or stop."""
+    try:
+        stuck = list(memory.list_stuck_tasks(tenant_id=auth.tenant_id) or [])
+    except Exception:
+        return []
+    from ts_harness.workflows.engine import get_workflow_engine
+    from ts_harness.workflows.human_decisions import stuck_summary
+
+    engine = get_workflow_engine()
+    items: list[dict[str, Any]] = []
+    for task in stuck:
+        task_id = str(task.get("id") or "")
+        workflow_id = str(task.get("workflow_id") or "")
+        if not task_id or not workflow_id:
+            continue
+        try:
+            summary = stuck_summary(engine, workflow_id, task_id)
+        except Exception:
+            continue
+        if approvable is not None and not approvable(summary.get("program_id")):
+            continue
+        reason = _STUCK_REASONS.get(summary["reason"], "Blocked")
+        items.append(
+            {
+                "type": "stuck_step",
+                "id": task_id,
+                "title": f"{summary['work_order']} · {summary['step_name']}",
+                "subtitle": f"{reason} · waiting for your decision",
+                "created_at": task.get("updated_at") or task.get("created_at"),
+                "href": f"/#/inbox/stuck_step/{quote(task_id, safe='')}",
+                "meta": {**summary, "status": "blocked", "updated_at": task.get("updated_at")},
+            }
+        )
+    return items
 
 
 def build_portfolio(
@@ -183,6 +348,8 @@ def build_portfolio(
     offset: int = 0,
 ) -> dict[str, Any]:
     """Root programs with their wait, escalation and recommended action for the portfolio board."""
+    from ts_harness.gateway.program_access import list_actor_params
+
     listed = memory.list_programs(
         tenant_id=auth.tenant_id,
         status=status,
@@ -191,6 +358,7 @@ def build_portfolio(
         roots_only=True,
         phase=phase,
         owner=owner,
+        actor_params=list_actor_params(auth),
     )
     rows: list[dict[str, Any]] = []
     for program in list(listed.get("programs") or []):
@@ -232,40 +400,49 @@ def list_cron_jobs_admin(runtime: Any) -> dict[str, Any]:
 
 
 def create_cron_job_admin(runtime: Any, body: dict[str, Any]) -> dict[str, Any]:
-    jobs = load_cron_file()
-    names = {str(j.get("name")) for j in jobs}
-    job = validate_cron_job(body, existing_names=names)
-    hints = list(job.get("skill_hints") or [])
-    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
-    jobs.append(job)
-    save_cron_file(jobs)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        names = {str(j.get("name")) for j in jobs}
+        job = validate_cron_job(body, existing_names=names)
+        hints = list(job.get("skill_hints") or [])
+        validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+        jobs.append(job)
+        save_cron_file(jobs)
     runtime.scheduler.replace_cron_jobs(jobs)
     return {"job": job}
 
 
 def update_cron_job_admin(runtime: Any, name: str, body: dict[str, Any]) -> dict[str, Any]:
-    jobs = load_cron_file()
-    idx = next((i for i, j in enumerate(jobs) if str(j.get("name")) == name), -1)
-    if idx < 0:
-        raise KeyError(f"cron job not found: {name}")
-    merged = {**jobs[idx], **body, "name": name}
-    job = validate_cron_job(merged, existing_names=None)
-    hints = list(job.get("skill_hints") or [])
-    validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
-    jobs[idx] = job
-    save_cron_file(jobs)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        idx = next((i for i, j in enumerate(jobs) if str(j.get("name")) == name), -1)
+        if idx < 0:
+            raise KeyError(f"cron job not found: {name}")
+        merged = {**jobs[idx], **body, "name": name}
+        job = validate_cron_job(merged, existing_names=None)
+        hints = list(job.get("skill_hints") or [])
+        validate_skill_hints_against_catalog(hints, getattr(runtime, "skill_catalog", None))
+        jobs[idx] = job
+        save_cron_file(jobs)
     runtime.scheduler.replace_cron_jobs(jobs)
     return {"job": job}
 
 
 def delete_cron_job_admin(runtime: Any, name: str) -> dict[str, Any]:
-    jobs = load_cron_file()
-    kept = [j for j in jobs if str(j.get("name")) != name]
-    if len(kept) == len(jobs):
-        raise KeyError(f"cron job not found: {name}")
-    save_cron_file(kept)
+    with editing_cron_file():
+        jobs = load_cron_file()
+        kept = [j for j in jobs if str(j.get("name")) != name]
+        if len(kept) == len(jobs):
+            raise KeyError(f"cron job not found: {name}")
+        save_cron_file(kept)
     runtime.scheduler.replace_cron_jobs(kept)
     return {"deleted": name}
+
+
+def _memory_client() -> Any:
+    from ts_harness.memory.client import get_memory_client
+
+    return get_memory_client()
 
 
 def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None = "web") -> dict[str, Any]:
@@ -279,6 +456,8 @@ def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None 
             for s in sessions
             if s.source == channel or (s.routing_key or "").startswith(f"{channel}:")
         ]
+    readable = _approvable_program_filter(_memory_client(), auth, "read")
+    sessions = [s for s in sessions if readable(str((s.metadata or {}).get("program_id") or "").strip() or None)]
     # Prefer actor-owned web sessions when available
     actor = auth.actor_id
     if actor:
@@ -292,6 +471,7 @@ def list_sessions_admin(runtime: Any, auth: AuthContext, *, channel: str | None 
             "agent_id": s.agent_id,
             "source": s.source,
             "routing_key": s.routing_key,
+            "binding_key": str((s.metadata or {}).get("binding_key") or ""),
             "started_at": getattr(s, "started_at", None),
         }
         for s in sorted(
@@ -325,10 +505,17 @@ def session_messages_admin(session_id: str, auth: AuthContext) -> dict[str, Any]
     # session existence in other tenants.
     if session is None or session.tenant_id != auth.tenant_id:
         raise KeyError("session not found")
+    metadata = session.metadata or {}
+    program_id = str(metadata.get("program_id") or "").strip()
+    if program_id and not _approvable_program_filter(_memory_client(), auth, "read")(program_id):
+        raise KeyError("session not found")
     messages = get_transcript_store().load_messages(session_id)
-    return {
+    payload: dict[str, Any] = {
         "session_id": session_id,
         "agent_id": session.agent_id,
         "source": session.source,
         "messages": messages,
     }
+    if program_id:
+        payload["program_id"] = program_id
+    return payload

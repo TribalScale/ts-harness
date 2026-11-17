@@ -80,6 +80,37 @@ CODING_BACKEND_API_KEY="$(fetch_secret "coding-backend-api-key" true 2>/dev/null
 CODING_BACKEND_PROVIDER="$(fetch_secret "coding-backend-provider" true 2>/dev/null || true)"
 CODING_BACKEND_MODEL="$(fetch_secret "coding-backend-model" true 2>/dev/null || true)"
 GITHUB_TOKEN="$(fetch_secret "github-token" true 2>/dev/null || true)"
+CODING_JOB_SECRET="$(fetch_secret "coding-job-secret" true 2>/dev/null || true)"
+GITHUB_APP_WEBHOOK_SECRET="$(fetch_secret "github-app-webhook-secret" true 2>/dev/null || true)"
+if is_blank_or_placeholder "$GITHUB_APP_WEBHOOK_SECRET"; then GITHUB_APP_WEBHOOK_SECRET=""; fi
+# The runtime turns literal \n back into newlines, so the PEM fits on one .env line.
+GITHUB_APP_PRIVATE_KEY="$(fetch_secret "github-app-private-key" true 2>/dev/null || true)"
+if is_blank_or_placeholder "$GITHUB_APP_PRIVATE_KEY"; then
+    GITHUB_APP_PRIVATE_KEY=""
+else
+    GITHUB_APP_PRIVATE_KEY="$(printf '%s' "$GITHUB_APP_PRIVATE_KEY" | awk 'BEGIN{ORS="\\n"} {print}')"
+fi
+if is_blank_or_placeholder "$CODING_JOB_SECRET"; then CODING_JOB_SECRET=""; fi
+LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
+if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
+
+# Jira: a service account OAuth credential (client id/secret) or an email and API token.
+ATLASSIAN_SITE_URL="$(fetch_optional_secret "jira-url")"
+ATLASSIAN_EMAIL="$(fetch_optional_secret "jira-username")"
+ATLASSIAN_API_TOKEN="$(fetch_optional_secret "jira-token")"
+ATLASSIAN_CLIENT_ID="$(fetch_optional_secret "jira-client-id")"
+ATLASSIAN_CLIENT_SECRET="$(fetch_optional_secret "jira-client-secret")"
+ATLASSIAN_CLOUD_ID="$(fetch_optional_secret "jira-cloud-id")"
+for jira_var in ATLASSIAN_SITE_URL ATLASSIAN_EMAIL ATLASSIAN_API_TOKEN ATLASSIAN_CLIENT_ID ATLASSIAN_CLIENT_SECRET ATLASSIAN_CLOUD_ID; do
+    if is_blank_or_placeholder "${!jira_var}"; then printf -v "$jira_var" '%s' ""; fi
+done
+if [[ -n "$ATLASSIAN_CLIENT_ID" && -n "$ATLASSIAN_CLIENT_SECRET" ]]; then
+    echo "[phase:${PHASE_NAME}] Jira auth: service account (oauth)"
+elif [[ -n "$ATLASSIAN_SITE_URL" && -n "$ATLASSIAN_EMAIL" && -n "$ATLASSIAN_API_TOKEN" ]]; then
+    echo "[phase:${PHASE_NAME}] Jira auth: email and API token (basic)"
+else
+    echo "[phase:${PHASE_NAME}] WARNING: Jira credentials missing; atlassian_search and Jira compensation will be unavailable." >&2
+fi
 
 # Terraform seeds secrets as a single space; treat that as unset.
 if is_blank_or_placeholder "$CODING_BACKEND_API_KEY"; then CODING_BACKEND_API_KEY=""; fi
@@ -154,6 +185,10 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var GATEWAY_TOKEN "$GATEWAY_TOKEN"
     write_env_var MEMORY_API_TOKEN "$MEMORY_API_TOKEN"
     write_env_var SANDBOX_WORKER_TOKEN "$SANDBOX_WORKER_TOKEN"
+    write_env_var CODING_JOB_SECRET "$CODING_JOB_SECRET"
+    write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"
+    write_env_var GITHUB_APP_WEBHOOK_SECRET "$GITHUB_APP_WEBHOOK_SECRET"
+    write_env_var GITHUB_APP_PRIVATE_KEY "$GITHUB_APP_PRIVATE_KEY"
     write_env_var TS_HARNESS_DB_PASSWORD "$TS_HARNESS_DB_PASSWORD"
     write_env_var MANAGED_DB_PASSWORD "${MANAGED_DB_PASSWORD:-$TS_HARNESS_DB_PASSWORD}"
     write_env_var MANAGED_DB_CREDENTIAL_REF "${MANAGED_DB_CREDENTIAL_REF:-}"
@@ -187,6 +222,12 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var CODING_BACKEND_PROVIDER "$CODING_BACKEND_PROVIDER"
     write_env_var CODING_BACKEND_MODEL "$CODING_BACKEND_MODEL"
     write_env_var GITHUB_TOKEN "$GITHUB_TOKEN"
+    write_env_var ATLASSIAN_SITE_URL "$ATLASSIAN_SITE_URL"
+    write_env_var ATLASSIAN_EMAIL "$ATLASSIAN_EMAIL"
+    write_env_var ATLASSIAN_API_TOKEN "$ATLASSIAN_API_TOKEN"
+    write_env_var ATLASSIAN_CLIENT_ID "$ATLASSIAN_CLIENT_ID"
+    write_env_var ATLASSIAN_CLIENT_SECRET "$ATLASSIAN_CLIENT_SECRET"
+    write_env_var ATLASSIAN_CLOUD_ID "$ATLASSIAN_CLOUD_ID"
 } > "$SECRETS_ENV"
 chmod 600 "$SECRETS_ENV"
 echo "[phase:${PHASE_NAME}] Secrets written to $SECRETS_ENV (mode 600)."

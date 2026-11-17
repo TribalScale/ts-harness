@@ -8,17 +8,20 @@ export function SplitView({
   detail,
   detailOpen,
   onCloseDetail,
+  className,
 }: {
   list: React.ReactNode;
   detail: React.ReactNode;
   detailOpen: boolean;
   onCloseDetail: () => void;
+  className?: string;
 }) {
   const desktop = useMediaQuery("(min-width: 1024px)");
+  const splitClass = className ? `split ${className}` : "split";
 
   if (desktop) {
     return (
-      <div className="split">
+      <div className={splitClass}>
         <aside className="split-list" aria-label="Items">
           {list}
         </aside>
@@ -28,7 +31,7 @@ export function SplitView({
   }
 
   return (
-    <div className="split">
+    <div className={splitClass}>
       <aside className="split-list" aria-label="Items">
         {list}
       </aside>

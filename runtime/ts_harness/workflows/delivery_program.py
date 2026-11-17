@@ -14,6 +14,7 @@ from ts_harness.repo_paths import ensure_scripts_importable
 from ts_harness.workflows.continuity import write_stage_snapshot
 from ts_harness.workflows.materialize import load_skeleton, materialize_skeleton_tasks
 from ts_harness.workflows.program_adapters import build_default_adapter_registry
+from ts_harness.workflows.project_repos import with_project_repositories
 from ts_harness.workflows.program_materialize import (
     automatic_edges_from,
     build_intake_for_node,
@@ -196,6 +197,39 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return dict(metadata) if isinstance(metadata, dict) else {}
 
 
+def _with_repo_onboarding(node_id: str, artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Add onboarding work orders the first time a program enters implement (see repo_onboarding_gate)."""
+    from ts_harness.workflows.repo_onboarding_gate import should_check, with_repo_onboarding
+    from ts_harness.implementation.work_order_context import max_parallel_work_orders
+
+    if not should_check(node_id, artifacts):
+        return artifacts
+    try:
+        return with_repo_onboarding(artifacts, max_parallel=max_parallel_work_orders(_live_program_defaults()))
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("repo onboarding check skipped: %s", exc)
+        return artifacts
+
+
+def ensure_program_can_advance(program: dict[str, Any], artifacts: dict[str, Any] | None = None) -> bool:
+    """Raise when the program is closed for good; return True when advancing reopens it.
+
+    A program that ended at a ``may_end`` node (``ended_at_phase`` equals its current
+    phase) is succeeded but may continue. One that reached a terminal node, or was
+    cancelled or failed, is closed: a new request starts a new program.
+    """
+    status = str(program.get("status") or "running")
+    if status in {"cancelled", "failed"}:
+        raise ValueError(f"program is {status}; start a new request instead")
+    if status != "succeeded":
+        return False
+    found = _program_artifacts(program) if artifacts is None else artifacts
+    ended_at = str(found.get("ended_at_phase") or "")
+    if ended_at and ended_at == str(program.get("current_phase") or ""):
+        return True
+    raise ValueError("program is complete; start a new request instead")
+
+
 def _program_artifacts(program: dict[str, Any]) -> dict[str, Any]:
     metadata = _parse_metadata(program.get("metadata"))
     artifacts = metadata.get("artifacts")
@@ -246,6 +280,7 @@ class DeliveryProgramService:
         link_program_ids: list[str] | None = None,
         parent_program_id: str | None = None,
         department: str | None = None,
+        owner_id: str | None = None,
     ) -> ProgramStartResult:
         resolved_entry = str(entry_node or entry_phase or "").strip()
         if not resolved_entry:
@@ -275,6 +310,10 @@ class DeliveryProgramService:
 
         effective_snapshot = snapshot if snapshot is not None else _compat_snapshot()
         artifact_bag = seed_list_reentry(effective_snapshot, resolved_entry, artifact_bag)
+        artifact_bag = with_project_repositories(
+            self.client, artifact_bag, tenant_id=tenant_id, project_key=project_id
+        )
+        artifact_bag = _with_repo_onboarding(resolved_entry, artifact_bag)
         errors = validate_entry_against_snapshot(
             effective_snapshot,
             resolved_entry,
@@ -301,6 +340,8 @@ class DeliveryProgramService:
         parent = str(parent_program_id or "").strip() or None
         if parent:
             create_kwargs["parent_program_id"] = parent
+        if owner_id:
+            create_kwargs["owner_id"] = owner_id
         created = self.client.create_program(
             program_id=program_id,
             tenant_id=tenant_id,
@@ -434,7 +475,13 @@ class DeliveryProgramService:
                 target_phase = phase_for_workflow_type(target_workflow_type)
 
         existing_artifacts = _program_artifacts(program)
-        merged_artifacts = {**existing_artifacts, **(artifacts or {})}
+        reopening = ensure_program_can_advance(program, existing_artifacts)
+        merged_artifacts = with_project_repositories(
+            self.client,
+            {**existing_artifacts, **(artifacts or {})},
+            tenant_id=str(program.get("tenant_id") or "default"),
+            project_key=program.get("project_id"),
+        )
 
         reentry = node_reentry(effective_snapshot, current_phase)
         allow_reentry = (
@@ -461,6 +508,7 @@ class DeliveryProgramService:
                 merged_artifacts["planning_track"] = track
         if resolved_target != current_phase:
             merged_artifacts = seed_list_reentry(effective_snapshot, resolved_target, merged_artifacts)
+        merged_artifacts = _with_repo_onboarding(resolved_target, merged_artifacts)
         errors = validate_entry_against_snapshot(
             effective_snapshot,
             resolved_target,
@@ -489,6 +537,14 @@ class DeliveryProgramService:
             actor=actor,
             **decision_fields,
         )
+        if reopening or existing_artifacts.get("ended_at_phase"):
+            # After the advance: the gateway checks ended_at_phase before it reopens the row.
+            self.client.patch_program_artifacts(
+                program_id,
+                {"program_status": "running", "ended_at_phase": None, "reopened_from_phase": current_phase},
+                merge=True,
+                actor=actor,
+            )
 
         workflow_type, definition_version = resolve_node_workflow(
             effective_snapshot,
@@ -923,6 +979,7 @@ class DeliveryProgramService:
                 "external_ref": body.get("external_ref"),
                 "contract": body.get("contract") or {},
                 "definition_version": body.get("definition_version"),
+                "lane": body.get("lane"),
                 "actor": actor,
             }
             if depends_on_names:

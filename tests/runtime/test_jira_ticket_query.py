@@ -24,44 +24,48 @@ def _issue(key: str, project: str, epic: str | None, summary: str, status: str) 
 class TicketQueryTests(unittest.TestCase):
     def test_build_assigned_ticket_jql(self):
         jql = build_assigned_ticket_jql(
-            "TFS",
+            "PROJ",
             ["To Do", "Open", "Ready for Dev", "In Progress"],
             "acct-1",
         )
         self.assertIn('assignee = "acct-1"', jql)
-        self.assertIn('project = TFS', jql)
+        self.assertIn('project = PROJ', jql)
         self.assertIn('status IN ("To Do", Open, "Ready for Dev", "In Progress")', jql)
         self.assertNotIn("statusCategory", jql)
 
     def test_group_and_projects(self):
         issues = [
-            _issue("TFS-184", "TFS", "TFS-100", "Add cart retry", "To Do"),
-            _issue("TFS-190", "TFS", "TFS-100", "Tax edge cases", "In Progress"),
+            _issue("PROJ-184", "PROJ", "PROJ-100", "Add cart retry", "To Do"),
+            _issue("PROJ-190", "PROJ", "PROJ-100", "Tax edge cases", "In Progress"),
             _issue("PAY-9", "PAY", None, "Hotfix", "Open"),
         ]
         groups = group_tickets_by_epic(issues)
-        self.assertEqual(groups[0]["epic"], "TFS-100 — Checkout rewrite")
+        self.assertEqual(groups[0]["epic"], "PROJ-100 — Checkout rewrite")
         self.assertEqual(len(groups[0]["issues"]), 2)
         self.assertEqual(groups[1]["epic"], "No epic")
-        self.assertEqual(projects_from_assigned_issues(issues), ["TFS", "PAY"])
+        self.assertEqual(projects_from_assigned_issues(issues), ["PROJ", "PAY"])
 
     def test_format_ticket_list_grouped(self):
         issues = [
-            _issue("TFS-184", "TFS", "TFS-100", "Add cart retry", "To Do"),
-            {**_issue("TFS-190", "TFS", "TFS-100", "Tax edge cases", "In Progress"), "work_order_id": "WO-005"},
+            _issue("PROJ-184", "PROJ", "PROJ-100", "Add cart retry", "To Do"),
+            {**_issue("PROJ-190", "PROJ", "PROJ-100", "Tax edge cases", "In Progress"), "work_order_id": "WO-005"},
         ]
         text = format_ticket_list(
-            project="TFS",
+            project="PROJ",
             issues=issues,
-            pointer_by_key={"TFS-184": {"work_order_id": "WO-003"}},
-            blocked_keys={"TFS-190"},
+            pointer_by_key={"PROJ-184": {"work_order_id": "WO-003"}},
+            blocked_keys={"PROJ-190"},
         )
-        self.assertIn("Project: TFS", text)
-        self.assertIn("Epic TFS-100", text)
-        self.assertIn("TFS-184", text)
+        self.assertIn("Project: PROJ", text)
+        self.assertIn("Epic PROJ-100", text)
+        self.assertIn("PROJ-184", text)
         self.assertIn("WO-003", text)
         self.assertIn("(blocked)", text)
         self.assertIn("Reply with a ticket key", text)
+
+    def test_format_ticket_list_example_key_comes_from_the_list(self):
+        text = format_ticket_list(project="ABC", issues=[_issue("ABC-7", "ABC", None, "Fix login", "To Do")])
+        self.assertIn("Reply with a ticket key (ABC-7)", text)
 
 
 if __name__ == "__main__":

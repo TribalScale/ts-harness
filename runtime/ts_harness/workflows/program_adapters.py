@@ -7,6 +7,7 @@ and intake-building behavior.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 
@@ -19,7 +20,7 @@ ExtractOutputsFn = Callable[..., dict[str, Any]]
 # extract_declared_outputs trusts the node's produces_artifacts list (None).
 ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     "extract_prd_outputs": frozenset({"approved_prd"}),
-    "extract_jira_outputs": frozenset({"jira_epic_key", "planning_track"}),
+    "extract_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "planning_track"}),
     "extract_work_orders_outputs": frozenset(
         {
             "planner_complete",
@@ -49,7 +50,7 @@ ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     "extract_deploy_outputs": frozenset({"merge_sha", "released_environments"}),
     "extract_file_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys"}),
     "extract_pick_ticket_outputs": frozenset(
-        {"jira_issue_key", "jira_project_key", "owner_program_id"}
+        {"jira_issue_key", "jira_project_key", "owner_program_id", "jira_issue_keys"}
     ),
     "extract_declared_outputs": None,
 }
@@ -132,7 +133,34 @@ def _extract_prd_outputs(
     patch: dict[str, Any] = {}
     if merged.get("approved_prd") or merged.get("prd"):
         patch["approved_prd"] = merged.get("approved_prd") or merged.get("prd")
+    else:
+        approved = _approved_draft(tasks)
+        if approved is not None:
+            patch["approved_prd"] = approved
     return patch
+
+
+PRD_DRAFT_STEPS = ("draft_prd", "revise_prd")
+
+
+def _approved_draft(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The draft a passed approval gate approved: the newest succeeded draft or revision.
+
+    Only the chat session used to keep it (``approved_artifact``), so a program that ended
+    at its PRD and was continued from the console reached Jira without the PRD.
+    """
+    from ts_harness.workflows.artifacts import latest_artifact_output
+
+    gate_passed = any(
+        task.get("approval_required")
+        and task.get("status") == "succeeded"
+        and str(task.get("approval_status") or "approved") == "approved"
+        for task in tasks
+    )
+    if not gate_passed:
+        return None
+    output, _step = latest_artifact_output(tasks, list(PRD_DRAFT_STEPS))
+    return output
 
 
 def _build_jira_inputs(
@@ -161,11 +189,15 @@ def _extract_jira_outputs(
     del workflow_type, artifacts
     merged = dict(outputs or {})
     merged.update(_merge_task_outputs(tasks))
+    if isinstance(merged.get("result"), dict):
+        merged = {**merged["result"], **merged}
     patch: dict[str, Any] = {}
     if merged.get("epic_key") or merged.get("jira_epic_key"):
-        patch["jira_epic_key"] = merged.get("epic_key") or merged.get("jira_epic_key")
-    if "planning_track" not in patch:
-        patch["planning_track"] = "jira"
+        patch["jira_epic_key"] = merged.get("jira_epic_key") or merged.get("epic_key")
+    story_keys = merged.get("jira_story_keys") or merged.get("child_keys")
+    if isinstance(story_keys, list) and story_keys:
+        patch["jira_story_keys"] = [str(key) for key in story_keys if str(key or "").strip()]
+    patch["planning_track"] = "jira"
     return patch
 
 
@@ -187,6 +219,8 @@ def _build_work_orders_inputs(
         intake["approved_prd"] = artifacts["approved_prd"]
     if artifacts.get("completed_work_order_ids") is not None:
         intake["completed_work_order_ids"] = artifacts.get("completed_work_order_ids")
+    if artifacts.get("project_repositories"):
+        intake["project_repositories"] = artifacts["project_repositories"]
     return intake
 
 
@@ -322,7 +356,13 @@ def _build_implement_inputs(
                 intake["work_order_body"] = body
         except Exception:  # noqa: BLE001
             pass
-    if workflow_type:
+    repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
+    project_default = repositories[0] if len(repositories) == 1 else None
+    if project_default:
+        intake["repo_url"] = project_default["repo_url"]
+        if project_default.get("default_branch"):
+            intake["base_branch"] = project_default["default_branch"]
+    elif workflow_type:
         try:
             from ts_harness.implementation.config import repo_for_workflow
 
@@ -340,7 +380,31 @@ def _build_implement_inputs(
         "main",
     }:
         intake["base_branch"] = "dev"
+    if repositories and artifacts.get("work_orders_markdown"):
+        _route_work_orders_to_repositories(intake, str(artifacts["work_orders_markdown"]), repositories)
     return intake
+
+
+def _route_work_orders_to_repositories(
+    intake: dict[str, Any], markdown: str, repositories: list[dict[str, Any]]
+) -> None:
+    """Give each work order the repo_url and base_branch of the repository it names."""
+    from ts_harness.implementation.work_order_context import parse_work_order_repositories, resolve_repository
+
+    named = parse_work_order_repositories(markdown)
+
+    def target(work_order_id: Any) -> dict[str, Any]:
+        repository = resolve_repository(named.get(str(work_order_id or "").upper()), repositories)
+        if repository is None:
+            return {}
+        out = {"repo_url": repository["repo_url"]}
+        if repository.get("default_branch"):
+            out["base_branch"] = repository["default_branch"]
+        return out
+
+    for item in intake.get("work_orders") or []:
+        item.update(target(item.get("work_order_id")))
+    intake.update(target(intake.get("work_order_id")))
 
 
 def _extract_implement_outputs(
@@ -380,7 +444,46 @@ def _extract_implement_outputs(
             if item not in completed:
                 completed.append(item)
         patch["completed_work_order_ids"] = completed
+    merged_work_orders = _merged_work_orders(tasks, merged, existing)
+    if merged_work_orders:
+        patch["merged_work_orders"] = merged_work_orders
     return patch
+
+
+def _merged_work_orders(
+    tasks: list[dict[str, Any]], merged: dict[str, Any], existing: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Every merged PR of the program so far, one entry per PR URL, for per-repository releases."""
+    by_pr: dict[str, dict[str, Any]] = {
+        str(item["pr_url"]): dict(item)
+        for item in existing.get("merged_work_orders") or []
+        if isinstance(item, dict) and item.get("pr_url")
+    }
+
+    def add(work_order_id: Any, pr_url: Any, merge_sha: Any, merged_at: Any) -> None:
+        if pr_url and merge_sha:
+            by_pr[str(pr_url)] = {
+                "work_order_id": str(work_order_id or ""),
+                "pr_url": str(pr_url),
+                "merge_sha": str(merge_sha),
+                "merged_at": str(merged_at or ""),
+            }
+
+    found_prs = False
+    for task in tasks:
+        output = task.get("output") if task.get("status") == "succeeded" else None
+        for pr in (output or {}).get("prs") or [] if isinstance(output, dict) else []:
+            if isinstance(pr, dict):
+                found_prs = True
+                add(pr.get("work_order_id"), pr.get("pr_url"), pr.get("merge_sha"), pr.get("merged_at"))
+    if not found_prs:
+        add(
+            merged.get("work_order_id"),
+            merged.get("pr_url"),
+            merged.get("merge_sha") or merged.get("merge_commit_sha"),
+            merged.get("merged_at"),
+        )
+    return list(by_pr.values())
 
 
 def _build_deploy_inputs(
@@ -393,7 +496,17 @@ def _build_deploy_inputs(
 ) -> dict[str, Any]:
     del transcript_messages
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
-    for key in ("pr_url", "pr_urls", "merge_sha", "repo_url", "rollback_environment", "rollback_sha"):
+    for key in (
+        "pr_url",
+        "pr_urls",
+        "merge_sha",
+        "repo_url",
+        "rollback_environment",
+        "rollback_sha",
+        "merged_work_orders",
+        "work_orders_markdown",
+        "project_repositories",
+    ):
         if artifacts.get(key):
             intake[key] = artifacts[key]
     base_branch = artifacts.get("base_branch") or artifacts.get("default_branch")
@@ -430,6 +543,9 @@ def _extract_deploy_outputs(
         and task["output"].get("release_id")
         and task["output"].get("environment")
     ]
+    for output in (merged.get("children_outputs") or {}).values():
+        if isinstance(output, dict):
+            released.extend(str(env) for env in output.get("environments") or [])
     if released:
         patch["released_environments"] = list(dict.fromkeys(released))
     return patch
@@ -510,6 +626,11 @@ def _extract_declared_outputs(
     if approved is not None and produces:
         first = produces[0]
         patch.setdefault(first, approved)
+    if "approved_prd" in produces and "approved_prd" not in patch:
+        result = merged.get("result") if isinstance(merged.get("result"), dict) else {}
+        markdown = merged.get("prd_markdown") or result.get("prd_markdown")
+        if isinstance(markdown, str) and markdown.strip():
+            patch["approved_prd"] = markdown
     return patch
 
 
@@ -528,6 +649,7 @@ def _build_file_jira_inputs(
         "approved_prd",
         "work_order_ids",
         "work_orders_markdown",
+        "bug_report",
         "jira_epic_key",
         "repo",
         "default_branch",
@@ -563,7 +685,32 @@ def _extract_file_jira_outputs(
         patch["jira_epic_key"] = merged.get("epic_key") or merged.get("jira_epic_key")
     if merged.get("jira_story_keys") or merged.get("story_keys"):
         patch["jira_story_keys"] = merged.get("jira_story_keys") or merged.get("story_keys")
+    if not patch:
+        epic, keys = _filed_issue_keys(str(merged.get("summary") or ""))
+        if epic:
+            patch["jira_epic_key"] = epic
+        if keys:
+            patch["jira_story_keys"] = keys
     return patch
+
+
+_FILED_KEY_RE = re.compile(r"(?<![A-Za-z0-9_-])([A-Z][A-Z0-9_]+-\d+)(?![A-Za-z0-9_])")
+
+
+def _filed_issue_keys(summary: str) -> tuple[str, list[str]]:
+    """The epic key named in a filing summary and the other issue keys. Work-order ids are not Jira keys."""
+    keys: list[str] = []
+    for match in _FILED_KEY_RE.finditer(summary):
+        key = match.group(1)
+        if key.startswith("WO-") or key in keys:
+            continue
+        keys.append(key)
+    match = _EPIC_KEY_RE.search(summary)
+    epic = match.group(1) if match and match.group(1) in keys else ""
+    return epic, [key for key in keys if key != epic]
+
+
+_EPIC_KEY_RE = re.compile(r"\b(?:[Ee]pic|EPIC)\b[^A-Z\n]{0,20}([A-Z][A-Z0-9_]+-\d+)")
 
 
 def _build_pick_ticket_inputs(
@@ -599,6 +746,9 @@ def _extract_pick_ticket_outputs(
     owner = owner_program_from_pick_output(merged)
     if owner:
         patch["owner_program_id"] = owner
+    keys = merged.get("jira_issue_keys")
+    if isinstance(keys, list) and keys and all(isinstance(item, str) and item.strip() for item in keys):
+        patch["jira_issue_keys"] = [item.strip() for item in keys]
     return patch
 
 

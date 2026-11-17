@@ -135,6 +135,7 @@ class ReleaseGateRunner:
         "workflow_hook_smoke",
         "prd_request_smoke",
         "continue_bridge_smoke",
+        "program_may_end_smoke",
         "intent_routing_smoke",
         "workflow_runner_import_smoke",
         "delivery_program",
@@ -171,9 +172,14 @@ class ReleaseGateRunner:
                 results[gate] = GateResult(gate, "missing", "no check registered")
                 continue
             try:
-                ok = bool(check())
+                outcome = check()
             except Exception as exc:  # noqa: BLE001
                 results[gate] = GateResult(gate, "failed", str(exc))
                 continue
-            results[gate] = GateResult(gate, "passed" if ok else "failed")
+            # A check returns a bool, or (ok, detail) to say why it failed or what it retried.
+            if isinstance(outcome, tuple):
+                ok, detail = bool(outcome[0]), str(outcome[1] if len(outcome) > 1 else "")
+            else:
+                ok, detail = bool(outcome), ""
+            results[gate] = GateResult(gate, "passed" if ok else "failed", detail)
         return ReleaseGateReport(results)

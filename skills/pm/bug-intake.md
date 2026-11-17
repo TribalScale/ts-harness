@@ -8,23 +8,27 @@ allowed_agents: [orchestrator, pm-agent]
 
 Use this skill on `bug_to_plan` and `bug_work_order`. Do not draft a PRD and do not call the write-up `approved_prd` or `prd_markdown`.
 
+## Shared sources
+
+On `clarify` and `draft_bug`, `input.sources`, when present, is what the requester attached: files, Google Drive documents and descriptions of images, as markdown with one section per source. Treat it as part of the report, alongside `input.report`. Name the source when you rely on it. Do not ask for anything it already states. A section marked _Could not be read_, or listed under _Not read_, is missing: ask about it once (for a Drive link, ask the requester to share it with the workspace account), then carry on without it. A section cut at the size limit is incomplete; say so when the missing part matters.
+
 ## pick_repo
 
 List configured `repo_picker.repos`. If the list is empty, ask for `org/repo` and **fail closed** unless an operator added it. If there is one repo, still confirm it. Record `repo` and `default_branch` (omit → `dev`). Do not invent a repo.
 
 ## clarify
 
-Ask **one question at a time**. Use the diagnosis and the Slack report. The reporter may answer several in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
+Ask **exactly one question** in the reply. Do not send a numbered checklist. Use the diagnosis and the reporter's words in `input.report`; do not ask for anything the report, the diagnosis, or an earlier answer already states. The reporter may answer several questions in one message. Do **not** draft the bug report until they say `ready` or `draft the bug`. You may say you have enough, but they decide.
 
 ## draft_bug
 
-Write `bug_report` as markdown. Include what broke, where, the diagnosis (unknown cause is allowed), `repo`, and `default_branch`. Stay inside the clarified scope. Do not open a PR or edit code.
+Write `bug_report` as Markdown in the bug template (`read_skill_reference skill_id=jira-ticket-format path=references/bug.md`): Steps to reproduce, Expected, Actual with a failure class, Evidence citing only files the diagnosis read, Blast radius, Regression test and Notes. Start with a one-line title for the Jira summary. An unknown cause is allowed; say so. Return `repo` and `default_branch` alongside it. Build it from `input.report`, the clarified answers and the diagnosis. Stay inside the clarified scope. Do not open a PR or edit code.
 
 ## draft_work_order
 
 Write exactly one work order from the approved bug report and its diagnosis. Return:
 
-- `work_orders_markdown` — one heading `# WO-001 …` whose body has `## Summary`, `## Requirements`, `## Files`, `## E2E Acceptance Tests`, and `## Out of Scope`
+- `work_orders_markdown` — one heading `# WO-001 …` whose body has `## Summary`, `## Requirements`, `## Files`, `## E2E Acceptance Tests`, and `## Out of Scope`. The E2E tests include the bug report's regression test and at least one negative case.
 - `work_order_ids`: `["WO-001"]`
 - `next_work_order_id`: `"WO-001"`
 

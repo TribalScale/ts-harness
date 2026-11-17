@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.0
+version: 1.3.0
 ---
 
 # Governed Code Review
@@ -29,15 +29,22 @@ At invocation, announce:
 
 Then:
 
-1. Read `input.prs` (PR URL and head SHA). The PR set you report back **must
-   equal** this set exactly.
+1. Read `input.prs` (PR URL, head SHA, and title). The PR set you report back
+   **must** equal this set exactly. When the work order requires a title,
+   including a Jira-key prefix, judge that requirement from `title`. A title
+   that does not meet it is a finding.
 2. Read `input.files`: each changed file with `filename`, `status`,
-   `additions`, `deletions`, `patch` (truncated at 20k characters; see
-   `patch_truncated`) and `pr_url`. Lock files and generated code may already
-   be excluded; `input.diff_stats` has the totals.
+   `additions`, `deletions`, `patch` and `pr_url`. Very large patches are cut
+   (`patch_truncated: true`). Lock files and generated code may already be
+   excluded; `input.diff_stats` has the totals. Code you cannot see because a
+   patch was cut is not a finding: review what is visible and say in the
+   summary which files were cut.
 3. Read `input.work_order_body` and `input.work_order_ref`. Judge scope against
    its **In Scope** and **Out of Scope** sections (and a `## Files` list when
-   present).
+   present). `input.human_change_requests` lists changes a human reviewer
+   requested on this PR, oldest first. They amend the work order: where one
+   conflicts with the work order or an earlier request, the latest request
+   wins. Never flag code for doing what a human requested.
 4. Read `input.scope_findings`. These are deterministic findings for files
    outside a declared `## Files` list; they are merged automatically, so do
    not repeat them.
@@ -127,3 +134,8 @@ look thorough, and do not hide real ones to pass.
 - Approving, requesting changes on, or merging PRs.
 - Editing code, pushing commits, or opening PRs.
 - Re-running CI or the test suite (CI results are already in `await_pr_checks`).
+
+## Reading beyond the diff
+
+`read_pr_file` (PR URL, path, `ref: head` or `base`) returns a whole file of the PR's repository. Use it for the code around a changed hunk, or to check whether the base branch already has what the work order asks for, before raising a finding about it.
+

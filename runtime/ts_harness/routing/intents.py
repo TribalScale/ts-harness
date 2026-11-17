@@ -6,6 +6,9 @@ from dataclasses import dataclass
 import re
 from typing import TYPE_CHECKING
 
+# The request becomes the workflow's input; only confirmation messages shorten it.
+REQUEST_TEXT_LIMIT = 8000
+
 if TYPE_CHECKING:
     from ts_harness.config.schema import RuntimeConfig
 
@@ -41,6 +44,7 @@ class ChannelIntent:
     delegate_agent: str | None = None
     summary: str = ""
     rule_id: str | None = None
+    artifacts: dict | None = None
 
 
 def classify_channel_intent(
@@ -51,7 +55,7 @@ def classify_channel_intent(
 ) -> ChannelIntent:
     metadata = session_metadata or {}
     text = (user_text or "").strip()
-    summary = text[:240]
+    summary = text[:REQUEST_TEXT_LIMIT]
 
     bridge_intent = _match_bridge_intent(text, metadata)
     if bridge_intent is not None:
@@ -68,6 +72,10 @@ def classify_channel_intent(
             if matched is not None and matched.workflow_type:
                 return matched
         return ChannelIntent(kind="workflow_gate", summary=summary)
+
+    advance = _match_program_advance(text, metadata)
+    if advance is not None:
+        return advance
 
     mode = str(metadata.get("mode") or "")
     linked_modes = {"workflow_linked", "bridge_linked", "prd_linked", "delivery_linked"}
@@ -93,7 +101,7 @@ def _match_bridge_intent(text: str, metadata: dict) -> ChannelIntent | None:
     pending = read_pending_bridge(metadata)
     if pending and (_is_confirm(text) or _signals_match_text(text, _bridge_signals(metadata))):
         bridge_id = _bridge_intent_id(metadata)
-        return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:240])
+        return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:REQUEST_TEXT_LIMIT])
 
     phase = read_workflow_phase(metadata)
     workflow_type = str(metadata.get("workflow_type") or "")
@@ -101,8 +109,80 @@ def _match_bridge_intent(text: str, metadata: dict) -> ChannelIntent | None:
         signals = _bridge_signals(metadata)
         if signals and _signals_match_text(text, signals):
             bridge_id = _bridge_intent_id(metadata)
-            return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:240])
+            return ChannelIntent(kind=bridge_id or "continue_bridge", summary=text[:REQUEST_TEXT_LIMIT])
     return None
+
+
+def program_advance_candidates(text: str, metadata: dict) -> list[dict]:
+    """Outgoing program edges from the session's phase whose signals match ``text``."""
+    from ts_harness.workflows.session_compat import read_program_id, read_program_phase
+
+    program_type = str(metadata.get("program_type") or "").strip()
+    source_node = str(read_program_phase(metadata) or "").strip()
+    if not read_program_id(metadata) or not program_type or not source_node or not text:
+        return []
+    from ts_harness.workflows.program_materialize import resolve_bridge_candidates_from_text
+    from ts_harness.workflows.program_registry import get_program_definition_registry
+
+    try:
+        snapshot = get_program_definition_registry().load(program_type)
+    except (FileNotFoundError, ValueError):
+        return []
+    candidates = resolve_bridge_candidates_from_text(
+        text,
+        source_workflow_type=str(metadata.get("workflow_type") or ""),
+        snapshot=snapshot,
+        source_node=source_node,
+    )
+    if not any(
+        item.get("source_node") == "implement" and item.get("target_node") == "pick"
+        for item in candidates
+    ):
+        return candidates
+    from ts_harness.jira.ticket_queue import queue_is_active
+
+    if queue_is_active(_artifacts_for_queue(metadata)):
+        return [
+            item
+            for item in candidates
+            if not (item.get("source_node") == "implement" and item.get("target_node") == "pick")
+        ]
+    return candidates
+
+
+def _artifacts_for_queue(metadata: dict) -> dict:
+    """Session artifacts when they already hold the queue; otherwise the program row."""
+    from ts_harness.workflows.session_compat import read_program_artifacts, read_program_id
+
+    artifacts = read_program_artifacts(metadata)
+    if "program_artifacts" in (metadata or {}):
+        return artifacts
+    program_id = read_program_id(metadata)
+    if not program_id:
+        return artifacts
+    try:
+        from ts_harness.memory.client import get_memory_client
+
+        payload = get_memory_client().get_program(program_id) or {}
+    except Exception:
+        return artifacts
+    program = payload.get("program") if isinstance(payload.get("program"), dict) else {}
+    meta = program.get("metadata") or {}
+    live = meta.get("artifacts") if isinstance(meta, dict) else None
+    return dict(live) if isinstance(live, dict) else artifacts
+
+
+def _match_program_advance(text: str, metadata: dict) -> ChannelIntent | None:
+    candidates = program_advance_candidates(text, metadata)
+    if not candidates:
+        return None
+    target = str(candidates[0]["target_node"]) if len(candidates) == 1 else None
+    return ChannelIntent(
+        kind="program_advance",
+        program_type=str(metadata.get("program_type") or "") or None,
+        entry_phase=target,
+        summary=text[:REQUEST_TEXT_LIMIT],
+    )
 
 
 def _bridge_signals(metadata: dict) -> list[str]:

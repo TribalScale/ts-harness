@@ -12,10 +12,12 @@ from ts_harness.gateway.channel_confirmations import (
     execute_confirmed_workflow_start,
     execute_governed_workflow_proposal,
     execute_intake_response,
+    execute_program_advance_proposal,
     execute_workflow_gate_response,
     execute_workflow_artifact_query,
     execute_workflow_status_query,
     format_intake_response_ack,
+    format_program_advance_proposal_message,
     format_program_advanced_message,
     format_program_started_message,
     format_workflow_gate_response_ack,
@@ -179,6 +181,60 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    def _bug_program_session(self):
+        self.session.metadata = {
+            **(self.session.metadata or {}),
+            "program_id": "prog-1",
+            "program_type": "bug_to_jira_work_orders",
+            "program_phase": "work_order",
+            "workflow_id": "wf-wo",
+            "workflow_type": "bug_work_order",
+            "mode": "bridge_linked",
+        }
+        get_session_store().save(self.session)
+        return ChannelIntent(
+            kind="program_advance",
+            program_type="bug_to_jira_work_orders",
+            entry_phase="file_jira",
+            summary="file these tickets",
+        )
+
+    def test_program_advance_proposal_waits_for_yes(self):
+        intent = self._bug_program_session()
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine_cls.return_value.get_status.return_value = {"status": "succeeded", "tasks": []}
+            result = execute_program_advance_proposal(
+                self.session, intent, tenant_id="default", agent_id="orchestrator", source="slack"
+            )
+        self.assertEqual(result["status"], "awaiting_confirmation")
+        pending = (get_session_store().get(self.session.session_id).metadata or {})["pending_program_advance"]
+        self.assertEqual(pending["target_node"], "file_jira")
+        self.assertEqual(pending["source_node"], "work_order")
+        self.assertEqual(
+            format_program_advance_proposal_message(result),
+            "Continue to file jira? Reply yes to continue, or no to stay.",
+        )
+
+    def test_program_advance_proposal_needs_a_finished_phase(self):
+        intent = self._bug_program_session()
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine_cls.return_value.get_status.return_value = {"status": "running", "tasks": []}
+            result = execute_program_advance_proposal(
+                self.session, intent, tenant_id="default", agent_id="orchestrator", source="slack"
+            )
+        self.assertEqual(result, {"status": "not_ready"})
+        self.assertNotIn("pending_program_advance", get_session_store().get(self.session.session_id).metadata or {})
+
+    def test_advanced_message_says_when_the_first_step_waits_for_a_reply(self):
+        message = format_program_advanced_message(
+            {"target_phase": "file_jira", "workflow_type": "file_work_orders_as_jira", "first_step": "choose_epic"}
+        )
+        self.assertIn("waiting for you. Reply ready to continue.", message)
+        started = format_program_started_message(
+            {"entry_phase": "bug_intake", "workflow_type": "bug_to_plan", "first_step": "pick_repo"}
+        )
+        self.assertIn("(pick repo) is waiting for you. Reply with the repo to use.", started)
+
     @patch("ts_harness.workflows.delivery_program.get_delivery_program_service")
     def test_execute_confirmed_program_advance_advances_program(self, service_factory):
         service = MagicMock()
@@ -221,6 +277,12 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(result["workflow_id"], "wf-jira")
         service.advance_program.assert_called_once()
+        self.assertEqual(service.advance_program.call_args.kwargs["source_workflow_id"], "wf-prd")
+        relinked = get_session_store().get(self.session.session_id).metadata or {}
+        self.assertEqual(relinked["workflow_id"], "wf-jira")
+        self.assertEqual(relinked["active_workflow_id"], "wf-jira")
+        self.assertEqual(relinked["program_phase"], "jira")
+        self.assertNotIn("pending_program_advance", relinked)
 
     def test_resolve_program_confirmation_proceed(self):
         set_pending_program(
@@ -321,7 +383,25 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
             }
         )
         self.assertIn("prd request", message.lower())
+        self.assertIn("online multiplayer checker game", message)
         self.assertIn("yes", message.lower())
+
+    def test_format_workflow_proposal_message_shortens_long_summary(self):
+        long_summary = (
+            "Build a crypto portfolio dashboard that tracks wallets, taxes, and alerts. "
+            + ("Include holdings, performance, and export. " * 30)
+        )
+        message = format_workflow_proposal_message(
+            {
+                "workflow_type": "prd_request",
+                "summary": long_summary,
+            }
+        )
+        self.assertIn("I've prepared a prd request workflow for:", message)
+        self.assertIn("Build a crypto portfolio dashboard", message)
+        self.assertNotIn(long_summary, message)
+        self.assertLess(len(message), len(long_summary))
+        self.assertIn("Reply yes to start, or no to cancel.", message)
 
     def test_is_workflow_status_query_matches_common_phrases(self):
         self.assertTrue(is_workflow_status_query("okay, whats the status?"))
@@ -448,6 +528,114 @@ class ChannelConfirmationExecutionTests(unittest.TestCase):
         engine.handle_approve.assert_called_once()
         self.assertEqual(result["status"], "approved")
         self.assertIn("approved", format_workflow_gate_response_ack(result).lower())
+
+    def test_intake_ready_reply_approves_without_asking_the_llm(self):
+        self.session.metadata = {
+            "workflow_id": "wf-1",
+            "workflow_type": "bug_to_plan",
+            "mode": "workflow_linked",
+        }
+        provider = MagicMock()
+        provider.chat.side_effect = AssertionError("llm should not classify a ready reply")
+        reply = "Steps: the report already lists them.\nready, draft the bug."
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls:
+            engine = engine_cls.return_value
+            engine.get_status.return_value = {
+                "tasks": [
+                    {"id": "clarify-1", "step_name": "clarify", "status": "succeeded"},
+                    {
+                        "id": "gate-1",
+                        "workflow_id": "wf-1",
+                        "workflow_type": "bug_to_plan",
+                        "step_name": "await_ready",
+                        "status": "pending",
+                        "approval_required": True,
+                        "approval_status": "pending",
+                        "depends_on": ["clarify-1"],
+                    },
+                ],
+            }
+            engine.handle_approve.return_value = {"id": "gate-1", "approval_status": "approved"}
+            result = execute_workflow_gate_response(
+                self.session,
+                tenant_id="default",
+                agent_id="orchestrator",
+                source="web",
+                user_text=reply,
+                provider=provider,
+                use_llm_fallback=True,
+            )
+        self.assertEqual(result["status"], "approved")
+        provider.chat.assert_not_called()
+        engine.handle_approve.assert_called_once()
+        self.assertEqual(engine.handle_approve.call_args.kwargs["reply_text"], reply)
+
+    def _intake_reply(self, text: str, gate_input: dict | None = None):
+        self.session.metadata = {
+            "workflow_id": "wf-1",
+            "workflow_type": "bug_to_plan",
+            "mode": "workflow_linked",
+        }
+        with patch("ts_harness.workflows.engine.get_workflow_engine") as engine_cls, patch(
+            "ts_harness.memory.client.get_memory_client"
+        ) as memory_factory:
+            engine = engine_cls.return_value
+            engine.get_status.return_value = {
+                "tasks": [
+                    {"id": "clarify-1", "step_name": "clarify", "status": "succeeded"},
+                    {
+                        "id": "gate-1",
+                        "workflow_id": "wf-1",
+                        "workflow_type": "bug_to_plan",
+                        "step_name": "await_ready",
+                        "status": "pending",
+                        "approval_required": True,
+                        "approval_status": "pending",
+                        "depends_on": ["clarify-1"],
+                        "input": dict(gate_input or {"summary": "bug"}),
+                    },
+                ],
+            }
+            engine.handle_approve.return_value = {"id": "gate-1", "approval_status": "approved"}
+            result = execute_workflow_gate_response(
+                self.session,
+                tenant_id="default",
+                agent_id="orchestrator",
+                source="web",
+                user_text=text,
+                use_llm_fallback=False,
+            )
+        return result, engine, memory_factory.return_value
+
+    def test_intake_not_ready_is_not_an_approval(self):
+        result, engine, _ = self._intake_reply("not ready, I need another pass")
+        self.assertNotEqual(result.get("status"), "approved")
+        engine.handle_approve.assert_not_called()
+
+    def test_intake_ready_after_a_leading_no_approves(self):
+        result, engine, _ = self._intake_reply("No design docs to add. Ready, draft the plan.")
+        self.assertEqual(result["status"], "approved")
+        engine.handle_reject.assert_not_called()
+
+    def test_intake_answer_is_recorded_and_never_rejected(self):
+        for text in ("No, the bug only happens on Safari", "not yet, wait for the logs", "don't draft yet"):
+            with self.subTest(text=text):
+                result, engine, memory = self._intake_reply(text, {"summary": "bug", "answers": ["first"]})
+                self.assertEqual(result["status"], "answer_recorded")
+                engine.handle_approve.assert_not_called()
+                engine.handle_reject.assert_not_called()
+                task_id, patched = memory.patch_task_input.call_args.args
+                self.assertEqual(task_id, "gate-1")
+                self.assertEqual(patched, {"summary": "bug", "answers": ["first", text]})
+                self.assertEqual(format_workflow_gate_response_ack(result), "Got it. Say ready when you want a draft.")
+
+    def test_jira_gate_approves_on_a_named_epic(self):
+        result, engine, _ = self._intake_reply(
+            "file under THD-17",
+            {"jira_allowed_projects": ["THD"], "jira_project_key": "THD"},
+        )
+        self.assertEqual(result["status"], "approved")
+        engine.handle_approve.assert_called_once()
 
     def test_classify_approval_gate_response_looks_good(self):
         result = classify_approval_gate_response("looks good", use_llm_fallback=False)
@@ -994,3 +1182,98 @@ class IntakeResponseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetachFinishedProgramTests(unittest.TestCase):
+    CONTENT_REQUEST = "Plan work from this content.\n\nGoal: add a Last workflow line."
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+
+        from ts_harness.config.schema import load_runtime_config
+
+        root = Path(__file__).resolve().parents[2]
+        cls.config = load_runtime_config(root / "config" / "ts-harness-runtime.test.yaml")
+
+    def setUp(self):
+        reset_session_store()
+        self.session = SessionRecord(
+            session_id="web:live-content-5",
+            routing_key="rk",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "channel": "web",
+                "thread_id": "web:live-content-5",
+                "binding_key": "web:web:web:live-content-5",
+                "mode": "bridge_linked",
+                "program_id": "prog-1",
+                "program_type": "content_to_jira_work_orders",
+                "program_phase": "file_jira",
+                "program_artifacts": {"program_status": "succeeded"},
+                "workflow_id": "wf-3",
+                "active_workflow_id": "wf-3",
+                "workflow_type": "file_work_orders_as_jira",
+                "workflow_phase": "approved",
+                "source_workflow_id": "wf-2",
+                "approved_artifact": {"x": 1},
+                "review_artifact": {"x": 1},
+                "specialist_handoff": {"x": 1},
+                "presentation_doc_url": "https://docs.example/d",
+            },
+        )
+        get_session_store().save(self.session)
+
+    def _memory(self, status: str) -> MagicMock:
+        memory = MagicMock()
+        memory.get_program.return_value = {"program": {"id": "prog-1", "status": status}, "workflows": []}
+        return memory
+
+    def _detach(self, text: str, memory: MagicMock):
+        from ts_harness.gateway.channel_confirmations import detach_finished_program_for_new_request
+
+        return detach_finished_program_for_new_request(self.session, text, config=self.config, memory=memory)
+
+    def test_a_new_request_detaches_a_finished_program(self):
+        from ts_harness.gateway.channel_confirmations import should_auto_propose_program
+        from ts_harness.routing.intents import classify_channel_intent
+
+        self.assertEqual(self._detach(self.CONTENT_REQUEST, self._memory("succeeded")), "prog-1")
+        saved = get_session_store().get(self.session.session_id)
+        self.assertEqual(
+            saved.metadata,
+            {
+                "channel": "web",
+                "thread_id": "web:live-content-5",
+                "binding_key": "web:web:web:live-content-5",
+                "previous_program_id": "prog-1",
+            },
+        )
+        intent = classify_channel_intent(self.CONTENT_REQUEST, saved.metadata, config=self.config)
+        self.assertEqual(intent.program_type, "content_to_jira_work_orders")
+        self.assertTrue(should_auto_propose_program(intent, saved.metadata))
+
+    def test_cancelled_and_failed_programs_also_detach(self):
+        for status in ("cancelled", "failed"):
+            self.setUp()
+            self.assertEqual(self._detach(self.CONTENT_REQUEST, self._memory(status)), "prog-1")
+
+    def test_a_running_or_blocked_program_stays_linked(self):
+        for status in ("running", "blocked"):
+            self.assertIsNone(self._detach(self.CONTENT_REQUEST, self._memory(status)))
+            self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")
+
+    def test_status_questions_and_plain_chat_keep_the_finished_program(self):
+        for text in ("what's the status?", "show me the prd", "thanks, looks good"):
+            memory = self._memory("succeeded")
+            self.assertIsNone(self._detach(text, memory))
+            memory.get_program.assert_not_called()
+        self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")
+
+    def test_an_unreachable_memory_api_keeps_the_program(self):
+        memory = MagicMock()
+        memory.get_program.side_effect = RuntimeError("connection refused")
+        self.assertIsNone(self._detach(self.CONTENT_REQUEST, memory))
+        self.assertEqual(get_session_store().get(self.session.session_id).metadata["program_id"], "prog-1")

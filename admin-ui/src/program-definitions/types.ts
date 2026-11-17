@@ -34,6 +34,8 @@ export interface ProgramNode {
   input_bindings: InputBinding[];
   completion_adapter: string;
   terminal: boolean;
+  /** The program may stop after this node; the next steps are offered, not started. */
+  may_end?: boolean;
   reentry?: ProgramNodeReentry;
   complete_channel_text?: string;
 }

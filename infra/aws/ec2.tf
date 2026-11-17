@@ -17,7 +17,7 @@ locals {
     "__TF_AWS_REGION__"                    = var.aws_region
     "__TF_CLOUD_PROVIDER__"                = "aws"
     "__TF_CLOUD_REGION__"                  = var.aws_region
-    "__TF_SECRETS_PREFIX__"                = var.project_name
+    "__TF_SECRETS_PREFIX__"                = local.secret_prefix_effective
     "__TF_ENTERPRISE_REPO__"               = var.enterprise_repo_url
     "__TF_MEMORY_BACKEND__"                = var.memory_backend
     "__TF_RDS_ENDPOINT__"                  = local.rds_endpoint_rendered
@@ -31,6 +31,9 @@ locals {
     "__TF_CREDENTIALS_ENCRYPTION_KEY_ID__" = aws_kms_alias.agent_credentials.name
     # Instance id is not known when rendering launch-template user-data without a cycle; runtime IMDS fills it.
     "__TF_INSTANCE_RESOURCE_ID__" = ""
+    "__TF_ENTERPRISE_REPO_REF__"  = var.enterprise_repo_ref
+    "__TF_TAILSCALE_HOSTNAME__"   = var.tailscale_hostname != "" ? var.tailscale_hostname : var.project_name
+    "__TF_TAILSCALE_TAGS__"       = var.tailscale_tags
   }
 
   # Staged substitutions: each local applies the next token from _ud_subs.
@@ -55,7 +58,11 @@ locals {
   _ud_s17 = replace(local._ud_s16, "__TF_CREDENTIALS_ENCRYPTION_KEY_ID__", local._ud_subs["__TF_CREDENTIALS_ENCRYPTION_KEY_ID__"])
   _ud_s18 = replace(local._ud_s17, "__TF_INSTANCE_RESOURCE_ID__", local._ud_subs["__TF_INSTANCE_RESOURCE_ID__"])
 
-  user_data_rendered = local._ud_s18
+  _ud_s19 = replace(local._ud_s18, "__TF_ENTERPRISE_REPO_REF__", local._ud_subs["__TF_ENTERPRISE_REPO_REF__"])
+  _ud_s20 = replace(local._ud_s19, "__TF_TAILSCALE_HOSTNAME__", local._ud_subs["__TF_TAILSCALE_HOSTNAME__"])
+  _ud_s21 = replace(local._ud_s20, "__TF_TAILSCALE_TAGS__", local._ud_subs["__TF_TAILSCALE_TAGS__"])
+
+  user_data_rendered = local._ud_s21
 }
 
 resource "aws_launch_template" "harness" {
@@ -114,6 +121,10 @@ resource "aws_instance" "harness" {
     id      = aws_launch_template.harness.id
     version = "$Latest"
   }
+
+  subnet_id = local.host_subnet_id
+  # Follow the data disk (ebs.tf), so a rebuilt instance can attach it.
+  availability_zone = aws_ebs_volume.harness_data.availability_zone
 
   tags = {
     Name                = var.project_name

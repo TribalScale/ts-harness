@@ -16,9 +16,9 @@
 - meeting_summaries — generate concise notes and action items
 - status_reports — compile status from multiple sources
 
-**Model:** `openai/gpt-4o-mini`
+**Model:** `openai/gpt-6-luna`
 **Workspace:** `/workspace/comms-agent`
-**Toolsets:** `core-read`, `channel`, `google-workspace`
+**Toolsets:** `core-read`, `channel`, `google-workspace`, `jira-read`
 **Skills:** `comms`, `memory-api`
 
 **tools.allow** (from `config/ts-harness-runtime.yaml`):

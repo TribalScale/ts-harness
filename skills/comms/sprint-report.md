@@ -131,24 +131,24 @@ Provide:
 | Sprint days remaining| 4           |            |
 
 ### Completed This Week
-- TFS-123: JWT token refresh endpoint — @alice
-- TFS-118: Fix stale search results — @carol
-- TFS-125: Database index optimization — @dave
+- PROJ-123: JWT token refresh endpoint — @alice
+- PROJ-118: Fix stale search results — @carol
+- PROJ-125: Database index optimization — @dave
 - <...>
 
 ### In Progress
-- TFS-130: Bulk document upload (80% complete) — @alice
-- TFS-127: Email notification system (50% complete) — @bob
+- PROJ-130: Bulk document upload (80% complete) — @alice
+- PROJ-127: Email notification system (50% complete) — @bob
 
 ### Not Started
-- TFS-140: API rate limiting
-- TFS-138: Node.js base image update
+- PROJ-140: API rate limiting
+- PROJ-138: Node.js base image update
 
 ## Risks
 
 | Risk                                  | Severity | Recommended Action            |
 |---------------------------------------|----------|-------------------------------|
-| TFS-135 blocked for 5 days            | High     | Escalate to partner team      |
+| PROJ-135 blocked for 5 days            | High     | Escalate to partner team      |
 | Completion rate below 60% at midpoint | Medium   | Consider scope reduction      |
 
 ## Incidents
@@ -157,18 +157,18 @@ Provide:
 
 ## Highlights
 
-- Search performance improved 40% after index optimization (TFS-125)
+- Search performance improved 40% after index optimization (PROJ-125)
 - Zero P1/P2 incidents this week
 
 ## Next Week
 
 - Sprint planning on Monday
-- TFS-130 expected to merge Tuesday
+- PROJ-130 expected to merge Tuesday
 - Planned staging deployment Wednesday
 
 ## Action Items
 
-1. Escalate TFS-135 blocker with partner team
+1. Escalate PROJ-135 blocker with partner team
 2. Review remaining sprint scope in standup
 3. Schedule staging deployment for Wednesday
 ```

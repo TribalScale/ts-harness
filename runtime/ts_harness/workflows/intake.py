@@ -38,11 +38,10 @@ def task_has_external_wait(task: dict[str, Any]) -> bool:
     return str(task.get("error") or "").startswith(prefix)
 
 
-def intake_task_output(
+def _latest_intake_task(
     tasks: list[dict[str, Any]],
-    *,
-    intake_step: str = "intake",
-) -> dict[str, Any]:
+    intake_step: str,
+) -> dict[str, Any] | None:
     matches = [
         task
         for task in tasks
@@ -50,13 +49,51 @@ def intake_task_output(
         and task.get("status") == "succeeded"
     ]
     if not matches:
-        return {}
-    latest = sorted(
+        return None
+    return sorted(
         matches,
         key=lambda task: str(task.get("created_at") or ""),
     )[-1]
-    output = latest.get("output")
+
+
+def intake_task_output(
+    tasks: list[dict[str, Any]],
+    *,
+    intake_step: str = "intake",
+) -> dict[str, Any]:
+    latest = _latest_intake_task(tasks, intake_step)
+    output = latest.get("output") if latest else None
     return dict(output) if isinstance(output, dict) else {}
+
+
+def intake_original_request(
+    tasks: list[dict[str, Any]],
+    *,
+    intake_step: str = "intake",
+) -> str:
+    """The requester's own words that started the workflow.
+
+    ``input.summary`` is a short title, so the full text comes from the user
+    turns in the transcript context the program passed to intake.
+    """
+    latest = _latest_intake_task(tasks, intake_step)
+    task_input = latest.get("input") if latest else None
+    if not isinstance(task_input, dict):
+        return ""
+    context = task_input.get("context")
+    transcript = context.get("transcript") if isinstance(context, dict) else None
+    user_turns = [
+        str(message.get("content") or "").strip()
+        for message in transcript or []
+        if isinstance(message, dict) and message.get("role") == "user"
+    ]
+    text = "\n\n".join(turn for turn in user_turns if turn)
+    if text:
+        return text
+    fallback = task_input.get("summary")
+    if not fallback and isinstance(context, dict):
+        fallback = context.get("summary")
+    return str(fallback or "").strip()
 
 
 def merge_intake_response(
@@ -64,6 +101,7 @@ def merge_intake_response(
     user_text: str,
     *,
     summary: str = "",
+    original_request: str = "",
 ) -> dict[str, Any]:
     text = (user_text or "").strip()
     base_summary = str(
@@ -72,9 +110,10 @@ def merge_intake_response(
         or intake_output.get("content")
         or ""
     ).strip()
+    request = (original_request or "").strip()
     clarified = {
         "summary": base_summary,
-        "initial_request": base_summary,
+        "initial_request": request or base_summary,
         "questions": intake_output.get("questions") or [],
         "user_response": text,
         "answers": text,

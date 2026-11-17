@@ -1,6 +1,6 @@
 {
   "workflow_type": "rfp_request",
-  "definition_version": "1.1.0",
+  "definition_version": "1.2.0",
   "display_name": "RFP review",
   "contracts": {
     "rfp_intake": {
@@ -42,12 +42,30 @@
   },
   "stages": [
     {
+      "name": "gather_sources",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "barrier": {
+        "hook": "gather_intake_sources",
+        "intake_sources": "$workflow.intake_sources",
+        "agent_id": "sales-agent"
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 300
+      }
+    },
+    {
       "name": "intake",
       "kind": "task",
       "agent_id": "sales-agent",
+      "depends_on": ["gather_sources"],
       "allowed_agents": ["sales-agent"],
       "required_artifacts": ["clarified_requirements"],
       "contract_ref": "rfp_intake",
+      "input_map": {
+        "sources": "$prior.gather_sources.output.sources_text"
+      },
       "retry": {
         "max_retries": 2,
         "timeout_seconds": 600
@@ -61,6 +79,9 @@
       "allowed_agents": ["sales-agent"],
       "required_artifacts": ["rfp_draft"],
       "contract_ref": "rfp_draft",
+      "input_map": {
+        "sources": "$prior.gather_sources.output.sources_text"
+      },
       "retry": {
         "max_retries": 2,
         "timeout_seconds": 1800

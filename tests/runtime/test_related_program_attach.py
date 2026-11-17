@@ -55,14 +55,14 @@ class RelatedProgramAttachTests(unittest.TestCase):
                 {
                     "id": "a",
                     "tenant_id": "default",
-                    "project_id": "TFS",
+                    "project_id": "PROJ",
                     "status": "running",
                     "current_phase": "prd",
                 },
                 {
                     "id": "b",
                     "tenant_id": "default",
-                    "project_id": "TFS",
+                    "project_id": "PROJ",
                     "status": "running",
                     "current_phase": "implement",
                     "excluded_from_autoshare": False,
@@ -80,7 +80,7 @@ class RelatedProgramAttachTests(unittest.TestCase):
             },
         )
         context = resolve_related_program_context(
-            memory, tenant_id="default", program_id="a", project_id="TFS"
+            memory, tenant_id="default", program_id="a", project_id="PROJ"
         )
         self.assertEqual(len(context["sources"]), 1)
         source = context["sources"][0]
@@ -91,24 +91,24 @@ class RelatedProgramAttachTests(unittest.TestCase):
 
     def test_excluded_omitted_unless_linked(self):
         programs = [
-            {"id": "a", "tenant_id": "default", "project_id": "TFS", "status": "running"},
+            {"id": "a", "tenant_id": "default", "project_id": "PROJ", "status": "running"},
             {
                 "id": "b",
                 "tenant_id": "default",
-                "project_id": "TFS",
+                "project_id": "PROJ",
                 "status": "succeeded",
                 "excluded_from_autoshare": True,
             },
         ]
         memory = FakeMemory(programs)
         context = resolve_related_program_context(
-            memory, tenant_id="default", program_id="a", project_id="TFS"
+            memory, tenant_id="default", program_id="a", project_id="PROJ"
         )
         self.assertEqual(context["sources"], [])
 
         memory.links["a"] = {"outbound": [{"to_program_id": "b"}], "inbound": []}
         context = resolve_related_program_context(
-            memory, tenant_id="default", program_id="a", project_id="TFS"
+            memory, tenant_id="default", program_id="a", project_id="PROJ"
         )
         self.assertEqual(context["sources"][0]["via"], "link")
 
@@ -116,7 +116,7 @@ class RelatedProgramAttachTests(unittest.TestCase):
         memory = FakeMemory(
             [
                 {"id": "a", "tenant_id": "default", "project_id": "RFP", "status": "running"},
-                {"id": "b", "tenant_id": "default", "project_id": "TFS", "status": "succeeded", "current_phase": "prd"},
+                {"id": "b", "tenant_id": "default", "project_id": "PROJ", "status": "succeeded", "current_phase": "prd"},
             ],
             links={"a": {"outbound": [{"to_program_id": "b"}], "inbound": []}},
         )
@@ -124,7 +124,7 @@ class RelatedProgramAttachTests(unittest.TestCase):
             memory, tenant_id="default", program_id="a", project_id="RFP"
         )
         from_b = resolve_related_program_context(
-            memory, tenant_id="default", program_id="b", project_id="TFS"
+            memory, tenant_id="default", program_id="b", project_id="PROJ"
         )
         self.assertEqual(from_a["sources"][0]["program_id"], "b")
         self.assertEqual(from_b["sources"], [])
@@ -132,18 +132,18 @@ class RelatedProgramAttachTests(unittest.TestCase):
     def test_tenant_mismatch_never_appears(self):
         memory = FakeMemory(
             [
-                {"id": "a", "tenant_id": "tenant-a", "project_id": "TFS", "status": "running"},
-                {"id": "b", "tenant_id": "tenant-b", "project_id": "TFS", "status": "running"},
+                {"id": "a", "tenant_id": "tenant-a", "project_id": "PROJ", "status": "running"},
+                {"id": "b", "tenant_id": "tenant-b", "project_id": "PROJ", "status": "running"},
             ]
         )
         context = resolve_related_program_context(
-            memory, tenant_id="tenant-a", program_id="a", project_id="TFS"
+            memory, tenant_id="tenant-a", program_id="a", project_id="PROJ"
         )
         self.assertEqual(context["sources"], [])
 
     def test_attach_persist_failure_does_not_raise(self):
         memory = FakeMemory(
-            [{"id": "a", "tenant_id": "default", "project_id": "TFS", "status": "running"}]
+            [{"id": "a", "tenant_id": "default", "project_id": "PROJ", "status": "running"}]
         )
 
         def boom(*_args, **_kwargs):
@@ -154,7 +154,7 @@ class RelatedProgramAttachTests(unittest.TestCase):
             memory,
             program_id="a",
             tenant_id="default",
-            project_id="TFS",
+            project_id="PROJ",
         )
         self.assertEqual(context["sources"], [])
         self.assertIn("related_program_context_persist_failed", context["warnings"])

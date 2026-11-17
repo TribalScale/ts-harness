@@ -25,6 +25,50 @@ Both tracks share the same program nodes (`prd` → planning → `implement` →
 
 Each change is one **root** program; `content_to_jira_work_orders`, `bug_to_jira_work_orders`, and `jira_to_pr` runs for that change are **child** programs (`parent_program_id`). See [`prd-first-delivery-flow.md`](../architecture/prd-first-delivery-flow.md#one-program-per-change).
 
+## Stopping after the PRD or Jira
+
+A requester does not have to take a program all the way to release. From
+`software_delivery` 1.4.0, the `prd` and `jira` nodes are marked `may_end`:
+
+- When the PRD is approved (or the Jira tickets are filed) and nobody has asked for
+  the next step, the program is marked **succeeded** and records
+  `ended_at_phase`. The console shows it as **Done at PRD** (or **Done at Jira**).
+- The thread is told the program is complete and given the phrases that continue
+  it: "create jira" or "work orders" after the PRD, "start implementation" after
+  Jira. A chat approval carries this in its reply; a console approval posts it to
+  the thread.
+- Continuing later, in the thread or with **Continue to …** on the program page,
+  reopens the same program with its approved PRD and history. The audit log
+  records `delivery_program_reopened`.
+- Only a program that ended this way can be reopened. One that reached release,
+  or was cancelled or failed, is refused: start a new request instead.
+- Child programs (started by a parent program) never end early at a `may_end`
+  node, so a parent does not continue on a child that stopped at its PRD.
+
+Other program definitions can opt in with **Program may end here** in the
+[program builder](program-builder.md). It is refused on terminal nodes and on nodes
+whose next step is automatic.
+
+### Programs created before 1.4.0
+
+Programs pin their definition when they start, so older programs still stay
+`running` after an approved PRD. Close them once per environment after deploying,
+after applying migration
+[`045_program_may_end_audit.sql`](../../database/migrations/045_program_may_end_audit.sql):
+
+```bash
+python scripts/close-ended-programs.py              # dry run: lists what would close
+python scripts/close-ended-programs.py --apply      # closes them
+```
+
+It selects root `software_delivery` programs that are `running` at `prd` or `jira`,
+whose workflow for that phase succeeded, with nothing running or blocked and no open
+child program, and no workflow activity for `--idle-days` days (default 7). Each is
+marked succeeded with `ended_at_phase`, audited as
+`delivery_program_closed_by_backfill`, and can be continued like a new one. Running
+it again closes nothing new. It uses the memory API's database settings
+(`TS_HARNESS_DB_*`).
+
 For sign-off testing of the work-orders path, see [`work-orders-delivery-smoke-test.md`](work-orders-delivery-smoke-test.md).
 Authoring custom topologies: [`program-builder.md`](program-builder.md).
 
@@ -41,8 +85,8 @@ Two PRD/delivery programs stay isolated when they have different `project_id`s (
 
 **Jira track additionally requires:**
 
-- Jira secrets in Secrets Manager: `jira-url`, `jira-token`, and `jira-username`.
-- Target Jira project `TFS`.
+- Jira secrets in Secrets Manager: `jira-url`, plus either `jira-client-id` and `jira-client-secret` for a service account, or `jira-username` and `jira-token`. See [`jira-service-account.md`](jira-service-account.md).
+- The target Jira project listed in `jira_filing.allowed_projects` ([System Settings](system-settings.md)).
 
 **Work-orders track additionally requires:**
 
@@ -58,7 +102,7 @@ Users can start mid-pipeline without running earlier phases in the same thread:
 | `prd` | "Create a governed PRD" | none |
 | `jira` | "File Jira from this approved PRD" | `approved_prd` |
 | `work_orders` | "Plan work orders from this approved PRD" | `approved_prd` |
-| `implement` | "Implement TFS-100 through TFS-104" (Jira track) | `jira_epic_key` |
+| `implement` | "Implement PROJ-100 through PROJ-104" (Jira track) | `jira_epic_key` |
 | `implement` | "Deliver WO-001" (work-orders track) | `planner_complete`, `next_work_order_id`, `work_orders_handoff` |
 | `release` | "Release the merged change" | `merge_sha` |
 | `rollback` | "Roll production back" | `rollback_environment` |
@@ -83,6 +127,23 @@ Program artifacts (contract):
 | `released_environments` | Release complete | Rollback targets |
 | `compensation` / `compensation_status` | Program cancelled | Cancel cleanup results and failures |
 
+## Who can see and act on a program
+
+Programs are private to their owner by default. The owner is the signed-in person who started the program (for chat, the directory person linked to the Slack user). The owner shares it from **Programs → Share** with people or teams at one of four levels:
+
+| Level | Allows |
+| --- | --- |
+| Can view (`read`) | Status, evidence, phase activity, the program's chat |
+| Can contribute (`write`) | Advance phases, department memory |
+| Can approve (`approve`) | Approve, reject and decide gates (also needs the `approve_gate` permission) |
+| Can manage (`admin`) | Cancel, edit project and links, sharing and visibility |
+
+A team approver on a team with `write` or higher gets `approve`. **Public** gives everyone in the tenant `read`. Sharing a program shares its child programs. Harness admins can open any program; each first visit per hour is audited as `program_admin_access`.
+
+`TS_HARNESS_PROGRAM_ACCESS` controls enforcement: `audit` (default) logs `program_access_would_deny` and blocks nothing, `enforce` returns 404 to people who cannot read and 403 to readers who need more, `off` checks only the tenant. Run in `audit` for a week and review the would-deny events before switching to `enforce`.
+
+Gate notifications still go to the thread that started the program. People the program is shared with see it in their Inbox and Programs list, and can approve from there or from a Slack thread once their Slack user is linked. With OIDC, an unlinked Slack user is asked to sign in to the console once with the same email.
+
 ## Governance Summary
 
 | Gate | Who Advances It | Agent Boundary |
@@ -93,7 +154,7 @@ Program artifacts (contract):
 | Refinery / Foundry / Planner (WO track) | `pm-agent` + human gates | Uses `prd-to-work-orders-governed`; Validator off critical path |
 | Work orders approved | Human (`approve_work_orders`) | Required before prepare handoff |
 | Prepare delivery (WO track) | `orchestrator` | Uses `source-work-order`; sets `next_work_order_id` |
-| Jira tickets filed | `pm-agent` | Only in `TFS` and only from approved PRD |
+| Jira tickets filed | `pm-agent` | Only in `jira_filing.allowed_projects` and only from approved PRD |
 | PR opened | `dev-agent` | No merge |
 | Code review passed | `review-agent` findings, verdict computed by `finalize_code_review` | Read-only; posts a `COMMENT` review and the `harness/code-review` status, never approves, requests changes or merges |
 | QA gate passed | `qa-agent` | No PR approval or merge |
@@ -167,7 +228,9 @@ Expected behavior:
 Create Jira tickets from this approved PRD.
 ```
 
-Expected: `planning_track=jira`, `jira_from_prd` materialized at `create_jira`.
+Expected: `planning_track=jira`, `jira_from_prd` materialized at `review_prd`. The story
+plan from `plan_stories` waits at `approve_plan`; reply `no` with feedback to revise it.
+Nothing is written to Jira until `file_jira` runs after approval.
 
 **Choose work-orders track:**
 
@@ -190,7 +253,7 @@ After choosing the Jira track (or entering at `entry_phase=jira`):
 Expected behavior:
 
 - `pm-agent` checks for duplicates in Jira.
-- `pm-agent` creates one epic, stories, and tasks in `TFS`.
+- `pm-agent` creates one epic, stories, and tasks in the target project from `jira_filing.allowed_projects`.
 - Program artifact `jira_epic_key` is patched on phase completion.
 
 If the PRD would create more than 10 tickets, use P0/P1 priority, or cross project boundaries, the agent must stop and request extra approval.
@@ -198,7 +261,7 @@ If the PRD would create more than 10 tickets, use P0/P1 priority, or cross proje
 ### A2. Start Development (Jira)
 
 ```text
-Implement TFS-123. Follow the ticket acceptance criteria, open a PR, and hand it to QA.
+Implement PROJ-123. Follow the ticket acceptance criteria, open a PR, and hand it to QA.
 ```
 
 Expected behavior:
@@ -210,7 +273,7 @@ Expected behavior:
 For an epic, prefer a small controlled batch:
 
 ```text
-Start the first two implementation-ready tickets under TFS-100. Open separate PRs and hand each one to QA.
+Start the first two implementation-ready tickets under PROJ-100. Open separate PRs and hand each one to QA.
 ```
 
 ### A3. QA, Merge, Deploy (Jira track)
@@ -255,8 +318,8 @@ Each `deliver_work_order` child runs the per-work-order pipeline:
 
 | Stage | Agent | Skill / tool | Notes |
 | --- | --- | --- | --- |
-| `deliver_work_order` | `dev-agent` | `verified-merge-governed` + `run_coding_backend` | OpenCode implement + commit/push/PR incl. host verify; output must include `work_order_id` + `pr_url` |
-| `await_pr_checks` | orchestrator | — | Waits for `github.pr_checks` on the PR head SHA; required checks come from `merge_readiness` (see [Merge readiness policy](#merge-readiness-policy)) |
+| `deliver_work_order` | `dev-agent` | `verified-merge-governed` + `run_coding_backend` | OpenCode implement + commit/push/PR incl. host verify; output must include `work_order_id` + `pr_url`. A run that fails for good (no PR) waits for a human: `/revise WO-n <guidance>` runs it again, `/stop WO-n` stops it |
+| `await_pr_checks` | orchestrator | — | Waits for `github.pr_checks` on the PR head SHA; required checks come from `merge_readiness` (see [Merge readiness policy](#merge-readiness-policy)). Failing checks send the PR back to `dev-agent` with the end of each failed job's log (`checks` budget, 3 revisions), then wait for a human decision (`verified_merge` 1.7.0) |
 | `review_precheck` | orchestrator (system step) | — | Collects the PR diff, applies `diff_limits`, and checks a declared `## Files` list. See [Code review](#code-review) |
 | `code_review` | `review-agent` | `governed-code-review` | Reviews the diff against the work order and returns findings |
 | `finalize_code_review` | orchestrator (system step) | — | Computes the verdict, posts the review and `harness/code-review` status; a blocking verdict sends the PR back to `dev-agent` |
@@ -307,6 +370,8 @@ Expected behavior:
   every per-PR `status` is `success`; the output PR URL set must equal the input
   PR URL set exactly (enforced by `validate_qa_pr_url_set`).
 - `qa-agent` does not approve or merge the PR.
+- The runner sets the `harness/qa` commit status on each PR head: `pending` ("QA running") before it dispatches the gate, then `success`, `failure` ("QA failed: N blocking of M defects") or `error` when QA could not finish. A human "accept as is" sets it to `success` with "accepted by <actor> (human override)". Like `harness/code-review`, the PR checks wait ignores it unless it is named as a required check.
+- On the program page, clicking a stage card shows that stage's activity under the cards: its own steps (with Approve/Reject on a pending gate for `approve_gate` holders) and every workflow it started. For `implement` that is one row per work order with its current step in plain words ("QA running", "OpenCode revising (revision 1)", "Ready to merge", "Stuck at code review: waiting for your decision"), its PR, revision count and expandable step list. The current stage is selected by default and the panel refreshes every 15 seconds while the program runs (`GET /admin/programs/<id>/phases/<phase>/activity`).
 
 **Failure behavior:** a schema-valid `status: failed` produces a **blocked** stage
 outcome. `qa_gate.on_block` then runs `revise_on_reject`: it cancels the blocked
@@ -314,12 +379,28 @@ gate and the unarmed `await_human_merge`, spawns a new `deliver_work_order` with
 `qa_feedback` plus the existing `pr_url`, then new checks, code review, QA,
 freshness and merge stages. OpenCode updates the existing PR (same `wo/*`
 branch). QA and code review revisions share one budget of three
-(`max_revisions: 3`); when it runs out, the loop stops and Slack asks a human
-to decide.
+(`max_revisions: 3`).
 
 ```text
 QA rejected the PR; sending it back to OpenCode (revision 2/3).
 ```
+
+When the budget runs out, the blocked step waits for a human instead of failing
+the work order. The task gets `_awaiting_human_decision` in its input, the wave
+join keeps waiting, the program thread lists the options, and the admin Inbox
+shows a **Stuck step** item. Deciding needs the `approve_gate` permission.
+
+| Decision | Chat reply | Effect |
+| --- | --- | --- |
+| Revise again | `/revise WO-003 <guidance>` | Sends the PR back to OpenCode with the review feedback plus your guidance. Grants a fresh budget of `max_revisions` (the same limit as the original), counted from this revision. |
+| Accept as is | `/accept WO-003` | Completes the step with its reviewed output and continues the delivery. For `finalize_code_review` it also sets `harness/code-review` to success, marked as a human override. Not offered for steps that wait on an external event. |
+| Stop | `/stop WO-003` | Blocks the step terminally (`stopped_by_human: ...`); the wave counts the work order as failed. |
+
+The work order can be left out of the reply when the thread has only one stuck
+step. The Inbox uses `POST /admin/workflows/decide` with
+`{workflow_id, task_id, action, guidance}`. With a shared gateway-token
+sign-in the server has no personal identity, so the thread says "An admin"
+rather than a name; single sign-on (OIDC) records the person.
 
 ## Code review
 
@@ -340,6 +421,8 @@ After the PR's checks finish and before QA, every PR gets an automated review by
 - `code_review` runs `review-agent` with the `governed-code-review` skill. It can only read (`read_file`, `recall_memory`) and returns findings with a severity (`blocker`, `major`, `minor`, `nit`) and a category (`correctness`, `security`, `scope`, `tests`, `maintainability`). `validate_code_review_envelope` checks that the PR set matches and the enums are valid. After a refresh revision the reviewer focuses on the merge delta.
 - `finalize_code_review` (system step) merges in the precheck scope findings and computes the verdict: any `blocker`, or a `major` in correctness, security or scope, blocks. The model's own verdict is advisory; a mismatch is a warning. It posts one `COMMENT` review per PR with inline comments and sets the `harness/code-review` commit status. It never approves or requests changes. Posting errors are warnings, not failures.
 - A blocking verdict sends the PR back to `dev-agent` with the findings as `review_feedback`, then runs checks, review, QA, freshness and merge again. Code review and QA share the budget of three revisions.
+- A code review revision may edit only the files its blocking findings named (`revision_files`), plus tests, test fixtures and BDD feature files or step definitions; OpenCode is told to revert anything else and the run fails with `revision_scope: <files>` if it does not. QA revisions and a human "revise again" have no file limit, since QA defects and guidance often need other files (for example wiring a component into the app).
+- A revision must implement: `run_coding_backend` refuses `mode: "refresh"` unless the delivery task was created with `refresh: true` (the freshness and merge loops), so a review or QA revision cannot pass by only merging the base branch.
 
 ```text
 Code review blocked the PR; sending it back to OpenCode (revision 1/3).
@@ -444,19 +527,43 @@ A PR is only offered for merge when it contains the current head of its base bra
 - The refresh push creates a new head SHA, so checks, code review, QA, `ensure_fresh` and `await_human_merge` run again.
 - Refreshes use their own revision budget (`budget: "refresh"`, 5 per workflow). They do not count against the shared code review and QA budget, and those revisions do not count against them. When the refresh budget runs out, the stage stays blocked for a human.
 
+## Human rejection
+
+While a PR waits in `await_human_merge`, the merge poller (`poll-github-merges`, every minute) also reads reviews and comments. A merge always wins.
+
+| Signal on the PR | What happens |
+| --- | --- |
+| Closed without merging | The wait blocks with `external_blocked:github.pr_closed by <login>`. The work order stops (no revision), its wave fails, and the bound channel gets "<login> closed the PR without merging; the work order is stopped." |
+| "Request changes" review on the current head commit | The wait blocks with `external_blocked:github.pr_changes_requested by <login>`. The review body and its inline comments (`path:line: comment`) go to OpenCode as `review_feedback`, on the same PR, then checks, code review, QA, freshness and the merge wait run again. |
+| Comment starting with `/revise` posted after the current head commit | Same as "Request changes", with the text after `/revise` as the feedback. Use it when you cannot request changes, for example on a PR opened by your own token account. |
+
+- Only reviewers and commenters with write access (`write`, `maintain` or `admin`) count. TS Harness's own reviews are `COMMENT` reviews and never count.
+- Both signals are tied to the head commit, so the revision's push makes them stale. Review the new commit to reject again; a later approval or dismissal clears a "Request changes".
+- Human requests amend the work order. Code review, QA, and every later OpenCode revision receive them as `human_change_requests` (oldest first, from `$runtime.human_requests:<implement stage>`); where a request conflicts with the work order or an earlier request, the latest one wins.
+- Human revisions use their own budget (`budget: "human"`, 3 per workflow), separate from the code review/QA and refresh budgets. When it runs out the stage stays blocked for a human.
+- Reopening a closed PR does not restart the work order.
+- A revision only updates the PR it was started for. If that PR is closed or merged before the revision pushes, the revision fails with `pr_closed:` (or `pr_merged:`) and the work order stops; it never opens a replacement PR.
+
 ## Release and rollback
 
-`implement` advances automatically to `release` (`deploy_release` 2.0) once `merge_sha` is known and every child program has finished.
+`implement` advances automatically to `release` (`deploy_release` 3.0) once `merge_sha` is known and every child program has finished.
+
+`deploy_release` starts one `release_track` workflow per repository that merged work in the program (`plan_release_tracks`) and waits for all of them (`join_tracks`). A single-repository program gets one track, which behaves like the 2.0 release. Each track releases the latest merge SHA of its repository.
+
+Tracks are ordered by work-order dependencies. When a work order in `acme/web` depends on one in `acme/api`, the `acme/web` track waits before each environment until `acme/api` has recorded a successful release there (the program page shows "Waits for api production"). Tracks with no dependency between them release in parallel. If an upstream track fails, only the tracks that depend on it block; the others carry on. A dependency cycle between repositories blocks `plan_release_tracks` before any track starts. Missed notifications are picked up by `poll_release_upstreams`, which runs with the GitHub merge poller.
+
+Each track runs these stages:
 
 | Stage | What it does |
 | --- | --- |
-| `plan_release` | Resolves the repo and its two environments from `release.environments` (default `staging`, `production`), and records each environment's current SHA as its rollback target |
+| `plan_track` | Resolves the repo and its two environments from `release.environments` (default `staging`, `production`), and records each environment's current SHA as its rollback target |
 | `await_ci_on_sha` | Waits for checks on the merge SHA; a failure blocks the release |
+| `await_upstream_staging` | Waits until every repository this one depends on has released to staging; immediate when there are none |
 | `approve_promote_staging` | Human gate with the environment's `required_roles`; recorded as a `promote` decision |
 | `trigger_deploy_staging` | Runs the repo's `workflow_dispatch` workflow or creates a GitHub deployment for the SHA |
 | `await_deployment_staging` | Waits for `github.deployment_status` (webhook or `poll_github_deployments`) |
 | `record_release_staging` | Marks the release succeeded, or failed with rollback guidance |
-| `…_production` | Same four stages for production |
+| `…_production` | Same five stages for production, starting with `await_upstream_production` |
 
 A program or node may set `required_permission`. When it is omitted, starting and advancing still require `start_program`, and reads stay on `view`. A node value wins for the node being entered. Add a custom name to a role bundle; the default `admin` and `owner` bundles receive every name listed there unless that role's bundle is replaced:
 
@@ -517,7 +624,8 @@ Operator path when stuck:
    config/runtime-cron-jobs.json, materialized by scripts/phases/15-automation-cron.sh).
 3. For expired leases, rely on workflow-runner stale recovery.
 4. For blocked QA, the runner sends the PR back to OpenCode with qa_feedback.
-   If the revision limit is reached, review qa_evidence and decide next steps.
+   If the revision limit is reached, read the findings and decide in the Inbox
+   or the thread: revise again, accept as is, or stop (see Code review above).
 ```
 
 ## Wait deadlines and escalation

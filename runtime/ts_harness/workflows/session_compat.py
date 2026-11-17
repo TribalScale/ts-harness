@@ -214,6 +214,48 @@ def write_pending_program_advance(
     return updated
 
 
+_PROGRAM_SESSION_KEYS = (
+    "program_id",
+    "program_type",
+    "program_phase",
+    "program_artifacts",
+    "workflow_id",
+    "active_workflow_id",
+    "workflow_type",
+    _GENERIC_PHASE,
+    _LEGACY_PHASE,
+    _GENERIC_SOURCE,
+    _LEGACY_SOURCE,
+    _GENERIC_ARTIFACT,
+    _LEGACY_ARTIFACT,
+    _REVIEW_ARTIFACT,
+    _SPECIALIST_HANDOFF,
+    _GENERIC_PENDING,
+    _LEGACY_PENDING,
+    "pending_workflow",
+    "pending_delegate",
+    "pending_program",
+    "pending_program_advance",
+    "presentation_doc_id",
+    "presentation_doc_url",
+    _GENERIC_MODE,
+    _GENERIC_BRIDGE_MODE,
+    _LEGACY_MODE_PRD,
+    _LEGACY_MODE_DELIVERY,
+)
+_LINKED_MODES = frozenset({_GENERIC_MODE, _GENERIC_BRIDGE_MODE, _LEGACY_MODE_PRD, _LEGACY_MODE_DELIVERY})
+
+
+def clear_program_session(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Unlink the session from its program and workflows, keeping the channel binding."""
+    updated = {key: value for key, value in metadata.items() if key not in _PROGRAM_SESSION_KEYS}
+    if str(updated.get("mode") or "") in _LINKED_MODES:
+        updated.pop("mode")
+    if metadata.get("program_id"):
+        updated["previous_program_id"] = metadata["program_id"]
+    return updated
+
+
 def write_program_session(
     metadata: dict[str, Any],
     *,

@@ -2,6 +2,9 @@
 # Select exactly one provider per installation (aws OR gcp, never both).
 cloud_provider: gcp
 environment: prod
+# single_host: one VM (small teams). scale_out: Fargate coding workers and
+# replicated services (aws only).
+deployment_profile: single_host
 project_name: ts-harness
 cloud_region: us-central1
 cloud_zone: us-central1-a
@@ -9,6 +12,12 @@ gcp_project_id: example-gcp-project
 secret_prefix: ts-harness
 notification_email: ops@example.com
 monthly_budget_limit: 500
+
+# GitHub App used for clone, push and PRs (see docs/runbooks/github-app.md).
+# github_app:
+#   app_id: "123456"
+#   slug: ts-harness-acme
+#   webhook_funnel: true   # serve /webhooks/github via Tailscale Funnel (port 8443)
 
 vm:
   instance_type: e2-medium
@@ -19,6 +28,8 @@ vm:
   ssh_allowed_cidrs:
     - 10.0.0.0/8
   # tailscale_authkey_secret_ref: projects/example-gcp-project/secrets/tailscale/versions/latest
+  # tailscale_hostname: ts-harness-prod   # default: project_name; keeps the tailnet URL stable across rebuilds
+  # tailscale_tags: ["tag:ts-harness"]   # required when the auth key is an OAuth client secret
 
 managed_db:
   instance_class: db-custom-1-3840
@@ -37,16 +48,25 @@ terraform_state:
 runtime:
   agent_runtime_version: "0.1.0"
   enterprise_repo_url: https://github.com/TribalScale/ts-harness.git
+  # enterprise_repo_ref: main   # branch the host runs; default: the repository's default branch
   multi_agent_enabled: true
   workflow_runner_enabled: true
   workflow_runner_poll_interval_seconds: 10
   workflow_runner_batch_size: 5
   workflow_runner_lease_seconds: 1800
   workflow_runner_stale_policy: block
+  # local keeps state and files on the VM. postgres and gcs move them to Cloud SQL
+  # and GCS; follow docs/runbooks/shared-state.md to switch an existing install.
+  state_backend: local
+  object_backend: local
+  # OpenCode runs as queued jobs in worker containers; turn on after one supervised run.
+  coding_jobs_enabled: false
+  coding_max_running: 3
   embeddings_provider: gemini
   embeddings_model: text-embedding-004
   embeddings_dimensions: 768
   embeddings_fallback: none
+  intake_vision_model: ""        # blank: the agent's model; "off" disables image reading
   agent_timezone: UTC
   implement_work_orders_repo_url: ""
   implement_work_orders_base_branch: main
@@ -57,7 +77,8 @@ runtime:
   slack_marketing_channel: ""
   slack_sales_channel: ""
   approved_slack_channels: []
-  # Admin identity (Auth0/OIDC). Leave static unless you set all oidc_* fields.
+  # Admin identity (Auth0/OIDC). oidc needs issuer, audience and client id; the
+  # JWKS URL and endpoints come from discovery when empty (docs/runbooks/auth0-setup.md).
   identity_provider: static
   oidc_issuer: ""
   oidc_audience: ""

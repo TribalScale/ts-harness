@@ -1,24 +1,50 @@
-"""Read-only repo context for a Slack bug report.
+"""Read-only repo context for a bug report or pasted planning content.
 
-``review-agent`` cannot clone or call GitHub. ``gather_bug_context`` fetches a
-truncated default-branch tree and the bodies of paths the report names.
+``review-agent`` and ``pm-agent`` cannot clone or call GitHub. ``gather_bug_context``
+fetches the default-branch tree and lists it whole when it fits the character
+budget. A larger tree is cut after the paths the text names and the paths that
+best match its words. It also fetches the bodies of the named paths (or, when
+none are named, of the closest matches).
 """
 
 from __future__ import annotations
 
 import base64
+import functools
+import json
+import logging
+import math
+import os
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from ts_harness.integrations.github_client import GitHubClient, parse_repo_slug
 from ts_harness.workflows.expressions import resolve_value
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
-TREE_PATH_LIMIT = 200
+TREE_CHAR_BUDGET = 60_000
+DIRECTORY_LIMIT = 150
 FILE_LIMIT = 8
+MATCHED_FILE_LIMIT = 4
 FILE_CHAR_LIMIT = 20_000
 
 _PATH_RE = re.compile(r"(?<![\w@./-])((?:[\w.-]+/)+[\w.-]+(?:\.[\w.-]+)?)")
+_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+_STOPWORDS = frozenset(
+    "the and for with that this from are was were has have had not but its our you your they them their "
+    "when then than what which who how why where there here into onto over under about after before "
+    "should would could will can may must also only just any all each some one two add use used using "
+    "new like more most other such very via per does did done make makes out yet none say says".split()
+)
+_LABEL_RE = re.compile(r"(^|(?<=[.!?])[ \t]+)[ \t]*[A-Za-z][A-Za-z \t]{0,24}:(?=\s)", re.MULTILINE)
+_REGEX_CHARS_RE = re.compile(r"[\\\[\](){}*+?|^$]")
+ROUTING_PHRASE_MIN_WORDS = 3
+
+logger = logging.getLogger(__name__)
+
+_BINARY_SUFFIXES = frozenset(
+    "png jpg jpeg gif ico svg webp bmp pdf zip gz tgz tar jar woff woff2 ttf eot otf mp3 mp4 mov lock".split()
+)
 
 
 def _input_extras(task: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -81,17 +107,142 @@ def cited_paths(report: str, tree_paths: list[str]) -> list[str]:
     return [path for _index, path in found[:FILE_LIMIT]]
 
 
+@functools.lru_cache(maxsize=1)
+def _routing_phrases() -> tuple[str, ...]:
+    """Routing signals of three or more words from the runtime config; shorter ones are also real content."""
+    path = (os.environ.get("TS_HARNESS_CONFIG") or "").strip()
+    if not path:
+        return ()
+    try:
+        from ts_harness.config.schema import load_runtime_config
+
+        intents = list(getattr(load_runtime_config(path).routing, "intents", None) or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("repo context could not read routing phrases: %s", exc)
+        return ()
+    phrases = {
+        str(signal).strip().lower()
+        for intent in intents
+        for signal in intent.signals or []
+        if len(str(signal).split()) >= ROUTING_PHRASE_MIN_WORDS and not _REGEX_CHARS_RE.search(str(signal))
+    }
+    return tuple(sorted(phrases, key=len, reverse=True))
+
+
+def request_words_text(report: str, *, repo: str, default_branch: str) -> str:
+    """The report without the words that name the request rather than the change.
+
+    Drops the routing phrase that started the flow, the repo and its branch
+    (the agent already gets both), and section labels such as ``Goal:``.
+    """
+    text = str(report or "")
+    for phrase in _routing_phrases():
+        text = re.sub(r"\b" + re.escape(phrase) + r"\b", " ", text, flags=re.IGNORECASE)
+    if repo:
+        text = re.sub(r"(?:https?://[\w.-]+/)?" + re.escape(repo) + r"(?:\.git)?", " ", text, flags=re.IGNORECASE)
+    if default_branch:
+        branch = re.escape(default_branch)
+        text = re.sub(r"\b(?:default\s+|base\s+)?branch\b[\s:,]*" + branch + r"\b", " ", text, flags=re.IGNORECASE)
+    return _LABEL_RE.sub(r"\1", text)
+
+
+def _stem(word: str) -> str:
+    word = word.lower()
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _words(text: str) -> list[str]:
+    return [
+        stem
+        for stem in (_stem(word) for word in _WORD_RE.findall(text))
+        if len(stem) >= 3 and stem not in _STOPWORDS
+    ]
+
+
+def _path_terms(path: str) -> tuple[set[str], set[str]]:
+    """Words of a path's directories and of its file name (extension dropped)."""
+    *dirs, name = path.split("/")
+    stem, dot, _suffix = name.rpartition(".")
+    return set(_words(" ".join(dirs))), set(_words(stem if dot and stem else name))
+
+
+class RankedPath(NamedTuple):
+    path: str
+    score: float
+    matched: int
+    in_name: bool
+    is_test: bool
+
+
+def ranked_paths(report: str, tree_paths: list[str]) -> list[RankedPath]:
+    """Paths sharing words with the report, best first.
+
+    A word scores by how rare it is in the tree, so one that every path carries
+    (the package name, say) adds nothing. Words the report repeats, and words in
+    the file name rather than a directory, count for more.
+    """
+    counts: dict[str, int] = {}
+    for word in _words(report):
+        counts[word] = counts.get(word, 0) + 1
+    if not counts or not tree_paths:
+        return []
+    terms = {path: _path_terms(path) for path in tree_paths}
+    frequency: dict[str, int] = {}
+    for dirs, name in terms.values():
+        for word in (dirs | name) & counts.keys():
+            frequency[word] = frequency.get(word, 0) + 1
+    total = len(tree_paths)
+    ranked: list[RankedPath] = []
+    for path, (dirs, name) in terms.items():
+        matched = (dirs | name) & counts.keys()
+        score = sum(
+            math.log(total / frequency[word]) * (1 + math.log(counts[word])) * (2 if word in name else 1)
+            for word in matched
+        )
+        if score > 0:
+            ranked.append(
+                RankedPath(path, score, len(matched), bool(name & counts.keys()), "test" in dirs | name)
+            )
+    ranked.sort(key=lambda item: -item.score)
+    return ranked
+
+
+def _within_budget(paths: list[str]) -> list[str]:
+    """The leading paths whose JSON listing fits in ``TREE_CHAR_BUDGET`` characters."""
+    kept: list[str] = []
+    used = 2
+    for path in paths:
+        used += len(json.dumps(path)) + (2 if kept else 0)
+        if used > TREE_CHAR_BUDGET:
+            break
+        kept.append(path)
+    return kept
+
+
+def _directories(tree_paths: list[str]) -> list[str]:
+    """Directories of the tree, as deep as fits in ``DIRECTORY_LIMIT``."""
+    for depth in (3, 2, 1):
+        found = sorted({"/".join(path.split("/")[:level]) for path in tree_paths for level in range(1, min(depth, path.count("/")) + 1)})
+        if len(found) <= DIRECTORY_LIMIT:
+            return found
+    return found[:DIRECTORY_LIMIT]
+
+
+def _is_text_path(path: str) -> bool:
+    _stem_part, dot, suffix = path.rsplit("/", 1)[-1].rpartition(".")
+    return not dot or suffix.lower() not in _BINARY_SUFFIXES
+
+
 def _tree_paths(payload: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     for entry in list(payload.get("tree") or []):
         if not isinstance(entry, dict) or entry.get("type") != "blob":
             continue
         path = str(entry.get("path") or "").strip()
-        if not path:
-            continue
-        paths.append(path)
-        if len(paths) >= TREE_PATH_LIMIT:
-            break
+        if path:
+            paths.append(path)
     return paths
 
 
@@ -134,18 +285,36 @@ def gather_bug_context(
     tree_payload = client.get_tree(owner, name, default_branch, recursive=True)
     if not isinstance(tree_payload, dict):
         raise ValueError("gather_bug_context received no tree")  # noqa: TRY004
-    paths = _tree_paths(tree_payload)
+    all_paths = _tree_paths(tree_payload)
     report = _report_text(task, tasks)
+    cited = cited_paths(report, all_paths)
+    request = request_words_text(report, repo=repo, default_branch=default_branch)
+    ranked = [item for item in ranked_paths(request, all_paths) if item.path not in cited]
+    listed = set(cited) | {item.path for item in ranked}
+    # Named paths, then the closest matches, then the rest, so a cut drops the least relevant.
+    ordered = cited + [item.path for item in ranked] + [path for path in all_paths if path not in listed]
+    paths = _within_budget(ordered)
+    matched = [
+        item.path
+        for item in ranked
+        if item.matched >= 2 and item.in_name and not item.is_test and _is_text_path(item.path)
+    ]
+    to_fetch = [(path, "named") for path in cited]
+    if not cited:
+        to_fetch += [(path, "matched") for path in matched[:MATCHED_FILE_LIMIT]]
     files: list[dict[str, Any]] = []
-    for path in cited_paths(report, paths):
+    for path, source in to_fetch:
         payload = client.get_file(owner, name, path, ref=default_branch)
         if not isinstance(payload, dict) or payload.get("type") not in (None, "file"):
             continue
         body, truncated = _decode_file(payload)
-        files.append({"path": path, "body": body, "truncated": truncated})
+        files.append({"path": path, "body": body, "truncated": truncated, "source": source})
     return {
         "repo": repo,
         "default_branch": default_branch,
         "tree": paths,
+        "tree_truncated": len(paths) < len(all_paths),
+        "tree_total": len(all_paths),
+        "directories": _directories(all_paths),
         "files": files,
     }

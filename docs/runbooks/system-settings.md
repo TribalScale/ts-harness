@@ -83,7 +83,7 @@ unknown keys and bad values with the issue code shown.
 {
   "program_defaults": {
     "github": { "org": "acme" },
-    "jira_filing": { "allowed_projects": ["TFS"] },
+    "jira_filing": { "allowed_projects": ["PROJ"] },
     "governance": { "independent_review": { "enabled": true } },
     "merge_readiness": { "required_checks": { "acme/app": ["build", "test"] } },
     "release": {

@@ -226,6 +226,44 @@ describe("detectClientProgramGraphIssues", () => {
     expect(codes.has("unreachable_node")).toBe(true);
     expect(codes.has("terminal_has_outgoing_edge")).toBe(true);
   });
+
+  it("refuses may_end on a terminal node and on a node with an automatic edge", () => {
+    const node = (id: string, terminal: boolean) => ({
+      id,
+      default_workflow_type: "w",
+      workflow_variants: [],
+      required_artifacts: [],
+      produces_artifacts: [],
+      input_bindings: [],
+      completion_adapter: "noop",
+      terminal,
+      may_end: true,
+    });
+    const definition: ProgramDefinition = {
+      program_type: "stops",
+      definition_version: "0.1.0",
+      startable_nodes: ["plan"],
+      nodes: [node("plan", false), node("ship", true)],
+      edges: [{ source: "plan", target: "ship", mode: "automatic", signals: [] }],
+    };
+    const codes = new Set(
+      detectClientProgramGraphIssues(definitionToProgramGraph(definition)).map((issue) => issue.code)
+    );
+    expect(codes.has("may_end_on_terminal")).toBe(true);
+    expect(codes.has("may_end_with_automatic_edge")).toBe(true);
+  });
+});
+
+describe("may_end", () => {
+  it("round-trips when set and stays absent when not", () => {
+    const withStop: ProgramDefinition = {
+      ...softwareDelivery,
+      nodes: softwareDelivery.nodes.map((node) => (node.id === "prd" ? { ...node, may_end: true } : node)),
+    };
+    const next = graphToProgramDefinition(definitionToProgramGraph(withStop), withStop);
+    expect(next.nodes.find((node) => node.id === "prd")?.may_end).toBe(true);
+    expect(next.nodes.find((node) => node.id === "jira")).not.toHaveProperty("may_end");
+  });
 });
 
 describe("updateNodeInGraph", () => {

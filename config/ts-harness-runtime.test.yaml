@@ -114,6 +114,8 @@ toolsets:
   terminal: [exec]
   coding-backend: [run_coding_backend]
   workflow: [workflow_update]
+  jira-read: [mcp-atlassian-atlassian_search, mcp-atlassian-jira_search, mcp-atlassian-jira_get_issue, mcp-atlassian-jira_get_all_projects]
+  jira-write: [mcp-atlassian-jira_create_issue, mcp-atlassian-jira_batch_create_issues, mcp-atlassian-jira_create_issue_link, mcp-atlassian-jira_add_comment, mcp-atlassian-jira_update_issue]
   google-workspace: []
   google-workspace-docs:
     - google_workspace_drive_search
@@ -125,6 +127,7 @@ toolsets:
   delegation: [delegate_task, propose_delegate_task]
   channel-chat: [propose_delegate_task, propose_start_workflow, propose_start_program, propose_continue_delivery, propose_bridge_workflow, propose_advance_program, propose_set_program_project, propose_link_program, unlink_program, set_program_autoshare, workflow_status, program_status]
   skill-authoring: [propose_skill]
+  knowledge-notes: [propose_knowledge_note]
   program-builder: [builder_catalog, propose_program_bundle]
   workflow-promotion: [propose_start_workflow, start_workflow, propose_start_program, start_program, propose_continue_delivery, continue_delivery, propose_bridge_workflow, bridge_workflow, propose_advance_program, advance_program, propose_set_program_project, set_program_project, propose_link_program, link_program, unlink_program, set_program_autoshare, workflow_status, program_status, workflow_approve, workflow_reject, workflow_reject_with_feedback, cancel_workflow, resume_external_event]
 
@@ -173,7 +176,7 @@ routing:
     - id: jira_to_pr
       program_type: jira_to_pr
       entry_phase: pick
-      signals: ["my tickets", "pick up my jira", "implement TFS-"]
+      signals: ["my tickets", "pick up my jira", "implement the rest", "implement all", "implement [a-z][a-z0-9]+-\\d+"]
       orchestrator_hint: >
         User wants the decoupled implement program. Call propose_start_program
         with program_type=jira_to_pr. If they pasted a ticket key, use
@@ -248,6 +251,13 @@ mcp_servers:
     transport: stdio
     command: mcporter
     enabled: true
+    env:
+      ATLASSIAN_SITE_URL: "secret:ATLASSIAN_SITE_URL"
+      ATLASSIAN_CLOUD_ID: "secret:ATLASSIAN_CLOUD_ID"
+      ATLASSIAN_CLIENT_ID: "secret:ATLASSIAN_CLIENT_ID"
+      ATLASSIAN_CLIENT_SECRET: "secret:ATLASSIAN_CLIENT_SECRET"
+      ATLASSIAN_EMAIL: "secret:ATLASSIAN_EMAIL"
+      ATLASSIAN_API_TOKEN: "secret:ATLASSIAN_API_TOKEN"
 
 agents:
   list:
@@ -256,7 +266,7 @@ agents:
       workspace: /workspace/orchestrator
       model: openai/gpt-4o-mini
       skills: [orchestrator, memory-api, workflow, workflows, governed-workflows]
-      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion]
+      toolsets: [core-read, workflow, delegation, channel-chat, workflow-promotion, jira-read, knowledge-notes]
       tools:
         allow:
           [
@@ -288,6 +298,7 @@ agents:
             advance_program,
             workflow_status,
             program_status,
+            propose_knowledge_note,
             workflow_approve,
             workflow_reject,
             workflow_reject_with_feedback,
@@ -309,9 +320,9 @@ agents:
       workspace: /workspace/dev-agent
       model: openai/gpt-4o-mini
       skills: [dev, memory, workflows, integrate, governed-workflows]
-      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring]
+      toolsets: [core-read, core-write, terminal, coding-backend, skill-authoring, jira-read, knowledge-notes]
       tools:
-        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill]
+        allow: [read_file, write_file, patch_file, exec, recall_memory, run_coding_backend, propose_skill, propose_knowledge_note]
         deny: [delegate_task]
 
     - id: ops-agent
@@ -329,7 +340,7 @@ agents:
       skills: [pm, memory-api, workflows, governed-workflows]
       connector_bindings:
         google-workspace: pm
-      toolsets: [core-read, workflow, google-workspace-docs]
+      toolsets: [core-read, workflow, google-workspace-docs, jira-read, jira-write]
       tools:
         allow: [read_file, recall_memory, workflow_update]
         deny: [exec, delegate_task]
@@ -340,7 +351,7 @@ agents:
       skills: [comms, memory-api]
       connector_bindings:
         google-workspace: comms
-      toolsets: [core-read, channel, google-workspace]
+      toolsets: [core-read, channel, google-workspace, jira-read]
       tools:
         allow:
           - read_file
@@ -356,18 +367,18 @@ agents:
       workspace: /workspace/qa-agent
       model: openai/gpt-6-astra
       skills: [qa, memory, workflows, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, run_coding_backend, delegate_task]
 
     - id: review-agent
       workspace: /workspace/review-agent
       model: openai/gpt-6-astra
       skills: [review, memory, governed-workflows]
-      toolsets: [core-read]
+      toolsets: [core-read, pr-read]
       tools:
-        allow: [read_file, recall_memory]
+        allow: [read_file, recall_memory, read_pr_file]
         deny: [write_file, patch_file, exec, delegate_task, run_coding_backend]
 
     - id: builder-agent

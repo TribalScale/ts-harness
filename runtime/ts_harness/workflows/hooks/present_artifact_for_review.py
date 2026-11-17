@@ -88,9 +88,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         workflow, _ = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
 
     source_channel = str(workflow.get("source_channel") or "")
-    from ts_harness.gateway.workflow_presentation import _parse_source_channel
+    from ts_harness.gateway.workflow_presentation import bound_channel
 
-    if _parse_source_channel(source_channel) is None:
+    if bound_channel(source_channel) is None:
         return {
             "hook": "present_specialist_output",
             "status": "skipped",

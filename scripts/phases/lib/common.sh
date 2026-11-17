@@ -126,6 +126,21 @@ fetch_secret() {
     exit 1
 }
 
+# For integrations that may stay unconfigured: a secret that exists but cannot be
+# read (e.g. AccessDenied before the instance policy lists it) warns and yields
+# empty instead of exiting the caller.
+fetch_optional_secret() {
+    local secret_id="$1"
+    local result ec=0
+    ensure_cloud_adapter
+    result="$(cloud_fetch_secret "$secret_id" optional)" || ec=$?
+    if (( ec != 0 )); then
+        echo "WARNING: could not read ${SECRETS_PREFIX:-ts-harness}/${secret_id}; treating it as unset" >&2
+        return 0
+    fi
+    printf '%s' "$result"
+}
+
 # Empty/whitespace or unsubstituted Terraform token (__TF_...) — treats incomplete renders as invalid.
 is_blank_or_placeholder() {
     local v="${1:-}"
@@ -198,9 +213,57 @@ ensure_google_workspace_sa_mount_file() {
     fi
 }
 
+# Phases whose results live on the root disk (users, packages, firewall, SSH, Docker images and
+# containers, Tailscale, crontab, the enterprise-assets checkout). Their markers live on the data
+# disk, which outlives the instance, so a replaced instance must re-run them.
+HOST_LEVEL_PHASES=(
+    02-admin-user 03-ufw 04-ssh-harden 05-docker 06-tailscale 09-clone-enterprise
+    12-compose-up 12a-db-credential-watch 12b-github-webhook 14-channels-init
+    15-automation-cron 16-release-gates
+)
+
+# After the data disk is mounted: when it was set up by another instance (or by a host that
+# predates host-id), drop the host-level markers so this instance configures its own root disk.
+# Data-disk, database and cloud phases keep their markers. Usage: reset_markers_for_new_host <data_dir> <host_id>
+reset_markers_for_new_host() {
+    local data_dir="$1" host_id="$2" setup recorded phase
+    setup="$data_dir/.setup"
+    mkdir -p "$setup"
+    recorded="$(cat "$setup/host-id" 2>/dev/null || true)"
+    if [[ "$recorded" != "$host_id" ]] && compgen -G "$setup/phase-*.done" >/dev/null; then
+        echo "[bootstrap] Data disk was set up by ${recorded:-an earlier host}; re-running host-level phases on ${host_id}."
+        for phase in "${HOST_LEVEL_PHASES[@]}"; do
+            rm -f "$setup/phase-${phase}.done"
+        done
+        rm -f "$data_dir/.setup-complete"
+    fi
+    printf '%s\n' "$host_id" > "$setup/host-id"
+}
+
+# Google OAuth callback for deployments that use Google sign-in or Workspace OAuth.
+# Without GOOGLE_OAUTH_CLIENT_ID it is cleared. A blank, placeholder or tailnet (*.ts.net) value
+# follows this host's current tailnet name, so it stays right after a rebuild; any other URL
+# (a custom domain) is kept as set in the google-oauth-callback-url secret.
+resolve_google_oauth_callback() {
+    local current="${GOOGLE_OAUTH_CALLBACK_URL:-}" fqdn
+    if is_blank_or_placeholder "${GOOGLE_OAUTH_CLIENT_ID:-}"; then
+        export GOOGLE_OAUTH_CALLBACK_URL=""
+        return 0
+    fi
+    if is_blank_or_placeholder "$current" || [[ "$current" == https://*.ts.net/* ]]; then
+        fqdn="$(cat "${DATA_DIR}/.setup/tailscale-fqdn" 2>/dev/null || true)"
+        fqdn="${fqdn//[[:space:]]/}"
+        if [[ -n "$fqdn" ]]; then
+            export GOOGLE_OAUTH_CALLBACK_URL="https://${fqdn}/oauth/google/callback"
+        fi
+    fi
+}
+
 write_runtime_env_file() {
     local env_file="$1"
     local key value
+
+    resolve_google_oauth_callback
 
     mkdir -p "$(dirname "$env_file")"
     : > "$env_file"
@@ -230,12 +293,42 @@ write_runtime_env_file() {
         CODING_BACKEND_PROVIDER \
         CODING_BACKEND_MODEL \
         GITHUB_TOKEN \
+        ATLASSIAN_SITE_URL \
+        ATLASSIAN_EMAIL \
+        ATLASSIAN_API_TOKEN \
+        ATLASSIAN_CLIENT_ID \
+        ATLASSIAN_CLIENT_SECRET \
+        ATLASSIAN_CLOUD_ID \
         TS_HARNESS_TOOLS_ROOT \
         TS_HARNESS_DB_HOST \
         TS_HARNESS_DB_PORT \
         TS_HARNESS_DB_USER \
         TS_HARNESS_DB_NAME \
         TS_HARNESS_DB_PASSWORD \
+        TS_HARNESS_PROGRAM_ACCESS \
+        TS_HARNESS_SCIM_TOKEN \
+        AUTH0_MGMT_DOMAIN \
+        AUTH0_MGMT_CLIENT_ID \
+        AUTH0_MGMT_CLIENT_SECRET \
+        MS_GRAPH_TENANT_ID \
+        MS_GRAPH_CLIENT_ID \
+        MS_GRAPH_CLIENT_SECRET \
+        GOOGLE_DIRECTORY_ADMIN_SUBJECT \
+        GOOGLE_DIRECTORY_CUSTOMER \
+        CLOUD_PROVIDER \
+        CLOUD_REGION \
+        SECRETS_PREFIX \
+        CODING_ECS_CLUSTER \
+        CODING_EGRESS_PROXY_SERVICE \
+        CODING_EGRESS_DOMAINS_PARAMETER \
+        CODING_EGRESS_PROXY_URL \
+        GITHUB_APP_ID \
+        GITHUB_APP_SLUG \
+        GITHUB_APP_HOST \
+        GITHUB_APP_PRIVATE_KEY \
+        GITHUB_APP_WEBHOOK_SECRET \
+        LLM_PROXY_SECRET \
+        OPENROUTER_API_KEY \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -357,6 +450,8 @@ INSTANCE_ENV_KEYS=(
     WORKFLOW_RUNNER_BATCH_SIZE
     WORKFLOW_RUNNER_LEASE_SECONDS
     WORKFLOW_RUNNER_STALE_POLICY
+    CODING_JOBS_ENABLED
+    CODING_MAX_RUNNING
     MEMORY_BACKEND
     CLOUD_PROVIDER
     CLOUD_REGION
@@ -381,6 +476,13 @@ INSTANCE_ENV_KEYS=(
     EMBEDDINGS_DIMENSIONS
     EMBEDDINGS_FALLBACK
     IMPLEMENT_WORK_ORDERS_REPO_URL
+    GITHUB_APP_ID
+    GITHUB_APP_SLUG
+    GITHUB_APP_HOST
+    GITHUB_WEBHOOK_FUNNEL
+    ENTERPRISE_REPO_REF
+    TAILSCALE_HOSTNAME
+    TAILSCALE_TAGS
     IMPLEMENT_WORK_ORDERS_BASE_BRANCH
     IMPLEMENT_JIRA_TICKET_REPO_URL
     IMPLEMENT_JIRA_TICKET_BASE_BRANCH
@@ -393,7 +495,69 @@ INSTANCE_ENV_KEYS=(
     OIDC_CLIENT_ID
     OIDC_AUTHORIZATION_ENDPOINT
     OIDC_TOKEN_ENDPOINT
+    OIDC_PRESET
+    OIDC_TOKEN_TYPE
+    OIDC_GROUPS_CLAIM
+    OIDC_ROLES_CLAIM
+    OIDC_ALLOWED_DOMAINS
+    OIDC_GROUPS_SOURCE
+    IDENTITY_DIRECTORY
+    DEPLOYMENT_PROFILE
+    CODING_ECS_CLUSTER
+    CODING_ECS_TASK_DEFINITION
+    CODING_ECS_CONTAINER
+    CODING_ECS_SUBNETS
+    CODING_ECS_SECURITY_GROUPS
+    CODING_EGRESS_PROXY_SERVICE
+    CODING_EGRESS_DOMAINS_PARAMETER
+    CODING_EGRESS_PROXY_URL
+    LLM_PROXY_ENABLED
+    CODING_WORKER_LLM_PROXY_URL
+    LLM_PROXY_HOST_PORT
+    TS_HARNESS_STATE_BACKEND
+    TS_HARNESS_OBJECT_BACKEND
+    TS_HARNESS_SKILLS_BUCKET
+    TS_HARNESS_WORKSPACE_BUCKET
+    TS_HARNESS_INTAKE_BUCKET
+    TS_HARNESS_INTAKE_VISION_MODEL
 )
+
+# Storage flags (docs/runbooks/shared-state.md). Unset flags follow the profile:
+# scale_out uses Postgres for state and the cloud's object store when both
+# buckets are known; everything else keeps files on the host. Once a backend is
+# on, the old volumes it replaces are mounted read-only.
+resolve_storage_backends() {
+    local profile="${DEPLOYMENT_PROFILE:-single_host}"
+    local cloud_object=s3
+    [[ "${CLOUD_PROVIDER:-aws}" == "gcp" ]] && cloud_object=gcs
+    if is_blank_or_placeholder "${TS_HARNESS_STATE_BACKEND:-}"; then
+        if [[ "$profile" == "scale_out" ]]; then
+            TS_HARNESS_STATE_BACKEND=postgres
+        else
+            TS_HARNESS_STATE_BACKEND=local
+        fi
+    fi
+    if is_blank_or_placeholder "${TS_HARNESS_OBJECT_BACKEND:-}"; then
+        TS_HARNESS_OBJECT_BACKEND=local
+        if [[ "$profile" == "scale_out" ]]; then
+            if ! is_blank_or_placeholder "${TS_HARNESS_SKILLS_BUCKET:-}" && ! is_blank_or_placeholder "${TS_HARNESS_WORKSPACE_BUCKET:-}"; then
+                TS_HARNESS_OBJECT_BACKEND="$cloud_object"
+            else
+                echo "WARNING: scale_out without TS_HARNESS_SKILLS_BUCKET and TS_HARNESS_WORKSPACE_BUCKET; skills and workspaces stay on the host" >&2
+            fi
+        fi
+    fi
+    TS_HARNESS_STATE_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_STATE_BACKEND" == "postgres" ]] && TS_HARNESS_STATE_VOLUME_MODE=ro
+    TS_HARNESS_OBJECT_VOLUME_MODE=rw
+    [[ "$TS_HARNESS_OBJECT_BACKEND" != "local" ]] && TS_HARNESS_OBJECT_VOLUME_MODE=ro
+    export TS_HARNESS_STATE_BACKEND TS_HARNESS_OBJECT_BACKEND TS_HARNESS_STATE_VOLUME_MODE TS_HARNESS_OBJECT_VOLUME_MODE
+    export TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}"
+    export TS_HARNESS_INTAKE_BUCKET="${TS_HARNESS_INTAKE_BUCKET:-}"
+    if [[ "$TS_HARNESS_OBJECT_BACKEND" != "local" ]] && is_blank_or_placeholder "${TS_HARNESS_INTAKE_BUCKET:-}"; then
+        echo "WARNING: TS_HARNESS_OBJECT_BACKEND=$TS_HARNESS_OBJECT_BACKEND without TS_HARNESS_INTAKE_BUCKET; console uploads and Discord attachments will fail" >&2
+    fi
+}
 
 instance_env_path() {
     echo "${DATA_DIR:?DATA_DIR must be set}/.setup/instance-env.sh"
@@ -539,6 +703,7 @@ sync_compose_db_password() {
     python3 - "$compose_env_file" "$password" <<'PY'
 import pathlib
 import re
+import shlex
 import sys
 
 path = pathlib.Path(sys.argv[1])
@@ -546,13 +711,58 @@ password = sys.argv[2]
 text = path.read_text()
 for key in ("TS_HARNESS_DB_PASSWORD",):
     pattern = rf"^export {key}=.*$"
-    replacement = f"export {key}={password!r}"
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
+    replacement = f"export {key}={shlex.quote(password)}"
+    text, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=re.M)
     if count == 0:
         text = text.rstrip() + f"\nexport {key}={password!r}\n"
 path.write_text(text)
 PY
     chmod 600 "$compose_env_file"
+}
+
+# Postgres URL for runtime sessions, transcripts, and Google OAuth tokens, built
+# from TS_HARNESS_DB_* so password rotation carries through. An explicit
+# TS_HARNESS_SESSION_DB_URL wins. Prints nothing (JSONL session store) when the
+# DB identity is incomplete.
+session_db_url() {
+    if ! is_blank_or_placeholder "${TS_HARNESS_SESSION_DB_URL:-}"; then
+        printf '%s' "$TS_HARNESS_SESSION_DB_URL"
+        return 0
+    fi
+    local key
+    for key in TS_HARNESS_DB_HOST TS_HARNESS_DB_USER TS_HARNESS_DB_NAME TS_HARNESS_DB_PASSWORD; do
+        if is_blank_or_placeholder "${!key:-}"; then
+            return 0
+        fi
+    done
+    local sslmode="${PGSSLMODE:-}"
+    if [[ -z "$sslmode" ]]; then
+        if is_managed_memory_backend; then
+            sslmode=require
+        else
+            sslmode=disable
+        fi
+    fi
+    DB_USER="$TS_HARNESS_DB_USER" DB_PASSWORD="$TS_HARNESS_DB_PASSWORD" \
+        DB_HOST="$TS_HARNESS_DB_HOST" DB_PORT="${TS_HARNESS_DB_PORT:-5432}" \
+        DB_NAME="$TS_HARNESS_DB_NAME" DB_SSLMODE="$sslmode" \
+        python3 -c '
+import os
+from urllib.parse import quote
+
+e = os.environ
+print(
+    "postgresql://{}:{}@{}:{}/{}?sslmode={}".format(
+        quote(e["DB_USER"], safe=""),
+        quote(e["DB_PASSWORD"], safe=""),
+        e["DB_HOST"],
+        e["DB_PORT"],
+        quote(e["DB_NAME"], safe=""),
+        quote(e["DB_SSLMODE"], safe=""),
+    ),
+    end="",
+)
+'
 }
 
 # Docker Compose interpolates all services (including inactive profiles) from the shell env.
@@ -563,6 +773,7 @@ run_docker_compose_as_admin() {
             TS_HARNESS_DB_PORT="${TS_HARNESS_DB_PORT:-5432}" \
             TS_HARNESS_DB_USER="${TS_HARNESS_DB_USER:-}" \
             TS_HARNESS_DB_NAME="${TS_HARNESS_DB_NAME:-}" \
+            TS_HARNESS_SESSION_DB_URL="$(session_db_url)" \
             ENTERPRISE_ASSETS_DIR="${ENTERPRISE_ASSETS_DIR:-}" \
             TS_HARNESS_CONFIG_DIR="${TS_HARNESS_CONFIG_DIR:-$DATA_DIR/.ts-harness}" \
             TS_HARNESS_TOOLS_ROOT_HOST="${TS_HARNESS_TOOLS_ROOT_HOST:-${DATA_DIR}/.ts-harness/tools}" \
@@ -573,12 +784,15 @@ run_docker_compose_as_admin() {
             EMBEDDINGS_MODEL="${EMBEDDINGS_MODEL:-text-embedding-3-small}" \
             EMBEDDINGS_DIMENSIONS="${EMBEDDINGS_DIMENSIONS:-1536}" \
             OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+            ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+            OPENCODE_VERSION="${OPENCODE_VERSION:-}" \
             VOYAGE_API_KEY="${VOYAGE_API_KEY:-}" \
             GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
             MISTRAL_API_KEY="${MISTRAL_API_KEY:-}" \
             GATEWAY_TOKEN="${GATEWAY_TOKEN:-}" \
             MEMORY_API_TOKEN="${MEMORY_API_TOKEN:-}" \
             SANDBOX_WORKER_TOKEN="${SANDBOX_WORKER_TOKEN:-}" \
+            CODING_JOB_SECRET="${CODING_JOB_SECRET:-}" \
             SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}" \
             SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
             SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-}" \
@@ -589,15 +803,83 @@ run_docker_compose_as_admin() {
             WORKFLOW_RUNNER_LEASE_SECONDS="${WORKFLOW_RUNNER_LEASE_SECONDS:-1800}" \
             WORKFLOW_RUNNER_STALE_POLICY="${WORKFLOW_RUNNER_STALE_POLICY:-block}" \
             WORKFLOW_RUNNER_ADAPTER="${WORKFLOW_RUNNER_ADAPTER:-gateway-http}" \
+            CODING_JOBS_ENABLED="${CODING_JOBS_ENABLED:-false}" \
+            CODING_MAX_RUNNING="${CODING_MAX_RUNNING:-3}" \
+            CODING_LAUNCHER="${CODING_LAUNCHER:-}" \
+            DEPLOYMENT_PROFILE="${DEPLOYMENT_PROFILE:-single_host}" \
+            CODING_ECS_CLUSTER="${CODING_ECS_CLUSTER:-}" \
+            CODING_ECS_TASK_DEFINITION="${CODING_ECS_TASK_DEFINITION:-}" \
+            CODING_ECS_CONTAINER="${CODING_ECS_CONTAINER:-coding-worker}" \
+            CODING_ECS_SUBNETS="${CODING_ECS_SUBNETS:-}" \
+            CODING_ECS_SECURITY_GROUPS="${CODING_ECS_SECURITY_GROUPS:-}" \
             AGENT_RUNTIME_URL="${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}" \
             RUNTIME_FAKE_PROVIDER="${RUNTIME_FAKE_PROVIDER:-false}" \
+            LLM_PROXY_RUNTIME_URL="${LLM_PROXY_RUNTIME_URL:-}" \
+            LLM_PROXY_REPLICA_URL="${LLM_PROXY_REPLICA_URL:-}" \
+            LLM_PROXY_HOST_PORT="${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}" \
+            CODING_WORKER_LLM_PROXY_URL="${CODING_WORKER_LLM_PROXY_URL:-}" \
+            TS_HARNESS_STATE_BACKEND="${TS_HARNESS_STATE_BACKEND:-local}" \
+            TS_HARNESS_OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}" \
+            TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" \
+            TS_HARNESS_WORKSPACE_BUCKET="${TS_HARNESS_WORKSPACE_BUCKET:-}" \
+            TS_HARNESS_INTAKE_BUCKET="${TS_HARNESS_INTAKE_BUCKET:-}" \
+            TS_HARNESS_INTAKE_VISION_MODEL="${TS_HARNESS_INTAKE_VISION_MODEL:-}" \
+            TS_HARNESS_STATE_VOLUME_MODE="${TS_HARNESS_STATE_VOLUME_MODE:-rw}" \
+            TS_HARNESS_OBJECT_VOLUME_MODE="${TS_HARNESS_OBJECT_VOLUME_MODE:-rw}" \
         docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
-restart_agent_runtime() {
-    run_docker_compose_as_admin restart agent-runtime
+# Adds agent-runtime-2 / memory-api-2 when docker-compose.replicas.yml is in use.
+# llm-proxy and workflow-runner share agent-runtime's network namespace, so a recreate
+# of the runtime leaves them attached to the old namespace unless they are recreated too.
+# Services to restart or recreate together. Services that run in agent-runtime's network
+# namespace (network_mode: service:agent-runtime) lose their network when it restarts
+# alone, so restarting agent-runtime brings them along. Each service is listed once.
+with_runtime_replicas() {
+    local service files="${COMPOSE_FILES_SERIALIZED:-}" seen=" "
+    _emit_runtime_service() {
+        case "$seen" in
+            *" $1 "*) ;;
+            *) seen+="$1 "; printf '%s\n' "$1" ;;
+        esac
+    }
+    for service in "$@"; do
+        _emit_runtime_service "$service"
+        if [[ "$files" == *docker-compose.replicas.yml* ]]; then
+            case "$service" in
+                agent-runtime|memory-api) _emit_runtime_service "${service}-2" ;;
+            esac
+        fi
+        [[ "$service" == agent-runtime ]] || continue
+        if [[ "$files" == *docker-compose.memory-api.yml* ]]; then
+            _emit_runtime_service memory-api
+            [[ "$files" == *docker-compose.replicas.yml* ]] && _emit_runtime_service memory-api-2
+        fi
+        [[ "$files" == *docker-compose.llm-proxy.yml* ]] && _emit_runtime_service llm-proxy
+        [[ "$files" == *docker-compose.workflow-runner.yml* ]] && _emit_runtime_service workflow-runner
+        [[ "$files" == *docker-compose.coding-jobs.yml* ]] && _emit_runtime_service coding-launcher
+    done
+    return 0
 }
 
+# Restart agent-runtime first, then the services in its network namespace. Restarted
+# together, a sharer that came back before agent-runtime kept the old namespace and lost
+# its network (workflow-runner then saw "connection refused" on every tick).
+restart_agent_runtime() {
+    local runtimes=() sharers=() service
+    while IFS= read -r service; do
+        case "$service" in
+            agent-runtime|agent-runtime-2) runtimes+=("$service") ;;
+            *) sharers+=("$service") ;;
+        esac
+    done < <(with_runtime_replicas agent-runtime)
+    run_docker_compose_as_admin restart "${runtimes[@]}"
+    if [[ ${#sharers[@]} -gt 0 ]]; then
+        run_docker_compose_as_admin restart "${sharers[@]}"
+    fi
+}
+
+# secrets.env is sourced by bash, so values are shell-quoted like phase 10 writes them.
 persist_env_key() {
     local env_file="$1" key="$2" value="$3"
 
@@ -607,8 +889,9 @@ persist_env_key() {
 
     mkdir -p "$(dirname "$env_file")"
     touch "$env_file"
-    grep -q "^${key}=" "$env_file" 2>/dev/null && sed -i "/^${key}=/d" "$env_file"
-    write_dotenv_var "$key" "$value" >> "$env_file"
+    (umask 077; grep -v "^${key}=" "$env_file" > "${env_file}.tmp") || true
+    mv "${env_file}.tmp" "$env_file"
+    write_env_var "$key" "$value" >> "$env_file"
     chmod 600 "$env_file"
 }
 
@@ -618,7 +901,8 @@ restart_ts_harness_services() {
 }
 
 recreate_ts_harness_services() {
-    local services=("$@")
+    local services=() service
+    while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas "$@")
     run_docker_compose_as_admin up -d --force-recreate "${services[@]}"
 }
 

@@ -15,7 +15,8 @@ from ts_harness.config.runtime_settings import _canonicalize_program_defaults
 from ts_harness.gateway import asgi_app
 from ts_harness.gateway.admin_bff import build_portfolio
 from ts_harness.integrations.github_client import GitHubError
-from ts_harness.integrations.jira_client import JiraClient
+from ts_harness.integrations.atlassian_auth import TOKEN_URL, AtlassianAuth
+from ts_harness.integrations.jira_client import JiraClient, JiraError
 from ts_harness.workflows.operability import build_operability_status
 from ts_harness.workflows.program_compensation import (
     CANCELLED_LABEL,
@@ -80,17 +81,17 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         memory.record_program_compensation.assert_called_once_with("root-1", status="skipped", actions=[], actor="orchestrator")
 
     def test_jira_is_labelled_and_commented_by_default(self):
-        memory = _memory([_ref("jira_issue", "TFS-1")])
+        memory = _memory([_ref("jira_issue", "PROJ-1")])
         jira = mock.MagicMock()
         result = compensate_cancelled_program(memory, "root-1", reason="scope dropped", github=_github(), jira=jira)
-        jira.add_label.assert_called_once_with("TFS-1", CANCELLED_LABEL)
+        jira.add_label.assert_called_once_with("PROJ-1", CANCELLED_LABEL)
         self.assertIn("scope dropped", jira.comment.call_args.args[1])
         jira.transition.assert_not_called()
         self.assertEqual(_results(result), [("jira_issue", "label_and_comment", "done")])
         self.assertEqual(memory.record_program_external_ref.call_args.kwargs["state"], "labelled")
 
     def test_jira_closes_only_when_configured(self):
-        memory = _memory([_ref("jira_issue", "TFS-1")])
+        memory = _memory([_ref("jira_issue", "PROJ-1")])
         jira = mock.MagicMock()
         jira.transition.return_value = True
         result = compensate_cancelled_program(
@@ -100,19 +101,19 @@ class CompensateCancelledProgramTests(unittest.TestCase):
             github=_github(),
             jira=jira,
         )
-        jira.transition.assert_called_once_with("TFS-1", "Cancelled")
+        jira.transition.assert_called_once_with("PROJ-1", "Cancelled")
         self.assertEqual(_results(result), [("jira_issue", "label_comment_and_close", "done")])
         self.assertEqual(memory.record_program_external_ref.call_args.kwargs["state"], "closed")
 
     def test_rerun_skips_labelled_jira_and_only_retries_the_close(self):
         jira = mock.MagicMock()
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1", state="labelled")]), "root-1", github=_github(), jira=jira
+            _memory([_ref("jira_issue", "PROJ-1", state="labelled")]), "root-1", github=_github(), jira=jira
         )
         self.assertEqual(_results(result), [("jira_issue", "none", "skipped")])
         jira.transition.return_value = True
         compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1", state="labelled")]),
+            _memory([_ref("jira_issue", "PROJ-1", state="labelled")]),
             "root-1",
             defaults={"compensation": {"jira": "close"}},
             github=_github(),
@@ -120,13 +121,13 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         )
         jira.add_label.assert_not_called()
         jira.comment.assert_not_called()
-        jira.transition.assert_called_once_with("TFS-1", "Done")
+        jira.transition.assert_called_once_with("PROJ-1", "Done")
 
     def test_jira_close_without_matching_transition_fails(self):
         jira = mock.MagicMock()
         jira.transition.return_value = False
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1")]),
+            _memory([_ref("jira_issue", "PROJ-1")]),
             "root-1",
             defaults={"compensation": {"jira": "close"}},
             github=_github(),
@@ -176,7 +177,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         result = compensate_cancelled_program(
             _memory([_ref("jira_issue", "OPS-9")]),
             "root-1",
-            defaults={"jira_filing": {"allowed_projects": ["TFS"]}},
+            defaults={"jira_filing": {"allowed_projects": ["PROJ"]}},
             github=_github(),
             jira=jira,
         )
@@ -242,7 +243,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
         github = _github()
         github.close_pull.side_effect = GitHubError(403, "forbidden")
         result = compensate_cancelled_program(
-            _memory([_ref("jira_issue", "TFS-1"), _ref("pull_request", PR_URL)]),
+            _memory([_ref("jira_issue", "PROJ-1"), _ref("pull_request", PR_URL)]),
             "root-1",
             defaults=BOUND,
             github=github,
@@ -256,7 +257,7 @@ class CompensateCancelledProgramTests(unittest.TestCase):
     def test_missing_jira_credentials_only_fail_jira_refs(self):
         with mock.patch.dict("os.environ", {}, clear=True):
             result = compensate_cancelled_program(
-                _memory([_ref("jira_issue", "TFS-1"), _ref("pull_request", PR_URL)]),
+                _memory([_ref("jira_issue", "PROJ-1"), _ref("pull_request", PR_URL)]),
                 "root-1",
                 defaults=BOUND,
                 github=_github(),
@@ -277,14 +278,59 @@ class JiraClientTests(unittest.TestCase):
                 return 200, json.dumps({"transitions": [{"id": "31", "name": "Close", "to": {"name": "Done"}}]}).encode()
             return 204, b""
 
-        client = JiraClient(site_url="https://acme.atlassian.net", email="bot@acme.io", token="t", transport=transport)
-        client.add_label("TFS-1", CANCELLED_LABEL)
-        client.comment("TFS-1", "cancelled")
-        self.assertTrue(client.transition("TFS-1", "done"))
-        self.assertFalse(client.transition("TFS-1", "Won't Do"))
-        self.assertEqual(calls[0], ("PUT", "https://acme.atlassian.net/rest/api/3/issue/TFS-1", {"update": {"labels": [{"add": CANCELLED_LABEL}]}}))
-        self.assertEqual(calls[1][0:2], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/comment"))
-        self.assertEqual(calls[3], ("POST", "https://acme.atlassian.net/rest/api/3/issue/TFS-1/transitions", {"transition": {"id": "31"}}))
+        auth = AtlassianAuth(mode="basic", site_url="https://acme.atlassian.net", email="bot@acme.io", api_token="t")
+        client = JiraClient(auth=auth, transport=transport)
+        client.add_label("PROJ-1", CANCELLED_LABEL)
+        client.comment("PROJ-1", "cancelled")
+        self.assertTrue(client.transition("PROJ-1", "done"))
+        self.assertFalse(client.transition("PROJ-1", "Won't Do"))
+        self.assertEqual(calls[0], ("PUT", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1", {"update": {"labels": [{"add": CANCELLED_LABEL}]}}))
+        self.assertEqual(calls[1][0:2], ("POST", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1/comment"))
+        self.assertEqual(calls[3], ("POST", "https://acme.atlassian.net/rest/api/3/issue/PROJ-1/transitions", {"transition": {"id": "31"}}))
+
+    def test_accepts_three_tuple_transport(self):
+        client = JiraClient(
+            auth=AtlassianAuth(mode="basic", site_url="https://acme.atlassian.net", email="bot@acme.io", api_token="t"),
+            transport=lambda method, url, headers, body: (200, b'{"ok": true}', {}),
+        )
+        self.assertEqual(client.request("GET", "/rest/api/3/myself"), {"ok": True})
+
+    def _oauth_client(self, issue_statuses: list[int]):
+        tokens: list[str] = []
+        seen: list[tuple[str, str]] = []
+
+        def transport(method, url, headers, body):
+            if url == TOKEN_URL:
+                tokens.append(f"tok-{len(tokens) + 1}")
+                return 200, json.dumps({"access_token": tokens[-1], "expires_in": 3600}).encode(), {}
+            seen.append((url, headers["Authorization"]))
+            return issue_statuses.pop(0), b"", {}
+
+        auth = AtlassianAuth(mode="oauth", client_id="id", client_secret="secret", cloud_id="cloud-1", transport=transport)
+        return JiraClient(auth=auth, transport=transport), seen
+
+    def test_oauth_uses_gateway_url_and_bearer(self):
+        client, seen = self._oauth_client([204])
+        client.add_label("PROJ-1", CANCELLED_LABEL)
+        self.assertEqual(seen, [("https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1", "Bearer tok-1")])
+
+    def test_oauth_retries_once_after_401_with_fresh_token(self):
+        client, seen = self._oauth_client([401, 204])
+        client.add_label("PROJ-1", CANCELLED_LABEL)
+        self.assertEqual([auth for _, auth in seen], ["Bearer tok-1", "Bearer tok-2"])
+
+    def test_oauth_second_401_raises(self):
+        client, seen = self._oauth_client([401, 401])
+        with self.assertRaises(JiraError) as ctx:
+            client.add_label("PROJ-1", CANCELLED_LABEL)
+        self.assertEqual(ctx.exception.status, 401)
+        self.assertEqual(len(seen), 2)
+
+    def test_from_env_without_credentials_raises_jira_error(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(JiraError) as ctx:
+                JiraClient.from_env()
+        self.assertEqual(ctx.exception.status, 401)
 
 
 def load_gateway():
@@ -394,6 +440,7 @@ class AdminEndpointsTests(unittest.TestCase):
             ("post", "/admin/programs/prog-1/advance"),
             ("get", "/admin/programs/prog-1"),
             ("get", "/admin/programs/prog-1/status"),
+            ("get", "/admin/programs/prog-1/phases/implement/activity"),
         ):
             response = getattr(self.client, method)(path, **({"json": {}} if method == "post" else {}))
             self.assertEqual(response.status_code, 404, path)
@@ -403,6 +450,44 @@ class AdminEndpointsTests(unittest.TestCase):
     def test_workflow_of_another_tenant_is_not_found(self):
         self.memory.get_workflow_tasks.return_value = {"workflow_id": "wf-1", "tasks": [{"id": "t1", "tenant_id": "other"}]}
         self.assertEqual(self.client.get("/admin/workflows/wf-1").status_code, 404)
+
+    def test_program_phase_activity_lists_the_stage_and_its_children(self):
+        self.memory.get_program.return_value = {"program": {"id": "prog-1", "tenant_id": "default"}}
+        activity = {"phase": "implement", "workflow": {"state": "Waiting"}, "children": [{"label": "WO-003"}]}
+        with mock.patch("ts_harness.workflows.phase_activity.phase_activity", return_value=activity) as build:
+            response = self.client.get("/admin/programs/prog-1/phases/implement/activity")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), activity)
+        build.assert_called_once_with(self.memory, "prog-1", "implement")
+
+    def test_stuck_step_decision_runs_through_the_engine_as_the_caller(self):
+        self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "default"}, "tasks": []}
+        engine = mock.Mock()
+        engine.decide_blocked_step.return_value = {"status": "revising", "revision_number": 1}
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine):
+            response = self.client.post(
+                "/admin/workflows/decide",
+                json={"workflow_id": "wf-d", "task_id": "finalize-4", "action": "revise", "guidance": "Persist empty state"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "revising")
+        engine.decide_blocked_step.assert_called_once_with(
+            "wf-d", "finalize-4", "revise", actor="admin-1", guidance="Persist empty state", tenant_id="default"
+        )
+
+    def test_stuck_step_decision_checks_tenant_and_state(self):
+        engine = mock.Mock()
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine):
+            self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "other"}, "tasks": []}
+            body = {"workflow_id": "wf-d", "task_id": "t", "action": "accept"}
+            self.assertEqual(self.client.post("/admin/workflows/decide", json=body).status_code, 404)
+            engine.decide_blocked_step.assert_not_called()
+            self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "default"}, "tasks": []}
+            engine.decide_blocked_step.side_effect = ValueError("step is not waiting for a decision")
+            response = self.client.post("/admin/workflows/decide", json=body)
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("not waiting", response.json()["error"])
+            self.assertEqual(self.client.post("/admin/workflows/decide", json={"task_id": "t"}).status_code, 400)
 
     def test_gate_decisions_carry_the_caller_tenant(self):
         self.memory.approve_task.return_value = {"id": "t1"}

@@ -8,6 +8,7 @@ Transform Foundry JSON artifacts into implementation-ready Work Orders.
 - `input.prior_refinery` — refinery artifacts
 - `input.prior_foundry` — foundry artifacts
 - `input.stage` — must be `planner`
+- `input.project_repositories` — the project's repositories (`full_name`, `role`, `default_branch`); absent for single-repository projects
 
 ## Outputs (JSON artifacts)
 
@@ -44,6 +45,9 @@ Each WO in `work_orders_markdown`:
 ## Requirements
 (verbatim from FRD)
 
+## Technical Constraints
+(verbatim from the Technical Constraints in input.prior_refinery requirements and the PRD)
+
 ## In Scope
 ...
 
@@ -62,8 +66,24 @@ Given ... When ... Then ...
 ## Rules
 
 - Requirements copied verbatim from FRDs in `input.prior_refinery`.
+- Every WO repeats the full Technical Constraints list. A coding agent sees only
+  its own WO, so a constraint missing there (for example the framework) is lost.
+- Work Orders build on one shared codebase: the first WO sets up the project in
+  the stated stack and later WOs depend on it instead of creating parallel
+  projects.
 - Each WO independently implementable unless dependencies are explicit.
 - A fresh coding agent should execute without clarifying questions.
 - Do not silently edit blueprints or FRDs; note issues in `warnings`.
+- When `input.project_repositories` is present, every WO starts with a
+  `Repository:` line, right under its heading, naming exactly one of those
+  repositories by its `full_name` (for example `Repository: acme/web`). Use
+  `role` to place the work: UI work in the web repository, endpoints in the API
+  repository. A WO that spans two repositories is two WOs, the consumer
+  depending on the provider. With a single repository the line may be omitted.
+- Without `input.project_repositories`, leave the `Repository:` line out. Never
+  write a placeholder such as `owner/name`; the planner contract rejects it.
+- Dependencies between repositories go one way. If WOs in `acme/web` depend on
+  `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
+  so the dependency points one way.
 
 Apply `quality-gates/planner-runtime.md` before returning JSON.

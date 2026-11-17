@@ -707,7 +707,7 @@ class ProgramProjectMemoryApiTests(unittest.TestCase):
                 "id": program_id,
                 "summary": "Project A",
                 "entry_phase": "prd",
-                "project_id": "TFS",
+                "project_id": "PROJ",
                 "project_id_source": "user",
                 "tenant_id": "default",
                 "actor": "test",
@@ -717,8 +717,8 @@ class ProgramProjectMemoryApiTests(unittest.TestCase):
             (sql, params) for sql, params in cursor.calls if "INSERT INTO delivery_programs" in sql
         )
         self.assertIn("project_id", insert_sql)
-        self.assertIn("TFS", params)
-        self.assertEqual(result["project_id"], "TFS")
+        self.assertIn("PROJ", params)
+        self.assertEqual(result["project_id"], "PROJ")
         self.assertEqual(result["project_id_source"], "user")
 
     def test_cross_tenant_link_rejected(self):
@@ -760,7 +760,7 @@ class ProgramProjectMemoryApiTests(unittest.TestCase):
         program = {
             "id": program_id,
             "tenant_id": "default",
-            "project_id": "TFS",
+            "project_id": "PROJ",
             "project_id_source": "user",
             "excluded_from_autoshare": False,
         }
@@ -793,7 +793,7 @@ class ProgramProjectMemoryApiTests(unittest.TestCase):
         program_id = str(uuid.uuid4())
         cursor = FakeCursor(
             fetchone_rows=[
-                {"id": program_id, "tenant_id": "default", "project_id": "TFS"},
+                {"id": program_id, "tenant_id": "default", "project_id": "PROJ"},
                 {"id": str(uuid.uuid4())},
             ]
         )

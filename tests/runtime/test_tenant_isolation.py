@@ -63,18 +63,18 @@ class TenantIsolationTests(unittest.TestCase):
                 tenant_id="tenant-a",
                 agent_id="orchestrator",
                 content="shared fact",
-                scope="project:TFS",
+                scope="project:PROJ",
             )
             client.recall(
                 tenant_id="tenant-a",
                 agent_id="orchestrator",
                 query="fact",
-                scope="project:TFS",
+                scope="project:PROJ",
             )
 
-        self.assertEqual(calls[0]["scope"], "project:TFS")
+        self.assertEqual(calls[0]["scope"], "project:PROJ")
         self.assertEqual(calls[0]["tenant_id"], "tenant-a")
-        self.assertEqual(calls[1]["scope"], "project:TFS")
+        self.assertEqual(calls[1]["scope"], "project:PROJ")
         self.assertEqual(calls[1]["tenant_id"], "tenant-a")
 
     def test_unknown_tenant_denied_by_policy(self):

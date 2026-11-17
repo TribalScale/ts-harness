@@ -23,6 +23,7 @@ class DiscordAdapter(BaseChannelAdapter):
             sender_id=str(payload.get("author", {}).get("id", "unknown")),
             thread_id=str(payload.get("channel_id", "")),
             metadata=payload,
+            attachments=discord_file_pointers(payload.get("attachments"), tenant_id=tenant_id),
         )
 
     def send(self, args: dict[str, Any], *, tenant_id: str) -> dict[str, Any]:
@@ -39,3 +40,28 @@ class DiscordAdapter(BaseChannelAdapter):
             "tenant_id": tenant_id,
             "message_id": response.get("id"),
         }
+
+
+def discord_file_pointers(attachments: Any, *, tenant_id: str) -> list[dict[str, Any]]:
+    """``discord_file`` pointers. Each names the key its prefetch copy will be stored under."""
+    from ts_harness.intake.blobs import discord_key
+    from ts_harness.intake.sources import MAX_FILE_BYTES
+
+    out: list[dict[str, Any]] = []
+    for item in attachments if isinstance(attachments, list) else []:
+        if not isinstance(item, dict) or not item.get("id") or not item.get("url"):
+            continue
+        size = int(item.get("size") or 0)
+        pointer: dict[str, Any] = {
+            "kind": "discord_file",
+            "attachment_id": str(item["id"]),
+            "url": str(item["url"]),
+            "name": str(item.get("filename") or "attachment"),
+            "mime": str(item.get("content_type") or ""),
+            "size": size,
+            "object_key": discord_key(tenant_id=tenant_id, attachment_id=str(item["id"])),
+        }
+        if size > MAX_FILE_BYTES:
+            pointer["error"] = "file is larger than 20 MB"
+        out.append(pointer)
+    return out

@@ -8,11 +8,14 @@ from unittest.mock import patch
 
 from ts_harness.integrations.github_client import GitHubError
 from ts_harness.jira.program_config import resolved_program_config
+from ts_harness.workflows import bug_context
 from ts_harness.workflows.bug_context import (
     FILE_LIMIT,
-    TREE_PATH_LIMIT,
+    MATCHED_FILE_LIMIT,
+    TREE_CHAR_BUDGET,
     cited_paths,
     gather_bug_context,
+    ranked_paths,
 )
 from ts_harness.workflows.definition_validation import validate_workflow_definition
 from ts_harness.workflows.expressions import resolve_token
@@ -107,6 +110,23 @@ class BugToJiraProgramTests(unittest.TestCase):
         intake = next(node for node in produces["nodes"] if node["id"] == "bug_intake")
         self.assertEqual(intake["produces_artifacts"][0], "bug_report")
 
+    def test_approved_bug_report_reaches_the_filing_stage(self):
+        bug = ProgramDefinitionRegistry().load("bug_to_jira_work_orders")
+        report = "Checkout total is wrong\n\n## Steps to reproduce\n1. Add two items"
+        intake = build_intake_for_node(
+            snapshot=bug,
+            node_id="file_jira",
+            workflow_type="file_work_orders_as_jira",
+            summary="file the bug",
+            artifacts={"work_order_ids": ["WO-001"], "work_orders_markdown": "# WO-001\n", "bug_report": report},
+        )
+        self.assertEqual(intake["bug_report"], report)
+        filing = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())
+        file_tickets = next(stage for stage in filing["stages"] if stage["name"] == "file_tickets")
+        self.assertEqual(file_tickets["input_map"]["bug_report"], "$workflow.bug_report")
+        tasks = [{"step_name": "choose_epic", "status": "pending", "created_at": "1", "input": intake}]
+        self.assertEqual(resolve_token("$workflow.bug_report", tasks=tasks), report)
+
     def test_resolved_issue_type_is_bug_and_content_stays_story(self):
         registry = ProgramDefinitionRegistry()
         bug = registry.load("bug_to_jira_work_orders")
@@ -142,7 +162,7 @@ class BugToJiraProgramTests(unittest.TestCase):
                         "step_name": "choose_epic",
                         "status": "pending",
                         "created_at": "1",
-                        "input": {"default_issue_type": "Bug", "issue_type_by_project": {"TFS": "Bug"}},
+                        "input": {"default_issue_type": "Bug", "issue_type_by_project": {"PROJ": "Bug"}},
                     }
                 ],
             ),
@@ -166,7 +186,7 @@ class BugToJiraProgramTests(unittest.TestCase):
 
 class GatherBugContextTests(unittest.TestCase):
     def test_returns_tree_and_cited_file_bodies(self):
-        paths = [f"src/f{index}.py" for index in range(TREE_PATH_LIMIT + 10)]
+        paths = [f"src/f{index}.py" for index in range(210)]
         paths.extend(["src/billing.py", "src/other.py"])
         github = _GitHub(paths, {"src/billing.py": "def charge():\n    return 1\n", "src/other.py": "x = 1\n"})
         task = {
@@ -183,9 +203,13 @@ class GatherBugContextTests(unittest.TestCase):
         )
         self.assertEqual(output["repo"], "acme/checkout")
         self.assertEqual(output["default_branch"], "dev")
-        self.assertEqual(len(output["tree"]), TREE_PATH_LIMIT)
-        self.assertEqual(github.fetched, [])
-        self.assertEqual(output["files"], [])
+        self.assertEqual(sorted(output["tree"]), sorted(paths))
+        self.assertFalse(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], len(paths))
+        self.assertEqual(output["tree"][0], "src/billing.py")
+        self.assertEqual(github.fetched, ["src/billing.py"])
+        self.assertEqual([item["path"] for item in output["files"]], ["src/billing.py"])
+        github.fetched.clear()
 
         github.paths = ["src/billing.py", "src/other.py", "README.md"]
         output = gather_bug_context(
@@ -198,6 +222,120 @@ class GatherBugContextTests(unittest.TestCase):
         self.assertIn("def charge", output["files"][0]["body"])
         self.assertEqual(github.fetched, ["src/billing.py"])
         self.assertNotIn("src/missing.py", github.fetched)
+
+    def test_paths_matching_the_request_come_first(self):
+        filler = [f"aaa/ts_harness/f{index:03}.py" for index in range(250)]
+        relevant = [
+            "runtime/ts_harness/workflows/last_workflow.py",
+            "admin-ui/src/system/SettingsPage.tsx",
+        ]
+        github = _GitHub(filler + relevant, {path: "x = 1\n" for path in relevant})
+        task = {
+            "id": "gather",
+            "workflow_id": "wf",
+            "input": {"summary": "Add a Last workflow line to the System Settings page of TS Harness."},
+        }
+        with patch.object(bug_context, "TREE_CHAR_BUDGET", 2_000):
+            output = gather_bug_context(
+                task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github
+            )
+        self.assertTrue(output["tree_truncated"])
+        self.assertLess(len(output["tree"]), len(filler))
+        self.assertEqual(set(output["tree"][:2]), set(relevant))
+        self.assertIn("runtime/ts_harness/workflows", output["directories"])
+        self.assertIn("aaa", output["directories"])
+        self.assertEqual(set(github.fetched), set(relevant))
+
+    def test_request_boilerplate_does_not_rank_paths(self):
+        paths = [
+            "docs/content-plan-work.md",
+            "src/branch/default_dev.py",
+            "src/acme_app.py",
+            "src/goal_audience.py",
+            "src/last_workflow.py",
+        ]
+        text = (
+            "Plan work from this content.\n\nAudience: operators.\nGoal: add a Last workflow line.\n"
+            "Repo: acme/app, default branch dev."
+        )
+        with patch.object(bug_context, "_routing_phrases", return_value=("plan work from this content",)):
+            request = bug_context.request_words_text(text, repo="acme/app", default_branch="dev")
+        self.assertEqual([item.path for item in ranked_paths(request, paths)], ["src/last_workflow.py"])
+
+    def test_routing_phrases_come_from_the_runtime_config(self):
+        bug_context._routing_phrases.cache_clear()
+        try:
+            with patch.dict("os.environ", {"TS_HARNESS_CONFIG": str(ROOT / "config" / "ts-harness-runtime.test.yaml")}):
+                phrases = bug_context._routing_phrases()
+        finally:
+            bug_context._routing_phrases.cache_clear()
+        self.assertIn("plan work from this content", phrases)
+        self.assertIn("file this bug", phrases)
+        self.assertNotIn("error", phrases)
+        self.assertNotIn("bug report", phrases)
+        self.assertFalse(any("\\" in phrase for phrase in phrases))
+
+    def test_a_tree_within_the_budget_is_sent_whole(self):
+        paths = [f"pkg/module_{index:04}/handler.py" for index in range(1_500)]
+        github = _GitHub(paths, {})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "it broke"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(output["tree"], paths)
+        self.assertFalse(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], 1_500)
+
+    def test_a_large_tree_is_cut_at_the_budget(self):
+        paths = [f"pkg/module_{index:05}/handler.py" for index in range(10_000)]
+        github = _GitHub(paths, {})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "it broke"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertTrue(output["tree_truncated"])
+        self.assertEqual(output["tree_total"], 10_000)
+        self.assertLess(len(output["tree"]), 10_000)
+        self.assertLessEqual(len(json.dumps(output["tree"])), TREE_CHAR_BUDGET)
+        self.assertEqual(output["tree"], paths[: len(output["tree"])])
+
+    def test_best_matches_are_fetched_when_no_path_is_named(self):
+        paths = [
+            "admin-ui/src/system/SettingsPage.tsx",
+            "admin-ui/src/system/SettingsPage.test.tsx",
+            "admin-ui/src/system/settings.png",
+            "admin-ui/src/projects/ProjectsPage.tsx",
+            "docs/readme.md",
+        ]
+        files = {path: f"// {path}\n" for path in paths}
+        github = _GitHub(paths, files)
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "The System Settings page shows the wrong status"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(github.fetched, ["admin-ui/src/system/SettingsPage.tsx"])
+        self.assertEqual(output["files"][0]["source"], "matched")
+        self.assertLessEqual(len(output["files"]), MATCHED_FILE_LIMIT)
+        self.assertIn("admin-ui/src/system/SettingsPage.test.tsx", output["tree"][:3])
+
+    def test_named_paths_keep_their_source(self):
+        github = _GitHub(["src/billing.py"], {"src/billing.py": "x = 1\n"})
+        task = {"id": "gather", "workflow_id": "wf", "input": {"summary": "src/billing.py crashes"}}
+        output = gather_bug_context(task, {"repo": "acme/app", "default_branch": "dev"}, memory=_Memory([]), github=github)
+        self.assertEqual(output["files"][0]["source"], "named")
+
+    def test_bug_stages_receive_the_full_report(self):
+        report = "x" * 300 + " the bug is in runtime/ts_harness/gateway/runtime_settings_bff.py"
+        tasks = [
+            {
+                "step_name": "pick_repo",
+                "status": "succeeded",
+                "created_at": "1",
+                "input": {"summary": report},
+                "output": {"summary": "Approved pick_repo", "repo": "acme/app"},
+            }
+        ]
+        self.assertEqual(resolve_token("$prior.pick_repo.input.summary", tasks=tasks), report)
+        self.assertEqual(resolve_token("$prior.pick_repo.input", tasks=tasks), {"summary": report})
+        self.assertEqual(resolve_token("$prior.pick_repo.output.repo", tasks=tasks), "acme/app")
+        plan = json.loads((WORKFLOWS / "bug_to_plan.json").read_text())
+        for stage in plan["stages"]:
+            if stage["name"] in {"investigate", "clarify", "draft_bug"}:
+                self.assertEqual(stage["input_map"]["report"], "$prior.pick_repo.input.summary", stage["name"])
 
     def test_caps_cited_files(self):
         paths = [f"pkg/m{index}.py" for index in range(FILE_LIMIT + 2)]
@@ -231,3 +369,24 @@ class GatherBugContextTests(unittest.TestCase):
             )
         self.assertEqual(result["status"], "blocked")
         self.assertIn("unavailable", result["reason"])
+
+
+class FillStageInputsTests(unittest.TestCase):
+    def test_unhydrated_stage_gets_its_input_map_at_dispatch(self):
+        from ts_harness.workflows.hooks.hydrate_input import fill_missing_inputs
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton("bug_to_plan")
+        report = "Settings previews the oldest draft; see runtime/app/settings_bff.py"
+        tasks = [
+            {"id": "p", "step_name": "pick_repo", "status": "succeeded", "created_at": "1",
+             "input": {"summary": report}, "output": {"summary": "Approved pick_repo", "repo": "acme/app", "default_branch": "dev"}},
+            {"id": "i", "step_name": "investigate", "status": "succeeded", "created_at": "2",
+             "input": {}, "output": {"diagnosis": "drafts[0] wins"}},
+        ]
+        clarify = {"id": "c", "workflow_id": "wf", "step_name": "clarify", "input": {"repo": "kept/override"}}
+        filled = fill_missing_inputs(_Memory(tasks), clarify, skeleton.stage("clarify"))
+        self.assertEqual(filled["report"], report)
+        self.assertEqual(filled["diagnosis"], "drafts[0] wins")
+        self.assertEqual(filled["repo"], "kept/override")
+        self.assertEqual(filled["default_branch"], "dev")

@@ -314,11 +314,21 @@ def cron_heartbeat() -> bool:
     return scheduler_ok and trigger.get("status") == "ok" and trigger.get("scheduler") == "triggered"
 
 
+def _gate_tenant(label: str) -> str:
+    # Fresh tenant ids per run: the audit log may be shared and persistent (Postgres), so
+    # events from earlier runs must not count, and these test events are easy to tell apart.
+    import uuid
+
+    return f"release-gate-{label}-{uuid.uuid4().hex[:12]}"
+
+
 def tenant_isolation() -> bool:
     audit = AuditWriter()
-    audit.append(tenant_id="a", action_type="test", actor_id="u")
-    audit.append(tenant_id="b", action_type="test", actor_id="u")
-    return len(audit.export(tenant_id="a")) == 1
+    tenant_a, tenant_b = _gate_tenant("a"), _gate_tenant("b")
+    mine = audit.append(tenant_id=tenant_a, action_type="test", actor_id="u")
+    audit.append(tenant_id=tenant_b, action_type="test", actor_id="u")
+    exported = audit.export(tenant_id=tenant_a)
+    return [e.get("event_id") for e in exported] == [mine.event_id] and all(e.get("tenant_id") == tenant_a for e in exported)
 
 
 def rbac_identity() -> bool:
@@ -328,14 +338,15 @@ def rbac_identity() -> bool:
 
 def audit_export() -> bool:
     audit = AuditWriter()
-    audit.append(tenant_id="default", action_type="export", actor_id="u")
-    return bool(audit.export(tenant_id="default"))
+    tenant = _gate_tenant("export")
+    event = audit.append(tenant_id=tenant, action_type="export", actor_id="u")
+    return event.event_id in {e.get("event_id") for e in audit.export(tenant_id=tenant)}
 
 
-def agent_redteam() -> bool:
-    from ts_harness.evals.redteam import run_live
+def agent_redteam() -> tuple[bool, str]:
+    from ts_harness.evals.redteam import run_live_report
 
-    return run_live()
+    return run_live_report()
 
 
 def agent_harness_security() -> bool:
@@ -350,10 +361,10 @@ def agent_harness_quality() -> bool:
     return check()
 
 
-def agent_output_judge() -> bool:
-    from ts_harness.evals.output_judge import run_live
+def agent_output_judge() -> tuple[bool, str]:
+    from ts_harness.evals.output_judge import run_live_report
 
-    return run_live()
+    return run_live_report()
 
 
 def secrets_redaction() -> bool:
@@ -425,18 +436,20 @@ def prd_request_smoke() -> bool:
     try:
         from unittest.mock import MagicMock, patch
 
-        from ts_harness.agent.sessions import SessionRecord, reset_session_store
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, reset_session_store
         from ts_harness.workflows.engine import WorkflowEngine
         from ts_harness.workflows.materialize import load_skeleton
 
         skeleton = load_skeleton("prd_request")
-        if skeleton.stages[0].name != "intake":
+        # Shared files are read before the intake agent runs.
+        if [stage.name for stage in skeleton.stages[:2]] != ["gather_sources", "intake"]:
             return False
 
-        reset_session_store()
+        # In-memory store: these smokes must never write fake sessions to the live session database.
+        reset_session_store(SessionStore())
         client = MagicMock()
         client.create_workflow.return_value = {"id": "wf-prd-rg"}
-        # prd_request materializes intake + await + draft + approve.
+        # prd_request materializes gather + intake + await + draft + approve.
         client.create_task.side_effect = [{"id": f"t{i}"} for i in range(8)]
         client.get_workflow.return_value = {
             "workflow": {"workflow_type": "prd_request", "source_channel": "slack:rg:1"},
@@ -495,16 +508,88 @@ def prd_request_smoke() -> bool:
         return False
 
 
+def program_may_end_smoke() -> bool:
+    """A software_delivery program ends at an approved PRD and reopens on "create jira"."""
+    try:
+        from unittest.mock import MagicMock, patch
+
+        from ts_harness.workflows.delivery_program import DeliveryProgramService
+        from ts_harness.workflows.hooks import complete_program_phase
+        from ts_harness.workflows.materialize import load_skeleton
+        from ts_harness.workflows.program_registry import get_program_definition_registry
+        from ts_harness.workflows.registry import HookContext
+
+        snapshot = get_program_definition_registry().load("software_delivery")
+        client = MagicMock()
+        client.get_workflow.return_value = {
+            "workflow": {"id": "wf-prd", "program_id": "prog-rg", "program_phase": "prd", "summary": "gate"},
+            "tasks": [{"status": "succeeded", "step_name": "approve_prd", "output": {}}],
+        }
+        client.get_program.return_value = {
+            "program": {
+                "id": "prog-rg",
+                "status": "running",
+                "current_phase": "prd",
+                "program_definition_snapshot": snapshot,
+                "metadata": {"artifacts": {}},
+            }
+        }
+        client.get_program_status.return_value = {"children": []}
+        skeleton = load_skeleton("prd_request")
+        ctx = HookContext(
+            workflow_id="wf-prd",
+            workflow_type="prd_request",
+            tenant_id="default",
+            task={"id": "gate"},
+            stage=skeleton.stages[-1],
+            skeleton=skeleton,
+            actor="release-gate",
+            memory_client=client,
+            extras={"reply_in_chat": True},
+        )
+        service = MagicMock()
+        service.on_workflow_terminal.return_value = {}
+        with patch.object(complete_program_phase, "get_delivery_program_service", return_value=service), \
+                patch.object(complete_program_phase, "publish_program_brief"):
+            ended = complete_program_phase.handle(ctx)
+        if ended.get("status") != "phase_completed_program_ended" or not client.complete_program.called:
+            return False
+        if "create jira" not in str(ended.get("offer_text") or ""):
+            return False
+
+        client.get_program.return_value = {
+            "program": {
+                "id": "prog-rg",
+                "status": "succeeded",
+                "current_phase": "prd",
+                "summary": "gate",
+                "program_definition_snapshot": snapshot,
+                "metadata": {"artifacts": {"approved_prd": {"title": "gate"}, "ended_at_phase": "prd"}},
+            },
+            "workflows": [],
+        }
+        client.patch_program_artifacts.reset_mock()
+        client.advance_program.return_value = {"current_phase": "jira"}
+        client.create_workflow.return_value = {"id": "wf-jira"}
+        client.create_task.return_value = {"id": "t-jira"}
+        reopened = DeliveryProgramService(client=client).advance_program(program_id="prog-rg", target_phase="jira")
+        last_patch = client.patch_program_artifacts.call_args_list[-1].args[1]
+        return reopened.get("workflow_type") == "jira_from_prd" and last_patch.get("program_status") == "running"
+    except Exception:
+        return False
+
+
 def continue_delivery_smoke() -> bool:
     try:
         from unittest.mock import MagicMock
 
-        from ts_harness.agent.sessions import SessionRecord, reset_session_store
+        from ts_harness.agent.sessions import SessionRecord, SessionStore, reset_session_store
         from ts_harness.workflows.hooks import continue_delivery
         from ts_harness.workflows.materialize import load_skeleton
         from ts_harness.workflows.registry import HookContext
 
-        reset_session_store()
+        # In-memory store: these smokes must never write fake sessions to the live session database.
+        reset_session_store(SessionStore())
         session = SessionRecord(
             session_id="rg-bridge",
             routing_key="rk",
@@ -547,8 +632,8 @@ def continue_delivery_smoke() -> bool:
         task_count = len(result.get("task_ids") or [])
         return (
             result.get("target_workflow_type") == "jira_from_prd"
-            and result.get("first_step") == "create_jira"
-            and task_count in {1, 5}
+            and result.get("first_step") == "review_prd"
+            and task_count in {1, 4}
         )
     except Exception:
         return False
@@ -793,6 +878,7 @@ def main() -> int:
         "prd_request_smoke": prd_request_smoke,
         "continue_bridge_smoke": continue_bridge_smoke,
         "continue_delivery_smoke": continue_delivery_smoke,
+        "program_may_end_smoke": program_may_end_smoke,
         "intent_routing_smoke": intent_routing_smoke,
         "workflow_runner_import_smoke": workflow_runner_import_smoke,
         "skeleton_hooks_registered": skeleton_hooks_registered,

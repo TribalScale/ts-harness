@@ -1,5 +1,8 @@
 # Re-run a Bootstrap Phase
 
+To roll a new version or a config change onto a host, use
+[`redeploy.md`](redeploy.md) instead: it re-runs every phase that matters, in order.
+
 Use this when one setup phase failed or when testing a phase script change on an
 existing instance.
 
@@ -19,6 +22,9 @@ sudo -u artemis git pull
 ```
 
 ## 3. Remove only the target phase marker
+
+On a replaced instance you don't need this: the bootstrap re-runs the host-level phases by itself
+(see [Rebuild a host](rebuild-a-host.md#how-the-bootstrap-handles-a-new-instance)).
 
 Example for Phase 15:
 

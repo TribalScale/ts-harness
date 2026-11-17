@@ -4,6 +4,8 @@
 *.tfstate.*
 *.tfplan
 .terraform.lock.hcl
+!infra/aws/.terraform.lock.hcl
+!infra/gcp/.terraform.lock.hcl
 
 # Environment / secrets
 .env
@@ -12,8 +14,6 @@ terraform/terraform.tfvars
 infra/aws/terraform.tfvars
 infra/gcp/terraform.tfvars
 terraform/backend.tf
-infra/aws/backend.tf
-infra/gcp/backend.tf
 
 # Generated previews
 .rendered-workspace/
@@ -52,6 +52,10 @@ __pycache__/
 # Organization context (copy config/organization.example.yaml)
 config/organization.yaml
 
+# Filled-in install config (copy config/install/aws.example.yaml)
+config/install/aws-dev.yaml
+config/install/aws-prod.yaml
+
 # Agent session working notes
 .superpowers/
 
@@ -60,6 +64,9 @@ config/organization.yaml
 
 # Local definition store (builder drafts, locks)
 workflow-definitions/
+
+# Last-known-good config copies the gateway writes beside its config file
+*.lkg
 
 # Python build output
 build/

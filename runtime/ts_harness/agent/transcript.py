@@ -10,6 +10,33 @@ import json
 import os
 
 
+HISTORY_MESSAGE_MAX_CHARS = 3000
+HISTORY_MESSAGE_KEEP_CHARS = 1500
+
+
+def compact_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shorten long assistant and tool messages from earlier turns before they are resent.
+
+    A program chat accumulates whole PRD drafts, requirements and work orders; resent on
+    every turn they made a one-line question cost over 150,000 input tokens. Those documents
+    stay available through ``program_status`` (``include_artifacts``). The cut does not
+    depend on a message's position, so a message is cut the same way on every turn and the
+    cached prompt prefix still matches. User messages are kept whole.
+    """
+    compacted: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") in {"assistant", "tool"} and isinstance(content, str) and len(content) > HISTORY_MESSAGE_MAX_CHARS:
+            message = {
+                **message,
+                "content": content[:HISTORY_MESSAGE_KEEP_CHARS]
+                + f"\n[... {len(content) - HISTORY_MESSAGE_KEEP_CHARS} more characters omitted from this earlier turn;"
+                " program documents are available through program_status include_artifacts.]",
+            }
+        compacted.append(message)
+    return compacted
+
+
 def repair_tool_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Close assistant tool calls and drop tool rows that have no matching call.
 
@@ -250,11 +277,28 @@ class TranscriptStore:
         return messages
 
     def _append_postgres(self, session_id: str, messages: list[dict[str, Any]]) -> None:
-        start = self._next_seq(session_id, len(messages))
+        from psycopg.types.json import Jsonb
+
+        # The runtime and the workflow runner both append. A process-local counter
+        # hands both of them the same seq. Lock the session and read MAX(seq) here.
         with self._connect() as conn:
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)",
+                    (session_id,),
+                )
+                cur.execute(
+                    """
+                    SELECT COALESCE(MAX(seq), 0)
+                    FROM runtime_transcript_messages
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                )
+                start = int(cur.fetchone()[0])
                 for offset, msg in enumerate(messages):
                     row = self._message_to_row(msg)
+                    seq = start + offset + 1
                     cur.execute(
                         """
                         INSERT INTO runtime_transcript_messages (
@@ -263,14 +307,15 @@ class TranscriptStore:
                         """,
                         (
                             session_id,
-                            start + offset + 1,
+                            seq,
                             row["role"],
                             row.get("content"),
-                            row.get("tool_calls"),
+                            Jsonb(row["tool_calls"]) if row.get("tool_calls") else None,
                             row.get("tool_call_id"),
                         ),
                     )
             conn.commit()
+        self._seq[session_id] = start + len(messages)
 
     def _clear_postgres(self, session_id: str) -> None:
         with self._connect() as conn:

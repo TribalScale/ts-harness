@@ -1,6 +1,6 @@
 {
   "program_type": "software_delivery",
-  "definition_version": "1.2.0",
+  "definition_version": "1.4.0",
   "display_name": "Software delivery",
   "startable_nodes": ["prd", "jira", "work_orders", "implement", "rollback"],
   "nodes": [
@@ -15,20 +15,22 @@
         {"kind": "transcript_context", "target": "context", "limit": 20}
       ],
       "completion_adapter": "extract_prd_outputs",
-      "terminal": false
+      "terminal": false,
+      "may_end": true
     },
     {
       "id": "jira",
       "default_workflow_type": "jira_from_prd",
       "workflow_variants": [],
       "required_artifacts": ["approved_prd"],
-      "produces_artifacts": ["jira_epic_key", "planning_track"],
+      "produces_artifacts": ["jira_epic_key", "jira_story_keys", "planning_track"],
       "input_bindings": [
         {"kind": "program_summary", "target": "summary"},
         {"kind": "artifact", "name": "approved_prd", "target": "approved_prd"}
       ],
       "completion_adapter": "extract_jira_outputs",
-      "terminal": false
+      "terminal": false,
+      "may_end": true
     },
     {
       "id": "work_orders",
@@ -188,7 +190,7 @@
       "target": "implement",
       "mode": "manual",
       "confirm_required": false,
-      "signals": [],
+      "signals": ["start implementation", "start implementing", "implement the tickets"],
       "artifact_patch": {"planning_track": "jira"}
     },
     {

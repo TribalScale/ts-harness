@@ -94,6 +94,8 @@ class DepAudit:
     tool: str
     findings: list[dict[str, Any]] = field(default_factory=list)
     skipped_reason: str = ""
+    # Findings at or above the threshold that the base branch already has; reported, not blocking.
+    preexisting: int = 0
 
 
 def _run(runner: Runner, command: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -458,16 +460,65 @@ def _json_output(completed: subprocess.CompletedProcess, ok_codes: tuple[int, ..
         return None
 
 
+def _finding_key(item: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(str(item.get(key) or "") for key in ("package", "version", "range", "id"))
+
+
+def _base_worktree_scan(repo_dir: Path, base_ref: str, scan: Callable[[Path], DepAudit], runner: Runner) -> DepAudit | None:
+    """Run ``scan`` on a temporary worktree of ``base_ref``; None when it cannot be checked out."""
+    import tempfile
+
+    target = Path(tempfile.mkdtemp(prefix="ts-harness-audit-base-"))
+    try:
+        added = _run(runner, ["git", "worktree", "add", "--detach", str(target), base_ref], repo_dir)
+        if added.returncode != 0:
+            return None
+        return scan(target)
+    finally:
+        _run(runner, ["git", "worktree", "remove", "--force", str(target)], repo_dir)
+        shutil.rmtree(target, ignore_errors=True)
+
+
 def audit_dependencies(
     repo_dir: Path,
     changed_files: list[str],
     severity: str = "high",
     runner: Runner = subprocess.run,
     which: Which = shutil.which,
+    base_ref: str | None = None,
 ) -> DepAudit:
+    """Audit the repo's dependencies when the change touches a manifest.
+
+    With ``base_ref`` only findings the change introduces block: a repo whose lockfile
+    already carries known vulnerabilities would otherwise fail every work order that adds a
+    package, for problems the work order did not cause.
+    """
     manifests = [path for path in changed_files if _is_manifest(path)]
     if not manifests:
         return DepAudit(tool="", skipped_reason="no_manifest_changes")
+    head = _audit_tree(repo_dir, manifests, severity, runner, which)
+    if not head.findings or not base_ref:
+        return head
+    base = _base_worktree_scan(repo_dir, base_ref, lambda tree: _audit_tree(tree, manifests, severity, runner, which), runner)
+    if base is None or base.skipped_reason:
+        return head
+    known = {_finding_key(item) for item in base.findings}
+    new = [item for item in head.findings if _finding_key(item) not in known]
+    return DepAudit(
+        tool=head.tool,
+        findings=new,
+        skipped_reason=head.skipped_reason,
+        preexisting=len(head.findings) - len(new),
+    )
+
+
+def _audit_tree(
+    repo_dir: Path,
+    manifests: list[str],
+    severity: str,
+    runner: Runner,
+    which: Which,
+) -> DepAudit:
     threshold = _severity_rank(severity)
 
     def at_threshold(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -541,12 +592,13 @@ def run_security_scan(
         if secrets.findings:
             reasons.append("secrets_detected")
     if config.dependency_audit:
-        audit = audit_dependencies(repo_dir, changed, config.audit_severity, runner, which)
+        audit = audit_dependencies(repo_dir, changed, config.audit_severity, runner, which, base_ref=base_ref)
         security["dependency_audit"] = {
             "tool": audit.tool,
             "findings": audit.findings,
             "skipped_reason": audit.skipped_reason,
             "severity": config.audit_severity,
+            "preexisting": audit.preexisting,
         }
         if audit.findings:
             reasons.append("vulnerable_dependency")

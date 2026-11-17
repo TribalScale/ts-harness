@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 _TOKEN = re.compile(r"^\$(.+)$")
+_PRIOR_FIELD = re.compile(r"^prior\.(.+?)\.(output|input)(?:\.(.*))?$")
 
 
 def _latest_succeeded(tasks: list[dict[str, Any]], step_names: list[str]) -> dict[str, Any] | None:
@@ -28,6 +30,19 @@ def _task_by_step(tasks: list[dict[str, Any]], step_name: str) -> dict[str, Any]
 
 def _revision_count(tasks: list[dict[str, Any]], step_name: str) -> int:
     return sum(1 for task in tasks if task.get("step_name") == step_name) + 1
+
+
+def _human_requests(tasks: list[dict[str, Any]], step_name: str) -> list[str]:
+    """Feedback of every human-requested revision of ``step_name``, oldest first."""
+    requests: list[str] = []
+    for task in sorted(tasks, key=lambda item: str(item.get("created_at") or "")):
+        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+        if task.get("step_name") != step_name or task.get("status") == "cancelled":
+            continue
+        feedback = str(task_input.get("review_feedback") or "").strip()
+        if task_input.get("_revision_budget") == "human" and feedback:
+            requests.append(feedback)
+    return requests
 
 
 def resolve_token(
@@ -69,11 +84,11 @@ def resolve_token(
     if path == "source.output":
         source = _latest_succeeded(tasks, list(source_steps or []))
         return (source or {}).get("output")
-    if path.startswith("prior.") and ".output." in path:
-        rest = path[len("prior.") :]
-        step_name, _, nested = rest.partition(".output.")
+    prior = _PRIOR_FIELD.match(path)
+    if prior:
+        step_name, section, nested = prior.group(1), prior.group(2), prior.group(3) or ""
         task = _task_by_step(tasks, step_name)
-        value = (task or {}).get("output")
+        value = (task or {}).get(section)
         for part in nested.split("."):
             if not part:
                 continue
@@ -82,13 +97,13 @@ def resolve_token(
             else:
                 return None
         return value
-    if path.startswith("prior.") and path.endswith(".output"):
-        step_name = path[len("prior.") : -len(".output")]
-        task = _task_by_step(tasks, step_name)
-        return (task or {}).get("output")
+    if path == "runtime.today":
+        return datetime.now(timezone.utc).date().isoformat()
     if path.startswith("runtime.revision_count:"):
         step_name = path.split(":", 1)[1]
         return _revision_count(tasks, step_name)
+    if path.startswith("runtime.human_requests:"):
+        return _human_requests(tasks, path.split(":", 1)[1])
     if path == "workflow.binding_key":
         return (workflow or {}).get("source_channel")
     if path in {"workflow.approved_prd", "workflow.approved_artifact"}:
@@ -150,7 +165,11 @@ def resolve_token(
         "workflow.work_order_ids",
         "workflow.drive_library",
         "workflow.jira_epic_key",
+        "workflow.jira_issue_key",
         "workflow.bug_report",
+        "workflow.project_repositories",
+        "workflow.knowledge_notes",
+        "workflow.intake_sources",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):

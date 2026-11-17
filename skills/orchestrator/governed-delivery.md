@@ -16,7 +16,7 @@ Use this skill when a user asks TS Harness to run a product delivery flow that s
 - Wait for human merge
 - Deploy merged code
 
-Do **not** use this skill for a single-domain task such as "review PR #42" or "deploy staging". Route those directly to the relevant specialist. For **implement TFS-123** / "my tickets", start `jira_to_pr` instead of `software_delivery`.
+Do **not** use this skill for a single-domain task such as "review PR #42" or "deploy staging". Route those directly to the relevant specialist. For **implement PROJ-123** / "my tickets", start `jira_to_pr` instead of `software_delivery`.
 
 For **PRD-only** work with human approval gates, use `propose_start_workflow(workflow_type='prd_request')` — not a one-off pm-agent delegate. For **informal PRD** requests (`quick draft`, `no approval process`), delegate to pm-agent instead.
 
@@ -63,7 +63,10 @@ Create one workflow with these canonical task names:
 | `draft_prd` | `pm-agent` | none |
 | `revise_prd` | `pm-agent` | repeats until human approval |
 | `approve_prd` | `orchestrator` | human approval (prd_request workflow) |
-| `create_jira` | `pm-agent` | requires approved PRD + human approval |
+| `review_prd` | `pm-agent` | requires approved PRD (jira_from_prd) |
+| `plan_stories` | `pm-agent` | reads Jira only; revised on plan reject |
+| `approve_plan` | `orchestrator` | human approval of the story plan |
+| `file_jira` | `pm-agent` | only stage that writes Jira; runs after `approve_plan` |
 | `implement_ticket` | `dev-agent` | one task per Jira ticket |
 | `qa_gate` | `qa-agent` | program stage; canonical QA envelope over delivered PR set (blocks on `failed`) |
 | `await_human_merge` | `orchestrator` | depends on `qa_gate`; `match_all` wait for human/GitHub merge of all QA PRs |
@@ -74,7 +77,7 @@ Before dispatching each non-human step, call `POST /workflow/claim` with the tas
 
 Represent human gates as workflow tasks with `approval_required: true`. Use `POST /workflow/approve` or `POST /workflow/reject` when the human decision arrives. The following stages should be approval-gated:
 
-- `create_jira`
+- `approve_plan`
 - `await_human_merge`
 - `deploy_staging`
 - `deploy_production`
@@ -140,7 +143,7 @@ Return the epic key, child ticket keys, Jira URLs, warnings, and unresolved open
 
 ## Stage 4 — Development
 
-For each Jira ticket selected by the user or orchestrator, delegate to `dev-agent` using `skills/dev/jira-to-pr.md`.
+Dev work for a Jira ticket runs in the `deliver_work_order` stage of `jira_to_pr` and of the other implement programs. That stage is assigned to `dev-agent`. From chat, when no program is running, delegate to `dev-agent` using `skills/dev/jira-to-pr.md`.
 
 Constraints:
 

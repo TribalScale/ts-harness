@@ -24,7 +24,11 @@ class FrozenLegacyCompatParityTests(unittest.TestCase):
         self.assertEqual(payload["program_type"], "software_delivery")
 
     def test_frozen_payload_matches_software_delivery_topology_before_release(self):
-        """Legacy programs keep the 1.1.0 graph: 1.2.0 only adds release and rollback."""
+        """Legacy programs keep the 1.1.0 graph: 1.2.0 only adds release and rollback.
+
+        1.4.0 adds chat phrases to jira -> implement so a program that ended after its
+        Jira tickets can be continued from the thread; legacy programs keep none.
+        """
         builtin = program_definitions.program_to_payload(
             program_definitions.load_program(programs_dir() / "software_delivery.json")
         )
@@ -49,7 +53,11 @@ class FrozenLegacyCompatParityTests(unittest.TestCase):
                     "target": edge["target"],
                     "mode": edge.get("mode"),
                     "confirm_required": bool(edge.get("confirm_required")),
-                    "signals": list(edge.get("signals") or []),
+                    "signals": (
+                        []
+                        if (edge["source"], edge["target"]) == ("jira", "implement")
+                        else list(edge.get("signals") or [])
+                    ),
                     "artifact_patch": dict(edge.get("artifact_patch") or {}),
                 }
                 for edge in builtin["edges"]

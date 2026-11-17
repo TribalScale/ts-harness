@@ -155,6 +155,72 @@ class ToolsPolicyTests(unittest.TestCase):
         decision = evaluate_tool_policy("delegate_task", agent, self.config, ctx)
         self.assertEqual(decision.decision, "allow")
 
+    def test_workflow_stage_denies_delegation(self):
+        agent = self.config.get_agent("orchestrator")
+        ctx = ToolPolicyContext(
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="workflow",
+            linked_workflow_id="wf-1",
+        )
+        for name in ("delegate_task", "propose_delegate_task"):
+            decision = evaluate_tool_policy(name, agent, self.config, ctx)
+            self.assertEqual((decision.decision, decision.policy_id), ("deny", "workflow_stage_delegation"))
+
+    def test_stage_tool_allow_opts_delegation_back_in(self):
+        agent = self.config.get_agent("orchestrator")
+        ctx = ToolPolicyContext(
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="workflow",
+            linked_workflow_id="wf-1",
+            stage_tool_allow={"delegate_task"},
+            approval_resumable=True,
+        )
+        decision = evaluate_tool_policy("delegate_task", agent, self.config, ctx)
+        self.assertEqual(decision.decision, "approval_required")
+
+    def test_channel_delegation_is_unchanged_by_the_workflow_rule(self):
+        agent = self.config.get_agent("orchestrator")
+        ctx = ToolPolicyContext(
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="slack",
+            channel_ingress=True,
+            linked_workflow_id="wf-1",
+        )
+        decision = evaluate_tool_policy("delegate_task", agent, self.config, ctx)
+        self.assertEqual(decision.policy_id, "channel_delegation")
+
+    def test_subagent_delegation_stays_ahead_of_the_workflow_rule(self):
+        agent = self.config.get_agent("orchestrator")
+        ctx = ToolPolicyContext(
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="workflow",
+            is_subagent=True,
+            linked_workflow_id="wf-1",
+            parent_tools={"read_file"},
+        )
+        decision = evaluate_tool_policy("delegate_task", agent, self.config, ctx)
+        self.assertEqual(decision.policy_id, "subagent_delegation")
+
+    def test_workflow_definitions_omit_delegation_tools(self):
+        from ts_harness.tools.registry import build_default_registry
+
+        registry = build_default_registry()
+        agent = self.config.get_agent("orchestrator")
+        ctx = ToolPolicyContext(
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="workflow",
+            linked_workflow_id="wf-1",
+            approval_resumable=True,
+        )
+        names = {item["function"]["name"] for item in registry.definitions_for_agent(agent, ctx, self.config)}
+        self.assertNotIn("delegate_task", names)
+        self.assertNotIn("propose_delegate_task", names)
+
     def test_propose_delegate_allowed_on_channel(self):
         agent = self.config.get_agent("orchestrator")
         ctx = ToolPolicyContext(

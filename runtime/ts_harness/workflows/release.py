@@ -234,7 +234,18 @@ def plan_release(
         "pr_urls": list(task_input.get("pr_urls") or []),
         "slots": slots,
         "environments": [slot["environment"] for slot in slots.values()],
+        "upstream": [str(item).lower() for item in task_input.get("upstream") or []],
     }
+
+
+def _program_id(memory: Any, workflow: dict[str, Any]) -> str:
+    """The workflow's program; a release track takes its parent's."""
+    program_id = str(workflow.get("program_id") or "")
+    parent_id = str(workflow.get("parent_workflow_id") or "")
+    if not program_id and parent_id:
+        parent, _ = load_workflow_payload(memory, parent_id)
+        program_id = str(parent.get("program_id") or "")
+    return program_id
 
 
 def _promote_decision(memory: Any, *, workflow_id: str, gate: dict[str, Any]) -> dict[str, Any]:
@@ -288,7 +299,7 @@ def trigger_deploy(
     """Record the release as in progress and ask GitHub to deploy the pinned SHA."""
     workflow_id = str(task.get("workflow_id") or "")
     workflow, tasks = load_workflow_payload(memory, workflow_id)
-    program_id = str(workflow.get("program_id") or "")
+    program_id = _program_id(memory, workflow)
     if not program_id:
         raise ReleaseBlocked("release workflows must belong to a program")
     plan = _step_output(tasks, str(config.get("plan_step") or "plan_release"))
@@ -370,7 +381,7 @@ def record_release(
     """Store the terminal deployment status; a failed deployment blocks with rollback guidance."""
     workflow_id = str(task.get("workflow_id") or "")
     workflow, tasks = load_workflow_payload(memory, workflow_id)
-    program_id = str(workflow.get("program_id") or "")
+    program_id = _program_id(memory, workflow)
     triggered = _step_output(tasks, str(config.get("trigger_step") or ""))
     outcome = _step_output(tasks, str(config.get("wait_step") or ""))
     state = str(outcome.get("state") or "").lower()
@@ -396,6 +407,10 @@ def record_release(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("deployment ref state not recorded for release %s: %s", triggered["release_id"], exc)
+    if config.get("slot"):
+        from ts_harness.workflows.release_tracks import notify_dependents
+
+        notify_dependents(memory, workflow, tasks, slot=str(config["slot"]), state=status, actor=actor)
     if status == "failed":
         rollback = triggered.get("rollback_sha")
         guidance = (
@@ -413,8 +428,15 @@ def record_release(
     }
 
 
+def _plan_release_tracks(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    from ts_harness.workflows.release_tracks import plan_release_tracks
+
+    return plan_release_tracks(task, config, memory=memory)
+
+
 SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "plan_release": plan_release,
+    "plan_release_tracks": _plan_release_tracks,
     "trigger_deploy": trigger_deploy,
     "record_release": record_release,
 }

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 from typing import Any
 
 from ts_harness.agent.sessions import get_session_store
@@ -369,6 +372,12 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
     history = get_transcript_store().load_messages(session.session_id)
     session_metadata = session.metadata or {}
     requester_actor_id = channel_requester_actor_id(session_metadata, ctx.agent_id)
+    from ts_harness.gateway.intake_pointers import clear_pointers, start_sources
+
+    extra_input = dict(pending.get("input")) if isinstance(pending.get("input"), dict) else {}
+    sources = start_sources(session_metadata, pending)
+    if sources:
+        extra_input["intake_sources"] = sources
     service = WorkflowPromotionService()
     try:
         result = service.start(
@@ -379,10 +388,13 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
             binding_key=binding_key,
             requester_actor_id=requester_actor_id,
             transcript_messages=history,
-            extra_input=pending.get("input") if isinstance(pending.get("input"), dict) else None,
+            extra_input=extra_input or None,
         )
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
+    if sources:
+        session.metadata = clear_pointers(dict(session.metadata or {}))
+        get_session_store().save(session)
     clear_pending_workflow(session)
     return {
         "status": "started",
@@ -401,7 +413,31 @@ def workflow_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
     if not workflow_id:
         return {"error": "workflow_id required"}
-    return get_workflow_engine().get_status(workflow_id)
+    status = get_workflow_engine().get_status(workflow_id)
+    if isinstance(status, dict) and isinstance(status.get("tasks"), list) and not args.get("full"):
+        status = {**status, "tasks": [_task_overview(task) for task in status["tasks"]]}
+    return status
+
+
+TASK_FIELD_MAX = 600
+
+
+def _task_overview(task: Any) -> Any:
+    """A task for a chat turn: its step, status and short fields; long inputs and outputs summarised.
+
+    Task inputs and outputs carry whole planning documents, so a workflow's status ran to
+    160,000 characters. ``full: true`` returns everything.
+    """
+    if not isinstance(task, dict):
+        return task
+    overview: dict[str, Any] = {}
+    for key, value in task.items():
+        if key in {"input", "output", "contract"} and isinstance(value, dict):
+            overview[key] = _artifact_overview(value, include=[])
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        overview[key] = value if len(text) <= TASK_FIELD_MAX else {"omitted_chars": len(text)}
+    return overview
 
 
 def workflow_approve_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
@@ -424,6 +460,8 @@ def workflow_approve_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> di
         actor=human.actor_id,
         tenant_id=ctx.tenant_id,
         decision=human.as_fields(),
+        # The agent relays the result; an ended program's offer is in result["phase"].
+        reply_in_chat=True,
     )
 
 
@@ -650,6 +688,63 @@ def resume_external_event_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
     )
 
 
+_PROPOSE_LIMIT = 3
+
+
+def propose_knowledge_note_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
+    """A run may propose a project note. It stays proposed until a person approves it."""
+    from ts_harness.agent.sessions import get_session_store
+    from ts_harness.workflows.session_compat import read_active_workflow_id, read_program_id
+
+    if str(args.get("scope") or "project").strip() == "org":
+        return {"error": "org notes are reviewed by an admin, not proposed from a run"}
+    session = get_session_store().get(str(ctx.session_id or ""))
+    metadata = getattr(session, "metadata", None) if session is not None else None
+    program_id = read_program_id(metadata if isinstance(metadata, dict) else None)
+    if not program_id:
+        return {"error": "this run has no program"}
+    try:
+        loaded = get_memory_client().get_program(program_id)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    program = (loaded or {}).get("program") or {}
+    project_id = str(program.get("project_ref") or program.get("project_id") or "").strip()
+    if not project_id:
+        return {"error": "this program has no project"}
+    workflow_id = read_active_workflow_id(metadata if isinstance(metadata, dict) else None)
+    evidence_ref = workflow_id or program_id
+    listed = get_memory_client().list_knowledge_notes(
+        tenant_id=ctx.tenant_id or "default",
+        scope="project",
+        project_id=project_id,
+        status="proposed",
+        source="agent",
+    )
+    already = 0
+    for note in listed.get("notes") or []:
+        for item in note.get("evidence") or []:
+            if isinstance(item, dict) and str(item.get("ref") or "") == evidence_ref:
+                already += 1
+                break
+    if already >= _PROPOSE_LIMIT:
+        return {"error": "this run already proposed 3 notes"}
+    return get_memory_client().create_knowledge_note(
+        tenant_id=ctx.tenant_id or program.get("tenant_id") or "default",
+        scope="project",
+        project_id=project_id,
+        kind=str(args.get("kind") or "avoid"),
+        title=str(args.get("title") or ""),
+        body=str(args.get("body") or ""),
+        why=str(args.get("why") or ""),
+        applies_to=list(args.get("applies_to") or []),
+        source="agent",
+        status="proposed",
+        proposal_action="add",
+        actor=ctx.agent_id,
+        evidence=[{"type": "workflow" if workflow_id else "program", "ref": evidence_ref}],
+    )
+
+
 def remember_memory_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
     content = str(args.get("content") or "").strip()
     if not content:
@@ -663,23 +758,65 @@ def remember_memory_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     )
 
 
+SESSIONS_LIST_DEFAULT = 20
+SESSIONS_LIST_MAX = 100
+
+
 def sessions_list_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
+    """Newest sessions first, ``limit`` of them (20 by default, 100 at most).
+
+    The full list grows with every chat and workflow step; returned whole it ran to
+    hundreds of thousands of tokens in a single tool result.
+    """
     source = args.get("source")
+    agent_id = args.get("agent_id")
+    try:
+        limit = int(args.get("limit") or SESSIONS_LIST_DEFAULT)
+    except (TypeError, ValueError):
+        limit = SESSIONS_LIST_DEFAULT
+    limit = max(1, min(limit, SESSIONS_LIST_MAX))
     sessions = get_session_store().list_for_tenant(ctx.tenant_id)
     if source:
         sessions = [session for session in sessions if session.source == str(source)]
-    return {
-        "sessions": [
-            {
-                "session_id": session.session_id,
-                "agent_id": session.agent_id,
-                "source": session.source,
-                "status": session.status,
-                "metadata": session.metadata,
-            }
-            for session in sessions
-        ]
-    }
+    if agent_id:
+        sessions = [session for session in sessions if session.agent_id == str(agent_id)]
+    sessions = sorted(sessions, key=lambda session: str(session.started_at or ""), reverse=True)
+    rows = []
+    for session in sessions[:limit]:
+        row = {
+            "session_id": session.session_id,
+            "agent_id": session.agent_id,
+            "source": session.source,
+            "status": session.status,
+            "started_at": session.started_at,
+        }
+        metadata, omitted = _session_list_metadata(session.metadata)
+        if metadata:
+            row["metadata"] = metadata
+        if omitted:
+            row["metadata_omitted"] = omitted
+        rows.append(row)
+    return {"sessions": rows, "total": len(sessions), "returned": len(rows)}
+
+
+SESSION_LIST_VALUE_MAX = 300
+
+
+def _session_list_metadata(metadata: Any) -> tuple[dict[str, Any], list[str]]:
+    """Short scalar fields (ids, phase, type, URLs). Drafts and handoffs are left out by name:
+    one approved PRD alone is tens of kilobytes. ``sessions_history`` reads a session in full."""
+    if not isinstance(metadata, dict):
+        return {}, []
+    kept: dict[str, Any] = {}
+    omitted: list[str] = []
+    for key, value in metadata.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (str, int, float, bool)) and len(str(value)) <= SESSION_LIST_VALUE_MAX:
+            kept[key] = value
+        else:
+            omitted.append(str(key))
+    return kept, sorted(omitted)
 
 
 def sessions_history_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
@@ -882,6 +1019,10 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             department = department_for_email(get_runtime().config, starter_email)
         except Exception:
             department = None
+    from ts_harness.gateway.intake_pointers import clear_pointers, start_sources
+
+    # Passed as first-task input, not artifacts: program artifacts never carry the files.
+    sources = start_sources(session.metadata, pending)
     try:
         result = service.create_program(
             entry_phase=entry_phase,
@@ -890,6 +1031,7 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             binding_key=binding_key,
             requester_actor_id=channel_requester_actor_id(session.metadata or {}, ctx.agent_id),
             artifacts=artifacts,
+            extra_input={"intake_sources": sources} if sources else None,
             transcript_messages=history,
             actor=ctx.agent_id,
             program_type=program_type,
@@ -898,13 +1040,14 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             link_program_ids=[str(item) for item in link_program_ids],
             parent_program_id=parent_program_id,
             department=department,
+            owner_id=str((session.metadata or {}).get("directory_subject") or "") or None,
         )
     except ValueError as exc:
         return {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
-    metadata = dict(session.metadata or {})
+    metadata = clear_pointers(dict(session.metadata or {}))
     from ts_harness.workflows.session_compat import write_program_session
 
     metadata = write_program_session(
@@ -1010,7 +1153,37 @@ def program_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
         status["resolved_config"] = _resolved_config_for_snapshot(
             _load_program_snapshot(program_type=program_type or None, program_id=program_id)
         )
+        wanted = args.get("include_artifacts")
+        wanted = [str(name) for name in wanted] if isinstance(wanted, list) else []
+        if isinstance(status.get("artifacts"), dict):
+            status["artifacts"] = _artifact_overview(status["artifacts"], include=wanted)
     return status
+
+
+ARTIFACT_VALUE_MAX = 400
+# A Markdown heading at the start of a line, or at the start of a JSON string value.
+_HEADING_RE = re.compile(r'(?:^|\n|"\s?)#{1,6}\s+([^\n"]+)')
+
+
+def _artifact_overview(artifacts: dict[str, Any], *, include: list[str]) -> dict[str, Any]:
+    """Program artifacts for a chat turn: short values as they are, long ones as a size and headings.
+
+    The full artifact bag (PRD, requirements, blueprints, work orders) ran to about 125,000
+    characters; returned on every status call it made each answer cost tens of thousands of
+    tokens. Name artifacts in ``include_artifacts`` to get them whole.
+    """
+    overview: dict[str, Any] = {}
+    for key, value in artifacts.items():
+        if key in include:
+            overview[key] = value
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if len(text) <= ARTIFACT_VALUE_MAX:
+            overview[key] = value
+            continue
+        headings = [match.strip() for match in _HEADING_RE.findall(text.replace("\\n", "\n"))]
+        overview[key] = {"omitted_chars": len(text), "headings": headings[:12]}
+    return overview
 
 
 def propose_advance_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

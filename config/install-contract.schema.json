@@ -29,6 +29,27 @@
       "minLength": 1,
       "description": "Logical environment name (e.g. prod, staging)."
     },
+    "deployment_profile": {
+      "type": "string",
+      "enum": ["single_host", "scale_out"],
+      "default": "single_host",
+      "description": "single_host keeps one VM for small teams; scale_out adds Fargate coding workers and replicated services (AWS only)."
+    },
+    "scale_out": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AWS network and coding worker settings. network_mode defaults to vpc when deployment_profile is scale_out.",
+      "properties": {
+        "network_mode": { "type": "string", "enum": ["default", "vpc"] },
+        "vpc_cidr": { "type": "string", "minLength": 9 },
+        "coding_worker_image_tag": { "type": "string", "minLength": 1 },
+        "coding_worker_cpu": { "type": "integer", "enum": [1024, 2048, 4096, 8192] },
+        "coding_worker_memory": { "type": "integer", "minimum": 2048 },
+        "coding_worker_ephemeral_storage_gib": { "type": "integer", "minimum": 21, "maximum": 200 },
+        "memory_api_certificate_arn": { "type": "string" },
+        "egress_allowed_domains": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "project_name": {
       "type": "string",
       "minLength": 1,
@@ -110,6 +131,15 @@
         "tailscale_authkey_secret_ref": {
           "type": "string",
           "description": "Optional pre-existing secret reference for Tailscale auth key."
+        },
+        "tailscale_hostname": {
+          "type": "string",
+          "description": "Tailscale machine name; keeps the tailnet address stable across rebuilds. Default: project_name."
+        },
+        "tailscale_tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^tag:[a-z0-9-]+$" },
+          "description": "Tags the host advertises; required when tailscale-authkey holds an OAuth client secret. See docs/runbooks/rebuild-a-host.md."
         }
       }
     },
@@ -155,6 +185,20 @@
         }
       }
     },
+    "github_app": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub App used for repository tokens. Maps to github_app_id, github_app_slug and github_app_host; the private key stays in the secrets manager.",
+      "properties": {
+        "app_id": { "type": ["integer", "string"] },
+        "slug": { "type": "string" },
+        "host": { "type": "string" },
+        "webhook_funnel": {
+          "type": "boolean",
+          "description": "Expose /webhooks/github through Tailscale Funnel on port 8443 and point the App's webhook at it. See docs/runbooks/github-app.md."
+        }
+      }
+    },
     "terraform_state": {
       "type": "object",
       "additionalProperties": false,
@@ -177,6 +221,11 @@
         "region": {
           "type": "string",
           "description": "Required for S3 backends."
+        },
+        "lock_table": {
+          "type": "string",
+          "minLength": 1,
+          "description": "S3 only. DynamoDB table for state locking. When omitted, S3-native locking (use_lockfile) is used, which requires Terraform >= 1.10."
         }
       }
     },
@@ -196,8 +245,21 @@
       "properties": {
         "agent_runtime_version": { "type": "string", "minLength": 1 },
         "enterprise_repo_url": { "type": "string", "minLength": 1 },
+        "enterprise_repo_ref": {
+          "type": "string",
+          "description": "Branch of enterprise_repo_url the host runs. Default: the repository's default branch."
+        },
         "multi_agent_enabled": { "type": "boolean" },
         "workflow_runner_enabled": { "type": "boolean" },
+        "coding_jobs_enabled": {
+          "type": "boolean",
+          "description": "Run deliver_work_order OpenCode runs as queued jobs in worker containers instead of inside agent-runtime."
+        },
+        "coding_max_running": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Coding jobs that may run at once."
+        },
         "workflow_runner_poll_interval_seconds": {
           "type": "integer",
           "minimum": 1
@@ -214,6 +276,16 @@
           "type": "string",
           "enum": ["block", "fail"]
         },
+        "state_backend": {
+          "type": "string",
+          "enum": ["", "local", "postgres"],
+          "description": "Where definitions, cron, scheduler state and audit live. Blank follows deployment_profile (scale_out: postgres). See docs/runbooks/shared-state.md before switching an existing install."
+        },
+        "object_backend": {
+          "type": "string",
+          "enum": ["", "local", "s3", "gcs"],
+          "description": "Where skill files and agent workspaces live. Blank follows deployment_profile (scale_out: s3 on AWS). gcs is GCP only and must be set explicitly."
+        },
         "embeddings_provider": {
           "type": "string",
           "enum": ["openai", "voyage", "gemini", "mistral", "bedrock", "local"]
@@ -224,6 +296,10 @@
           "minimum": 1
         },
         "embeddings_fallback": { "type": "string" },
+        "intake_vision_model": {
+          "type": "string",
+          "description": "Model that reads images attached to requests (provider/model). Blank uses the stage agent's model; off turns image reading off."
+        },
         "agent_timezone": { "type": "string", "minLength": 1 },
         "implement_work_orders_repo_url": { "type": "string" },
         "implement_work_orders_base_branch": { "type": "string" },
@@ -247,7 +323,14 @@
         "oidc_jwks_url": { "type": "string" },
         "oidc_client_id": { "type": "string" },
         "oidc_authorization_endpoint": { "type": "string" },
-        "oidc_token_endpoint": { "type": "string" }
+        "oidc_token_endpoint": { "type": "string" },
+        "oidc_preset": { "type": "string" },
+        "oidc_token_type": { "type": "string" },
+        "oidc_groups_claim": { "type": "string" },
+        "oidc_roles_claim": { "type": "string" },
+        "oidc_allowed_domains": { "type": "string" },
+        "oidc_groups_source": { "type": "string", "enum": ["", "token", "microsoft_graph", "google_directory"] },
+        "identity_directory": { "type": "string", "enum": ["", "seen_users", "auth0_management", "scim", "microsoft_graph", "google_directory"] }
       }
     }
   }

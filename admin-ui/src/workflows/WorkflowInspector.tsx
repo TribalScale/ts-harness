@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChildWorkflowSection, FragmentIncludeSection, type ChildJoinState } from "./CompositionSections";
 import { findChildJoin, isFragmentStage } from "./graph";
+import { stringFieldPaths } from "./presentation";
 import type {
   WorkflowDefinition,
   WorkflowDefinitionCatalog,
@@ -119,7 +120,7 @@ export function WorkflowInspector({
     });
   }
 
-  function updateRetry(key: "max_retries" | "timeout_seconds", value: string) {
+  function updateRetry(key: "max_retries" | "timeout_seconds" | "max_turns", value: string) {
     updateStage({ retry: { ...(stageDraft?.retry || {}), [key]: value === "" ? undefined : Number(value) } });
   }
 
@@ -154,6 +155,14 @@ export function WorkflowInspector({
   const validators = catalog.semantic_validators || [];
   const contractNames = Object.keys(workflowDraft.contracts || {});
   const stageNames = (workflowDraft.stages || []).map((stage) => stage.name);
+  const stageContract = stageDraft?.contract_ref
+    ? workflowDraft.contracts?.[stageDraft.contract_ref]
+    : undefined;
+  const presentBodyOptions = stringFieldPaths(stageContract?.output_schema ?? stageDraft?.output_schema);
+  if (stageDraft?.present_body && !presentBodyOptions.includes(stageDraft.present_body)) {
+    presentBodyOptions.push(stageDraft.present_body);
+  }
+  const contractPresentBody = stageContract?.presentation?.body;
 
   function childJoinState(forkStage: string): ChildJoinState {
     const join = findChildJoin(definition.stages || [], forkStage);
@@ -677,6 +686,24 @@ export function WorkflowInspector({
                 ))}
               </select>
             </label>
+            <label className="form-field">
+              <span>Show at gate</span>
+              <select
+                aria-label="Show at gate"
+                value={stageDraft.present_body || ""}
+                disabled={readOnly}
+                onChange={(e) => updateStage({ present_body: e.target.value || undefined })}
+              >
+                <option value="">
+                  {contractPresentBody ? `Contract default (${contractPresentBody})` : "Default"}
+                </option>
+                {presentBodyOptions.map((path) => (
+                  <option key={path} value={path}>
+                    {path}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="form-grid-two">
               <label className="form-field">
                 <span>Retry count</span>
@@ -696,6 +723,19 @@ export function WorkflowInspector({
                   value={stageDraft.retry?.timeout_seconds ?? ""}
                   disabled={readOnly}
                   onChange={(e) => updateRetry("timeout_seconds", e.target.value)}
+                />
+              </label>
+              <label className="form-field">
+                <span>Max model turns</span>
+                <input
+                  aria-label="Max model turns"
+                  type="number"
+                  min={1}
+                  max={64}
+                  placeholder="Agent default"
+                  value={stageDraft.retry?.max_turns ?? ""}
+                  disabled={readOnly}
+                  onChange={(e) => updateRetry("max_turns", e.target.value)}
                 />
               </label>
             </div>

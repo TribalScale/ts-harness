@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
-from ts_harness.workflows.code_review import PIPELINE_WRITTEN, is_blocking
+from ts_harness.workflows.code_review import PIPELINE_WRITTEN, is_blocking, is_test_path
 
 _PYTHON_SOURCES = ("requirements*.txt", "pyproject.toml")
 _PYTHON_LOCKS = ("poetry.lock", "uv.lock", "Pipfile.lock")
@@ -59,5 +59,5 @@ def unexpected_revision_paths(changed: list[str], allowed: set[str]) -> list[str
     return sorted(
         path
         for path in changed
-        if path and path not in allowed and not _pipeline_written(path)
+        if path and path not in allowed and not _pipeline_written(path) and not is_test_path(path)
     )

@@ -8,7 +8,8 @@ from typing import Any
 from ts_harness.workflows.workflow_session import get_phase_tracking
 
 _TRAILING_META_RE = re.compile(
-    r"\n(?:#{1,3}\s*)?(?:Next Steps|Please review|If you have any questions)\b.*",
+    r"(?:\n-{3,}[ \t]*)?\n\s*(?:#{1,3}\s*)?(?:Next Steps|Please review|If you have any questions"
+    r"|This (?:draft )?(?:PRD )?(?:draft )?is ready for review|Let me know if|Feel free to)\b.*",
     re.IGNORECASE | re.DOTALL,
 )
 _TRAILING_JSON_OUTPUT_RE = re.compile(
@@ -92,7 +93,7 @@ REFINERY_MIN_FRDS_CHARS = 500
 REFINERY_MIN_FEATURE_TREE_CHARS = 200
 PLANNER_MIN_CHARS = 600
 PLANNER_MIN_HEADINGS = 3
-PLANNER_MIN_WO_IDS = 2
+PLANNER_MIN_WO_IDS = 1
 
 WORK_ORDERS_STAGE_ARTIFACT_KEYS: dict[str, tuple[str, ...]] = {
     "refinery": (
@@ -148,9 +149,53 @@ def latest_artifact_output(
     return None, None
 
 
+_HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
+_FENCE_LINE_RE = re.compile(r"^\s*```")
+
+
+def _unwrap_fenced_document(text: str) -> str:
+    """Return the body of the fenced block that holds the whole document, if one does."""
+    lines = text.splitlines()
+    fences = [index for index, line in enumerate(lines) if _FENCE_LINE_RE.match(line)]
+    best = ""
+    for open_index, close_index in zip(fences[0::2], fences[1::2]):
+        body = "\n".join(lines[open_index + 1 : close_index])
+        outside = "\n".join(lines[:open_index] + lines[close_index + 1 :])
+        if _HEADING_RE.search(body) and not _HEADING_RE.search(outside) and len(body) > len(best):
+            best = body
+    return best.strip() if best else text
+
+
+def _drop_after_stray_fence(text: str) -> str:
+    """An unmatched closing fence with no heading after it ends the document."""
+    lines = text.splitlines()
+    fences = [index for index, line in enumerate(lines) if _FENCE_LINE_RE.match(line)]
+    if len(fences) % 2 == 0:
+        return text
+    last = fences[-1]
+    if _HEADING_RE.search("\n".join(lines[last + 1 :])):
+        return text
+    return "\n".join(lines[:last]).rstrip()
+
+
+def sanitize_markdown_artifact(text: str) -> str:
+    """Keep a Markdown document and drop the agent's talk around it, by structure."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = _unwrap_fenced_document(cleaned)
+    cleaned = _drop_after_stray_fence(cleaned)
+    first_heading = _HEADING_RE.search(cleaned)
+    if first_heading and first_heading.start() > 0:
+        preamble = cleaned[: first_heading.start()].strip()
+        if "\n\n" not in preamble and len(preamble) <= 200:
+            cleaned = cleaned[first_heading.start() :]
+    return cleaned.strip()
+
+
 def sanitize_prd_markdown(text: str) -> str:
     """Strip fences, preamble, and trailing meta from PRD markdown bodies."""
-    cleaned = (text or "").strip()
+    cleaned = sanitize_markdown_artifact(text)
     if not cleaned:
         return ""
 
@@ -423,6 +468,22 @@ def refinery_artifact_failure_reason(text: str) -> str | None:
     return None
 
 
+_MARKDOWN_HEADING_RE = re.compile(r"(?m)^(#{1,6}[ \t]+\S.*?)$")
+_ELLIPSIS_ONLY_RE = re.compile(r"[.\u2026\s]+")
+
+
+def _ellipsis_only_section_heading(text: str) -> str | None:
+    """Return the first heading whose body is only dots or an ellipsis."""
+    matches = list(_MARKDOWN_HEADING_RE.finditer(text or ""))
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[start:end].strip()
+        if body and _ELLIPSIS_ONLY_RE.fullmatch(body):
+            return match.group(1).lstrip("#").strip()
+    return None
+
+
 def foundry_artifact_failure_reason(text: str) -> str | None:
     """Return a specific validation failure reason for foundry artifact text."""
     cleaned = (text or "").strip()
@@ -450,6 +511,12 @@ def foundry_artifact_failure_reason(text: str) -> str | None:
         return "foundry artifact content too short"
     if count_markdown_headings(cleaned) < FOUNDRY_MIN_HEADINGS:
         return "foundry artifact content lacks enough section headings"
+    placeholder = _ellipsis_only_section_heading(cleaned)
+    if placeholder:
+        return (
+            f"foundry section {placeholder!r} is a placeholder; "
+            "write the decision prose instead of '...'"
+        )
     return None
 
 
@@ -594,6 +661,66 @@ def _looks_like_action_plan_summary(text: str) -> bool:
     return looks_like_action_plan(text)
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _intake_questions(output: dict[str, Any]) -> list[str]:
+    sources: list[dict[str, Any]] = [output]
+    artifacts = output.get("artifacts")
+    if isinstance(artifacts, dict):
+        sources.append(artifacts)
+    result = output.get("result")
+    if isinstance(result, dict):
+        sources.append(result)
+        nested = result.get("artifacts")
+        if isinstance(nested, dict):
+            sources.append(nested)
+    for source in sources:
+        for key in ("questions", "clarifying_questions"):
+            questions = _string_list(source.get(key))
+            if questions:
+                return questions
+    return []
+
+
+def _usable_summary_text(output: dict[str, Any]) -> str:
+    sources: list[Any] = [output, output.get("result")]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        summary = source.get("summary")
+        if not isinstance(summary, str):
+            continue
+        body = summary.strip()
+        if (
+            not body
+            or _is_empty_json_placeholder(body)
+            or _looks_like_action_plan_summary(body)
+            or looks_like_artifact_catalog_summary(body)
+        ):
+            continue
+        return body
+    return ""
+
+
+def _intake_questions_body(output: dict[str, Any]) -> str:
+    questions = _intake_questions(output)
+    if not questions:
+        return ""
+    numbered = "\n".join(
+        f"{index}. {question}" for index, question in enumerate(questions, start=1)
+    )
+    summary = _usable_summary_text(output)
+    # A plain-text reply is normalized into summary + questions; don't show the questions twice.
+    repeats = any(question[:40] in summary for question in questions)
+    if summary and summary not in numbered and not repeats:
+        return f"{summary}\n\n{numbered}"
+    return numbered
+
+
 def artifact_body(output: dict[str, Any]) -> str:
     prd_keys = ("prd_markdown", "markdown")
     other_keys = ("content", "summary", "text")
@@ -609,9 +736,18 @@ def artifact_body(output: dict[str, Any]) -> str:
             if isinstance(value, str) and value.strip():
                 return sanitize_prd_markdown(value)
 
+    for source in (output, result if isinstance(result, dict) else {}):
+        for key, value in source.items():
+            if str(key).endswith("_markdown") and isinstance(value, str) and value.strip():
+                return sanitize_markdown_artifact(value)
+
     work_orders_body = _work_orders_artifacts_body(output)
     if work_orders_body:
         return work_orders_body
+
+    questions_body = _intake_questions_body(output)
+    if questions_body:
+        return questions_body
 
     for key in other_keys:
         value = output.get(key)
@@ -677,8 +813,9 @@ def artifact_heading(
     display_name: str = "Draft",
     step_name: str = "",
     agent_id: str = "",
+    title: str = "",
 ) -> str:
-    title = artifact_title(artifact, fallback=display_name or "Draft")
+    title = title.strip() or artifact_title(artifact, fallback=display_name or "Draft")
     if agent_id or step_name:
         origin = " / ".join(
             part for part in (agent_id.replace("_", " "), step_name.replace("_", " ")) if part
@@ -760,7 +897,25 @@ def _pr_list_lines(artifact: dict[str, Any]) -> list[str]:
     return [f"- {ref}: {url}" if ref else f"- {url}"]
 
 
-def artifact_channel_body(artifact: dict[str, Any], *, display_name: str = "Draft") -> str:
+def artifact_value_at(artifact: dict[str, Any], path: str) -> Any:
+    """Value at a dotted path such as ``result.prd_markdown``; None when any part is missing."""
+    value: Any = artifact
+    for part in str(path or "").split("."):
+        if not part or not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def artifact_channel_body(
+    artifact: dict[str, Any],
+    *,
+    display_name: str = "Draft",
+    presentation: dict[str, str] | None = None,
+) -> str:
+    configured = artifact_value_at(artifact, (presentation or {}).get("body", ""))
+    if isinstance(configured, str) and configured.strip() and not _is_empty_json_placeholder(configured):
+        return sanitize_markdown_artifact(configured)
     body = artifact_body(artifact)
     if not body:
         summary = str(artifact.get("summary") or "").strip()
@@ -784,14 +939,17 @@ def build_artifact_channel_text(
     display_name: str = "Draft",
     step_name: str = "",
     agent_id: str = "",
+    presentation: dict[str, str] | None = None,
 ) -> str:
+    title = artifact_value_at(artifact, (presentation or {}).get("title", ""))
     heading = artifact_heading(
         artifact,
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        title=title if isinstance(title, str) else "",
     )
-    body = artifact_channel_body(artifact, display_name=display_name)
+    body = artifact_channel_body(artifact, display_name=display_name, presentation=presentation)
     if body.startswith("I finished ") and "no readable content" in body:
         return body
     return f"{heading}\n\n{body}"
@@ -802,6 +960,24 @@ def _format_doc_link_for_slack(web_view_link: str) -> str:
     if not url:
         return ""
     return f"View full output in Google Docs: {url}"
+
+
+def _prd_checks_text(artifact: dict[str, Any]) -> str:
+    """What the automatic PRD checks found on a draft (``prd_checks``), for the reviewer."""
+    from ts_harness.workflows.prd_checks import format_prd_checks
+
+    findings = artifact.get("prd_checks") if isinstance(artifact, dict) else None
+    if not isinstance(findings, list):
+        return ""
+    return format_prd_checks([str(item) for item in findings if str(item).strip()])
+
+
+def _first_intake_question(text: str) -> str:
+    """Chat shows one question. The stored artifact still has the full reply."""
+    first = text.find("?")
+    if first < 0 or text.find("?", first + 1) < 0:
+        return text
+    return text[: first + 1].rstrip()
 
 
 def format_artifact_for_channel(
@@ -815,15 +991,20 @@ def format_artifact_for_channel(
     min_chars_for_doc: int = 3000,
     doc_url: str | None = None,
     publish_full_text: bool = False,
+    presentation: dict[str, str] | None = None,
 ) -> str:
     message = build_artifact_channel_text(
         artifact,
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        presentation=presentation,
     )
     if message.startswith("I finished ") and "no readable content" in message:
         return message
+    all_questions = (presentation or {}).get("questions") == "all"
+    if (present_prompt or "inform").lower() == "intake" and not all_questions:
+        message = _first_intake_question(message)
 
     truncated = len(message) > max_length
     should_link = bool(doc_url) and (publish_full_text or truncated or len(message) >= min_chars_for_doc)
@@ -834,13 +1015,23 @@ def format_artifact_for_channel(
     elif truncated:
         message += "\n\n(Full output is stored in the workflow.)"
 
+    checks = _prd_checks_text(artifact)
+    if checks:
+        # Above the reply instructions, so the reviewer reads them before deciding.
+        message += f"\n\n{checks}"
+
     prompt_mode = (present_prompt or "inform").lower()
     if prompt_mode == "approval":
         message += "\n\nReply yes to approve, or no with feedback to revise."
+    elif prompt_mode == "intake" and all_questions:
+        message += (
+            '\n\nReply "yes" to accept the recommended answers and I\'ll draft. '
+            "To change some, answer them by number, then say ready when you want a draft."
+        )
     elif prompt_mode == "intake":
         message += (
             "\n\nReply in this thread with your answers. "
-            "I'll draft the PRD once you've responded."
+            "Say ready when you want a draft."
         )
     elif prompt_mode == "merge":
         message += (

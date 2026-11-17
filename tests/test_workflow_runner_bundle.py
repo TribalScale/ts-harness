@@ -19,6 +19,11 @@ class WorkflowRunnerBundleTests(unittest.TestCase):
         self.assertIn("pip install", dockerfile)
         self.assertIn("workflow-runner.py", dockerfile)
 
+    def test_dockerfile_installs_intake_extras(self):
+        # The gather step reads Drive (google) and the intake object store (aws/gcp).
+        dockerfile = (REPO_ROOT / "docker" / "Dockerfile.workflow-runner").read_text()
+        self.assertIn('".[google,aws,gcp]"', dockerfile)
+
     def test_runner_pythonpath_imports_engine_and_hooks(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "runtime"), str(REPO_ROOT / "scripts")])

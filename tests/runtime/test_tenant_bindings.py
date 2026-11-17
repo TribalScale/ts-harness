@@ -55,24 +55,25 @@ class BindingsTests(unittest.TestCase):
         args = {
             "project_key": "acme",
             "fields": {"project": {"key": "OPS"}},
-            "issues": [{"issue_key": "TFS-9"}],
+            "issues": [{"issue_key": "PROJ-9"}],
         }
-        self.assertEqual(jira_project_keys_from_args(args), {"ACME", "OPS", "TFS"})
+        self.assertEqual(jira_project_keys_from_args(args), {"ACME", "OPS", "PROJ"})
 
     def test_jira_projects_outside_binding(self):
         bindings = tenant_bindings(DEFAULTS)
         self.assertIsNone(check_jira_projects_allowed({"ACME"}, bindings))
-        self.assertIn("TFS", check_jira_projects_allowed({"ACME", "TFS"}, bindings))
+        self.assertIn("PROJ", check_jira_projects_allowed({"ACME", "PROJ"}, bindings))
 
     def test_jira_write_tool_detection(self):
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_create_issue"))
         self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_transition_issue"))
+        self.assertTrue(is_jira_write_tool("mcp-atlassian-jira_update_issue"))
         self.assertFalse(is_jira_write_tool("mcp-atlassian-jira_search"))
 
     def test_story_payload_rejects_unbound_project(self):
         with self.assertRaises(ValueError):
             build_story_payload(
-                project_key="TFS",
+                project_key="PROJ",
                 summary="s",
                 acceptance="a",
                 pointer={"work_order_id": "WO-1", "repo_id": "acme/checkout", "program_id": "p"},
@@ -157,7 +158,7 @@ class PolicyEnforcementTests(unittest.TestCase):
             agent,
             config,
             self._ctx(),
-            tool_args={"project_key": "TFS", "summary": "x"},
+            tool_args={"project_key": "PROJ", "summary": "x"},
         )
         self.assertEqual(decision.decision, "deny")
         self.assertEqual(decision.policy_id, "tenant_jira_binding")
@@ -184,18 +185,81 @@ class PolicyEnforcementTests(unittest.TestCase):
         )
         self.assertNotEqual(decision.policy_id, "tenant_jira_binding")
 
+    def test_jira_write_advertised_without_args_when_bound(self):
+        config = self._config()
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue", config.get_agent("pm-agent"), config, self._ctx()
+        )
+        self.assertNotEqual(decision.policy_id, "tenant_jira_binding")
+
+    def test_jira_write_denied_in_stage_without_jira_write_effect(self):
+        config = self._config()
+        ctx = ToolPolicyContext(tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects=set())
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue",
+            config.get_agent("pm-agent"),
+            config,
+            ctx,
+            tool_args={"project_key": "ACME", "summary": "x"},
+        )
+        self.assertEqual((decision.decision, decision.policy_id), ("deny", "stage_external_effects"))
+
+    def test_jira_write_allowed_in_stage_with_jira_write_effect(self):
+        config = self._config()
+        ctx = ToolPolicyContext(
+            tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects={"jira_write"}
+        )
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_create_issue",
+            config.get_agent("pm-agent"),
+            config,
+            ctx,
+            tool_args={"project_key": "ACME", "summary": "x"},
+        )
+        self.assertEqual(decision.decision, "allow")
+
+    def test_jira_read_not_limited_by_stage_effects(self):
+        config = self._config()
+        ctx = ToolPolicyContext(tenant_id="default", agent_id="pm-agent", source="workflow", stage_external_effects=set())
+        decision = evaluate_tool_policy(
+            "mcp-atlassian-jira_get_issue", config.get_agent("pm-agent"), config, ctx, tool_args={"issue_key": "PROJ-1"}
+        )
+        self.assertEqual(decision.decision, "allow")
+
+    def test_jira_reads_are_not_publish_tools(self):
+        from ts_harness.tools.policy import publish_tool_names
+
+        config = self._config()
+        published = publish_tool_names(
+            {"mcp-atlassian-jira_search", "mcp-atlassian-jira_get_issue", "mcp-atlassian-jira_create_issue"}, config
+        )
+        self.assertEqual(published, {"mcp-atlassian-jira_create_issue"})
+
+    def test_agents_get_jira_toolsets(self):
+        from ts_harness.tools.toolsets import agent_effective_tools
+
+        config = self._config()
+        pm = agent_effective_tools(config.get_agent("pm-agent"), config)
+        self.assertIn("mcp-atlassian-jira_create_issue", pm)
+        self.assertIn("mcp-atlassian-jira_get_issue", pm)
+        for agent_id in ("orchestrator", "dev-agent", "comms-agent"):
+            tools = agent_effective_tools(config.get_agent(agent_id), config)
+            self.assertIn("mcp-atlassian-jira_get_issue", tools, agent_id)
+            self.assertNotIn("mcp-atlassian-jira_create_issue", tools, agent_id)
+
 
 class CodingBackendBindingTests(unittest.TestCase):
     def test_run_coding_backend_denies_repo_outside_binding(self):
+        from ts_harness.implementation import coding_job
         from ts_harness.tools import coding_backend_tool
 
         config = load_runtime_config(REPO_ROOT / "config" / "ts-harness-runtime.test.yaml")
         apply_settings_to_config(config, {"program_defaults": copy.deepcopy(DEFAULTS)})
         config.implementation.coding_backend = "opencode"
         ctx = ToolPolicyContext(tenant_id="default", agent_id="dev-agent", source="workflow")
-        with patch.object(coding_backend_tool, "_live_runtime_config", return_value=config), patch.object(
-            coding_backend_tool, "load_active_runtime_config", return_value=config
-        ), patch.object(coding_backend_tool, "OpenCodeBackend") as backend:
+        with patch.object(coding_job, "_live_runtime_config", return_value=config), patch.object(
+            coding_job, "load_active_runtime_config", return_value=config
+        ), patch.object(coding_job, "OpenCodeBackend") as backend:
             result = coding_backend_tool.handle_run_coding_backend(
                 {
                     "work_order_id": "WO-1",

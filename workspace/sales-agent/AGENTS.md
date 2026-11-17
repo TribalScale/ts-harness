@@ -14,7 +14,7 @@
 - outreach_drafts — draft outreach for human review
 - pipeline_ops — track follow-ups and deal hygiene
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-sonnet-5-5`
 **Workspace:** `/workspace/sales-agent`
 **Toolsets:** `core-read`, `channel`, `google-workspace`
 **Skills:** `memory-api`, `clarify-rfp`, `draft-rfp`

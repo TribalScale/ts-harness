@@ -4,11 +4,11 @@ import { artifactRows } from "../api/normalizers";
 import type {
   PinnedWorkflowVersion,
   PortfolioFilters,
+  ProgramBudget,
   ProgramEvidenceExport,
   ProgramStatus,
   ProgramSummary,
   ProgramTopology,
-  WorkflowTask,
 } from "../api/types";
 import { hasPermission } from "../auth/session";
 import { Button } from "../components/Button";
@@ -18,9 +18,10 @@ import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { Tabs, tabButtonId, tabPanelId } from "../components/Tabs";
 import { SplitView } from "../layout/SplitView";
 import { PhaseStrip } from "./PhaseStrip";
-import { TaskKanban } from "./TaskKanban";
+import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
+import { ShareDialog } from "./ShareDialog";
 
-type ProgramTab = "overview" | "tasks" | "artifacts";
+type ProgramTab = "overview" | "artifacts";
 type ProgramAction = "advance" | "cancel";
 
 const TABS_ID = "program-detail";
@@ -46,6 +47,28 @@ export function formatAge(seconds?: number | null): string | undefined {
 function humanize(value?: string): string {
   if (!value) return "Unknown";
   return value.replace(/_/g, " ");
+}
+
+/** Short phase name, matching the chat offer: "prd" -> "PRD", "work_orders" -> "Work orders". */
+export function phaseLabel(phase?: string): string {
+  const text = String(phase || "").replace(/_/g, " ").trim();
+  if (!text) return "Unknown";
+  return text.length <= 3 ? text.toUpperCase() : text[0].toUpperCase() + text.slice(1);
+}
+
+/** The phase a succeeded program stopped at when it may still continue (a may_end node). */
+export function endedAtPhase(program?: {
+  status?: string;
+  artifacts?: Record<string, unknown>;
+}): string | undefined {
+  if (String(program?.status || "").toLowerCase() !== "succeeded") return undefined;
+  const ended = program?.artifacts?.ended_at_phase;
+  return typeof ended === "string" && ended ? ended : undefined;
+}
+
+function statusLabel(program?: { status?: string; artifacts?: Record<string, unknown> }): string {
+  const ended = endedAtPhase(program);
+  return ended ? `Done at ${phaseLabel(ended)}` : humanize(program?.status);
 }
 
 function parseJsonObject<T extends Record<string, unknown>>(value: unknown): T | undefined {
@@ -103,6 +126,18 @@ function linkLabel(key: string): string {
   return humanize(key);
 }
 
+const ACCESS_RANK: Record<string, number> = { none: 0, read: 1, write: 2, approve: 3, admin: 4 };
+
+function VisibilityPill({ visibility }: { visibility: string }) {
+  const isPublic = visibility === "public";
+  return (
+    <StatusPill
+      status={isPublic ? "neutral" : "muted"}
+      label={isPublic ? "Public" : "Private"}
+    />
+  );
+}
+
 export function ProgramsPage({
   programId,
   onSelect,
@@ -112,10 +147,12 @@ export function ProgramsPage({
 }) {
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [status, setStatus] = useState<ProgramStatus | null>(null);
-  const [tasks, setTasks] = useState<WorkflowTask[]>([]);
+  const [budget, setBudget] = useState<ProgramBudget["team"]>(null);
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
   const [pendingAction, setPendingAction] = useState<ProgramAction | null>(null);
+  // Set when the pending advance continues an ended program to a chosen phase.
+  const [advanceTarget, setAdvanceTarget] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -124,7 +161,19 @@ export function ProgramsPage({
   const [filters, setFilters] = useState<PortfolioFilters>(EMPTY_FILTERS);
   const [evidence, setEvidence] = useState<ProgramEvidenceExport | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const canExportEvidence = hasPermission("edit_config");
+  const programClosed = ["succeeded", "cancelled", "failed"].includes(String(status?.status || "").toLowerCase());
+  const accessRank = ACCESS_RANK[status?.access_level || "admin"] ?? 0;
+  const canWrite = accessRank >= ACCESS_RANK.write;
+  const canApproveProgram = accessRank >= ACCESS_RANK.approve;
+  const canManage = accessRank >= ACCESS_RANK.admin;
+  const activityPhase = selectedPhase || status?.current_phase;
+  const phaseActivity = usePhaseActivity(
+    programId,
+    status ? activityPhase : undefined,
+    tab === "overview" && !programClosed
+  );
 
   async function loadList() {
     setListLoading(true);
@@ -165,28 +214,25 @@ export function ProgramsPage({
   useEffect(() => {
     if (!programId) {
       setStatus(null);
-      setTasks([]);
       setError(null);
       return;
     }
     setTab("overview");
     setEvidence(null);
     void refreshStatus(programId);
+    setBudget(null);
+    let active = true;
+    apiFetch<ProgramBudget>(`/admin/budgets/programs/${encodeURIComponent(programId)}`)
+      .then((data) => {
+        if (active) setBudget(data.team);
+      })
+      .catch(() => {
+        if (active) setBudget(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [programId, refreshStatus]);
-
-  useEffect(() => {
-    if (!status) return;
-    const phase = status.current_phase;
-    const phaseInfo = (status.phases || {})[phase || ""] || {};
-    const wfId = phaseInfo.workflow_id || status.active_workflow_id;
-    if (!wfId) {
-      setTasks([]);
-      return;
-    }
-    apiFetch<{ tasks?: WorkflowTask[] }>(`/admin/workflows/${encodeURIComponent(wfId)}`)
-      .then((data) => setTasks(data.tasks || (data as any).workflow_tasks || []))
-      .catch(() => setTasks([]));
-  }, [status]);
 
   async function mutateProgram(action: ProgramAction) {
     if (!programId) return;
@@ -195,7 +241,11 @@ export function ProgramsPage({
       await apiFetch(`/admin/programs/${encodeURIComponent(programId)}/${action}`, {
         method: "POST",
         body: JSON.stringify(
-          action === "cancel" ? { reason: "cancelled from admin console" } : {}
+          action === "cancel"
+            ? { reason: "cancelled from admin console" }
+            : advanceTarget
+              ? { target_phase: advanceTarget }
+              : {}
         ),
       });
       const [nextStatus] = await Promise.all([loadStatus(programId), loadList()]);
@@ -207,6 +257,7 @@ export function ProgramsPage({
       setError(String(e.message || e));
     } finally {
       setPendingAction(null);
+      setAdvanceTarget(undefined);
       setBusy(false);
     }
   }
@@ -314,7 +365,8 @@ export function ProgramsPage({
               {title}
             </span>
             <span className="row-meta">
-              <StatusPill status={programStatus(p.status)} label={humanize(p.status)} />
+              <StatusPill status={programStatus(p.status)} label={statusLabel(p)} />
+              {p.visibility && <VisibilityPill visibility={p.visibility} />}
               <span>{humanize(p.current_phase)}</span>
               {p.owner && <span>Owner {p.owner}</span>}
               {Boolean(p.child_count) && <span>{p.child_count} child programs</span>}
@@ -350,12 +402,19 @@ export function ProgramsPage({
           confirmLabel: "Cancel program",
           danger: true,
         }
-      : {
-          title: "Advance program?",
-          description: "This moves the selected delivery program to the next phase.",
-          confirmLabel: "Advance program",
-          danger: false,
-        };
+      : advanceTarget
+        ? {
+            title: "Continue program?",
+            description: `This reopens the program and starts ${phaseLabel(advanceTarget)}.`,
+            confirmLabel: `Continue to ${phaseLabel(advanceTarget)}`,
+            danger: false,
+          }
+        : {
+            title: "Advance program?",
+            description: "This moves the selected delivery program to the next phase.",
+            confirmLabel: "Advance program",
+            danger: false,
+          };
 
   function tabPanel(children: React.ReactNode) {
     return (
@@ -392,6 +451,16 @@ export function ProgramsPage({
       status.resolved_workflow_versions
     );
     const definitionHref = programDefinitionHref(status.program_type || topology?.program_type);
+    const endedAt = endedAtPhase(status);
+    const continueTargets = endedAt
+      ? Array.from(
+          new Set(
+            (topology?.edges || [])
+              .filter((edge) => edge.source === endedAt && edge.target)
+              .map((edge) => String(edge.target))
+          )
+        )
+      : [];
     const pinnedWorkflowLinks = Object.entries(resolved || {})
       .map(([phase, pin]) => {
         const workflowType = pin?.workflow_type || (status.phases || {})[phase]?.workflow_type;
@@ -415,10 +484,8 @@ export function ProgramsPage({
           <div className="program-header-main">
             <h2>{status.summary || status.program_id}</h2>
             <div className="program-header-meta">
-              <StatusPill
-                status={programStatus(status.status)}
-                label={humanize(status.status)}
-              />
+              <StatusPill status={programStatus(status.status)} label={statusLabel(status)} />
+              {status.visibility && <VisibilityPill visibility={status.visibility} />}
               {(status.program_type ||
                 status.program_definition_version ||
                 topology?.program_type) && (
@@ -455,12 +522,35 @@ export function ProgramsPage({
             </div>
           </div>
           <div className="program-actions" role="group" aria-label="Program actions">
-            <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
-              Advance
-            </Button>
-            <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
-              Cancel
-            </Button>
+            {canWrite && !programClosed && (
+              <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
+                Advance
+              </Button>
+            )}
+            {canWrite &&
+              continueTargets.map((target) => (
+                <Button
+                  key={target}
+                  variant="primary"
+                  busy={busy}
+                  onClick={() => {
+                    setAdvanceTarget(target);
+                    setPendingAction("advance");
+                  }}
+                >
+                  Continue to {phaseLabel(target)}
+                </Button>
+              ))}
+            {canManage && (
+              <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
+                Cancel
+              </Button>
+            )}
+            {canManage && (
+              <Button variant="ghost" onClick={() => setSharing(true)}>
+                Share
+              </Button>
+            )}
             {canExportEvidence && (
               <Button variant="ghost" busy={exporting} onClick={() => void downloadEvidence()}>
                 Download evidence
@@ -482,6 +572,21 @@ export function ProgramsPage({
             {error}
           </div>
         )}
+        {budget && budget.status !== "ok" && (
+          <div className="callout budget-banner" role="status">
+            <strong>
+              {budget.status === "reached"
+                ? `${budget.display_name || budget.slug} reached its monthly LLM budget`
+                : `${budget.display_name || budget.slug} has used ${budget.percent}% of its monthly LLM budget`}
+            </strong>
+            {budget.status === "reached"
+              ? `Agent and coding steps wait until a manager or admin raises the budget${
+                  budget.held_tasks ? ` (${budget.held_tasks} waiting)` : ""
+                }. `
+              : "Work continues; at 100% agent and coding steps wait. "}
+            <a href="#/system/budgets">Open budgets</a>
+          </div>
+        )}
         <Tabs
           idBase={TABS_ID}
           ariaLabel="Program detail"
@@ -489,7 +594,6 @@ export function ProgramsPage({
           onChange={(id) => setTab(id as ProgramTab)}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "tasks", label: "Tasks", count: tasks.length },
             { id: "artifacts", label: "Artifacts", count: rows.length },
           ]}
         />
@@ -504,7 +608,18 @@ export function ProgramsPage({
                 currentPhase={status.current_phase}
                 selectedPhase={selectedPhase}
                 onSelect={setSelectedPhase}
-              />
+              >
+                {activityPhase && (
+                  <PhaseActivityPanel
+                    phase={activityPhase}
+                    activity={phaseActivity.activity}
+                    error={phaseActivity.error}
+                    programClosed={programClosed}
+                    canApproveProgram={canApproveProgram}
+                    onChanged={() => void phaseActivity.reload()}
+                  />
+                )}
+              </PhaseStrip>
               {pinnedWorkflowLinks.length > 0 && (
                 <div className="key-links" aria-label="Pinned workflow definitions">
                   {pinnedWorkflowLinks.map((item) => (
@@ -529,6 +644,7 @@ export function ProgramsPage({
                   {" · "}
                   Links out {status.outbound_link_count || 0} / in {status.inbound_link_count || 0}
                 </div>
+                {canManage && (
                 <div className="program-actions" style={{ marginTop: 8 }}>
                   <label>
                     Project
@@ -587,6 +703,8 @@ export function ProgramsPage({
                     {status.excluded_from_autoshare ? "Include in auto-share" : "Exclude from auto-share"}
                   </Button>
                 </div>
+                )}
+                {canManage && (
                 <div className="program-actions" style={{ marginTop: 8 }}>
                   <label>
                     Link to program
@@ -621,9 +739,11 @@ export function ProgramsPage({
                     Add link
                   </Button>
                 </div>
+                )}
                 {(status.links?.outbound || []).map((link) => (
                   <div key={link.to_program_id} className="program-actions">
                     <span>Reads {link.to_program_id}</span>
+                    {canManage && (
                     <Button
                       variant="ghost"
                       busy={busy}
@@ -647,6 +767,7 @@ export function ProgramsPage({
                     >
                       Unlink
                     </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -677,8 +798,6 @@ export function ProgramsPage({
               )}
             </section>
           )}
-        {tab === "tasks" &&
-          tabPanel(<TaskKanban tasks={tasks} programStatus={status?.status} />)}
         {tab === "artifacts" &&
           tabPanel(
             <dl className="artifact-list">
@@ -712,14 +831,28 @@ export function ProgramsPage({
           danger={confirmation.danger}
           busy={busy}
           onConfirm={() => pendingAction && mutateProgram(pendingAction)}
-          onCancel={() => setPendingAction(null)}
+          onCancel={() => {
+            setPendingAction(null);
+            setAdvanceTarget(undefined);
+          }}
         />
+        {programId && (
+          <ShareDialog
+            open={sharing}
+            programId={programId}
+            onClose={() => setSharing(false)}
+            onChanged={(access) =>
+              setStatus((current) => (current ? { ...current, visibility: access.visibility } : current))
+            }
+          />
+        )}
       </div>
     );
   }
 
   return (
     <SplitView
+      className="programs-split"
       list={list}
       detail={detail}
       detailOpen={Boolean(programId)}

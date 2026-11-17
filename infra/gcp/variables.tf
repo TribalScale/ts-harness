@@ -162,6 +162,28 @@ variable "memory_backend" {
   }
 }
 
+variable "state_backend" {
+  description = "Where runtime state lives: local (files on the VM) or postgres (definitions, cron, scheduler state, audit and dedup in Cloud SQL)."
+  type        = string
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "postgres"], var.state_backend)
+    error_message = "state_backend must be local or postgres."
+  }
+}
+
+variable "object_backend" {
+  description = "Where skill files and agent workspaces live: local (VM disk) or gcs (the skills and workspaces buckets)."
+  type        = string
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "gcs"], var.object_backend)
+    error_message = "object_backend must be local or gcs."
+  }
+}
+
 variable "enterprise_repo_url" {
   description = "Git URL for this ts-harness repo (cloned on the instance for scripts, workspace, skills, and docker overrides)"
   type        = string
@@ -177,6 +199,30 @@ variable "implement_work_orders_repo_url" {
   description = "Git URL of the application repo that implement_work_orders clones and opens PRs against (OpenCode coding backend)."
   type        = string
   default     = ""
+}
+
+variable "github_app_id" {
+  description = "GitHub App id for github.com (or github_app_host). Empty keeps the github-token PAT."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_slug" {
+  description = "GitHub App slug, used for the install link on the admin GitHub page."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_host" {
+  description = "Host the GitHub App is registered on."
+  type        = string
+  default     = "github.com"
+}
+
+variable "github_webhook_funnel" {
+  description = "Expose /webhooks/github through Tailscale Funnel (port 8443) and point the GitHub App's webhook at it (bootstrap phase 12b)."
+  type        = bool
+  default     = false
 }
 
 variable "implement_work_orders_base_branch" {
@@ -238,6 +284,58 @@ variable "oidc_token_endpoint" {
   default     = ""
 }
 
+variable "oidc_preset" {
+  description = "Identity provider preset: auth0, entra, google, okta or generic. Empty keeps legacy defaults."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_token_type" {
+  description = "Token the gateway validates: access or id. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_groups_claim" {
+  description = "Claim holding groups, e.g. https://ts-harness/groups. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_roles_claim" {
+  description = "Claim holding roles, e.g. https://ts-harness/roles. Empty uses the preset default."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_allowed_domains" {
+  description = "Comma-separated email or hosted domains allowed to sign in. Empty allows any."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_groups_source" {
+  description = "Where sign-in groups come from: token, microsoft_graph or google_directory. Empty means token."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "token", "microsoft_graph", "google_directory"], var.oidc_groups_source)
+    error_message = "oidc_groups_source must be empty, token, microsoft_graph or google_directory."
+  }
+}
+
+variable "identity_directory" {
+  description = "Directory synced every 15 minutes: seen_users, auth0_management, scim, microsoft_graph or google_directory. Empty means seen_users."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "seen_users", "auth0_management", "scim", "microsoft_graph", "google_directory"], var.identity_directory)
+    error_message = "identity_directory must be empty or one of seen_users, auth0_management, scim, microsoft_graph, google_directory."
+  }
+}
+
 variable "multi_agent_enabled" {
   description = "When true, the bootstrap runs the multi-agent topology."
   type        = bool
@@ -248,6 +346,29 @@ variable "workflow_runner_enabled" {
   description = "When true and multi_agent_enabled is true, deploy the optional workflow-runner sidecar."
   type        = bool
   default     = false
+}
+
+variable "coding_jobs_enabled" {
+  description = "Run deliver_work_order OpenCode runs as queued jobs in worker containers instead of inside agent-runtime."
+  type        = bool
+  default     = false
+}
+
+variable "llm_proxy_enabled" {
+  description = "Route agent and coding-worker model calls through the metering LLM proxy (usage, cost, rate limits, team budgets). Needs a session database."
+  type        = bool
+  default     = false
+}
+
+variable "coding_max_running" {
+  description = "Coding jobs that may run at once."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.coding_max_running >= 1
+    error_message = "coding_max_running must be at least 1."
+  }
 }
 
 variable "workflow_runner_poll_interval_seconds" {
@@ -343,6 +464,12 @@ variable "embeddings_model" {
   default     = "text-embedding-3-small"
 }
 
+variable "intake_vision_model" {
+  description = "Model that reads images attached to requests, as provider/model. Empty uses the stage agent's model; off turns image reading off."
+  type        = string
+  default     = ""
+}
+
 variable "embeddings_dimensions" {
   description = "Output dimensionality. MUST equal the vector() width in database/migrations/001_init_memory.sql (currently 1536)."
   type        = number
@@ -393,4 +520,22 @@ locals {
   data_disk_device_name   = "ts-harness-data"
   data_disk_device_hint   = "/dev/disk/by-id/google-${local.data_disk_device_name}"
   monitoring_namespace    = "TSHarness"
+}
+
+variable "enterprise_repo_ref" {
+  description = "Branch of enterprise_repo_url the host clones and runs (bootstrap and phase 09). Empty means the repository's default branch."
+  type        = string
+  default     = ""
+}
+
+variable "tailscale_hostname" {
+  description = "Tailscale machine name, so the host keeps the same tailnet address after a rebuild. Empty means project_name."
+  type        = string
+  default     = ""
+}
+
+variable "tailscale_tags" {
+  description = "Comma-separated Tailscale tags the host advertises (for example tag:ts-harness). Required when tailscale-authkey holds an OAuth client secret."
+  type        = string
+  default     = ""
 }

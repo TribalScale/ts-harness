@@ -185,6 +185,18 @@ class VersionedDefinitionStore:
 
     @contextmanager
     def _store_lock(self) -> Iterator[None]:
+        from ts_harness.storage.shared_tree import definitions_tree_for
+
+        shared = definitions_tree_for(self.root)
+        if shared is not None:
+            tree, rel = shared
+            prefix = "" if rel == "." else f"{rel}/"
+            with self._thread_lock, tree.transaction(
+                f"store:{rel if rel != '.' else 'root'}",
+                [f"{prefix}drafts", f"{prefix}active", f"{prefix}history"],
+            ):
+                yield
+            return
         with self._thread_lock:
             lock_path = self.root / ".store.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True)

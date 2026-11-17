@@ -203,6 +203,29 @@ class SemanticValidatorTests(unittest.TestCase):
         violations = sc.validate_stage_output(DELIVER_CONTRACT, output, {}, audit)
         self.assertTrue(any("run_coding_backend failed" in v.message for v in violations))
 
+    def test_failed_coding_tool_is_the_stage_error_when_pr_url_is_empty(self):
+        output = {"work_order_id": "WO-1", "pr_url": "", "rejected": True}
+        audit = [
+            {
+                "tool": "run_coding_backend",
+                "decision": "allow",
+                "result_preview": json.dumps(
+                    {
+                        "ok": False,
+                        "error": "repo tribalscale/test-ts-harness-repo is not on the tenant repo allowlist",
+                    }
+                ),
+            }
+        ]
+        violations = sc.validate_stage_output(DELIVER_CONTRACT, output, {}, audit)
+        self.assertEqual(
+            [v.message for v in violations],
+            [
+                "deliver_work_order cannot succeed when run_coding_backend failed: "
+                "repo tribalscale/test-ts-harness-repo is not on the tenant repo allowlist"
+            ],
+        )
+
     def test_work_order_artifacts_validator_uses_stage_input(self):
         contract = {
             "output_schema": {"type": "object"},

@@ -13,7 +13,7 @@
 - program_drafting — draft workflow, program, and routing definitions
 - skill_proposals — propose missing skills for Inbox approval
 
-**Model:** `openai/gpt-4o`
+**Model:** `anthropic/claude-opus-5-5`
 **Workspace:** `/workspace/builder-agent`
 **Toolsets:** `core-read`, `program-builder`, `skill-authoring`
 **Skills:** `program-builder`

@@ -93,19 +93,19 @@ Provide the formatted standup ready for posting.
 # Daily Standup — <DATE>
 
 ## Done (Yesterday)
-- Merged PR #142: JWT token refresh endpoint [TFS-123] — @alice
-- Closed TFS-118: Fixed stale search results after contract edit — @carol
+- Merged PR #142: JWT token refresh endpoint [PROJ-123] — @alice
+- Closed PROJ-118: Fixed stale search results after contract edit — @carol
 
 ## In Progress
-- TFS-130: Implementing bulk document upload (PR draft open) — @alice
-- TFS-127: Database index optimization for clause search — @dave
+- PROJ-130: Implementing bulk document upload (PR draft open) — @alice
+- PROJ-127: Database index optimization for clause search — @dave
 
 ## Blocked
-- TFS-135: Waiting on API credentials from partner team (3 days) — @bob
+- PROJ-135: Waiting on API credentials from partner team (3 days) — @bob
 
 ## Up Next
-- TFS-140: Email notification preferences (ready for pickup)
-- TFS-138: Update Node.js base image to 20.11 LTS
+- PROJ-140: Email notification preferences (ready for pickup)
+- PROJ-138: Update Node.js base image to 20.11 LTS
 
 ## Alerts
 - No active incidents

@@ -76,6 +76,46 @@ it("sends text and renders output.summary", async () => {
   fetchMock.mockRestore();
 });
 
+it("shows working while a program status still means work is in progress", async () => {
+  mockFetch((url) => {
+    if (url.includes("/messages")) {
+      return jsonResponse({
+        program_id: "program-1",
+        messages: [{ role: "assistant", content: "Drafting the PRD." }],
+      });
+    }
+    if (url.includes("/admin/programs/program-1/status")) {
+      return jsonResponse({ status: "pending" });
+    }
+    return jsonResponse({ sessions: THREADS });
+  });
+
+  renderPage(<ChatPage sessionId="session-1" onSelectSession={() => undefined} />);
+  expect(await screen.findByText("Working")).toBeInTheDocument();
+});
+
+it("stays quiet when the program is waiting or finished", async () => {
+  const fetchMock = mockFetch((url) => {
+    if (url.includes("/messages")) {
+      return jsonResponse({
+        program_id: "program-1",
+        messages: [{ role: "assistant", content: "Drafting the PRD." }],
+      });
+    }
+    if (url.includes("/admin/programs/program-1/status")) {
+      return jsonResponse({ status: "blocked" });
+    }
+    return jsonResponse({ sessions: THREADS });
+  });
+
+  renderPage(<ChatPage sessionId="session-1" onSelectSession={() => undefined} />);
+  expect(await screen.findByText("Drafting the PRD.")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/status"))).toBe(true)
+  );
+  expect(screen.queryByText("Working")).not.toBeInTheDocument();
+});
+
 it("shows an intentional start state", async () => {
   mockFetch(() => jsonResponse({ sessions: [] }));
   renderPage(<ChatPage onSelectSession={() => undefined} />);
@@ -210,7 +250,7 @@ it("rejects a whitespace-only send", async () => {
   await userEvent.type(box, "   ");
   await userEvent.keyboard("{Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Enter a message before sending."
+    "Enter a message or attach a file."
   );
   expect(box).toHaveValue("   ");
   expect(
@@ -416,6 +456,46 @@ it("hides typeahead once the caret leaves the leading slash token", async () => 
   expect(screen.getByLabelText("Message")).toHaveValue("/j leftover");
 });
 
+it("sends the open chat binding instead of the leftover browser binding", async () => {
+  sessionStorage.setItem("ec_web_binding", "web:leftover-chat");
+  let posted: { session_id?: string; thread_id?: string; binding_key?: string } | undefined;
+  mockFetch((url, init) => {
+    if (url.includes("/messages")) {
+      return jsonResponse({ messages: [{ role: "assistant", content: "What should the mock engine do?" }] });
+    }
+    if (url.startsWith("/admin/sessions")) {
+      return jsonResponse({
+        sessions: [
+          { session_id: "openchat1", agent_id: "orchestrator", binding_key: "web:open-chat" },
+          { session_id: "oldchat01", agent_id: "orchestrator", binding_key: "web:leftover-chat" },
+        ],
+      });
+    }
+    if (url === "/session/message") {
+      posted = JSON.parse(String(init?.body));
+      return jsonResponse({
+        status: "ok",
+        session_id: "openchat1",
+        output: { summary: "Thanks — I recorded your answers." },
+      });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulChat />);
+  await userEvent.click(await screen.findByRole("button", { name: /openchat/ }));
+  await userEvent.type(screen.getByLabelText("Message"), "Use a local timer");
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() =>
+    expect(posted).toMatchObject({
+      session_id: "openchat1",
+      thread_id: "web:open-chat",
+      binding_key: "web:open-chat",
+      text: "Use a local timer",
+    })
+  );
+});
+
 it("shows the start state on a narrow screen", async () => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -434,4 +514,110 @@ it("shows the start state on a narrow screen", async () => {
   expect(screen.getByLabelText("Message")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "New chat" }));
   expect(screen.getByLabelText("Message")).toBeInTheDocument();
+});
+
+it("keeps the caret where the user is editing", async () => {
+  mockFetch((url) => {
+    if (url.startsWith("/admin/sessions")) return jsonResponse({ sessions: [] });
+    return jsonResponse({});
+  });
+  renderPage(<ChatPage onSelectSession={() => undefined} />);
+  const input = (await screen.findByRole("textbox", { name: "Message" })) as HTMLTextAreaElement;
+  await userEvent.type(input, "hello world");
+  await userEvent.type(input, "X", { initialSelectionStart: 5, initialSelectionEnd: 5 });
+  expect(input.value).toBe("helloX world");
+  expect(input.selectionStart).toBe(6);
+});
+
+function fileOf(name: string, body: string, type = "text/plain", size?: number): File {
+  const file = new File([body], name, { type });
+  if (size !== undefined) Object.defineProperty(file, "size", { value: size });
+  return file;
+}
+
+const POINTER = {
+  kind: "stored",
+  object_key: "intake/default/ab/abc",
+  sha256: "abc",
+  size: 5,
+  name: "brief.txt",
+  mime: "text/plain",
+};
+
+it("uploads an attached file and sends only its pointer", async () => {
+  let sessionBody: any = null;
+  let uploadInit: RequestInit | undefined;
+  mockFetch((url, init) => {
+    if (url.startsWith("/intake/uploads")) {
+      uploadInit = init;
+      expect(url).toBe("/intake/uploads?name=brief.txt");
+      return jsonResponse({ pointer: POINTER });
+    }
+    if (url === "/session/message") {
+      sessionBody = JSON.parse(String(init?.body));
+      return jsonResponse({ status: "ok", session_id: "s-1", output: { summary: "Got it." } });
+    }
+    if (url.includes("/messages")) return jsonResponse({ messages: [] });
+    return jsonResponse({ sessions: [] });
+  });
+  renderPage(<ChatPage onSelectSession={() => undefined} />);
+  await userEvent.upload(screen.getByLabelText("Attach files"), fileOf("brief.txt", "hello"));
+  expect(await screen.findByText("5 B")).toBeInTheDocument();
+  expect(uploadInit?.body).toBeInstanceOf(File);
+  expect(new Headers(uploadInit?.headers).get("Content-Type")).toBe("text/plain");
+  await userEvent.type(screen.getByLabelText("Message"), "Plan this");
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Got it.")).toBeInTheDocument();
+  expect(sessionBody).toMatchObject({ text: "Plan this", attachments: [POINTER] });
+  expect(JSON.stringify(sessionBody)).not.toContain("hello");
+  expect(screen.getByText(/Attached: brief.txt/)).toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Attachments" })).not.toBeInTheDocument();
+});
+
+it("sends a files-only message", async () => {
+  let sessionBody: any = null;
+  mockFetch((url, init) => {
+    if (url.startsWith("/intake/uploads")) return jsonResponse({ pointer: POINTER });
+    if (url === "/session/message") {
+      sessionBody = JSON.parse(String(init?.body));
+      return jsonResponse({ status: "ok", session_id: "s-1", output: { summary: "Reading it." } });
+    }
+    if (url.includes("/messages")) return jsonResponse({ messages: [] });
+    return jsonResponse({ sessions: [] });
+  });
+  renderPage(<ChatPage onSelectSession={() => undefined} />);
+  await userEvent.upload(screen.getByLabelText("Attach files"), fileOf("brief.txt", "hello"));
+  await screen.findByText("5 B");
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Reading it.")).toBeInTheDocument();
+  expect(sessionBody).toMatchObject({ text: "", attachments: [POINTER] });
+});
+
+it("disables send while a file is uploading", async () => {
+  let finish: (value: Response) => void = () => undefined;
+  mockFetch((url) => {
+    if (url.startsWith("/intake/uploads")) return new Promise<Response>((resolve) => (finish = resolve));
+    return jsonResponse({ sessions: [] });
+  });
+  renderPage(<ChatPage onSelectSession={() => undefined} />);
+  await userEvent.upload(screen.getByLabelText("Attach files"), fileOf("brief.txt", "hello"));
+  expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await act(async () => finish(jsonResponse({ pointer: POINTER }) as Response));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled());
+});
+
+it("refuses a file over 20 MB without uploading it", async () => {
+  const fetchMock = mockFetch(() => jsonResponse({ sessions: [] }));
+  renderPage(<ChatPage onSelectSession={() => undefined} />);
+  await userEvent.upload(
+    screen.getByLabelText("Attach files"),
+    fileOf("video.mov", "x", "video/quicktime", 25 * 1024 * 1024)
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Files are limited to 20 MB each and 80 MB per message."
+  );
+  expect(fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/intake/uploads"))).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "Remove video.mov" }));
+  expect(screen.queryByText("video.mov")).not.toBeInTheDocument();
 });

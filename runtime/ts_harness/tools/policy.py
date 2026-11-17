@@ -31,6 +31,10 @@ def _intent_routing_enabled() -> bool:
 # Read-only access to the stage's own assigned skills; a stage tool restriction never removes it.
 STAGE_ALWAYS_ALLOWED_TOOLS = frozenset({"read_skill_reference"})
 
+# A workflow stage hands off by naming the next stage's agent. Delegation stays
+# available in channel chat, and a stage can opt back in by listing the tool.
+WORKFLOW_DELEGATION_TOOLS = frozenset({"delegate_task", "propose_delegate_task"})
+
 # Tools whose effect reaches other people (send, publish, change shared records). Every
 # ``mcp-`` tool counts too; see ``publish_tool_names``. Docs create/append are drafting
 # tools and stay out: stages draft into Docs before their approval gate.
@@ -45,6 +49,18 @@ PUBLISH_TOOLS = frozenset(
 )
 
 
+JIRA_WRITE_EFFECT = "jira_write"
+# MCP tools that only read; every other ``mcp-`` tool counts as a publish tool.
+READ_ONLY_MCP_TOOLS = frozenset(
+    {
+        "mcp-atlassian-atlassian_search",
+        "mcp-atlassian-jira_search",
+        "mcp-atlassian-jira_get_issue",
+        "mcp-atlassian-jira_get_all_projects",
+    }
+)
+
+
 def is_mcp_tool(tool_name: str) -> bool:
     return str(tool_name).startswith("mcp-")
 
@@ -55,7 +71,8 @@ def publish_tool_names(candidates: set[str], config: RuntimeConfig) -> set[str]:
     return {
         name
         for name in candidates
-        if (name in PUBLISH_TOOLS or is_mcp_tool(name)) and name not in approval_gated
+        if (name in PUBLISH_TOOLS or (is_mcp_tool(name) and name not in READ_ONLY_MCP_TOOLS))
+        and name not in approval_gated
     }
 
 
@@ -103,6 +120,8 @@ class ToolPolicyContext:
     pending_program_advance: dict | None = None
     # Set only for workflow stage dispatch; None means the agent grant applies unchanged.
     stage_tool_allow: set[str] | None = None
+    # The stage's allowed_external_effects; None outside a workflow stage.
+    stage_external_effects: set[str] | None = None
     # True only when an approval_required call can pause and later resume this run.
     approval_resumable: bool = False
 
@@ -146,7 +165,17 @@ def evaluate_tool_policy(
         tenant_bindings,
     )
 
-    if is_jira_write_tool(tool_name):
+    if is_jira_write_tool(tool_name) and ctx.stage_external_effects is not None:
+        if JIRA_WRITE_EFFECT not in ctx.stage_external_effects:
+            return PolicyDecision(
+                "deny",
+                "workflow stage does not allow Jira writes",
+                "stage_external_effects",
+                "medium",
+            )
+
+    # Without args the call is only being advertised; the binding is checked at dispatch.
+    if is_jira_write_tool(tool_name) and tool_args is not None:
         bindings = tenant_bindings(getattr(config, "program_defaults", None))
         projects = jira_project_keys_from_args(tool_args)
         if bindings.jira_allowed_projects and not projects:
@@ -385,6 +414,20 @@ def evaluate_tool_policy(
         and tool_name not in STAGE_ALWAYS_ALLOWED_TOOLS
     ):
         return PolicyDecision("deny", "not in workflow stage tool allow", "stage_tool_allow", "medium")
+
+    if (
+        ctx.source == "workflow"
+        and ctx.linked_workflow_id
+        and not ctx.is_subagent
+        and tool_name in WORKFLOW_DELEGATION_TOOLS
+        and (ctx.stage_tool_allow is None or tool_name not in ctx.stage_tool_allow)
+    ):
+        return PolicyDecision(
+            "deny",
+            "workflow stages hand off through the next stage",
+            "workflow_stage_delegation",
+            "medium",
+        )
 
     if ctx.is_subagent and ctx.parent_tools is not None and tool_name not in ctx.parent_tools:
         return PolicyDecision("deny", "subagent cannot exceed parent tools", "subagent_intersection", "high")

@@ -294,9 +294,7 @@ class SkillReferenceToolsetTests(unittest.TestCase):
         self.assertIn("read_skill_reference", TOOLSET_DEFINITIONS["core-read"])
         for name in (
             "ts-harness-runtime.yaml.tmpl",
-            "ts-harness-runtime.yaml.tmpl.lkg",
             "ts-harness-runtime.test.yaml",
-            "ts-harness-runtime.test.yaml.lkg",
         ):
             with self.subTest(config=name):
                 raw = yaml.safe_load((REPO_ROOT / "config" / name).read_text(encoding="utf-8"))

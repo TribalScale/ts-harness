@@ -30,6 +30,7 @@ TS Harness workflows are declared in JSON skeletons under `config/workflows/`. T
 | `continue_delivery` | `continue_delivery` tool after confirm | Bridge to next phase (`jira_from_prd` when programs enabled) |
 | `register_program` | `promote` when programs enabled | Create/link delivery program on workflow start |
 | `complete_program_phase` | Runner when all phase tasks succeed | Merge artifacts; optional auto-advance |
+| `freeze_ticket_queue` | `pick_ticket` on_complete | Keep the confirmed ticket list equal to the list the barrier froze |
 
 ## Expression language (`input_map`)
 
@@ -114,6 +115,29 @@ Per-stage overrides in skeleton JSON:
 |-------|--------|---------|
 | `present_output` | `true` / `false` | Force present or suppress |
 | `present_prompt` | `approval` / `inform` / `intake` / `merge` / `none` | Footer CTA after the posted output |
+| `present_body` | dotted output path, e.g. `result.brief_text` | Field posted as the message body; overrides the contract |
+| `retry.max_turns` | 1 to 64 | Model turns per task attempt (agent default 8) |
+
+A contract can set the body for every stage that uses it:
+
+```json
+"contracts": {
+  "brief": {
+    "presentation": { "body": "result.brief_text", "title": "result.headline" },
+    "output_schema": { "...": "..." }
+  }
+}
+```
+
+Without `present_body` or `presentation.body`, the first `*_markdown` string in the
+contract's `output_schema` is posted. A configured path that is missing from the
+output falls back to the default body.
+
+On an `intake` gate, chat shows only the first question by default, for intakes that ask one
+question per message (bug and content-to-plan). `"presentation": { "questions": "all" }`
+shows the whole numbered list instead, with a footer saying that "yes" accepts the
+recommended answers. `prd_request` uses it, because `prd-intake` asks one round of
+questions, each with a recommended answer.
 
 Presentation stores `specialist_handoff` + transcript on the linked session so the orchestrator can reference the latest specialist output on follow-up turns.
 

@@ -102,7 +102,7 @@ class MemoryGatewayTests(unittest.TestCase):
                 "source": "test",
                 "confidence": 0.9,
                 "tags": ["safe"],
-                "metadata": {"ticket": "TFS-1"},
+                "metadata": {"ticket": "PROJ-1"},
             },
             embed=lambda text: "[0.1,0.2]",
         )
@@ -127,7 +127,7 @@ class MemoryGatewayTests(unittest.TestCase):
             {
                 "type": "semantic",
                 "content": "Program brief summary",
-                "scope": "project:TFS",
+                "scope": "project:PROJ",
                 "tenant_id": "tenant-a",
                 "source": "test",
             },
@@ -148,7 +148,7 @@ class MemoryGatewayTests(unittest.TestCase):
             {
                 "query": "approved prd",
                 "tenant_id": "tenant-a",
-                "scope": "project:TFS",
+                "scope": "project:PROJ",
                 "limit": 5,
             },
             embed=lambda text: "[0.1,0.2]",
@@ -157,7 +157,7 @@ class MemoryGatewayTests(unittest.TestCase):
         self.assertIn("tenant_id = %s", sql)
         self.assertIn("scope = %s OR scope = 'global'", sql)
         self.assertIn("tenant-a", params)
-        self.assertIn("project:TFS", params)
+        self.assertIn("project:PROJ", params)
 
     def test_remember_rejects_global_and_department_scopes(self):
         gateway = load_gateway()
@@ -197,13 +197,58 @@ class MemoryGatewayTests(unittest.TestCase):
         )
         self.assertEqual(result["department"], "engineering")
 
+    def test_long_text_embeds_only_its_head(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        gateway = load_gateway()
+        sent = []
+
+        def run(cmd, **kwargs):
+            sent.append(cmd[2])
+            if len(sent) == 1 and len(cmd[2]) > 10000:
+                return SimpleNamespace(returncode=22, stdout="", stderr="curl: (22) The requested URL returned error: 400")
+            return SimpleNamespace(returncode=0, stdout="[0.1,0.2]", stderr="")
+
+        with patch.object(gateway.subprocess, "run", run):
+            self.assertEqual(gateway.generate_embedding("x" * 50000), gateway.normalize_embedding("[0.1,0.2]"))
+        self.assertEqual([len(text) for text in sent], [gateway.EMBED_MAX_INPUT_CHARS, gateway.EMBED_MAX_INPUT_CHARS // 4])
+
+        sent.clear()
+        with patch.object(gateway.subprocess, "run", run):
+            gateway.generate_embedding("short")
+        self.assertEqual(sent, ["short"])
+
+    def _assert_psycopg_placeholders(self, sql, params):
+        """psycopg rejects a bare % in a query with parameters: only %s and %% may appear."""
+        import re
+
+        unescaped = sql.replace("%%", "")
+        self.assertEqual(re.findall(r"%(?!s)", unescaped), [], sql)
+        self.assertEqual(unescaped.count("%s"), len(params))
+
+    def test_recall_scope_without_department_passes_every_scope_shape(self):
+        gateway = load_gateway()
+        cursor = FakeCursor(rows=[])
+        conn = FakeConnection(cursor)
+        for body in (
+            {"query": "q", "tenant_id": "default", "scope": "tenant:default:agent:orchestrator"},
+            {"query": "q", "tenant_id": "default", "department_scope": "department:engineering"},
+        ):
+            cursor.calls.clear()
+            gateway.recall(conn, body, embed=lambda text: "[0.1,0.2]")
+            sql, params = cursor.calls[0]
+            with self.subTest(body=body):
+                self._assert_psycopg_placeholders(sql, params)
+
     def test_recall_hides_department_rows_unless_the_program_scope_is_set(self):
         gateway = load_gateway()
         cursor = FakeCursor(rows=[])
         conn = FakeConnection(cursor)
         gateway.recall(conn, {"query": "stack", "tenant_id": "default"}, embed=lambda text: "[0.1,0.2]")
-        sql, _params = cursor.calls[0]
-        self.assertIn("scope NOT ILIKE 'department:%'", sql)
+        sql, params = cursor.calls[0]
+        self.assertIn("scope NOT ILIKE 'department:%%'", sql)
+        self._assert_psycopg_placeholders(sql, params)
 
         cursor.calls.clear()
         gateway.recall(
@@ -218,6 +263,7 @@ class MemoryGatewayTests(unittest.TestCase):
         )
         sql, params = cursor.calls[0]
         self.assertIn("scope = %s OR scope = 'global' OR scope = %s", sql)
+        self._assert_psycopg_placeholders(sql, params)
         self.assertIn("department:engineering", params)
         self.assertNotIn("department:sales", params)
 

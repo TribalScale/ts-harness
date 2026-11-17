@@ -29,6 +29,33 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
         self.assertEqual(patch["approved_rfp"], {"body": "approved"})
         self.assertNotIn("noise", patch)
 
+    def test_extract_declared_outputs_uses_the_draft_as_the_approved_prd(self):
+        tasks = [
+            {"status": "succeeded", "step_name": "draft_plan", "output": {"prd_markdown": "# Plan\n\nBody"}},
+            {"status": "succeeded", "step_name": "approve_plan", "output": {"summary": "Approved approve_plan"}},
+        ]
+        patch = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="content_to_plan",
+            tasks=tasks,
+            produces_artifacts=["approved_prd", "repo", "default_branch"],
+        )
+        self.assertEqual(patch["approved_prd"], "# Plan\n\nBody")
+        nested = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="content_to_plan",
+            tasks=[{"status": "succeeded", "output": {"result": {"prd_markdown": "# Nested"}}}],
+            produces_artifacts=["approved_prd"],
+        )
+        self.assertEqual(nested["approved_prd"], "# Nested")
+        other = self.registry.extract_outputs(
+            "extract_declared_outputs",
+            workflow_type="rfp_review",
+            tasks=tasks,
+            produces_artifacts=["approved_rfp"],
+        )
+        self.assertNotIn("approved_prd", other)
+
     def test_build_declared_inputs_copies_required_artifacts(self):
         intake = self.registry.build_inputs(
             "extract_declared_outputs",
@@ -39,6 +66,30 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
         self.assertEqual(intake["summary"], "Draft RFP")
         self.assertEqual(intake["approved_rfp"], {"title": "x"})
         self.assertNotIn("other", intake)
+
+    def test_extract_jira_outputs_records_epic_and_story_keys(self):
+        patch = self.registry.extract_outputs(
+            "extract_jira_outputs",
+            workflow_type="jira_from_prd",
+            tasks=[
+                {"status": "succeeded", "step_name": "plan_stories", "output": {"plan_markdown": "# Plan"}},
+                {
+                    "status": "succeeded",
+                    "step_name": "file_jira",
+                    "output": {"jira_epic_key": "PROJ-10", "jira_story_keys": ["PROJ-11", "PROJ-12"]},
+                },
+            ],
+        )
+        self.assertEqual(patch, {"jira_epic_key": "PROJ-10", "jira_story_keys": ["PROJ-11", "PROJ-12"], "planning_track": "jira"})
+
+    def test_extract_jira_outputs_accepts_legacy_epic_and_child_keys(self):
+        patch = self.registry.extract_outputs(
+            "extract_jira_outputs",
+            workflow_type="jira_from_prd",
+            tasks=[{"status": "succeeded", "output": {"result": {"epic_key": "PROJ-1", "child_keys": ["PROJ-2"]}}}],
+        )
+        self.assertEqual(patch["jira_epic_key"], "PROJ-1")
+        self.assertEqual(patch["jira_story_keys"], ["PROJ-2"])
 
     def test_extract_implement_tracks_cloned_workflow_type(self):
         patch = self.registry.extract_outputs(
@@ -90,22 +141,22 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
     def test_implement_jira_ticket_prefers_default_branch_over_generic_main(self):
         intake = self.registry.build_inputs(
             "extract_implement_outputs",
-            summary="Implement TFS-184",
+            summary="Implement PROJ-184",
             artifacts={
-                "jira_issue_key": "TFS-184",
+                "jira_issue_key": "PROJ-184",
                 "default_branch": "dev",
             },
             extra_input={"base_branch": "main"},
             workflow_type="implement_jira_ticket",
         )
-        self.assertEqual(intake["jira_issue_key"], "TFS-184")
+        self.assertEqual(intake["jira_issue_key"], "PROJ-184")
         self.assertEqual(intake["base_branch"], "dev")
 
     def test_implement_jira_ticket_rewrites_bare_main_to_dev(self):
         intake = self.registry.build_inputs(
             "extract_implement_outputs",
-            summary="Implement TFS-184",
-            artifacts={"jira_issue_key": "TFS-184"},
+            summary="Implement PROJ-184",
+            artifacts={"jira_issue_key": "PROJ-184"},
             extra_input={"base_branch": "main"},
             workflow_type="implement_jira_ticket",
         )

@@ -117,7 +117,7 @@ class QAContractTests(unittest.TestCase):
     def test_jira_multi_pr_set_equality(self):
         contract = _qa_contract("implement_delivery")
         output = _qa_output(
-            "success", [_pr(PR1, ref="TFS-1"), _pr(PR2, ref="TFS-2")]
+            "success", [_pr(PR1, ref="PROJ-1"), _pr(PR2, ref="PROJ-2")]
         )
         violations = sc.validate_stage_output(
             contract, output, {"pr_urls": [PR1, PR2]}, []

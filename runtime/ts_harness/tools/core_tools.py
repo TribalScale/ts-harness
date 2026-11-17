@@ -9,7 +9,13 @@ from ts_harness.tools.registry import ToolDefinition, ToolRegistry
 
 def register_core_tools(registry: ToolRegistry) -> None:
     from ts_harness.tools.delegation import handle_delegate_task
-    from ts_harness.tools.file_tools import handle_patch_file, handle_read_file, handle_search_files, handle_write_file
+    from ts_harness.tools.file_tools import (
+        handle_patch_file,
+        handle_read_file,
+        handle_read_pr_file,
+        handle_search_files,
+        handle_write_file,
+    )
     from ts_harness.tools.terminal import handle_background_logs, handle_exec
     from ts_harness.agent.sessions import session_status_handler
     from ts_harness.memory.client import recall_memory_handler, workflow_update_handler
@@ -30,6 +36,7 @@ def register_core_tools(registry: ToolRegistry) -> None:
         set_program_autoshare_handler,
         set_program_project_handler,
         unlink_program_handler,
+        propose_knowledge_note_handler,
         remember_memory_handler,
         resume_external_event_handler,
         search_sessions_handler,
@@ -70,6 +77,27 @@ def register_core_tools(registry: ToolRegistry) -> None:
             },
             handler=lambda args, ctx: handle_read_file(args, ctx),
             toolsets=["core-read"],
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="read_pr_file",
+            description=(
+                "Read a file of a pull request's repository as it is on the PR head or on its base branch "
+                "(read-only). Use it to check what already exists on the base branch, or the full file around a "
+                "changed hunk."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pr_url": {"type": "string", "description": "The pull request URL"},
+                    "path": {"type": "string", "description": "Repository-relative file path"},
+                    "ref": {"type": "string", "enum": ["base", "head"], "description": "base branch or PR head (default base)"},
+                },
+                "required": ["pr_url", "path"],
+            },
+            handler=lambda args, ctx: handle_read_pr_file(args, ctx),
+            toolsets=["pr-read"],
         )
     )
     registry.register(
@@ -269,11 +297,41 @@ def register_core_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolDefinition(
-            name="sessions_list",
-            description="List runtime sessions for the current tenant",
+            name="propose_knowledge_note",
+            description=(
+                "Propose a short project note when this run hit a repo-specific trap "
+                "that is not already in Project notes. It waits for a person. Org notes are not accepted."
+            ),
             parameters={
                 "type": "object",
-                "properties": {"source": {"type": "string"}},
+                "properties": {
+                    "kind": {"type": "string", "enum": ["avoid", "howto"]},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "why": {"type": "string"},
+                    "applies_to": {"type": "array", "items": {"type": "string"}},
+                    "scope": {"type": "string"},
+                },
+                "required": ["kind", "title", "body"],
+            },
+            handler=lambda args, ctx: propose_knowledge_note_handler(args, ctx),
+            toolsets=["knowledge-notes"],
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="sessions_list",
+            description=(
+                "List the tenant's most recent runtime sessions, newest first "
+                "(20 by default, up to 100). Filter by source or agent_id."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "agent_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
             },
             handler=lambda args, ctx: sessions_list_handler(args, ctx),
             toolsets=["core-read", "channel-chat"],
@@ -411,10 +469,13 @@ def register_core_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolDefinition(
             name="workflow_status",
-            description="Return workflow task status from memory-api",
+            description=(
+                "Return workflow task status from memory-api. Long task inputs and outputs come "
+                "back as their size; pass full: true only when you need them whole."
+            ),
             parameters={
                 "type": "object",
-                "properties": {"workflow_id": {"type": "string"}},
+                "properties": {"workflow_id": {"type": "string"}, "full": {"type": "boolean"}},
             },
             handler=lambda args, ctx: workflow_status_handler(args, ctx),
             toolsets=["workflow-promotion", "channel-chat"],
@@ -563,11 +624,16 @@ def register_core_tools(registry: ToolRegistry) -> None:
             name="program_status",
             description=(
                 "Return aggregated delivery program status. "
-                "program_id is the program id; a unique display name is also accepted."
+                "program_id is the program id; a unique display name is also accepted. "
+                "Long artifacts come back as their size and headings; name them in "
+                "include_artifacts (e.g. approved_prd, work_orders_markdown) to get them in full."
             ),
             parameters={
                 "type": "object",
-                "properties": {"program_id": {"type": "string"}},
+                "properties": {
+                    "program_id": {"type": "string"},
+                    "include_artifacts": {"type": "array", "items": {"type": "string"}},
+                },
             },
             handler=lambda args, ctx: program_status_handler(args, ctx),
             toolsets=["workflow-promotion", "channel-chat"],
@@ -776,8 +842,8 @@ def register_core_tools(registry: ToolRegistry) -> None:
 
 def _handle_propose_skill(args: dict[str, Any], ctx) -> dict[str, Any]:
     from ts_harness.gateway.program_builder_bff import BUILDER_CHANNEL, track_skill_proposal
-    from ts_harness.skills.authoring import SkillAuthoringError, propose_skill_draft
-    from ts_harness.skills.roots import catalog_roots, managed_root
+    from ts_harness.skills.authoring import SkillAuthoringError
+    from ts_harness.skills.repository import skill_repository
 
     builder_session = None
     created_by = ""
@@ -789,15 +855,13 @@ def _handle_propose_skill(args: dict[str, Any], ctx) -> dict[str, Any]:
             return error
         created_by = str((builder_session.metadata or {}).get("builder_actor", {}).get("actor_id") or "")
     try:
-        result = propose_skill_draft(
-            root=managed_root(),
+        result = skill_repository().propose_markdown(
             agent_id=str(getattr(ctx, "agent_id", "") or ""),
             tenant_id=str(getattr(ctx, "tenant_id", "") or ""),
             markdown=str(args.get("markdown") or ""),
             revision_of=str(args.get("revision_of") or "").strip() or None,
             source="learn",
             created_by=created_by,
-            read_roots=catalog_roots(),
         )
     except SkillAuthoringError as exc:
         payload = {"error": str(exc)}

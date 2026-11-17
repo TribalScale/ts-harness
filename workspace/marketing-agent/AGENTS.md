@@ -14,7 +14,7 @@
 - campaign_tracking — surface deadlines and overdue drafts
 - brand_consistency — keep messaging aligned with approved voice
 
-**Model:** `openai/gpt-4o`
+**Model:** `openai/gpt-6.1-sol`
 **Workspace:** `/workspace/marketing-agent`
 **Toolsets:** `core-read`, `channel`, `google-workspace-docs`
 **Skills:** `memory-api`

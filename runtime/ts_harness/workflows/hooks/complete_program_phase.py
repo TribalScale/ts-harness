@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ts_harness.implementation.work_order_context import (
-    parse_work_order_dependencies,
+    dependencies_from_artifacts,
     select_next_work_order_id,
 )
 from ts_harness.workflows.delivery_program import get_delivery_program_service
@@ -13,8 +13,10 @@ from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.program_brief import publish_program_brief
 from ts_harness.workflows.program_materialize import (
     automatic_edges_from,
+    may_end_offer,
     next_list_item,
     node_is_terminal,
+    node_may_end,
     parse_program_snapshot,
     reentry_item_key,
     reentry_keys,
@@ -45,17 +47,18 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     if not tasks:
         return {"status": "skipped", "reason": "no tasks"}
 
-    terminal_statuses = {"succeeded", "cancelled"}
+    settled_statuses = {"succeeded", "cancelled", "failed"}
     active = [
         task
         for task in tasks
-        if str(task.get("status") or "") not in terminal_statuses
+        if str(task.get("status") or "") not in settled_statuses
     ]
     if active:
         return {"status": "skipped", "reason": "workflow still has active tasks"}
 
     failed = [task for task in tasks if task.get("status") == "failed"]
     if failed:
+        _notify_queue_stopped(ctx, workflow, str(program_id))
         return {"status": "phase_failed", "program_id": str(program_id)}
 
     service = get_delivery_program_service()
@@ -178,15 +181,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             )
 
         # All reentry items delivered and nothing follows — the program is done.
-        ctx.memory_client.patch_program_artifacts(
+        _mark_program_succeeded(
+            ctx,
             str(program_id),
-            {
-                **loop_done,
-                "program_status": "succeeded",
-                "completed_at_phase": program_phase or "implement",
-            },
-            merge=True,
-            actor=ctx.actor or "workflow-runner",
+            program_phase,
+            {**loop_done, "completed_at_phase": program_phase or "implement"},
         )
         _resume_parent_pending_advance(ctx, service, program)
         try:
@@ -235,12 +234,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 ctx, service, workflow, program, snapshot, program_phase, auto_edges[0], result
             )
         if node_is_terminal(snapshot, program_phase):
-            ctx.memory_client.patch_program_artifacts(
-                str(program_id),
-                {"program_status": "succeeded"},
-                merge=True,
-                actor=ctx.actor or "workflow-runner",
-            )
+            _mark_program_succeeded(ctx, str(program_id), program_phase)
             _resume_parent_pending_advance(ctx, service, program)
             if complete_channel_text:
                 ctx.extras["channel_text"] = complete_channel_text
@@ -263,6 +257,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                     "program_id": str(program_id),
                     "artifacts": result,
                 },
+            )
+        # A child program was started for its parent's delivery; it does not end early.
+        if node_may_end(snapshot, program_phase) and not program.get("parent_program_id"):
+            return _end_at_may_end_node(
+                ctx, str(program_id), program, snapshot, program_phase, result, complete_channel_text
             )
         return _with_brief(
             ctx,
@@ -311,12 +310,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         )
 
     if program_cfg.get("terminal"):
-        ctx.memory_client.patch_program_artifacts(
-            str(program_id),
-            {"program_status": "succeeded"},
-            merge=True,
-            actor=ctx.actor or "workflow-runner",
-        )
+        _mark_program_succeeded(ctx, str(program_id), program_phase)
 
     return _with_brief(
         ctx,
@@ -346,6 +340,97 @@ def _unfinished_children(memory: Any, program_id: str, *, exclude: str | None = 
         if str(child.get("id")) != str(exclude or "")
         and str(child.get("status") or "") not in CHILD_DONE_STATUSES
     ]
+
+
+def _end_at_may_end_node(
+    ctx: HookContext,
+    program_id: str,
+    program: dict[str, Any],
+    snapshot: dict[str, Any],
+    program_phase: str,
+    result: Any,
+    complete_channel_text: str,
+) -> dict[str, Any]:
+    """Mark the program succeeded where it stopped and offer the next steps.
+
+    A chat approval (``reply_in_chat``) puts the offer in its own reply, so it is not
+    posted here as well; otherwise (console approval, runner) the bound thread gets it.
+    """
+    offer = may_end_offer(snapshot, program_phase)
+    _mark_program_succeeded(
+        ctx,
+        program_id,
+        program_phase,
+        {"ended_at_phase": program_phase, "completed_at_phase": program_phase},
+    )
+    text = "\n\n".join(part for part in (complete_channel_text, offer["text"]) if part)
+    if not (ctx.extras or {}).get("reply_in_chat"):
+        ctx.extras["channel_text"] = text
+        ctx.runner_event = "completed"
+        try:
+            from ts_harness.workflows.hooks.notify_bound_channel import (
+                handle as notify_bound,
+            )
+
+            notify_bound(ctx)
+        except Exception:
+            pass
+    return _with_brief(
+        ctx,
+        program_id,
+        program,
+        program_phase,
+        {
+            "status": "phase_completed_program_ended",
+            "program_id": program_id,
+            "artifacts": result,
+            "ended_at_phase": program_phase,
+            "next_steps": offer["next_steps"],
+            "offer_text": text,
+        },
+    )
+
+
+def _mark_program_succeeded(
+    ctx: HookContext,
+    program_id: str,
+    program_phase: str,
+    artifacts: dict[str, Any] | None = None,
+) -> None:
+    """Record success in the artifacts and on the program row.
+
+    A program with unfinished children stays open on the row (its status rolls up
+    from them), so the chat binding still finds it.
+    """
+    actor = ctx.actor or "workflow-runner"
+    ctx.memory_client.patch_program_artifacts(
+        program_id,
+        {**(artifacts or {}), "program_status": "succeeded"},
+        merge=True,
+        actor=actor,
+    )
+    if _unfinished_children(ctx.memory_client, program_id):
+        return
+    ctx.memory_client.complete_program(program_id, actor=actor, phase=program_phase)
+
+
+def _notify_queue_stopped(ctx: HookContext, workflow: dict[str, Any], program_id: str) -> None:
+    """Name every queue key that has not finished, including the one that just failed."""
+    try:
+        payload = ctx.memory_client.get_program(program_id) or {}
+    except Exception:
+        return
+    program = payload.get("program") if isinstance(payload.get("program"), dict) else {}
+    from ts_harness.jira.ticket_queue import remaining_queue_keys
+
+    remaining = remaining_queue_keys(_program_artifacts(program))
+    if not remaining:
+        return
+    _notify_channel(
+        ctx,
+        workflow,
+        "Stopped the ticket queue. Still to do: " + ", ".join(remaining) + ".",
+    )
 
 
 def _notify_channel(ctx: HookContext, workflow: dict[str, Any], text: str) -> None:
@@ -681,16 +766,7 @@ def _next_reentry_item(
     )
     all_ids = list(artifacts.get(remaining_key) or [])
     completed = list(artifacts.get(completed_key) or [])
-    structured = artifacts.get("work_order_dependencies")
-    dependencies: dict[str, list[str]] = {}
-    if isinstance(structured, dict):
-        dependencies = {
-            str(k): [str(d) for d in (v or [])]
-            for k, v in structured.items()
-        }
-    elif artifacts.get("work_orders_markdown"):
-        dependencies = parse_work_order_dependencies(str(artifacts["work_orders_markdown"]))
-    return select_next_work_order_id(all_ids, completed, dependencies)
+    return select_next_work_order_id(all_ids, completed, dependencies_from_artifacts(artifacts))
 
 
 def _next_reentry_wave(

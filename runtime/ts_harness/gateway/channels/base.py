@@ -18,6 +18,8 @@ class MessageEvent:
     thread_id: str | None = None
     sender_email: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Intake pointers for files on the message (``slack_file``, ``telegram_file``, ``discord_file``).
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 class JsonHttpTransport:

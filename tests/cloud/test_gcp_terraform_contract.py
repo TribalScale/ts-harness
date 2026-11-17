@@ -13,7 +13,7 @@ STARTUP = REPO_ROOT / "scripts" / "gcp-startup.sh"
 
 REQUIRED_FILES = (
     "versions.tf",
-    "backend.tf.example",
+    "backend.tf",
     "variables.tf",
     "terraform.tfvars.example",
     "apis.tf",
@@ -155,9 +155,9 @@ class GcpTerraformContractTests(unittest.TestCase):
         self.assertIn('source  = "hashicorp/google"', versions)
         self.assertIn("google-beta", versions)
 
-    def test_backend_example_is_gcs(self):
-        backend = (GCP / "backend.tf.example").read_text()
-        self.assertIn('backend "gcs"', backend)
+    def test_backend_is_partial_gcs(self):
+        backend = (GCP / "backend.tf").read_text()
+        self.assertIn('backend "gcs" {}', backend)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,9 @@ from ts_harness.agent.transcript import (
 )
 from ts_harness.gateway.workflow_presentation import (
     _parse_source_channel,
+    _session_for_workflow,
     binding_key_from_source_channel,
+    bound_channel,
     _resolve_share_email,
     present_workflow_artifact,
 )
@@ -65,7 +67,131 @@ class WorkflowPresentationTests(unittest.TestCase):
             _parse_source_channel("web:web:abc-123"),
             ("web", "web", "abc-123"),
         )
+        self.assertEqual(
+            _parse_source_channel("web:web:web:live-bug-5"),
+            ("web", "web", "live-bug-5"),
+        )
+        self.assertEqual(
+            binding_key_from_source_channel("web:web:web:live-bug-5"),
+            "web:web:live-bug-5",
+        )
         self.assertIsNone(_parse_source_channel("slack-only"))
+
+    def test_operator_label_is_not_a_bound_channel(self):
+        self.assertIsNone(bound_channel("operator:thd32:allowlist"))
+        self.assertEqual(
+            bound_channel("slack:C123:thread-1"),
+            ("slack", "C123", "thread-1"),
+        )
+        self.assertEqual(bound_channel("web:abc-123"), ("web", "web", "abc-123"))
+        self.assertEqual(
+            bound_channel("discord:guild:thread"),
+            ("discord", "guild", "thread"),
+        )
+
+    @patch("ts_harness.gateway.workflow_presentation.get_channel_router")
+    def test_present_workflow_artifact_skips_operator_label(self, router_getter):
+        router = MagicMock()
+        router_getter.return_value = router
+
+        result = present_workflow_artifact(
+            workflow_id="wf-1",
+            workflow_type="implement_jira_ticket",
+            tenant_id="default",
+            step_name="deliver_work_order",
+            agent_id="dev-agent",
+            artifact={
+                "work_order_id": "THD-32",
+                "pr_url": "https://github.com/TribalScale/test-ts-harness-repo/pull/21",
+            },
+            source_channel="operator:thd32:allowlist",
+        )
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no bound channel")
+        router.send.assert_not_called()
+
+    def test_session_lookup_matches_admin_chat_after_the_workflow_changes(self):
+        chat = SessionRecord(
+            session_id="sess-web-1",
+            routing_key="web:routing",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "workflow_id": "wf-work-orders",
+                "active_workflow_id": "wf-implement",
+                "binding_key": "web:abc-123",
+                "program_id": "program-1",
+            },
+        )
+        get_session_store().save(chat)
+
+        by_binding = _session_for_workflow("wf-other", "default", "web:abc-123")
+        by_program = _session_for_workflow(
+            "wf-other",
+            "default",
+            "web:someone-else",
+            program_id="program-1",
+        )
+        by_active = _session_for_workflow("wf-implement", "default", "")
+
+        self.assertEqual(by_binding.session_id, "sess-web-1")
+        self.assertEqual(by_program.session_id, "sess-web-1")
+        self.assertEqual(by_active.session_id, "sess-web-1")
+
+        later = SessionRecord(
+            session_id="sess-web-2",
+            routing_key="web:routing-2",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "workflow_id": "wf-bug-intake",
+                "binding_key": "web:web:web:live-bug-5",
+                "program_id": "program-2",
+            },
+        )
+        get_session_store().save(later)
+        by_thread = _session_for_workflow("wf-work-order", "default", "web:live-bug-5")
+        by_program_only = _session_for_workflow(
+            "wf-work-order",
+            "default",
+            "slack:C9:1",
+            program_id="program-2",
+        )
+        self.assertEqual(by_thread.session_id, "sess-web-2")
+        self.assertEqual(by_program_only.session_id, "sess-web-2")
+
+    def test_present_finds_the_chat_by_program_when_the_workflow_changed(self):
+        chat = SessionRecord(
+            session_id="sess-web-3",
+            routing_key="web:routing-3",
+            tenant_id="default",
+            agent_id="orchestrator",
+            source="web",
+            metadata={
+                "workflow_id": "wf-old",
+                "binding_key": "slack:C1:9",
+                "program_id": "program-9",
+                "channel": "web",
+            },
+        )
+        get_session_store().save(chat)
+        get_transcript_store().append_messages(chat.session_id, [])
+        result = present_workflow_artifact(
+            workflow_id="wf-new",
+            workflow_type="bug_work_order",
+            tenant_id="default",
+            step_name="draft_work_order",
+            agent_id="pm-agent",
+            present_prompt="approval",
+            artifact={"work_orders_markdown": "# WO-001\n\nFix the settings page."},
+            source_channel="web:live-bug-5",
+            program_id="program-9",
+        )
+        self.assertEqual(result["status"], "presented")
+        self.assertNotEqual(result.get("error"), "no linked session for workflow")
 
     @patch("ts_harness.gateway.workflow_presentation.get_channel_router")
     @patch(
@@ -324,6 +450,42 @@ class PresentSpecialistHookTests(unittest.TestCase):
         self.assertEqual(result["hook"], "present_specialist_output")
         mock_present.assert_called_once()
         self.assertEqual(mock_present.call_args.kwargs["present_prompt"], "approval")
+
+    @patch(
+        "ts_harness.workflows.hooks.present_artifact_for_review."
+        "_runtime_present_specialist_output"
+    )
+    def test_present_hook_skips_operator_label(self, mock_present):
+        from ts_harness.workflows.hooks.present_artifact_for_review import handle
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton("implement_jira_ticket")
+        ctx = HookContext(
+            workflow_id="wf-1",
+            workflow_type="implement_jira_ticket",
+            tenant_id="default",
+            task={
+                "id": "deliver-1",
+                "step_name": "deliver_work_order",
+                "agent_id": "dev-agent",
+            },
+            stage=skeleton.stage("deliver_work_order"),
+            skeleton=skeleton,
+            actor="workflow-runner",
+            memory_client=MagicMock(),
+            dispatch_result={
+                "output": {
+                    "work_order_id": "THD-32",
+                    "pr_url": "https://github.com/TribalScale/test-ts-harness-repo/pull/21",
+                }
+            },
+            workflow={"source_channel": "operator:thd32:allowlist"},
+        )
+        result = handle(ctx)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no bound channel")
+        self.assertEqual(result["hook"], "present_specialist_output")
+        mock_present.assert_not_called()
 
 
 class EnginePresentSpecialistTests(unittest.TestCase):

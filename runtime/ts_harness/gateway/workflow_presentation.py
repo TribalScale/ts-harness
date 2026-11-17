@@ -35,15 +35,39 @@ def _session_for_workflow(
     workflow_id: str,
     tenant_id: str,
     source_channel: str = "",
+    program_id: str = "",
 ) -> SessionRecord | None:
-    binding = binding_key_from_source_channel(source_channel) or (
-        source_channel or ""
-    ).strip()
+    """Find the chat that owns this workflow.
+
+    Admin chat stores ``binding_key`` as ``web:<id>`` while the canonical
+    channel key is ``web:web:<id>``. Later phases keep the original
+    ``workflow_id`` and are linked by ``program_id`` or ``active_workflow_id``.
+    """
+    raw = str(source_channel or "").strip()
+    canonical = binding_key_from_source_channel(raw) or ""
+    bindings = {item for item in (raw, canonical) if item}
+    workflow = str(workflow_id or "").strip()
+    program = str(program_id or "").strip()
     for session in get_session_store().list_for_tenant(tenant_id):
         metadata = session.metadata or {}
-        if metadata.get("workflow_id") == workflow_id:
+        linked = {
+            str(metadata.get("workflow_id") or "").strip(),
+            str(metadata.get("active_workflow_id") or "").strip(),
+        }
+        if workflow and workflow in linked:
             return session
-        if binding and metadata.get("binding_key") == binding:
+        stored_binding = str(metadata.get("binding_key") or "").strip()
+        stored_key = binding_key_from_source_channel(stored_binding)
+        candidate_keys = {
+            key
+            for item in bindings
+            if (key := binding_key_from_source_channel(item))
+        }
+        if stored_binding and (
+            stored_binding in bindings or (stored_key and stored_key in candidate_keys)
+        ):
+            return session
+        if program and str(metadata.get("program_id") or "").strip() == program:
             return session
     return None
 
@@ -80,11 +104,30 @@ def _resolve_share_email(
     return None
 
 
+# Channel adapters plus the admin-console chat. An operator start label such as
+# ``operator:thd32:allowlist`` is three parts, but it is not a place to post.
+_BOUND_CHANNELS = frozenset({"slack", "discord", "telegram", "web"})
+
+
+def bound_channel(source_channel: str) -> tuple[str, str, str] | None:
+    """Return a binding that can receive a post, or None for a non-channel label."""
+    parsed = _parse_source_channel(source_channel)
+    if parsed is None or parsed[0] not in _BOUND_CHANNELS:
+        return None
+    return parsed
+
+
 def _parse_source_channel(source_channel: str) -> tuple[str, str, str] | None:
     """Return (channel, channel_id, thread_id) for a workflow binding key."""
     raw = str(source_channel or "").strip()
     if not raw:
         return None
+    # Admin chat rewrites `web:<id>` to `web:web:<id>`, and a later rewrite can
+    # leave `web:web:web:<id>`. Collapse those to one thread id.
+    if raw.startswith("web:"):
+        tail = [part for part in raw.split(":") if part and part != "web"]
+        if len(tail) == 1:
+            return "web", "web", tail[0]
     parts = raw.split(":", 2)
     if len(parts) == 3 and parts[0] and parts[1]:
         return parts[0], parts[1], parts[2]
@@ -172,6 +215,7 @@ def _maybe_publish_artifact_doc(
     share_with_email: str | None,
     max_length: int = 3900,
     skip: bool = False,
+    presentation: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if skip or runtime_config is None:
         return None
@@ -184,6 +228,7 @@ def _maybe_publish_artifact_doc(
         display_name=display_name,
         step_name=step_name,
         agent_id=agent_id,
+        presentation=presentation,
     )
     if full_text.startswith("I finished ") and "no readable content" in full_text:
         return None
@@ -266,6 +311,9 @@ def build_workflow_artifact_channel_message(
     existing_drive_library: dict[str, Any] | None = None,
     max_length: int = 3900,
 ) -> dict[str, Any]:
+    from ts_harness.workflows.presentation import workflow_step_presentation
+
+    presentation = workflow_step_presentation(workflow_type, step_name)
     resolved_share_email = _resolve_share_email(
         runtime_config=runtime_config,
         session=session,
@@ -307,6 +355,7 @@ def build_workflow_artifact_channel_message(
         share_with_email=resolved_share_email,
         max_length=max_length,
         skip=library_ok,
+        presentation=presentation,
     )
     doc_url = None
     publish_full_text = False
@@ -327,6 +376,7 @@ def build_workflow_artifact_channel_message(
         min_chars_for_doc=int(publish_cfg.min_chars if publish_cfg else 3000),
         doc_url=doc_url,
         publish_full_text=publish_full_text,
+        presentation=presentation,
     )
     share_info = doc_result.get("sharedWith") if isinstance(doc_result, dict) else None
     if isinstance(share_info, dict) and share_info.get("error"):
@@ -336,11 +386,6 @@ def build_workflow_artifact_channel_message(
         )
     elif doc_url and resolved_share_email and isinstance(share_info, dict) and share_info.get("email"):
         message += f"\n\n(Google Doc shared with {share_info['email']}.)"
-    elif doc_url and not resolved_share_email and not library_ok:
-        message += (
-            "\n\n(Google Doc created but your email could not be resolved for sharing. "
-            "Ask an admin to grant access or open with your workspace account.)"
-        )
 
     message = _append_library_links(message, library_result)
 
@@ -413,7 +458,7 @@ def present_workflow_artifact(
     if not artifact:
         return {"status": "skipped", "reason": "empty artifact"}
 
-    binding = _parse_source_channel(source_channel)
+    binding = bound_channel(source_channel)
     if binding is None:
         return {"status": "skipped", "reason": "no bound channel"}
 
@@ -426,7 +471,12 @@ def present_workflow_artifact(
     except FileNotFoundError:
         pass
 
-    session = _session_for_workflow(workflow_id, tenant_id, source_channel)
+    session = _session_for_workflow(
+        workflow_id,
+        tenant_id,
+        source_channel,
+        program_id=program_id,
+    )
     existing_drive_library = _load_existing_drive_library(program_id)
 
     built = build_workflow_artifact_channel_message(

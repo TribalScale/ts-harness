@@ -14,7 +14,7 @@ class ProgramBriefExtractTests(unittest.TestCase):
             phase="prd",
             artifacts={
                 "approved_prd": {"title": "Payments v2"},
-                "jira_project_key": "TFS",
+                "jira_project_key": "PROJ",
                 "repo_url": "https://github.com/acme/payments",
             },
         )
@@ -61,7 +61,7 @@ class ProgramBriefPublishTests(unittest.TestCase):
                 "prog-1",
                 {
                     "tenant_id": "default",
-                    "project_id": "TFS",
+                    "project_id": "PROJ",
                     "metadata": {"artifacts": {"approved_prd": {"title": "X"}}},
                 },
                 "prd",
@@ -75,7 +75,7 @@ class ProgramBriefPublishTests(unittest.TestCase):
             client,
             program_id="p1",
             tenant_id="default",
-            project_id="TFS",
+            project_id="PROJ",
             phase="prd",
             artifacts={"approved_prd": {"title": "X"}},
             actor="test",
