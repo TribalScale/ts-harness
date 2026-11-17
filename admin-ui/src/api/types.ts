@@ -1,4 +1,9 @@
-export type InboxType = "skill_draft" | "tool_approval" | "workflow_gate" | "stuck_step" | "knowledge_note";
+export type InboxType =
+  | "skill_draft"
+  | "tool_approval"
+  | "workflow_gate"
+  | "stuck_step"
+  | "knowledge_note";
 
 export type StuckDecision = "revise" | "accept" | "stop";
 
@@ -160,13 +165,21 @@ export interface ProgramAccessList {
   access_root_id?: string;
   inherited?: boolean;
   visibility?: ProgramVisibility;
-  owner?: { subject: string; email?: string | null; display_name?: string | null } | null;
+  owner?: {
+    subject: string;
+    email?: string | null;
+    display_name?: string | null;
+  } | null;
   grants: ProgramGrant[];
   access_level?: ProgramAccessLevel;
 }
 
 export interface DirectorySearch {
-  users: Array<{ subject: string; email?: string | null; display_name?: string | null }>;
+  users: Array<{
+    subject: string;
+    email?: string | null;
+    display_name?: string | null;
+  }>;
   teams: Array<{ slug: string; display_name?: string; member_count?: number }>;
 }
 
@@ -270,7 +283,8 @@ export interface ProgramDetail {
   program_definition_version?: string;
   program_definition_revision?: string;
   program_definition_snapshot?: ProgramTopology | string | null;
-  resolved_workflow_versions?: Record<string, PinnedWorkflowVersion> | string | null;
+  resolved_workflow_versions?:
+    Record<string, PinnedWorkflowVersion> | string | null;
   [key: string]: unknown;
 }
 
@@ -452,8 +466,18 @@ export interface GitHubOverview {
     repositories: string[];
     synced_at: string | null;
   }[];
-  webhooks: { host: string; last_received_at: string | null; last_day: number }[];
-  rate_limits: { host: string; remaining: number; limit: number; reset: number; observed_at: number }[];
+  webhooks: {
+    host: string;
+    last_received_at: string | null;
+    last_day: number;
+  }[];
+  rate_limits: {
+    host: string;
+    remaining: number;
+    limit: number;
+    reset: number;
+    observed_at: number;
+  }[];
   pat_fallback: boolean;
   can_sync: boolean;
 }
@@ -510,5 +534,8 @@ export interface BudgetsOverview {
 }
 
 export interface ProgramBudget {
-  team: Pick<TeamBudget, "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"> | null;
+  team: Pick<
+    TeamBudget,
+    "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"
+  > | null;
 }

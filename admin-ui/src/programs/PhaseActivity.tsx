@@ -42,11 +42,13 @@ export function codingJobLabel(
   job: CodingJobProgress,
   now: number = Date.now(),
 ): string {
-  if (job.status === "queued") return "Waiting for a coding worker";
+  if (job.status === "queued")
+    return "Queued: waiting for a free coding worker";
+  if (job.status === "starting") return "Coding worker starting";
   const started = new Date(job.started_at || job.created_at).getTime();
-  if (Number.isNaN(started)) return "Coding worker starting";
+  if (Number.isNaN(started)) return "Coding in progress";
   const minutes = Math.max(0, Math.floor((now - started) / 60000));
-  return `Running for ${minutes} min`;
+  return `Coding in progress · ${minutes} min`;
 }
 
 export function usePhaseActivity(
@@ -101,7 +103,11 @@ function StepList({
           <span className="workflow-step-label">{step.label}</span>
           <span className="mono muted">{step.step_name}</span>
           <span className={`workflow-step-status step-${step.status}`}>
-            {step.approval_pending ? "waiting for approval" : step.status}
+            {step.approval_pending
+              ? "waiting for approval"
+              : step.status === "coding"
+                ? "coding in progress"
+                : step.status}
           </span>
           {actions?.(step)}
           {step.error && (

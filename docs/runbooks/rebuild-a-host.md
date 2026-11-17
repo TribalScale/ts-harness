@@ -182,7 +182,7 @@ Deploy a branch to a dev host, run real work orders, then clean up. The tools ar
 
 ```bash
 cd /home/<admin>/enterprise-assets && git fetch && git checkout -B <branch> origin/<branch>
-sudo ADMIN_USER=<admin> bash scripts/ops/redeploy.sh       # no ts-coding-* containers may be running
+sudo ADMIN_USER=<admin> bash scripts/ops/redeploy.sh       # waits for running ts-coding-* workers first
 
 docker cp WO-501.md docker-agent-runtime-1:/tmp/
 sudo docker exec docker-agent-runtime-1 python3 /app/scripts/ops/live-test/start_work_order.py /tmp/WO-501.md \

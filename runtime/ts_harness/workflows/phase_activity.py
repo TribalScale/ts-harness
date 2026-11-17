@@ -32,6 +32,10 @@ def _humanize(value: str) -> str:
     return value.replace("_", " ").strip()
 
 
+def _coding(task: dict[str, Any]) -> bool:
+    return str(task.get("status") or "") == "blocked" and str(task.get("error") or "") == CODING_WAIT
+
+
 def _label(step: str, coding_step: str) -> str:
     if coding_step and step == coding_step:
         return "OpenCode"
@@ -188,9 +192,11 @@ def summarize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
                 "step_name": str(t.get("step_name") or ""),
                 "label": _label(str(t.get("step_name") or ""), coding_step),
                 "agent_id": str(t.get("agent_id") or ""),
-                "status": str(t.get("status") or ""),
+                # A step parked on its coding job is stored as blocked with the wait as its
+                # error; it is working, so it reads "coding", without the error line.
+                "status": "coding" if _coding(t) else str(t.get("status") or ""),
                 "approval_pending": bool(ready_gate) and str(t.get("id") or "") == ready_gate,
-                "error": str(t.get("error") or "")[:300],
+                "error": "" if _coding(t) else str(t.get("error") or "")[:300],
                 "updated_at": str(t.get("updated_at") or ""),
             }
             for t in steps
@@ -209,7 +215,7 @@ def _workflow_record(memory: Any, workflow_id: str) -> dict[str, Any]:
 def _with_coding_job(memory: Any, summary: dict[str, Any]) -> dict[str, Any]:
     """Attach the running coding job's latest output line and start time to a parked step."""
     current = next((s for s in summary["steps"] if s["step_name"] == summary["current_step"]), None)
-    if not current or current["status"] != "blocked" or current["error"] != CODING_WAIT:
+    if not current or current["status"] != "coding":
         return summary
     try:
         jobs = memory.list_coding_jobs(task_id=current["task_id"], status="queued,starting,running", limit=1)

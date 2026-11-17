@@ -376,6 +376,46 @@ class WorkflowHookTests(unittest.TestCase):
         return ctx
 
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_review_and_qa_taking_turns_go_to_a_human(self, mock_bulk):
+        # WO-004 in the rehearsal: review asked for explicit sorting, QA said it contradicts
+        # "keep the existing order", review asked again.
+        gate = {"id": "finalize-3", "step_name": "finalize_code_review", "status": "blocked", "created_at": "2026-01-05"}
+        tasks = [
+            self._deliver(1),
+            {**self._deliver(2, _revision_source="finalize_code_review", review_feedback="sort explicitly"), "input": {
+                "work_order_id": "WO-004", "_revision_source": "finalize_code_review", "review_feedback": "sort explicitly"}},
+            {**self._deliver(3), "input": {
+                "work_order_id": "WO-004", "_revision_source": "qa_gate", "qa_feedback": "sorting contradicts keep order"}},
+            gate,
+        ]
+        result = revise_on_reject.handle(self._review_block_ctx(tasks))
+        self.assertEqual((result["status"], result["reason"]), ("revision_limit", "conflicting_feedback"))
+        self.assertEqual(
+            [(item["step"], item["feedback"]) for item in result["conflict"]],
+            [
+                ("finalize_code_review", "sort explicitly"),
+                ("qa_gate", "sorting contradicts keep order"),
+                ("finalize_code_review", "fix the persistence bug"),
+            ],
+        )
+        mock_bulk.assert_not_called()
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_the_same_gate_twice_is_not_a_conflict_and_records_its_source(self, mock_bulk):
+        mock_bulk.side_effect = [["deliver-4"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
+        gate = {"id": "finalize-3", "step_name": "finalize_code_review", "status": "blocked", "created_at": "2026-01-05"}
+        tasks = [
+            self._deliver(1),
+            {**self._deliver(2), "input": {"work_order_id": "WO-004", "_revision_source": "qa_gate", "qa_feedback": "a"}},
+            {**self._deliver(3), "input": {"work_order_id": "WO-004", "_revision_source": "qa_gate", "qa_feedback": "b"}},
+            gate,
+        ]
+        result = revise_on_reject.handle(self._review_block_ctx(tasks))
+        self.assertEqual(result["status"], "revising")
+        payload = mock_bulk.call_args_list[0].kwargs["tasks"][0]["input"]
+        self.assertEqual(payload["_revision_source"], "finalize_code_review")
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
     def test_human_grant_revises_past_the_limit_and_starts_a_new_budget(self, mock_bulk):
         mock_bulk.side_effect = [["deliver-5"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
         gate = {"id": "finalize-4", "step_name": "finalize_code_review", "status": "blocked", "created_at": "2026-01-05"}

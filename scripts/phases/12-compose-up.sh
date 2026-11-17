@@ -226,7 +226,10 @@ echo "[phase:${PHASE_NAME}] Mounting coding tools from TS_HARNESS_TOOLS_ROOT_HOS
 if ! docker image inspect ts-harness-agent-runtime:latest >/dev/null 2>&1; then
     run_docker_compose_as_admin build agent-runtime
 fi
-run_docker_compose_as_admin up -d
+# Recreating agent-runtime would cut off running coding workers; let them finish first.
+drain_coding_workers "phase:${PHASE_NAME}"
+# shellcheck disable=SC2046
+run_docker_compose_as_admin up -d $(compose_up_hold_args)
 echo "[phase:${PHASE_NAME}] Containers started."
 
 # Persist compose file list and DB vars for Phases 13 and 14.

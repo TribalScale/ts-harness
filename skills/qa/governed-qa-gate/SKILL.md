@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.6.0
+version: 1.7.0
 ---
 
 # Governed QA Gate
@@ -93,6 +93,12 @@ Then:
    failing on it only repeats the run. Fail a PR only for a defect you can show:
    a failed check, code that contradicts a criterion, or a required behaviour
    with no implementation or test in a patch you can read in full.
+   **A self-contradicting work order is not a defect in the PR.** When two
+   statements in the work order cannot both hold (for example "sort newest
+   first" and "keep the existing sort order unchanged") and the code follows
+   one of them, mark the other criterion `unverified` with a note quoting both
+   statements. Failing the PR sends it back to the dev agent, code review then
+   asks for the opposite, and the work order loops; a person settles it.
 4. For each PR, evaluate acceptance criteria and record evidence:
    - `acceptance_criteria`: per-criterion `pass`, `fail` or `unverified` with a short note.
    - `tests`: tests exercised or the host verify summary reused as evidence.
@@ -145,6 +151,8 @@ Rules enforced by the `validate_qa_pr_url_set` semantic validator:
   defects as `qa_feedback`. The revised PR then runs checks, code review and QA
   again. Code review and QA share a budget of 3 revisions per workflow; after
   that the stage stays blocked and a human decides.
+- When code review and QA send it back in turn (review, QA, review), the
+  harness stops revising and asks a human with both verdicts.
 
 ## Not In Scope
 

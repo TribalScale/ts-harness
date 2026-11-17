@@ -61,6 +61,23 @@ class FailedChecksTests(unittest.TestCase):
         with patch("ts_harness.integrations.github_client._download_job_log", side_effect=OSError("gone")):
             self.assertEqual(client.job_log_tail("acme", "app", 1), "")
 
+    def test_job_log_shows_the_first_failure_not_only_the_retries(self):
+        # WO-004 in the rehearsal: the first attempt failed on colliding random text; the log's
+        # end showed only the retries, which failed on data the first attempt left behind.
+        lines = ["Running 3 tests using 1 worker", "  1) [chromium] › e2e/tests/smoke.spec.ts:7:1 › smoke",
+                 "    Error: expect(locator).toBeHidden() failed"]
+        lines += [f"    detail {i}" for i in range(60)]
+        lines += ["    Retry #2", "    Error: strict mode violation: getByRole('link', { name: 'View' })"]
+        lines += [f"    retry detail {i}" for i in range(80)]
+        raw = "\n".join(lines).encode()
+        client = GitHubClient(token="t")
+        with patch("ts_harness.integrations.github_client._download_job_log", return_value=raw):
+            text = client.job_log_tail("acme", "app", 1)
+        self.assertTrue(text.startswith("First failure in the log:\n  1) [chromium] › e2e/tests/smoke.spec.ts:7:1 › smoke"))
+        self.assertIn("toBeHidden() failed", text)
+        self.assertIn("End of the log:", text)
+        self.assertTrue(text.endswith("retry detail 79"))
+
     def test_failed_check_logs_reads_only_failed_named_runs(self):
         client = GitHubClient(token="t")
         runs = [{"id": 1, "name": "test", "conclusion": "failure"}, {"id": 2, "name": "lint", "conclusion": "success"},

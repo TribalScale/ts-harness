@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "1.7.0",
+  "definition_version": "1.8.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -264,76 +264,76 @@
       "allowed_agents": [
         "orchestrator"
       ],
-      "allowed_external_effects": [],
-      "depends_on": [],
-      "required_artifacts": [],
+      "approval_required": true,
       "skill_hints": [
         "jira-to-pr"
       ],
-      "retry": {
-        "max_retries": 1,
-        "timeout_seconds": 1800
-      },
-      "approval_required": true,
-      "plan_approval_required": false,
+      "present_prompt": "intake",
       "input_map": {
         "jira_issue_key": "$workflow.jira_issue_key",
         "knowledge_notes": "$workflow.knowledge_notes"
       },
-      "on_reject": {},
-      "on_failure": {},
+      "on_complete": {
+        "hook": "hydrate_input",
+        "downstream": [
+          "prepare_ticket_delivery",
+          "deliver_work_order"
+        ]
+      },
+      "retry": {
+        "max_retries": 1,
+        "timeout_seconds": 1800
+      }
+    },
+    {
+      "name": "prepare_ticket_delivery",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": [
+        "hydrate_ticket"
+      ],
+      "barrier": {
+        "hook": "prepare_ticket_delivery"
+      },
       "on_complete": {
         "hook": "hydrate_input",
         "downstream": [
           "deliver_work_order"
         ]
       },
-      "wait_external": {},
-      "join": {},
-      "barrier": {},
-      "present_prompt": "intake",
-      "contract_ref": "",
-      "allowed_contracts": [],
-      "output_schema": {}
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 600
+      }
     },
     {
       "name": "deliver_work_order",
       "kind": "task",
       "agent_id": "dev-agent",
       "execution": "coding_job",
+      "depends_on": [
+        "prepare_ticket_delivery"
+      ],
       "allowed_agents": [
         "dev-agent"
       ],
-      "allowed_external_effects": [],
-      "depends_on": [
-        "hydrate_ticket"
-      ],
-      "required_artifacts": [],
+      "contract_ref": "deliver_work_order",
       "skill_hints": [
         "verified-merge-governed",
         "implement-work-order"
       ],
-      "retry": {
-        "max_retries": 2,
-        "timeout_seconds": 7200
-      },
-      "approval_required": false,
-      "plan_approval_required": false,
+      "present_prompt": "none",
       "input_map": {
         "work_order_id": "$prior.hydrate_ticket.output.work_order_id",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "repo_url": "$prior.hydrate_ticket.output.repo_url",
         "base_branch": "$prior.hydrate_ticket.output.base_branch",
         "refinery_artifacts": "$prior.hydrate_ticket.output.refinery_artifacts",
         "foundry_artifacts": "$prior.hydrate_ticket.output.foundry_artifacts",
         "planner_artifacts": "$prior.hydrate_ticket.output.planner_artifacts",
         "jira_issue_key": "$workflow.jira_issue_key",
-        "knowledge_notes": "$workflow.knowledge_notes"
-      },
-      "on_reject": {},
-      "on_failure": {
-        "hook": "compensate_on_failure",
-        "compensate_stage": "record_implement_failure"
+        "knowledge_notes": "$workflow.knowledge_notes",
+        "design_refs": "$prior.prepare_ticket_delivery.output.design_refs"
       },
       "on_complete": {
         "hook": "hydrate_input",
@@ -341,13 +341,14 @@
           "qa_gate"
         ]
       },
-      "wait_external": {},
-      "join": {},
-      "barrier": {},
-      "present_prompt": "none",
-      "contract_ref": "deliver_work_order",
-      "allowed_contracts": [],
-      "output_schema": {}
+      "on_failure": {
+        "hook": "compensate_on_failure",
+        "compensate_stage": "record_implement_failure"
+      },
+      "retry": {
+        "max_retries": 2,
+        "timeout_seconds": 7200
+      }
     },
     {
       "name": "record_implement_failure",
@@ -526,7 +527,7 @@
       "barrier": {
         "hook": "review_precheck",
         "pr_url": "$prior.deliver_work_order.output.pr_url",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "refresh": "$prior.deliver_work_order.output.refresh_method"
       },
       "present_prompt": "",
@@ -559,7 +560,7 @@
         "pr_url": "$prior.deliver_work_order.output.pr_url",
         "work_order_id": "$prior.deliver_work_order.output.work_order_id",
         "work_order_ref": "$workflow.jira_issue_key",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "prs": "$prior.review_precheck.output.prs",
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",
@@ -708,7 +709,7 @@
         "pr_url": "$prior.deliver_work_order.output.pr_url",
         "work_order_id": "$prior.deliver_work_order.output.work_order_id",
         "work_order_ref": "$workflow.jira_issue_key",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "repo_url": "$prior.hydrate_ticket.output.repo_url",
         "base_branch": "$prior.hydrate_ticket.output.base_branch",
         "host_verify_summary": "$prior.deliver_work_order.output.verify_summary",

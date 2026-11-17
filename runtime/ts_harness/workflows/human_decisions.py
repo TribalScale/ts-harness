@@ -105,6 +105,32 @@ def revision_limit_text(*, label: str, cause: str, feedback: str, max_revisions:
     return "\n".join(lines)
 
 
+def _decision_options(label: str, decisions: list[str], *, revise_hint: str) -> str:
+    options: list[str] = []
+    if "revise" in decisions:
+        options.append(f"`/revise {label} <guidance>` {revise_hint}")
+    if "accept" in decisions:
+        options.append(f"`/accept {label}` to accept it as it is")
+    options.append(f"`/stop {label}` to stop the work order")
+    return "Reply " + ", ".join(options[:-1]) + (", or " if len(options) > 1 else "") + options[-1] + ". You can also decide from the admin Inbox."
+
+
+def conflicting_feedback_text(*, label: str, conflict: list[dict[str, Any]], decisions: list[str]) -> str:
+    """Review and QA asked for opposite changes in turn; show each verdict so a person can settle it."""
+    lines = [
+        f"{label}: code review and QA keep asking for opposite changes, so OpenCode stopped revising. "
+        "This usually means the work order asks for two things that cannot both hold."
+    ]
+    for item in conflict:
+        who = "QA" if item.get("step") == "qa_gate" else "Code review"
+        feedback = str(item.get("feedback") or "").strip()
+        lines.append(f"{who}: {feedback[:700]}" if feedback else f"{who}: (no feedback text)")
+    lines.append(
+        _decision_options(label, decisions, revise_hint="with the guidance that settles it (it overrides the work order)")
+    )
+    return "\n".join(lines)
+
+
 def stuck_summary(engine: Any, workflow_id: str, task_id: str) -> dict[str, Any]:
     """What a person needs to decide a stuck step: work order, PR, feedback and the allowed decisions."""
     from ts_harness.workflows.engine import _qa_feedback_text

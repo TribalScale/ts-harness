@@ -291,6 +291,29 @@ class IntegrationPlanTests(unittest.TestCase):
             path = ts.write_agent_command(Path(tmp))
             self.assertTrue(path.stat().st_mode & 0o111)
             self.assertIn("ts_harness.implementation.test_services integration", path.read_text())
+            self.assertIn('"$@"', path.read_text())
+
+    def test_scoped_run_hands_the_files_to_playwright_with_the_same_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _write(repo / "playwright.config.ts", "export default {}")
+            _write(repo / "node_modules" / ".bin" / "playwright", "")
+            plan = ts.IntegrationPlan(
+                command="pnpm test:e2e", setup=["pnpm db:seed"], background=[{"run": "pnpm dev"}],
+                evidence_specs=["e2e/a.spec.ts"], evidence_dir="/tmp/x",
+            )
+            scoped = ts.scoped_plan(repo, plan, ["e2e/discussions.spec.ts"])
+            self.assertIn("playwright test --config", scoped.command)
+            self.assertTrue(scoped.command.endswith("e2e/discussions.spec.ts"))
+            self.assertEqual((scoped.setup, scoped.background), (["pnpm db:seed"], [{"run": "pnpm dev"}]))
+            self.assertEqual((scoped.evidence_specs, scoped.evidence_dir), ([], ""))
+
+    def test_scoped_run_without_playwright_appends_the_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            npm = ts.scoped_plan(Path(tmp), ts.IntegrationPlan(command="npm run test:integration"), ["tests/a.test.ts"])
+            self.assertEqual(npm.command, "npm run test:integration -- tests/a.test.ts")
+            pytest_plan = ts.scoped_plan(Path(tmp), ts.IntegrationPlan(command="pytest tests/integration"), ["tests/integration/test_a.py"])
+            self.assertEqual(pytest_plan.command, "pytest tests/integration tests/integration/test_a.py")
 
 
 class VerifyIntegrationTests(unittest.TestCase):

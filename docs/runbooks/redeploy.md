@@ -13,6 +13,7 @@ sudo ADMIN_USER=<admin-user> bash scripts/ops/redeploy.sh
 
 | Step | What it picks up |
 |---|---|
+| Drain | Pauses the coding launcher and waits for running `ts-coding-*` workers to finish |
 | Phase 10 | Secrets Manager values (API keys, coding-backend provider and model) |
 | Phase 10a | The runtime-config store (`<prefix>/runtime-config`) |
 | Phases 10b, 11, 11a | The workspace, `ts-harness-runtime.yaml` (agent models, effort, `llm_pricing`) and the agent docs |
@@ -25,6 +26,21 @@ after every pull is safe. Rebuilding and restarting the containers alone
 (`docker compose build && up -d`) does not re-render the runtime config or the
 compose env: model and price changes and new secret keys would not reach the
 containers.
+
+## Running coding jobs
+
+Coding workers run in agent-runtime's network namespace, so recreating agent-runtime cuts
+them off and the job is lost. The script first stops the coding launcher (queued jobs stay
+queued), then waits for every `ts-coding-*` container to exit, printing progress every five
+minutes. The launcher stays stopped through phase 12 and the build, and the final `up -d`
+starts it again. If any step fails, the launcher is started again on exit.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CODING_DRAIN_TIMEOUT_MINUTES` | `120` | How long to wait. On timeout nothing is changed, the launcher is started again and the script exits 1. |
+| `FORCE_REDEPLOY` | `0` | `1` skips the wait. Running workers lose their network; their work orders must be retried. |
+
+Re-running phase 12 on its own drains the same way.
 
 ## Check it
 

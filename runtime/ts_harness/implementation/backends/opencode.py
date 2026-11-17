@@ -396,8 +396,9 @@ def build_implement_prompt(
         "report. The host runs them as well as the tests.\n"
         + (
             test_environment_note.strip()
-            + " Run the repo's integration suite with `ts-harness-integration` (it resets the databases, "
-            "runs the repo's setup and starts what the suite needs); the host runs it too.\n"
+            + " Run the integration or e2e tests you added or changed with `ts-harness-integration <test files>` "
+            "(it resets the databases, runs the repo's setup and starts what the suite needs). Do not run the "
+            "whole suite: the host runs all of it after you finish and sends any failure back to you.\n"
             if test_environment_note.strip()
             else "Tests that need a database or other services may not run here; still write them in the repo's "
             "existing style so CI runs them, and keep them consistent with the code.\n"
@@ -622,7 +623,8 @@ class OpenCodeBackend:
             test_env.services_note = (
                 f"The repo's end-to-end suite (`{plan.command}`) runs here with a headless Chromium for Playwright"
                 + (f"; settings are in {services.env_file}" if services.env_file else "")
-                + ". Add or update e2e tests for user-visible changes and run them before finishing."
+                + ". Add or update e2e tests for user-visible changes and run only those before finishing "
+                "(`ts-harness-integration <spec files>`); the host runs the whole suite afterwards."
             )
         return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log] if part)
 

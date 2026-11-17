@@ -11,7 +11,11 @@ const branchedTopology = {
     { id: "intake", default_workflow_type: "prd_request" },
     { id: "plan_a", default_workflow_type: "jira_from_prd" },
     { id: "plan_b", default_workflow_type: "work_orders_from_prd" },
-    { id: "build", default_workflow_type: "implement_delivery", terminal: true },
+    {
+      id: "build",
+      default_workflow_type: "implement_delivery",
+      terminal: true,
+    },
   ],
   edges: [
     { source: "intake", target: "plan_a", mode: "manual" },
@@ -23,7 +27,11 @@ const branchedTopology = {
 
 const phases = {
   intake: { state: "succeeded", workflow_type: "prd_request" },
-  plan_a: { state: "running", workflow_type: "jira_from_prd", active_step: "Create epic" },
+  plan_a: {
+    state: "running",
+    workflow_type: "jira_from_prd",
+    active_step: "Create epic",
+  },
   plan_b: { state: "not_started" },
   build: { state: "not_started" },
 };
@@ -31,7 +39,10 @@ const phases = {
 const resolved = {
   intake: { workflow_type: "prd_request", definition_version: "1.0.0" },
   plan_a: { workflow_type: "jira_from_prd", definition_version: "1.0.0" },
-  plan_b: { workflow_type: "work_orders_from_prd", definition_version: "1.1.0" },
+  plan_b: {
+    workflow_type: "work_orders_from_prd",
+    definition_version: "1.1.0",
+  },
   build: { workflow_type: "implement_delivery", definition_version: "2.0.0" },
 };
 
@@ -44,7 +55,7 @@ it("renders the selected branch from phase_order without hardcoded jira/work_ord
       resolvedWorkflowVersions={resolved}
       currentPhase="plan_a"
       onSelect={() => undefined}
-    />
+    />,
   );
 
   const strip = screen.getByRole("list", { name: /program phases/i });
@@ -52,8 +63,12 @@ it("renders the selected branch from phase_order without hardcoded jira/work_ord
   expect(strip).toHaveTextContent(/plan a/i);
   expect(strip).toHaveTextContent(/build/i);
   expect(strip).not.toHaveTextContent(/plan b/i);
-  expect(screen.queryByRole("button", { name: /^jira$/i })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /work orders/i })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^jira$/i }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /work orders/i }),
+  ).not.toBeInTheDocument();
   expect(screen.getByText("prd_request@1.0.0")).toBeInTheDocument();
   expect(screen.getByText("jira_from_prd@1.0.0")).toBeInTheDocument();
 });
@@ -68,7 +83,7 @@ it("exposes alternate nodes and edges in an expandable topology view", async () 
       resolvedWorkflowVersions={resolved}
       currentPhase="plan_a"
       onSelect={onSelect}
-    />
+    />,
   );
 
   const expander = screen.getByText(/full topology/i).closest("details");
@@ -84,7 +99,7 @@ it("exposes alternate nodes and edges in an expandable topology view", async () 
   expect(topology).toHaveTextContent(/alternate/i);
 
   await userEvent.click(
-    within(topology).getByRole("button", { name: /plan b/i })
+    within(topology).getByRole("button", { name: /plan b/i }),
   );
   expect(onSelect).toHaveBeenCalledWith("plan_b");
 });
@@ -99,10 +114,12 @@ it("draws a finished current phase as complete", () => {
       phaseOrder={["prd", "release"]}
       currentPhase="release"
       onSelect={() => undefined}
-    />
+    />,
   );
 
-  const release = screen.getByRole("button", { name: /release/i }).closest("li");
+  const release = screen
+    .getByRole("button", { name: /release/i })
+    .closest("li");
   expect(release).toHaveClass("complete");
   expect(release).not.toHaveClass("current");
 });
@@ -116,9 +133,13 @@ it("falls back to payload phase keys when phase_order is absent", () => {
       }}
       currentPhase="beta"
       onSelect={() => undefined}
-    />
+    />,
   );
 
-  expect(screen.getByRole("button", { name: /1alphasucceeded/i })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /2betarunning/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /1alphasucceeded/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /2betarunning/i }),
+  ).toBeInTheDocument();
 });

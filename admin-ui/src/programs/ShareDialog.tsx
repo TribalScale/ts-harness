@@ -1,6 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { DirectorySearch, ProgramAccessList, ProgramGrantLevel } from "../api/types";
+import type {
+  DirectorySearch,
+  ProgramAccessList,
+  ProgramGrantLevel,
+} from "../api/types";
 import { Button } from "../components/Button";
 
 const LEVELS: Array<{ id: ProgramGrantLevel; label: string }> = [
@@ -10,7 +14,12 @@ const LEVELS: Array<{ id: ProgramGrantLevel; label: string }> = [
   { id: "admin", label: "Can manage" },
 ];
 
-type Candidate = { type: "user" | "team"; id: string; label: string; detail?: string };
+type Candidate = {
+  type: "user" | "team";
+  id: string;
+  label: string;
+  detail?: string;
+};
 
 function levelLabel(level: string): string {
   return LEVELS.find((item) => item.id === level)?.label || level;
@@ -83,7 +92,9 @@ export function ShareDialog({
       return;
     }
     const timer = setTimeout(() => {
-      apiFetch<DirectorySearch>(`/admin/directory/search?q=${encodeURIComponent(q)}`)
+      apiFetch<DirectorySearch>(
+        `/admin/directory/search?q=${encodeURIComponent(q)}`,
+      )
         .then(setResults)
         .catch((e) => setError(String(e?.message || e)));
     }, 250);
@@ -111,8 +122,12 @@ export function ShareDialog({
     const ok = await run(
       apiFetch<ProgramAccessList>(`${base}/access`, {
         method: "POST",
-        body: JSON.stringify({ principal_type: selected.type, principal_id: selected.id, level }),
-      })
+        body: JSON.stringify({
+          principal_type: selected.type,
+          principal_id: selected.id,
+          level,
+        }),
+      }),
     );
     if (ok) {
       setSelected(null);
@@ -141,7 +156,10 @@ export function ShareDialog({
         </div>
       )}
       {access?.inherited && (
-        <p className="muted">Access is shared with the whole program tree; changes apply to the parent program.</p>
+        <p className="muted">
+          Access is shared with the whole program tree; changes apply to the
+          parent program.
+        </p>
       )}
       <fieldset className="share-visibility" disabled={!canManage || busy}>
         <legend>Who can see it</legend>
@@ -155,7 +173,7 @@ export function ShareDialog({
                 apiFetch<ProgramAccessList>(`${base}/visibility`, {
                   method: "PATCH",
                   body: JSON.stringify({ visibility: "private" }),
-                })
+                }),
               )
             }
           />
@@ -171,7 +189,7 @@ export function ShareDialog({
                 apiFetch<ProgramAccessList>(`${base}/visibility`, {
                   method: "PATCH",
                   body: JSON.stringify({ visibility: "public" }),
-                })
+                }),
               )
             }
           />
@@ -183,14 +201,20 @@ export function ShareDialog({
       <ul className="share-grants" aria-label="Program access">
         {access?.owner && (
           <li>
-            <span>{access.owner.display_name || access.owner.email || access.owner.subject}</span>
+            <span>
+              {access.owner.display_name ||
+                access.owner.email ||
+                access.owner.subject}
+            </span>
             <span className="muted">Owner</span>
           </li>
         )}
         {(access?.grants || []).map((grant) => (
           <li key={`${grant.principal_type}:${grant.principal_id}`}>
             <span>
-              {grant.principal_type === "team" ? `Team ${grant.principal_id}` : grant.display_name || grant.email || grant.principal_id}
+              {grant.principal_type === "team"
+                ? `Team ${grant.principal_id}`
+                : grant.display_name || grant.email || grant.principal_id}
             </span>
             <span className="muted">{levelLabel(grant.level)}</span>
             {canManage && (
@@ -203,8 +227,8 @@ export function ShareDialog({
                   void run(
                     apiFetch<ProgramAccessList>(
                       `${base}/access/${encodeURIComponent(grant.principal_type)}/${encodeURIComponent(grant.principal_id)}`,
-                      { method: "DELETE" }
-                    )
+                      { method: "DELETE" },
+                    ),
                   )
                 }
               >
@@ -240,7 +264,9 @@ export function ShareDialog({
                     onClick={() => setSelected(option)}
                   >
                     <span>{option.label}</span>
-                    {option.detail && <span className="muted"> {option.detail}</span>}
+                    {option.detail && (
+                      <span className="muted"> {option.detail}</span>
+                    )}
                   </button>
                 </li>
               ))}
@@ -251,7 +277,9 @@ export function ShareDialog({
             <select
               aria-label="Access level"
               value={level}
-              onChange={(event) => setLevel(event.target.value as ProgramGrantLevel)}
+              onChange={(event) =>
+                setLevel(event.target.value as ProgramGrantLevel)
+              }
             >
               {LEVELS.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -260,7 +288,12 @@ export function ShareDialog({
               ))}
             </select>
           </label>
-          <Button variant="primary" busy={busy} disabled={!selected} onClick={() => void addGrant()}>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={!selected}
+            onClick={() => void addGrant()}
+          >
             Add
           </Button>
         </div>

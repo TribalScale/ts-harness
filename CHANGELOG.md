@@ -11,6 +11,10 @@ First public release.
 
 ### Added
 
+- Jira tickets get what planned work orders get (`prepare_ticket_delivery` in `implement_jira_ticket` 1.8.0): the design references of the program the ticket points at, the ticket's image attachments as further references, and the repository onboarding check (the ticket's PR also adds `.ts-harness.yml` when CI runs a suite the harness cannot run yet). On the PRD to Jira path, `plan_stories` sees the design images and names them per story (`Design: D1`).
+- Console: a Documents tab on the program page with the PRD and the Refinery, Foundry and Planner documents.
+- `ts-harness-integration <test files>` runs only those tests, with the same setup and background processes; the coding agent runs the tests it added or changed and leaves the full suite to the host.
+- When code review and QA send a work order back in turn (review, QA, review), the harness stops revising and asks a person with both verdicts, instead of spending the remaining revisions. The planner has a consistency gate (no two statements in a work order that cannot both hold), and code review and QA flag a self-contradicting work order instead of failing the PR on one side of it.
 - Approval gates show what they approve, in the inbox and on the program page: the PRD, FRDs, blueprints or work orders with the agent's summary and warnings, or for a release, the commit, the PRs in it, CI, a comparison with what the environment runs now, the rollback commit and how the previous environment went (`GET /admin/workflows/gate-review`).
 - QA posts its verdict on each PR as a comment (summary, defects with files and the requested change, acceptance criteria, evidence), one per run so a failed run stays visible after a later pass.
 - PR titles and descriptions follow a standard shape: the work order's title; summary, changed files, how to test (its acceptance tests as a checklist), verification, out of scope, design references, work order links and the security scan; a repository's PR template is added for the reviewer.
@@ -316,6 +320,10 @@ First public release.
 
 ### Fixed
 
+- Redeploys cut off running coding jobs: workers share agent-runtime's network namespace. `redeploy.sh` and phase 12 now pause the coding launcher and wait for running `ts-coding-*` workers (`CODING_DRAIN_TIMEOUT_MINUTES`, default 120; `FORCE_REDEPLOY=1` skips the wait), and a failed redeploy starts the launcher again.
+- The workflow runner had no Jira credentials, which `prepare_ticket_delivery` needs for ticket attachments; compose now passes `ATLASSIAN_*` to it.
+- CI failure feedback showed only the end of the job log, which with retries is the retries' errors (often caused by data the first attempt left behind). It now leads with the first failure in the log.
+- A step parked on its coding job read "blocked" with an internal error line; it now reads "coding in progress", and the job line says "Coding in progress · N min" or "Queued: waiting for a free coding worker".
 - Release gates never reached the inbox: it listed only gates on a phase's own workflow, and the promote gates are on the release tracks it starts. The memory API's child tasks now carry their ids, and the inbox lists gates waiting inside started workflows.
 - Code reviews and QA results were posted under the PAT owner's name: the workflow runner had no GitHub App credentials. Compose now passes `GITHUB_APP_*` to it.
 - `FIGMA_TOKEN` never reached the containers: the compose wrapper did not pass it, so a stored Figma token would have been ignored.

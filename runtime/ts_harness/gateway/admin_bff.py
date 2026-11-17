@@ -260,7 +260,10 @@ def _gate_draft_checks(memory: Any, workflow_id: str) -> list[str] | None:
     return [str(item) for item in latest["output"]["prd_checks"] if str(item).strip()]
 
 
-_STUCK_REASONS = {"revision_limit": "Revision limit reached"}
+_STUCK_REASONS = {
+    "revision_limit": "Revision limit reached",
+    "conflicting_feedback": "Code review and QA disagree",
+}
 
 
 def _knowledge_note_items(memory: Any, auth: AuthContext, runtime: Any) -> list[dict[str, Any]]:

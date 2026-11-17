@@ -3,7 +3,10 @@
 #
 #   sudo ADMIN_USER=<admin-user> bash scripts/ops/redeploy.sh
 #
-# Pull the branch you want first. This re-fetches secrets (phase 10), re-hydrates the
+# Pull the branch you want first. Running coding jobs are allowed to finish first: the launcher
+# is paused and the deploy waits for ts-coding-* workers (CODING_DRAIN_TIMEOUT_MINUTES, default
+# 120; FORCE_REDEPLOY=1 skips the wait and cuts them off).
+# This re-fetches secrets (phase 10), re-hydrates the
 # runtime-config store (10a), re-renders the workspace, runtime YAML and agent docs (10b, 11,
 # 11a), writes the compose env and starts the stack (12), applies database migrations, then
 # rebuilds the images and recreates the containers whose image or settings changed.
@@ -48,6 +51,23 @@ if [[ -n "${ENTERPRISE_REPO_REF:-}" && "$current_branch" != "$ENTERPRISE_REPO_RE
     echo "WARNING: this host is configured to run '${ENTERPRISE_REPO_REF}' (runtime.enterprise_repo_ref) but '${current_branch:-detached}' is checked out." >&2
     echo "WARNING: fine for a live test; check out '${ENTERPRISE_REPO_REF}' and redeploy afterwards." >&2
 fi
+# Coding workers share agent-runtime's network: pause the launcher and let running jobs finish
+# before anything is recreated. Phase 12 keeps the launcher stopped (HOLD_CODING_LAUNCHER) and
+# the final `up -d` below starts it again.
+drain_coding_workers redeploy
+export HOLD_CODING_LAUNCHER=1
+# A failed step must not leave the launcher stopped: queued coding jobs would never start.
+resume_coding_launcher_on_failure() {
+    local status=$?
+    if (( status != 0 )); then
+        local launcher
+        launcher="$(coding_launcher_containers | head -1)"
+        [[ -n "$launcher" ]] && docker start "$launcher" >/dev/null 2>&1 \
+            && echo "redeploy failed (exit $status); the coding launcher was started again" >&2
+    fi
+    return "$status"
+}
+trap resume_coding_launcher_on_failure EXIT
 for phase in 10-fetch-secrets 10a-hydrate-runtime-config 10b-render-workspace 11-agent-runtime-setup 11a-agents-init 12-compose-up 12b-github-webhook; do
     echo "--- phase $phase"
     bash "$PHASES_DIR/$phase.sh"
@@ -75,7 +95,8 @@ echo "--- build"
 run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
 echo "--- up"
-run_docker_compose_as_admin up -d
+# Starts the coding launcher again (phase 12 held it at zero).
+HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d
 wait_for_agent_runtime_health redeploy
 run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 

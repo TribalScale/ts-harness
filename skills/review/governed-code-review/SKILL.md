@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.3.0
+version: 1.4.0
 ---
 
 # Governed Code Review
@@ -91,6 +91,11 @@ Calibrate `correctness` against the work order, not your preferences:
   actual result.
 - Hardening the work order does not ask for ("consider validating negative
   quantities") is `minor` at most. "Consider ..." is never `major`.
+- When the work order states two things that cannot both hold (for example
+  "sort newest first" and "keep the existing sort order unchanged"), do not
+  block on one of them: QA checks the other, and the PR would loop between
+  you. Report one `minor` `correctness` finding that quotes both statements
+  and says which one the code follows. A person settles it.
 Be specific: every finding needs a `message` a developer can act on, and a
 `file` and `line` (a line in the new version of the file) when it is about a
 particular place.

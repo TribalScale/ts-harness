@@ -798,6 +798,12 @@ run_docker_compose_as_admin() {
             SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-}" \
             GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
             FIGMA_TOKEN="${FIGMA_TOKEN:-}" \
+            ATLASSIAN_SITE_URL="${ATLASSIAN_SITE_URL:-}" \
+            ATLASSIAN_EMAIL="${ATLASSIAN_EMAIL:-}" \
+            ATLASSIAN_API_TOKEN="${ATLASSIAN_API_TOKEN:-}" \
+            ATLASSIAN_CLIENT_ID="${ATLASSIAN_CLIENT_ID:-}" \
+            ATLASSIAN_CLIENT_SECRET="${ATLASSIAN_CLIENT_SECRET:-}" \
+            ATLASSIAN_CLOUD_ID="${ATLASSIAN_CLOUD_ID:-}" \
             GITHUB_APP_ID="${GITHUB_APP_ID:-}" \
             GITHUB_APP_SLUG="${GITHUB_APP_SLUG:-}" \
             GITHUB_APP_HOST="${GITHUB_APP_HOST:-}" \
@@ -909,6 +915,58 @@ recreate_ts_harness_services() {
     local services=() service
     while IFS= read -r service; do services+=("$service"); done < <(with_runtime_replicas "$@")
     run_docker_compose_as_admin up -d --force-recreate "${services[@]}"
+}
+
+# Coding workers (ts-coding-*) run in agent-runtime's network namespace: recreating
+# agent-runtime cuts their network and the job is lost (it happened to a live work order).
+# Stop the launcher so no job starts, then wait for the running workers to finish.
+#   CODING_DRAIN_TIMEOUT_MINUTES  how long to wait (default 120)
+#   FORCE_REDEPLOY=1              do not wait; running workers will be cut off
+# On timeout the launcher is started again and this returns 1.
+coding_launcher_containers() {
+    docker ps -a --filter "label=com.docker.compose.service=coding-launcher" --format '{{.Names}}'
+}
+
+running_coding_workers() {
+    docker ps --filter "name=^ts-coding-" --format '{{.Names}}'
+}
+
+drain_coding_workers() {
+    local context="${1:-deploy}" timeout_min="${CODING_DRAIN_TIMEOUT_MINUTES:-120}" launcher waited=0
+    launcher="$(coding_launcher_containers | head -1)"
+    if [[ -n "$launcher" ]]; then
+        echo "[$context] Pausing the coding launcher ($launcher): queued jobs wait until the deploy finishes."
+        docker stop -t 60 "$launcher" >/dev/null || true
+    fi
+    if [[ "${FORCE_REDEPLOY:-0}" == "1" ]]; then
+        local cut
+        cut="$(running_coding_workers | tr '\n' ' ')"
+        [[ -n "${cut// /}" ]] && echo "[$context] WARNING: FORCE_REDEPLOY=1; these coding workers will lose their network: $cut" >&2
+        return 0
+    fi
+    while [[ -n "$(running_coding_workers)" ]]; do
+        if (( waited >= timeout_min * 60 )); then
+            echo "[$context] ERROR: coding workers still running after ${timeout_min} min: $(running_coding_workers | tr '\n' ' ')" >&2
+            echo "[$context] Nothing was changed. Retry later, raise CODING_DRAIN_TIMEOUT_MINUTES, or set FORCE_REDEPLOY=1 to cut them off." >&2
+            [[ -n "$launcher" ]] && docker start "$launcher" >/dev/null || true
+            return 1
+        fi
+        if (( waited % 300 == 0 )); then
+            echo "[$context] Waiting for coding workers to finish: $(running_coding_workers | tr '\n' ' ')(${waited}s of $((timeout_min * 60))s)"
+        fi
+        sleep 15
+        waited=$((waited + 15))
+    done
+    echo "[$context] No coding workers running."
+}
+
+# `up -d` arguments that keep the launcher stopped while a redeploy is still building
+# (HOLD_CODING_LAUNCHER=1); the redeploy's last `up -d` starts it again.
+compose_up_hold_args() {
+    if [[ "${HOLD_CODING_LAUNCHER:-0}" == "1" ]] \
+        && run_docker_compose_as_admin config --services 2>/dev/null | grep -qx coding-launcher; then
+        echo "--scale coding-launcher=0"
+    fi
 }
 
 wait_for_agent_runtime_health() {

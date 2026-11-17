@@ -80,6 +80,27 @@ class HumanDecisionTests(unittest.TestCase):
             self.assertIn(command, text)
         self.assertIn("3 more automatic revisions", text)
 
+    def test_review_and_qa_disagreeing_parks_the_step_with_both_verdicts(self):
+        finalize = _finalize(flagged=False)
+        self._state(
+            [
+                _deliver(1),
+                _deliver(2, _revision_source="finalize_code_review", review_feedback="Sort explicitly."),
+                _deliver(3, _revision_source="qa_gate", qa_feedback="Sorting contradicts keep order."),
+                finalize,
+            ]
+        )
+
+        result = self.engine.on_task_transition(finalize, "blocked", dispatch_result={"output": finalize["output"]}, error=ERROR)
+
+        self.assertEqual((result["status"], result["reason"]), ("revision_limit", "conflicting_feedback"))
+        _task_id, patched = self.client.patch_task_input.call_args.args
+        self.assertEqual(patched["_awaiting_human_decision"]["reason"], "conflicting_feedback")
+        text = self.notified[-1]["channel_text"]
+        self.assertIn("Code review: Sort explicitly.", text)
+        self.assertIn("QA: Sorting contradicts keep order.", text)
+        self.assertIn("/revise WO-003", text)
+
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
     def test_revise_grants_a_fresh_budget_with_the_human_guidance(self, mock_bulk):
         mock_bulk.side_effect = [["deliver-5"], ["checks-2"], ["precheck-2"], ["review-2"], ["finalize-2"], ["qa-2"], ["fresh-2"], ["merge-2"]]
@@ -167,3 +188,23 @@ class HumanDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConflictingFeedbackTextTests(unittest.TestCase):
+    def test_shows_each_verdict_and_the_decisions(self):
+        from ts_harness.workflows.human_decisions import conflicting_feedback_text
+
+        text = conflicting_feedback_text(
+            label="WO-004",
+            conflict=[
+                {"step": "finalize_code_review", "feedback": "sort explicitly"},
+                {"step": "qa_gate", "feedback": "sorting contradicts keep order"},
+            ],
+            decisions=["revise", "accept"],
+        )
+        self.assertIn("code review and QA keep asking for opposite changes", text)
+        self.assertIn("Code review: sort explicitly", text)
+        self.assertIn("QA: sorting contradicts keep order", text)
+        self.assertIn("`/revise WO-004 <guidance>`", text)
+        self.assertIn("`/accept WO-004`", text)
+        self.assertIn("`/stop WO-004`", text)
