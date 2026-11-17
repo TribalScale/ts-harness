@@ -11,6 +11,11 @@ TASK_INPUT = {"pr_url": PR, "prs": [{"pr_url": PR, "head_sha": "62bb0d4"}]}
 class _GitHub:
     def __init__(self):
         self.statuses = []
+        self.comments = []
+
+    def comment(self, owner, repo, number, body):
+        self.comments.append((owner, repo, number, body))
+        return {"id": len(self.comments)}
 
     def create_status(self, owner, repo, sha, *, state, context, description=""):
         self.statuses.append((owner, repo, sha, state, context, description))
@@ -40,6 +45,50 @@ class QaStatusTests(unittest.TestCase):
             github=github,
         )
         self.assertEqual(github.statuses[-1][3:], ("failure", "harness/qa", "QA failed: 1 blocking of 2 defects"))
+
+    def test_failed_qa_is_commented_on_the_pr(self):
+        github = _GitHub()
+        output = _qa_output(
+            "failed",
+            [
+                {
+                    "criterion": "No other file may hard-code a category string.",
+                    "description": "Tests duplicate category strings.",
+                    "files": ["src/a.test.ts"],
+                    "requested_change": "Use the shared exports.",
+                }
+            ],
+        )
+        verdict = output["result"]["prs"][0]
+        verdict["summary"] = "The single-source constraint is violated."
+        verdict["acceptance_criteria"] = [{"criterion": "Seeded list | categories", "status": "unverified", "note": "no seed test"}]
+        verdict["tests"] = ["Host unit verification: 36 passed"]
+        warnings = qa_status.qa_finished(TASK_INPUT, {"status": "blocked", "output": output}, github=github)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(github.statuses[-1][3:], ("failure", "harness/qa", "QA failed: 1 defect"))
+        owner, repo, number, body = github.comments[-1]
+        self.assertEqual((owner, repo, number), ("o", "r", 19))
+        self.assertIn(qa_status.COMMENT_MARKER, body)
+        self.assertIn("QA (TS Harness): failed", body)
+        self.assertIn("The single-source constraint is violated.", body)
+        self.assertIn("1. **No other file may hard-code a category string.**", body)
+        self.assertIn("Files: `src/a.test.ts`", body)
+        self.assertIn("Requested change: Use the shared exports.", body)
+        self.assertIn("| ⚠️ | Seeded list \\| categories | no seed test |", body)
+        self.assertIn("Host unit verification: 36 passed", body)
+        self.assertIn("`62bb0d4`", body)
+
+    def test_passed_qa_is_commented_once_and_not_again_when_carried_forward(self):
+        github = _GitHub()
+        qa_status.qa_finished(TASK_INPUT, {"status": "succeeded", "output": _qa_output("success")}, github=github)
+        self.assertEqual(len(github.comments), 1)
+        self.assertIn("QA (TS Harness): passed", github.comments[0][3])
+
+        carried = {**_qa_output("success"), "carried_forward": {"from_task_id": "t1"}}
+        qa_status.qa_finished(TASK_INPUT, {"status": "succeeded", "output": carried}, github=github)
+        self.assertEqual(len(github.comments), 1)
+        self.assertEqual(github.statuses[-1][3], "success")
 
     def test_error_when_qa_could_not_finish(self):
         github = _GitHub()

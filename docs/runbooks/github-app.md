@@ -37,6 +37,8 @@ Generate a private key on the App page after creating it.
 
 3. Re-run bootstrap phase 10 and restart the runtime (then memory-api and workflow-runner) so the runtime env picks up `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_APP_WEBHOOK_SECRET`.
 
+   The workflow runner gets `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_HOST` and `GITHUB_APP_PRIVATE_KEY` through compose (phase 12, `scripts/ops/redeploy.sh`). It posts code reviews, QA statuses and QA comments; without them it falls back to `github-token` and those appear under the token owner's name. Check with `docker exec docker-workflow-runner-1 printenv GITHUB_APP_ID`.
+
 4. In the admin console, open **System → GitHub** and click **Install on an organization**. Pick the repositories coding runs may change. After installing, **Sync installations** loads them if the webhook is not reachable yet.
 
 Keep `github-token` populated during the move. Repositories the App is not installed on keep using it; remove it once the GitHub page lists every repository you deliver to.

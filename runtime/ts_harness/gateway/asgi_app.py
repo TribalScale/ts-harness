@@ -1769,6 +1769,36 @@ def _engine_gate(task_id: str) -> tuple[str, dict[str, Any]] | None:
     return workflow_id, task
 
 
+async def admin_workflows_gate_review(request: Request) -> Response:
+    """What gate ``task_id`` asks to approve: the documents before it, or the release it promotes."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    task_id = str(request.query_params.get("task_id") or "").strip()
+    if not task_id:
+        return _json({"error": "task_id is required"}, 400)
+    from ts_harness.workflows.gate_review import gate_review
+
+    memory = get_memory_client()
+    try:
+        program_id = str((memory.task_program(task_id) or {}).get("program_id") or "")
+        if not program_id:
+            return _json({"error": "gate not found"}, 404)
+        _program_for_tenant(memory, program_id, auth)
+        _require_program_level(program_id, auth, "read", route="status", memory=memory)
+        review = gate_review(memory, task_id)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "gate not found"}, 404)
+    if review is None:
+        return _json({"error": "gate not found"}, 404)
+    return _json({**review, "program_id": program_id})
+
+
 async def admin_workflows_approve(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -4207,6 +4237,7 @@ routes = [
     Route("/admin/programs/{id}/links", endpoint=admin_programs_link, methods=["POST"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_get, methods=["GET"]),
     Route("/admin/programs/{id}", endpoint=admin_programs_patch, methods=["PATCH"]),
+    Route("/admin/workflows/gate-review", endpoint=admin_workflows_gate_review, methods=["GET"]),
     Route("/admin/workflows/approve", endpoint=admin_workflows_approve, methods=["POST"]),
     Route("/admin/workflows/decide", endpoint=admin_workflows_decide, methods=["POST"]),
     Route("/admin/workflows/reject", endpoint=admin_workflows_reject, methods=["POST"]),

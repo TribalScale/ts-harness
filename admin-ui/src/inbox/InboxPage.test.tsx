@@ -496,3 +496,40 @@ it("keeps approval actions in a sticky detail footer", async () => {
   expect(within(footer as HTMLElement).getByRole("button", { name: "Reject" })).toBeInTheDocument();
   expect(within(footer as HTMLElement).getByRole("button", { name: "Approve" })).toBeInTheDocument();
 });
+
+it("shows what a gate approves: the release a promote gate deploys", async () => {
+  const gate: InboxItem = {
+    type: "workflow_gate",
+    id: "gate-staging",
+    title: "approve_promote_staging",
+    subtitle: "Program Discussion categories",
+    created_at: "2026-11-17T16:00:00Z",
+    meta: { task_id: "gate-staging", step_name: "approve_promote_staging", program_id: "program-3" },
+  };
+  mockFetch((url) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: [gate] });
+    if (url === "/admin/workflows/gate-review?task_id=gate-staging") {
+      return jsonResponse({
+        task_id: "gate-staging",
+        kind: "release",
+        release: {
+          environment: "staging",
+          repo: "acme/web",
+          sha: "a4d80707e51395b5",
+          pr_urls: ["https://github.com/acme/web/pull/67", "https://github.com/acme/web/pull/68"],
+          ci: { state: "success", checks: { e2e: "success", check: "success" }, failed: [] },
+          rollback_sha: "22ebbfb1560c",
+        },
+      });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="workflow_gate" initialId="gate-staging" />);
+
+  const review = await screen.findByRole("region", { name: "What you are approving" });
+  expect(await within(review).findByRole("link", { name: "PR #68" })).toBeInTheDocument();
+  expect(within(review).getByText("staging")).toBeInTheDocument();
+  expect(within(review).getByText(/e2e: success, check: success/)).toBeInTheDocument();
+  expect(within(review).getByText("22ebbfb1560c")).toBeInTheDocument();
+});

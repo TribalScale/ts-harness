@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { CodingJobProgress, PhaseActivity, WorkflowProgress, WorkflowStep } from "../api/types";
+import type {
+  CodingJobProgress,
+  PhaseActivity,
+  WorkflowProgress,
+  WorkflowStep,
+} from "../api/types";
 import { hasPermission } from "../auth/session";
 import { Button } from "../components/Button";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
+import { GateReview } from "./GateReview";
 
 const POLL_MS = 15000;
 
@@ -27,10 +33,15 @@ function prLabel(url: string): string {
 
 function updatedLabel(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : `Updated ${date.toLocaleTimeString()}`;
+  return Number.isNaN(date.getTime())
+    ? ""
+    : `Updated ${date.toLocaleTimeString()}`;
 }
 
-export function codingJobLabel(job: CodingJobProgress, now: number = Date.now()): string {
+export function codingJobLabel(
+  job: CodingJobProgress,
+  now: number = Date.now(),
+): string {
   if (job.status === "queued") return "Waiting for a coding worker";
   const started = new Date(job.started_at || job.created_at).getTime();
   if (Number.isNaN(started)) return "Coding worker starting";
@@ -38,7 +49,11 @@ export function codingJobLabel(job: CodingJobProgress, now: number = Date.now())
   return `Running for ${minutes} min`;
 }
 
-export function usePhaseActivity(programId: string | undefined, phase: string | undefined, poll: boolean) {
+export function usePhaseActivity(
+  programId: string | undefined,
+  phase: string | undefined,
+  poll: boolean,
+) {
   const [activity, setActivity] = useState<PhaseActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +61,7 @@ export function usePhaseActivity(programId: string | undefined, phase: string | 
     if (!programId || !phase) return;
     try {
       const data = await apiFetch<PhaseActivity>(
-        `/admin/programs/${encodeURIComponent(programId)}/phases/${encodeURIComponent(phase)}/activity`
+        `/admin/programs/${encodeURIComponent(programId)}/phases/${encodeURIComponent(phase)}/activity`,
       );
       setActivity(data);
       setError(null);
@@ -89,7 +104,9 @@ function StepList({
             {step.approval_pending ? "waiting for approval" : step.status}
           </span>
           {actions?.(step)}
-          {step.error && <span className="muted workflow-step-error">{step.error}</span>}
+          {step.error && (
+            <span className="muted workflow-step-error">{step.error}</span>
+          )}
         </li>
       ))}
     </ol>
@@ -110,7 +127,8 @@ export function WorkflowRows({
     <ul className="workflow-list">
       {items.map((item) => {
         // A row with a gate waiting for approval opens by default, so its Approve button shows.
-        const waiting = Boolean(actions) && item.steps.some((step) => step.approval_pending);
+        const waiting =
+          Boolean(actions) && item.steps.some((step) => step.approval_pending);
         const expanded = open[item.workflow_id] ?? waiting;
         return (
           <li key={item.workflow_id} className="workflow-row">
@@ -119,15 +137,24 @@ export function WorkflowRows({
                 type="button"
                 className="workflow-toggle"
                 aria-expanded={expanded}
-                onClick={() => setOpen((prev) => ({ ...prev, [item.workflow_id]: !expanded }))}
+                onClick={() =>
+                  setOpen((prev) => ({
+                    ...prev,
+                    [item.workflow_id]: !expanded,
+                  }))
+                }
               >
                 <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
                 <strong>{item.label}</strong>
               </button>
-              <StatusPill status={KIND_STATUS[item.kind] || "neutral"} label={item.state} />
+              <StatusPill
+                status={KIND_STATUS[item.kind] || "neutral"}
+                label={item.state}
+              />
               {item.revisions > 0 && (
                 <span className="muted">
-                  {item.revisions} {item.revisions === 1 ? "revision" : "revisions"}
+                  {item.revisions}{" "}
+                  {item.revisions === 1 ? "revision" : "revisions"}
                 </span>
               )}
               {item.pr_url && (
@@ -136,17 +163,29 @@ export function WorkflowRows({
                 </a>
               )}
               {item.kind === "stuck" && item.stuck_task_id && (
-                <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>Decide in Inbox</a>
+                <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>
+                  Decide in Inbox
+                </a>
               )}
-              <span className="muted workflow-updated">{updatedLabel(item.updated_at)}</span>
+              <span className="muted workflow-updated">
+                {updatedLabel(item.updated_at)}
+              </span>
             </div>
             {item.coding_job && (
               <div className="workflow-coding-job muted">
                 <span>{codingJobLabel(item.coding_job)}</span>
-                {item.coding_job.last_output && <code>{item.coding_job.last_output}</code>}
+                {item.coding_job.last_output && (
+                  <code>{item.coding_job.last_output}</code>
+                )}
               </div>
             )}
-            {expanded && <StepList steps={item.steps} label={`${item.label} steps`} actions={actions} />}
+            {expanded && (
+              <StepList
+                steps={item.steps}
+                label={`${item.label} steps`}
+                actions={actions}
+              />
+            )}
           </li>
         );
       })}
@@ -171,19 +210,28 @@ export function PhaseActivityPanel({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const canApprove = hasPermission("approve_gate") && canApproveProgram && !programClosed;
+  // Gates whose review the user closed; a waiting gate shows what it approves by default.
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const canApprove =
+    hasPermission("approve_gate") && canApproveProgram && !programClosed;
   const workflow = activity?.workflow || null;
   const children = activity?.children || [];
-  const childTitle = children.length && children.every((c) => /^WO-/i.test(c.label)) ? "Work orders" : "Started workflows";
+  const childTitle =
+    children.length && children.every((c) => /^WO-/i.test(c.label))
+      ? "Work orders"
+      : "Started workflows";
 
   async function decide(taskId: string, approve: boolean) {
     setBusy(taskId);
     setActionError(null);
     try {
-      await apiFetch(approve ? "/admin/workflows/approve" : "/admin/workflows/reject", {
-        method: "POST",
-        body: JSON.stringify({ id: taskId }),
-      });
+      await apiFetch(
+        approve ? "/admin/workflows/approve" : "/admin/workflows/reject",
+        {
+          method: "POST",
+          body: JSON.stringify({ id: taskId }),
+        },
+      );
       onChanged?.();
     } catch (e: any) {
       setActionError(String(e?.message || e));
@@ -194,36 +242,81 @@ export function PhaseActivityPanel({
 
   function approvalActions(step: WorkflowStep) {
     if (!step.approval_pending || !canApprove) return null;
+    const reviewing = !hidden[step.task_id];
     return (
-      <span className="workflow-step-actions">
-        <a className="muted" href={`#/inbox/workflow_gate/${encodeURIComponent(step.task_id)}`}>
-          Inbox
-        </a>
-        <Button variant="danger" size="sm" disabled={busy === step.task_id} onClick={() => void decide(step.task_id, false)}>
-          Reject
-        </Button>
-        <Button variant="primary" size="sm" disabled={busy === step.task_id} onClick={() => void decide(step.task_id, true)}>
-          Approve
-        </Button>
-      </span>
+      <>
+        <span className="workflow-step-actions">
+          <button
+            type="button"
+            className="link-button"
+            aria-expanded={reviewing}
+            onClick={() =>
+              setHidden((prev) => ({ ...prev, [step.task_id]: reviewing }))
+            }
+          >
+            {reviewing ? "Hide review" : "Review"}
+          </button>
+          <a
+            className="muted"
+            href={`#/inbox/workflow_gate/${encodeURIComponent(step.task_id)}`}
+          >
+            Inbox
+          </a>
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={busy === step.task_id}
+            onClick={() => void decide(step.task_id, false)}
+          >
+            Reject
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy === step.task_id}
+            onClick={() => void decide(step.task_id, true)}
+          >
+            Approve
+          </Button>
+        </span>
+        {reviewing && (
+          <div className="workflow-step-review">
+            <GateReview taskId={step.task_id} />
+          </div>
+        )}
+      </>
     );
   }
 
   return (
-    <section className="phase-activity" aria-label={`${humanize(phase)} activity`}>
+    <section
+      className="phase-activity"
+      aria-label={`${humanize(phase)} activity`}
+    >
       <div className="phase-activity-head">
         <h3>{humanize(phase)}</h3>
-        {workflow && <StatusPill status={KIND_STATUS[workflow.kind] || "neutral"} label={workflow.state} />}
+        {workflow && (
+          <StatusPill
+            status={KIND_STATUS[workflow.kind] || "neutral"}
+            label={workflow.state}
+          />
+        )}
       </div>
       {(error || actionError) && (
         <div className="error" role="alert">
           {actionError || error}
         </div>
       )}
-      {activity && !workflow && <p className="muted">This stage has not started.</p>}
+      {activity && !workflow && (
+        <p className="muted">This stage has not started.</p>
+      )}
       {!activity && !error && <p className="muted">Loading…</p>}
       {workflow && (
-        <StepList steps={workflow.steps} label={`${humanize(phase)} steps`} actions={approvalActions} />
+        <StepList
+          steps={workflow.steps}
+          label={`${humanize(phase)} steps`}
+          actions={approvalActions}
+        />
       )}
       {children.length > 0 && (
         <>

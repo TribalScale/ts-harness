@@ -67,6 +67,14 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
         self.assertNotIn("env_file:", compose)
         self.assertIn('GITHUB_TOKEN="${GITHUB_TOKEN:-}"', common)
 
+    def test_workflow_runner_posts_as_the_github_app_and_gets_the_figma_token(self):
+        # Reviews and QA results were posted as the PAT owner; FIGMA_TOKEN never reached compose.
+        compose = COMPOSE.read_text()
+        common = COMPOSE_COMMON.read_text()
+        for name in ("GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_APP_HOST", "GITHUB_APP_PRIVATE_KEY", "FIGMA_TOKEN"):
+            self.assertIn(f"{name}: ${{{name}:-}}", compose)
+            self.assertIn(f'{name}="${{{name}:-}}"', common)
+
     def test_workflow_runner_mounts_managed_definitions_read_only(self):
         compose = COMPOSE.read_text()
 

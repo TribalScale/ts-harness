@@ -3914,8 +3914,8 @@ def get_delivery_program_status(
                     UNION ALL
                     SELECT w.id FROM workflows w JOIN kids k ON w.parent_workflow_id = k.id
                 )
-                SELECT t.workflow_id, w.workflow_type, t.step_name, t.status, t.approval_required,
-                       t.error, t.created_at
+                SELECT t.id, t.workflow_id, w.workflow_type, t.step_name, t.status, t.approval_required,
+                       t.error, t.created_at, t.updated_at
                 FROM workflow_tasks t
                 JOIN kids k ON k.id = t.workflow_id
                 JOIN workflows w ON w.id = t.workflow_id

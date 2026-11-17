@@ -176,12 +176,14 @@ class ChildStepsTests(unittest.TestCase):
             ],
             "active_child_tasks": [
                 {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "await_ci_on_sha", "status": "succeeded"},
-                {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "approve_promote_staging", "status": "pending", "approval_required": True},
+                {"id": "g1", "workflow_id": "c1", "workflow_type": "release_track", "step_name": "approve_promote_staging",
+                 "status": "pending", "approval_required": True, "updated_at": "2026-11-17T16:00:00Z"},
                 {"workflow_id": "c1", "workflow_type": "release_track", "step_name": "trigger_deploy_staging", "status": "pending"},
             ],
         }
         status = with_operability(raw)
         self.assertEqual(status["waiting_on"]["children"],
-                         [{"workflow_id": "c1", "workflow_type": "release_track", "step": "approve_promote_staging", "waiting_for": "approval"}])
+                         [{"workflow_id": "c1", "workflow_type": "release_track", "step": "approve_promote_staging",
+                           "waiting_for": "approval", "task_id": "g1", "since": "2026-11-17T16:00:00Z"}])
         self.assertEqual(status["recommended_action"], "approve_promote_staging")
         self.assertNotIn("active_child_tasks", status)

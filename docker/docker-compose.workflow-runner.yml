@@ -23,6 +23,12 @@ services:
       GATEWAY_TOKEN: ${GATEWAY_TOKEN}
       # Merge-readiness system steps (await_pr_checks, review_precheck, merge gates) call GitHub.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Code reviews, QA statuses and comments post as the GitHub App, like agent-runtime.
+      # Without these the runner fell back to GITHUB_TOKEN and posted as the PAT's owner.
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      GITHUB_APP_HOST: ${GITHUB_APP_HOST:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       # Web chat posts run in this process and read the same session store as agent-runtime.
       TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
       WORKFLOW_DEFINITIONS_DIR: /config/workflows

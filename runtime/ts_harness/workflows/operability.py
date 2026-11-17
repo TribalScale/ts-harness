@@ -261,6 +261,9 @@ def child_steps(child_tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "workflow_type": task.get("workflow_type"),
             "step": task.get("step_name"),
             "waiting_for": waiting_for,
+            # The inbox approves a child's gate by this id (a release track's promote gates).
+            "task_id": task.get("id"),
+            "since": task.get("updated_at") or task.get("created_at"),
         }
     return list(current.values())
 

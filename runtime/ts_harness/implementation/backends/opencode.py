@@ -22,11 +22,10 @@ from ts_harness.implementation.auth import (
 from ts_harness.implementation.backends.base import (
     CodingRequest,
     CodingResult,
-    attribution_markdown,
     commit_message,
-    security_markdown,
 )
 from ts_harness.implementation.backends.opencode_usage import record_opencode_usage
+from ts_harness.implementation.pr_description import pr_body, pr_title
 from ts_harness.implementation.coding_backend_skills import (
     ensure_opencode_project_config,
     materialize_coding_backend_skills,
@@ -1166,23 +1165,18 @@ class OpenCodeBackend:
                 env=git_env,
                 remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
             )
-            pr_body = (
-                f"## Work order\n\n`{request.work_order_id}`\n\n"
-                "Opened by ts-harness `run_coding_backend` (OpenCode).\n"
-                "Human merge required before the delivery program resumes.\n"
-            )
-            pr_body += attribution_markdown(request)
-            pr_body += security_markdown(security)
-            if docs_written:
-                pr_body += (
-                    "\n## Planning docs\n\n"
-                    "Approved Refinery / Foundry / Planner specs were materialized under `docs/` "
-                    "for this change and are included in the PR.\n"
-                )
             pr_url = create_pull_request(
                 repo_dir,
-                title=f"{request.work_order_id}: governed delivery",
-                body=pr_body,
+                title=pr_title(request),
+                body=pr_body(
+                    request,
+                    changed_files=changed,
+                    verification=verification,
+                    security=security,
+                    docs_written=bool(docs_written),
+                    repo_dir=repo_dir,
+                    screenshots=bool((verification or {}).get("screenshots")),
+                ),
                 base_branch=request.base_branch,
                 head_branch=branch,
                 runner=self.runner,
