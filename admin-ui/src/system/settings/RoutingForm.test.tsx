@@ -117,7 +117,7 @@ describe("RoutingForm", () => {
     expect(screen.getByLabelText("Intent workflow type").tagName).toBe("SELECT");
     expect(screen.getByLabelText("Intent delegate agent").tagName).toBe("SELECT");
     expect(screen.queryByRole("button", { name: "Reset to inherited" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Intent id")).not.toBeDisabled();
+    expect(screen.getByLabelText("Intent id")).not.toBeDisabledControl();
     await waitFor(() => expect(screen.getByRole("option", { name: "software_delivery" })).toBeInTheDocument());
     expect(screen.getByRole("option", { name: "rfp_response" })).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Intent workflow type"), "prd_request");

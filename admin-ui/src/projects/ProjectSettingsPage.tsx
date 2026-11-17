@@ -86,6 +86,8 @@ function ProjectForm({
       className="project-form"
       onSubmit={(event) => {
         event.preventDefault();
+        // Same rule as the disabled Save button; don't rely on the button alone.
+        if (invalid || busy) return;
         void save();
       }}
     >
@@ -211,6 +213,7 @@ function NewProjectForm({ onCreated }: { onCreated: (p: Project) => void }) {
       className="project-new"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!key.trim() || busy) return;
         void create();
       }}
     >

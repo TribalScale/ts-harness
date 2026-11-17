@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { ProgramDefinitionBuilderPage } from "./ProgramDefinitionBuilderPage";
+import { getAlert } from "../test/alerts";
 
 vi.mock("@xyflow/react", async () => {
   const React = await import("react");
@@ -335,7 +336,7 @@ it("shows an activation warning when runtime reload fails", async () => {
   );
 
   await userEvent.click(await screen.findByRole("button", { name: /validate/i }));
-  await waitFor(() => expect(screen.getByRole("button", { name: /activate/i })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: /activate/i })).not.toBeDisabledControl());
   await userEvent.click(screen.getByRole("button", { name: /activate/i }));
   await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /activate draft/i }));
 
@@ -457,13 +458,13 @@ it("keeps activation disabled until validation succeeds and after edits", async 
   );
 
   const activate = await screen.findByRole("button", { name: /activate/i });
-  expect(activate).toBeDisabled();
+  expect(activate).toBeDisabledControl();
   await userEvent.click(screen.getByRole("button", { name: /validate/i }));
-  await waitFor(() => expect(activate).toBeEnabled());
+  await waitFor(() => expect(activate).not.toBeDisabledControl());
 
   await userEvent.clear(screen.getByLabelText("Program type"));
   await userEvent.type(screen.getByLabelText("Program type"), "software_delivery_v2");
-  expect(activate).toBeDisabled();
+  expect(activate).toBeDisabledControl();
 });
 
 it("restores dirty state when clone fails after discard confirmation", async () => {
@@ -507,7 +508,7 @@ it("restores dirty state when clone fails after discard confirmation", async () 
   await userEvent.click(screen.getByRole("button", { name: /clone software_delivery/i }));
 
   expect(confirm).toHaveBeenCalled();
-  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/clone failed/i));
+  await waitFor(() => expect(getAlert()).toHaveTextContent(/clone failed/i));
   expect(screen.getByLabelText("Display name")).toHaveValue("Dirty draft");
 });
 

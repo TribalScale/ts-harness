@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { setPermissions, setRoles } from "../auth/session";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { endedAtPhase, formatAge, phaseLabel, portfolioUrl, ProgramsPage } from "./ProgramsPage";
+import { findAlert } from "../test/alerts";
 
 const programId = "57249723-checkers-program";
 const LIST_URL = "/admin/programs?portfolio=1";
@@ -376,7 +377,7 @@ it("keeps the program selected and surfaces the error when cancel fails", async 
     within(screen.getByRole("dialog")).getByRole("button", { name: /cancel program/i })
   );
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("program already cancelled");
+  expect(await findAlert()).toHaveTextContent("program already cancelled");
   expect(onSelect).not.toHaveBeenCalled();
   expect(screen.getByRole("group", { name: "Program actions" })).toBeInTheDocument();
 });
@@ -517,7 +518,7 @@ it("surfaces a list error instead of a false empty state", async () => {
 
   renderPage(<ProgramsPage onSelect={() => undefined} />);
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to load programs");
+  expect(await findAlert()).toHaveTextContent("Unable to load programs");
   expect(screen.getByText(/password authentication failed/i)).toBeInTheDocument();
   expect(screen.queryByText("No delivery programs")).not.toBeInTheDocument();
 });

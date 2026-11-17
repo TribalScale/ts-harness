@@ -5,6 +5,7 @@ import { setPermissions } from "../auth/session";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { prepareUpload, SkillCreatePanel } from "./SkillCreatePanel";
 import { SkillsCatalogPage } from "./SkillsCatalogPage";
+import { findAlert } from "../test/alerts";
 
 const SKILL_MD = "---\nid: launch-kit\nversion: 1.2.0\ncategory: marketing\ndescription: Launch kit\n---\n# Kit\n";
 
@@ -76,9 +77,9 @@ describe("SkillCreatePanel", () => {
     expect(screen.getByText(/Skipped: launch-kit\/\.DS_Store/)).toBeInTheDocument();
 
     const submit = screen.getByRole("button", { name: "Submit for review" });
-    await waitFor(() => expect(submit).toBeEnabled());
+    await waitFor(() => expect(submit).not.toBeDisabledControl());
     await userEvent.click(submit);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
+    expect(await findAlert()).toHaveTextContent(
       "skill draft rejected by threat scan (stages/plan.md)"
     );
     const call = fetchMock.mock.calls.find((item) => String(item[0]) === "/admin/skills/drafts");
@@ -93,9 +94,9 @@ describe("SkillCreatePanel", () => {
       target: { files: [fileAt("kit/SKILL.md", SKILL_MD), fileAt("kit/run.py", "print(1)")] },
     });
     expect(await screen.findByText("file type not allowed")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit for review" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit for review" })).toBeDisabledControl();
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
-    expect(screen.getByRole("button", { name: "Submit for review" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Submit for review" })).not.toBeDisabledControl();
   });
 });
 

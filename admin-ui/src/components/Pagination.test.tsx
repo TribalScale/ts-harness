@@ -39,7 +39,7 @@ it("moves forward and back", async () => {
     />
   );
   expect(screen.getByText("Showing 1–10 of 25 skills")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Previous" })).toBeDisabledControl();
   await userEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(onPageChange).toHaveBeenCalledWith(2);
 });

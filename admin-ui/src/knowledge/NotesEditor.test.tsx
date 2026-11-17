@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
 import { NotesEditor } from "./NotesEditor";
+import { findAlert } from "../test/alerts";
 
 const NOTE = {
   id: "n1",
@@ -30,6 +31,18 @@ afterEach(() => {
 });
 
 describe("NotesEditor", () => {
+  it("does not save a note without a title when Enter submits the form", async () => {
+    const writes: string[] = [];
+    mockFetch((url, init) => {
+      if ((init?.method || "GET").toUpperCase() !== "GET") writes.push(url);
+      return jsonResponse({ notes: [NOTE], can_write: true });
+    });
+    renderPage(<NotesEditor listUrl="/admin/notes" canWrite />);
+    await userEvent.click(await screen.findByRole("button", { name: "New note" }));
+    await userEvent.type(screen.getByLabelText("Why"), "Because{Enter}");
+    expect(writes).toEqual([]);
+  });
+
   it("lists notes and reloads when a save conflicts", async () => {
     let calls = 0;
     mockFetch((url, init) => {
@@ -43,7 +56,7 @@ describe("NotesEditor", () => {
     expect(screen.getByText("Used by 4 runs")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Changed by someone else");
+    expect(await findAlert()).toHaveTextContent("Changed by someone else");
     await waitFor(() => expect(calls).toBeGreaterThan(1));
   });
 });

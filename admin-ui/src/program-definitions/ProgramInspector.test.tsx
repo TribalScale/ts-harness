@@ -212,7 +212,7 @@ it("does not let built-in programs change inherit toggles", async () => {
     />
   );
 
-  expect(screen.getByLabelText("Repo allowlist custom")).toBeDisabled();
+  expect(screen.getByLabelText("Repo allowlist custom")).toBeDisabledControl();
   expect(screen.getByRole("link", { name: "Edit tenant defaults in Settings" })).toHaveAttribute(
     "href",
     "#/system/settings"
