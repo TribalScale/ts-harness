@@ -1747,6 +1747,28 @@ def _auth_decision_fields(auth: Any, body: Any) -> dict[str, Any]:
     return fields
 
 
+def _engine_gate(task_id: str) -> tuple[str, dict[str, Any]] | None:
+    """``(workflow_id, task)`` when the workflow engine should decide this approval gate.
+
+    The console used to approve in the memory API only, which skipped the gate's hooks and,
+    for a workflow's last step (``approve_prd``), the program phase completion: the program kept
+    neither the approved PRD nor its design references and could not continue.
+    """
+    from ts_harness.workflows.engine import hook_engine_enabled
+
+    if not hook_engine_enabled():
+        return None
+    memory = get_memory_client()
+    workflow_id = str((memory.task_program(task_id) or {}).get("workflow_id") or "")
+    if not workflow_id:
+        return None
+    tasks = (memory.get_workflow_tasks(workflow_id) or {}).get("tasks") or []
+    task = next((item for item in tasks if str(item.get("id")) == str(task_id)), None)
+    if not task or not task.get("approval_required") or str(task.get("approval_status") or "") != "pending":
+        return None
+    return workflow_id, task
+
+
 async def admin_workflows_approve(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -1765,14 +1787,20 @@ async def admin_workflows_approve(request: Request) -> Response:
     except ProgramAccessDenied as exc:
         return _json({"error": str(exc)}, exc.status)
     try:
-        return _json(
-            get_memory_client().approve_task(
-                task_id,
-                actor=str(auth.actor_id or "admin"),
-                tenant_id=str(auth.tenant_id or "default"),
-                **_auth_decision_fields(auth, body),
+        decision = _auth_decision_fields(auth, body)
+        actor = str(auth.actor_id or "admin")
+        tenant_id = str(auth.tenant_id or "default")
+        gate = _engine_gate(task_id)
+        if gate is not None:
+            # Same path as a chat approval: the gate's hooks run (for example mark_prd_approved)
+            # and, when it is the workflow's last step, the program phase completes.
+            workflow_id, task = gate
+            return _json(
+                get_workflow_engine().handle_approve(
+                    workflow_id=workflow_id, gate_task=task, actor=actor, tenant_id=tenant_id, decision=decision
+                )
             )
-        )
+        return _json(get_memory_client().approve_task(task_id, actor=actor, tenant_id=tenant_id, **decision))
     except Exception as exc:
         return _json({"error": str(exc)}, 400)
 
@@ -1795,14 +1823,21 @@ async def admin_workflows_reject(request: Request) -> Response:
     except ProgramAccessDenied as exc:
         return _json({"error": str(exc)}, exc.status)
     try:
-        return _json(
-            get_memory_client().reject_task(
-                task_id,
-                actor=str(auth.actor_id or "admin"),
-                tenant_id=str(auth.tenant_id or "default"),
-                **_auth_decision_fields(auth, body),
+        decision = _auth_decision_fields(auth, body)
+        actor = str(auth.actor_id or "admin")
+        tenant_id = str(auth.tenant_id or "default")
+        gate = _engine_gate(task_id)
+        if gate is not None:
+            # Same path as a chat rejection: on_reject hooks run (for example a PRD revision).
+            workflow_id, task = gate
+            comments = str((body or {}).get("comments") or decision.get("reason") or "rejected in the console")
+            return _json(
+                get_workflow_engine().handle_reject(
+                    workflow_id=workflow_id, gate_task=task, comments=comments, actor=actor,
+                    tenant_id=tenant_id, decision=decision,
+                )
             )
-        )
+        return _json(get_memory_client().reject_task(task_id, actor=actor, tenant_id=tenant_id, **decision))
     except Exception as exc:
         return _json({"error": str(exc)}, 400)
 
@@ -3953,6 +3988,16 @@ async def github_webhook(request: Request) -> Response:
         if delivery_id:
             await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
         return _json(result)
+    except ValueError as exc:
+        if "no tasks awaiting external event" not in str(exc):
+            log_event("github_webhook_error", error=str(exc))
+            return _json({"error": str(exc)}, 500)
+        # An event for a workflow that is not waiting (it moved on, was revised or cancelled) is
+        # expected, not a failure: answering 500 marks the delivery failed in GitHub.
+        log_event("github_webhook_ignored", github_event=event_name, reason=str(exc))
+        if delivery_id:
+            await asyncio.to_thread(remember_delivery, delivery_id, host=host, event=event_name)
+        return _json({"status": "ignored", "reason": str(exc)})
     except Exception as exc:
         log_event("github_webhook_error", error=str(exc))
         return _json({"error": str(exc)}, 500)

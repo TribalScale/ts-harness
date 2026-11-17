@@ -32,7 +32,7 @@ def decision_request_fields(
     fields = {
         key: value
         for key, value in dict(decision or {}).items()
-        if key in {"actor_email", "actor_roles", "reason"} and value
+        if key in {"actor_email", "actor_roles", "actor_permissions", "reason"} and value
     }
     program_id = workflow.get("program_id") if isinstance(workflow, dict) else None
     if isinstance(program_id, str) and program_id.strip():

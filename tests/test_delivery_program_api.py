@@ -485,6 +485,43 @@ class ProgramDefinitionPinningApiTests(unittest.TestCase):
         # Full topology still available for expanders, but phase_order is the visible branch.
         self.assertIn("plan_b", status["phases"])
 
+    def test_status_reports_the_newest_workflow_of_a_phase(self):
+        # Work orders are delivered in waves, one implement workflow per wave; the first wave
+        # is history once the next starts (found in the end-to-end rehearsal).
+        gateway = load_gateway()
+        program_id = str(uuid.uuid4())
+        program = {
+            "id": program_id, "summary": "Waves", "entry_phase": "prd", "current_phase": "implement",
+            "status": "running", "metadata": {}, "program_type": None, "program_definition_version": None,
+            "program_definition_revision": None, "program_definition_snapshot": None,
+        }
+        workflows = [
+            {"id": "wf-prd", "program_phase": "prd", "status": "succeeded", "workflow_type": "prd_request"},
+            {"id": "wf-wave1", "program_phase": "implement", "status": "superseded", "workflow_type": "implement_work_orders"},
+            {"id": "wf-wave2", "program_phase": "implement", "status": "running", "workflow_type": "implement_work_orders"},
+        ]
+
+        class StatusCursor(FakeCursor):
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+                upper = sql.upper()
+                if "FROM DELIVERY_PROGRAMS" in upper:
+                    self.rows = [program]
+                elif "FROM WORKFLOWS" in upper:
+                    self.rows = list(workflows)
+                elif "FROM WORKFLOW_TASKS" in upper:
+                    self.rows = []
+
+            def fetchone(self):
+                return program
+
+            def fetchall(self):
+                return list(self.rows)
+
+        status = gateway.get_delivery_program_status(FakeConnection(StatusCursor()), program_id)
+        self.assertEqual(status["phases"]["implement"]["workflow_id"], "wf-wave2")
+        self.assertEqual(status["phases"]["prd"]["workflow_id"], "wf-prd")
+
     def test_status_legacy_null_snapshot_uses_compat_topology(self):
         gateway = load_gateway()
         program_id = str(uuid.uuid4())

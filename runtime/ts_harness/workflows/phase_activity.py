@@ -251,10 +251,30 @@ def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
         for other in (status.get("phases") or {}).values()
         if isinstance(other, dict)
     }
-    children = []
-    for child in memory.get_workflow_children(workflow_id) or []:
-        child_id = str(child.get("id") or "")
-        if child_id and child_id not in stage_workflows and child.get("status") != "superseded":
-            children.append(_with_coding_job(memory, summarize_workflow(_workflow_record(memory, child_id))))
+    # Every workflow of this phase (one per work-order wave), so earlier waves' work orders
+    # stay listed; the newer waves themselves are not work orders.
+    phase_workflows = _phase_workflow_ids(memory, program_id, phase) or [workflow_id]
+    skip = stage_workflows | set(phase_workflows)
+    latest: dict[str, dict[str, Any]] = {}
+    for parent_id in phase_workflows:
+        for child in memory.get_workflow_children(parent_id) or []:
+            child_id = str(child.get("id") or "")
+            if not child_id or child_id in skip or child.get("status") == "superseded":
+                continue
+            summary = _with_coding_job(memory, summarize_workflow(_workflow_record(memory, child_id)))
+            # A work order delivered again (after a cancel or a failed wave) shows its latest attempt.
+            key = str(summary.get("label") or child_id)
+            previous = latest.get(key)
+            if previous is None or str(child.get("created_at") or "") >= str(previous.get("_created_at") or ""):
+                latest[key] = {**summary, "_created_at": str(child.get("created_at") or "")}
+    children = [{k: v for k, v in item.items() if k != "_created_at"} for item in latest.values()]
     result["children"] = sorted(children, key=lambda item: (item["label"], item["workflow_id"]))
     return result
+
+
+def _phase_workflow_ids(memory: Any, program_id: str, phase: str) -> list[str]:
+    try:
+        workflows = (memory.get_program(program_id) or {}).get("workflows") or []
+    except Exception:  # noqa: BLE001 - fall back to the phase's own workflow
+        return []
+    return [str(wf.get("id")) for wf in workflows if wf.get("program_phase") == phase and wf.get("id")]

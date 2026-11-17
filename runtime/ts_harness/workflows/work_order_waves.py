@@ -148,12 +148,15 @@ def failure_details(tasks: list[dict[str, Any]]) -> str:
 
 
 def child_state(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> str | None:
-    """``succeeded``, ``failed`` or ``None`` while the child is still running.
+    """``succeeded``, ``failed``, ``cancelled`` or ``None`` while the child is still running.
 
     Only the latest task per step counts, so superseded revise-loop tasks are ignored.
     A blocked task with a real error counts as failed. A wait for the user or an
-    external event does not.
+    external event does not. A cancelled child delivered nothing: it is neither a success
+    (its work order stays undone and is planned again) nor a failure.
     """
+    if str(workflow.get("status") or "") == "cancelled":
+        return "cancelled"
     skip = _compensate_steps(str(workflow.get("workflow_type") or CHILD_WORKFLOW_TYPE))
     latest: dict[str, dict[str, Any]] = {}
     for task in tasks:
@@ -193,6 +196,7 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
     failed_labels: list[str] = []
     failure_lines: list[str] = []
     pending: list[str] = []
+    cancelled: list[str] = []
     children_outputs: dict[str, dict[str, Any]] = {}
     latest_merge: tuple[str, str] = ("", "")
     for child in children:
@@ -202,6 +206,10 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
         label = child_label(child)
         if state is None:
             pending.append(work_order_id or label)
+            continue
+        if state == "cancelled":
+            # Not delivered: left out of the wave's work orders so the program plans it again.
+            cancelled.append(work_order_id or label)
             continue
         if state == "failed":
             failed.append(work_order_id)
@@ -233,6 +241,7 @@ def wave_result(memory: Any, children: list[dict[str, str]]) -> dict[str, Any]:
         "pr_urls": sorted({str(pr["pr_url"]) for pr in prs if pr.get("pr_url")}),
         "prs": prs,
         "failed_work_order_ids": failed,
+        "cancelled_work_order_ids": cancelled,
         "children_outputs": children_outputs,
         "failed_labels": failed_labels,
         "failure_details": "\n".join(failure_lines),

@@ -60,6 +60,17 @@ class WebhookReplayTests(unittest.TestCase):
         self.assertEqual(self._post("d-1").status_code, 500)
         self.assertEqual(self._post("d-1").json()["status"], "resumed")
 
+    def test_an_event_nobody_waits_for_is_acknowledged_not_failed(self):
+        # Found in the rehearsal: a check event arriving while the work order was being revised
+        # answered 500, which GitHub shows as a failed delivery.
+        self.handle.side_effect = ValueError("no tasks awaiting external event")
+        response = self._post("d-9")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ignored")
+        self.assertEqual(self._post("d-9").json()["status"], "duplicate")
+        self.handle.side_effect = ValueError("bad payload")
+        self.assertEqual(self._post("d-10").status_code, 500)
+
     def test_missing_delivery_id_and_bad_signature_are_rejected(self):
         self.assertEqual(self._post(None).status_code, 400)
         self.assertEqual(self._post("d-3", signature="sha256=" + "0" * 64).status_code, 401)

@@ -287,6 +287,47 @@ class PhaseActivityTests(unittest.TestCase):
 
         self.assertEqual((child["state"], child["kind"]), ("OpenCode queued", "waiting"))
 
+    def test_work_orders_from_every_wave_show_their_latest_attempt(self):
+        # The rehearsal: wave 1 merged WO-001 and had WO-002/WO-003 cancelled; wave 2 (a child of
+        # wave 1) re-delivers WO-002 and WO-003 and starts WO-004. Program status names wave 2.
+        memory = _Memory()
+        memory.status["phases"]["implement"]["workflow_id"] = "wf-wave2"
+        memory.get_program = lambda program_id: {"workflows": [
+            {"id": "wf-prd", "program_phase": "prd"},
+            {"id": "wf-wave1", "program_phase": "implement"},
+            {"id": "wf-wave2", "program_phase": "implement"},
+        ]}
+        memory.children = {
+            "wf-wave1": [
+                {"id": "wo1", "created_at": "1"}, {"id": "wo2-old", "created_at": "1"}, {"id": "wo3-old", "created_at": "1"},
+                {"id": "wf-wave2", "created_at": "5"},
+            ],
+            "wf-wave2": [{"id": "wo2", "created_at": "6"}, {"id": "wo3", "created_at": "6"}, {"id": "wo4", "created_at": "6"}],
+        }
+        waiting = {"deliver_work_order": "awaiting_external:coding.finished"}
+        memory.workflows = {
+            "wf-wave2": {"workflow": {"id": "wf-wave2", "status": "running", "workflow_type": "implement_work_orders"}, "tasks": []},
+            "wo1": {"workflow": {"id": "wo1", "status": "succeeded"}, "tasks": _round("1", ["succeeded"] * 8, work_order="WO-001")},
+            "wo2-old": {"workflow": {"id": "wo2-old", "status": "cancelled"}, "tasks": _round("1", ["cancelled"] + ["pending"] * 7, work_order="WO-002")},
+            "wo3-old": {"workflow": {"id": "wo3-old", "status": "cancelled"}, "tasks": _round("1", ["cancelled"] + ["pending"] * 7, work_order="WO-003")},
+            "wo2": {"workflow": {"id": "wo2", "status": "running"}, "tasks": _round("6", ["blocked"] + ["pending"] * 7, work_order="WO-002", errors=waiting)},
+            "wo3": {"workflow": {"id": "wo3", "status": "running"}, "tasks": _round("6", ["blocked"] + ["pending"] * 7, work_order="WO-003", errors=waiting)},
+            "wo4": {"workflow": {"id": "wo4", "status": "running"}, "tasks": _round("6", ["blocked"] + ["pending"] * 7, work_order="WO-004", errors=waiting)},
+        }
+
+        result = phase_activity(memory, "program-1", "implement")
+
+        self.assertEqual(result["workflow_id"], "wf-wave2")
+        self.assertEqual(
+            [(item["label"], item["workflow_id"], item["state"]) for item in result["children"]],
+            [
+                ("WO-001", "wo1", "Merged"),
+                ("WO-002", "wo2", "OpenCode implementing"),
+                ("WO-003", "wo3", "OpenCode implementing"),
+                ("WO-004", "wo4", "OpenCode implementing"),
+            ],
+        )
+
     def test_a_stage_that_has_not_started_has_no_workflow(self):
         result = phase_activity(_Memory(), "program-1", "release")
         self.assertEqual(result, {"phase": "release", "state": "not_started", "workflow_id": "", "workflow": None, "children": []})
