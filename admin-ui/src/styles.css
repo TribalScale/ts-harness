@@ -2525,3 +2525,95 @@ form {
   white-space: nowrap;
   min-width: 0;
 }
+
+.workflow-step-review {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.gate-review {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  min-width: 0;
+}
+
+.detail-card .gate-review {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.gate-review h4 {
+  margin: 0;
+}
+
+.gate-review-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.gate-review-facts dt {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.gate-review-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gate-review-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gate-review-docs {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gate-review-docs p {
+  margin: 0;
+}
+
+.gate-review-warnings {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--text);
+}
+
+.gate-review-warnings ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.gate-review-doc summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.gate-review-doc pre {
+  max-height: 480px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

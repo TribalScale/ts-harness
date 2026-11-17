@@ -460,6 +460,25 @@ class AdminEndpointsTests(unittest.TestCase):
         self.assertEqual(response.json(), activity)
         build.assert_called_once_with(self.memory, "prog-1", "implement")
 
+    def test_gate_review_shows_what_a_gate_approves_within_the_tenant(self):
+        self.memory.task_program.return_value = {"task_id": "gate", "program_id": "prog-1", "workflow_id": "wf-1"}
+        self.memory.get_program.return_value = {"program": {"id": "prog-1", "tenant_id": "default"}}
+        self.memory.get_workflow_tasks.return_value = {
+            "tasks": [
+                {"id": "draft", "step_name": "draft_prd", "output": {"summary": "Drafted", "result": {"prd_markdown": "# PRD"}}},
+                {"id": "gate", "step_name": "approve_prd", "depends_on": ["draft"]},
+            ]
+        }
+        response = self.client.get("/admin/workflows/gate-review?task_id=gate")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual((body["kind"], body["program_id"]), ("documents", "prog-1"))
+        self.assertEqual(body["documents"][0]["markdown"], "# PRD")
+
+        self.assertEqual(self.client.get("/admin/workflows/gate-review").status_code, 400)
+        self.memory.get_program.return_value = {"program": {"id": "prog-1", "tenant_id": "other"}}
+        self.assertEqual(self.client.get("/admin/workflows/gate-review?task_id=gate").status_code, 404)
+
     def test_stuck_step_decision_runs_through_the_engine_as_the_caller(self):
         self.memory.get_workflow.return_value = {"workflow": {"id": "wf-d", "tenant_id": "default"}, "tasks": []}
         engine = mock.Mock()

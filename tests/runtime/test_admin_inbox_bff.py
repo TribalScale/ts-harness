@@ -132,6 +132,58 @@ class AdminBffTests(unittest.TestCase):
         self.assertEqual((gate["id"], gate["title"]), ("task-1", "approve_prd"))
         self.assertEqual(gate["meta"]["waiting_on"]["kind"], "approval")
 
+    def test_build_inbox_lists_a_release_tracks_promote_gate(self):
+        # deploy_release waits for its release tracks; the gate a human decides is on the track.
+        from ts_harness.memory.client import MemoryClient
+
+        raw_status = {
+            "program_id": "prog-1",
+            "status": "running",
+            "active_workflow_id": "wf-release",
+            "artifacts": {},
+            "active_workflow": {"id": "wf-release", "definition_version": "2.0.0"},
+            "active_tasks": [
+                {"id": "plan", "step_name": "plan_release_tracks", "status": "succeeded"},
+                {
+                    "id": "join",
+                    "step_name": "join_tracks",
+                    "status": "blocked",
+                    "error": "awaiting_external:workflow.child_terminal",
+                },
+            ],
+            "active_child_tasks": [
+                {"id": "ci", "workflow_id": "track-1", "workflow_type": "release_track",
+                 "step_name": "await_ci_on_sha", "status": "succeeded"},
+                {"id": "gate-staging", "workflow_id": "track-1", "workflow_type": "release_track",
+                 "step_name": "approve_promote_staging", "status": "pending", "approval_required": True,
+                 "updated_at": "2026-11-17T16:00:00Z"},
+            ],
+        }
+        programs = {"programs": [{"id": "prog-1", "status": "running", "display_name": "Categories"}]}
+        client = MemoryClient("http://memory.test")
+
+        def request(method, path, body=None, **_):
+            return raw_status if path.endswith("/status") else programs
+
+        auth = AuthContext(actor_id="admin", tenant_id="default", roles=["admin"])
+        runtime = SimpleNamespace(
+            policy=SimpleNamespace(evaluate_identity=mock.Mock(return_value=SimpleNamespace(decision="allow")))
+        )
+        with (
+            mock.patch.object(client, "_request", side_effect=request),
+            mock.patch.object(client, "list_stuck_tasks", return_value=[], create=True),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
+        ):
+            result = build_inbox(runtime, auth, memory=client, skills_root="skills")
+
+        [gate] = [item for item in result["items"] if item["type"] == "workflow_gate"]
+        self.assertEqual((gate["id"], gate["title"]), ("gate-staging", "approve_promote_staging"))
+        self.assertEqual(gate["href"], "/#/inbox/workflow_gate/gate-staging")
+        self.assertEqual(gate["created_at"], "2026-11-17T16:00:00Z")
+        self.assertEqual(gate["meta"]["workflow_type"], "release_track")
+        self.assertEqual(gate["meta"]["program_id"], "prog-1")
+
     def _gate_inbox(self, tasks):
         memory = mock.Mock()
         memory.list_programs.return_value = {"programs": [{"id": "prog-1", "status": "running", "display_name": "PRD"}]}

@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiFetch } from "../api/client";
-import type { InboxItem, InboxType, SkillDraftDetail, StuckDecision } from "../api/types";
+import type {
+  InboxItem,
+  InboxType,
+  SkillDraftDetail,
+  StuckDecision,
+} from "../api/types";
 import { canManageSkills } from "../auth/session";
-import { SkillDraftFiles, SkillDraftProvenance, SkillDraftRevisionDiffs } from "./SkillDraftFiles";
+import {
+  SkillDraftFiles,
+  SkillDraftProvenance,
+  SkillDraftRevisionDiffs,
+} from "./SkillDraftFiles";
 import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { SplitView } from "../layout/SplitView";
 import { useMediaQuery } from "../layout/useMediaQuery";
+import { GateReview } from "../programs/GateReview";
 
 const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "all", label: "All for me" },
@@ -24,10 +34,18 @@ const STUCK_DECISION_LABEL: Record<StuckDecision, string> = {
   accept: "Accept as is",
   stop: "Stop work order",
 };
-const STUCK_DECISION_VARIANT = { revise: "primary", accept: "secondary", stop: "danger" } as const;
+const STUCK_DECISION_VARIANT = {
+  revise: "primary",
+  accept: "secondary",
+  stop: "danger",
+} as const;
 
-function stuckDecisions(meta: Record<string, unknown> | null | undefined): StuckDecision[] {
-  const raw = Array.isArray(meta?.decisions) ? (meta?.decisions as unknown[]) : [];
+function stuckDecisions(
+  meta: Record<string, unknown> | null | undefined,
+): StuckDecision[] {
+  const raw = Array.isArray(meta?.decisions)
+    ? (meta?.decisions as unknown[])
+    : [];
   return STUCK_DECISION_ORDER.filter((decision) => raw.includes(decision));
 }
 
@@ -69,7 +87,7 @@ const STATUS_SEMANTICS: Record<string, SemanticStatus> = {
  * backend reports an actual lifecycle status we can map to a semantic colour.
  */
 function statusFromMeta(
-  meta: Record<string, unknown> | null | undefined
+  meta: Record<string, unknown> | null | undefined,
 ): { status: SemanticStatus; label: string } | null {
   const raw = meta?.status ?? meta?.state ?? meta?.approval_status;
   if (typeof raw !== "string" || !raw.trim()) return null;
@@ -78,14 +96,19 @@ function statusFromMeta(
   return { status, label: raw.replace(/_/g, " ") };
 }
 
-function KnowledgeNoteReview({ meta }: { meta: Record<string, unknown> | null | undefined }) {
+function KnowledgeNoteReview({
+  meta,
+}: {
+  meta: Record<string, unknown> | null | undefined;
+}) {
   const note = (meta?.note || {}) as Record<string, unknown>;
   const target = (meta?.target || null) as Record<string, unknown> | null;
   const evidence = Array.isArray(meta?.evidence) ? meta.evidence : [];
   return (
     <section className="detail-card" aria-label="Knowledge note proposal">
       <h3>
-        {String(note.scope || "note")} · {String(note.proposal_action || "add")} · {String(note.kind || "")}
+        {String(note.scope || "note")} · {String(note.proposal_action || "add")}{" "}
+        · {String(note.kind || "")}
       </h3>
       <p>
         <strong>{String(note.title || "")}</strong>
@@ -106,7 +129,8 @@ function KnowledgeNoteReview({ meta }: { meta: Record<string, unknown> | null | 
             const entry = item as Record<string, unknown>;
             return (
               <li key={index}>
-                {String(entry.type || "evidence")} {String(entry.ref || "")} {String(entry.excerpt || "")}
+                {String(entry.type || "evidence")} {String(entry.ref || "")}{" "}
+                {String(entry.excerpt || "")}
               </li>
             );
           })}
@@ -117,15 +141,23 @@ function KnowledgeNoteReview({ meta }: { meta: Record<string, unknown> | null | 
 }
 
 function stringifyValue(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "Not provided";
+  if (value === undefined || value === null || value === "")
+    return "Not provided";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   return JSON.stringify(value, null, 2);
 }
 
-function detailValue(detail: Record<string, unknown> | null, keys: string[]): string {
+function detailValue(
+  detail: Record<string, unknown> | null,
+  keys: string[],
+): string {
   if (!detail) return "Not provided";
-  const key = keys.find((candidate) => detail[candidate] !== undefined && detail[candidate] !== null);
+  const key = keys.find(
+    (candidate) =>
+      detail[candidate] !== undefined && detail[candidate] !== null,
+  );
   return key ? stringifyValue(detail[key]) : "Not provided";
 }
 
@@ -135,13 +167,16 @@ function itemRecord(item: InboxItem): Record<string, unknown> {
 
 function revisionOfValue(detail: Record<string, unknown> | null): string {
   const direct = detail?.revision_of;
-  if (direct !== undefined && direct !== null && direct !== "") return String(direct);
+  if (direct !== undefined && direct !== null && direct !== "")
+    return String(direct);
   const metadata = detail?.metadata;
   if (!metadata || typeof metadata !== "object") return "";
   const provenance = (metadata as Record<string, unknown>).provenance;
   if (!provenance || typeof provenance !== "object") return "";
   const nested = (provenance as Record<string, unknown>).revision_of;
-  return nested !== undefined && nested !== null && nested !== "" ? String(nested) : "";
+  return nested !== undefined && nested !== null && nested !== ""
+    ? String(nested)
+    : "";
 }
 
 /** What the automatic PRD checks found on the draft this gate approves. */
@@ -154,8 +189,9 @@ function PrdChecksCard({ findings }: { findings: string[] }) {
       ) : (
         <>
           <p>
-            The automatic PRD checks found {findings.length} {findings.length === 1 ? "issue" : "issues"}. They
-            do not block approval.
+            The automatic PRD checks found {findings.length}{" "}
+            {findings.length === 1 ? "issue" : "issues"}. They do not block
+            approval.
           </p>
           <ul>
             {findings.map((finding) => (
@@ -181,7 +217,10 @@ export function InboxPage({
   const [filter, setFilter] = useState<"all" | InboxType>("all");
   const [listError, setListError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ title: string; detail: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    title: string;
+    detail: string;
+  } | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -210,19 +249,27 @@ export function InboxPage({
 
   const visibleItems = useMemo(
     () => items.filter((item) => item.type !== "skill_draft" || skillsOk),
-    [items, skillsOk]
+    [items, skillsOk],
   );
 
   const counts = useMemo(
     () => ({
       all: visibleItems.length,
-      skill_draft: visibleItems.filter((item) => item.type === "skill_draft").length,
-      tool_approval: visibleItems.filter((item) => item.type === "tool_approval").length,
-      workflow_gate: visibleItems.filter((item) => item.type === "workflow_gate").length,
-      stuck_step: visibleItems.filter((item) => item.type === "stuck_step").length,
-      knowledge_note: visibleItems.filter((item) => item.type === "knowledge_note").length,
+      skill_draft: visibleItems.filter((item) => item.type === "skill_draft")
+        .length,
+      tool_approval: visibleItems.filter(
+        (item) => item.type === "tool_approval",
+      ).length,
+      workflow_gate: visibleItems.filter(
+        (item) => item.type === "workflow_gate",
+      ).length,
+      stuck_step: visibleItems.filter((item) => item.type === "stuck_step")
+        .length,
+      knowledge_note: visibleItems.filter(
+        (item) => item.type === "knowledge_note",
+      ).length,
     }),
-    [visibleItems]
+    [visibleItems],
   );
 
   const visible = useMemo(() => {
@@ -233,23 +280,26 @@ export function InboxPage({
   }, [visibleItems, filter]);
 
   const selectedItem = useMemo(
-    () => visibleItems.find((i) => i.type === selectedType && i.id === selectedId),
-    [selectedId, selectedType, visibleItems]
+    () =>
+      visibleItems.find((i) => i.type === selectedType && i.id === selectedId),
+    [selectedId, selectedType, visibleItems],
   );
 
   async function loadDetail(item = selectedItem) {
     if (!item) return;
     setDetailError(null);
-    setDetailLoading(item.type === "skill_draft" || item.type === "tool_approval");
+    setDetailLoading(
+      item.type === "skill_draft" || item.type === "tool_approval",
+    );
     try {
       if (item.type === "skill_draft") {
         const data = await apiFetch<Record<string, unknown>>(
-          `/admin/skills/drafts/${encodeURIComponent(item.id)}`
+          `/admin/skills/drafts/${encodeURIComponent(item.id)}`,
         );
         setDetail(data);
       } else if (item.type === "tool_approval") {
         const data = await apiFetch<Record<string, unknown>>(
-          `/admin/approvals/${encodeURIComponent(item.id)}`
+          `/admin/approvals/${encodeURIComponent(item.id)}`,
         );
         setDetail(data);
       } else {
@@ -293,7 +343,10 @@ export function InboxPage({
   }, [visible, selectedId, onSelect, desktop]);
 
   async function actNote(status: "active" | "rejected") {
-    const note = (detail?.note || selectedItem?.meta?.note || {}) as { id?: string; version?: number };
+    const note = (detail?.note || selectedItem?.meta?.note || {}) as {
+      id?: string;
+      version?: number;
+    };
     const id = String(note.id || selectedId || "");
     if (!id) return;
     setBusy(true);
@@ -324,10 +377,15 @@ export function InboxPage({
     setBusy(true);
     try {
       const path = approve ? "approve" : "reject";
-      await apiFetch(`/admin/skills/drafts/${encodeURIComponent(selectedId)}/${path}`, {
-        method: "POST",
-        body: JSON.stringify({ reason: approve ? "" : "rejected from inbox" }),
-      });
+      await apiFetch(
+        `/admin/skills/drafts/${encodeURIComponent(selectedId)}/${path}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            reason: approve ? "" : "rejected from inbox",
+          }),
+        },
+      );
       await load();
       setDetail(null);
     } catch (e: any) {
@@ -342,10 +400,12 @@ export function InboxPage({
     setBusy(true);
     setNotice(null);
     try {
-      const decided = await apiFetch<{ resume?: { status: string; error?: string } }>(
-        `/admin/approvals/${encodeURIComponent(selectedId)}/decide`,
-        { method: "POST", body: JSON.stringify({ approved }) }
-      );
+      const decided = await apiFetch<{
+        resume?: { status: string; error?: string };
+      }>(`/admin/approvals/${encodeURIComponent(selectedId)}/decide`, {
+        method: "POST",
+        body: JSON.stringify({ approved }),
+      });
       if (decided?.resume?.status === "failed") {
         setNotice({
           title: "Workflow stage did not resume",
@@ -377,10 +437,13 @@ export function InboxPage({
     if (!taskId) return;
     setBusy(true);
     try {
-      await apiFetch(approve ? "/admin/workflows/approve" : "/admin/workflows/reject", {
-        method: "POST",
-        body: JSON.stringify({ id: taskId }),
-      });
+      await apiFetch(
+        approve ? "/admin/workflows/approve" : "/admin/workflows/reject",
+        {
+          method: "POST",
+          body: JSON.stringify({ id: taskId }),
+        },
+      );
       await load();
       setDetail(null);
     } catch (e: any) {
@@ -426,17 +489,21 @@ export function InboxPage({
     const workOrder = String(meta.work_order || "This work order");
     const step = String(meta.step_name || "a step");
     const prUrl = typeof meta.pr_url === "string" ? meta.pr_url : "";
-    const programId = typeof meta.program_id === "string" ? meta.program_id : "";
-    const feedback = String(meta.feedback || meta.error || "No feedback recorded.");
+    const programId =
+      typeof meta.program_id === "string" ? meta.program_id : "";
+    const feedback = String(
+      meta.feedback || meta.error || "No feedback recorded.",
+    );
     const decisions = stuckDecisions(meta);
     return (
       <div className="detail-sections">
         <section className="detail-card">
           <h3>Summary</h3>
           <p>
-            {workOrder} stopped at <span className="mono">{step}</span> after using all automatic
-            revisions. Revise again gives OpenCode a fresh set of revisions, accept continues the
-            delivery as it is, and stop ends the work order.
+            {workOrder} stopped at <span className="mono">{step}</span> after
+            using all automatic revisions. Revise again gives OpenCode a fresh
+            set of revisions, accept continues the delivery as it is, and stop
+            ends the work order.
           </p>
         </section>
         {prUrl && (
@@ -480,30 +547,53 @@ export function InboxPage({
   }
 
   const detailTitle = selectedType ? typeLabel(selectedType) : "Inbox item";
-  const detailStatus = statusFromMeta(detail) || statusFromMeta(selectedItem?.meta);
+  const detailStatus =
+    statusFromMeta(detail) || statusFromMeta(selectedItem?.meta);
 
   function renderDetailSections(type: InboxType) {
-    if (type === "stuck_step") return renderStuckSections(detail || selectedItem?.meta || {});
+    if (type === "stuck_step")
+      return renderStuckSections(detail || selectedItem?.meta || {});
     const fallbackDetail = selectedItem ? itemRecord(selectedItem) : null;
     const raw = detail || selectedItem?.meta || fallbackDetail || {};
     const timestampDetail = detail || selectedItem?.meta || fallbackDetail;
     const programId =
-      typeof detail?.program_id === "string" || typeof detail?.program_id === "number"
+      typeof detail?.program_id === "string" ||
+      typeof detail?.program_id === "number"
         ? String(detail.program_id)
         : "";
-    const summary = detailValue(detail, ["summary", "title", "content", "description"]);
-    const actor = detailValue(detail, ["requester", "actor", "agent_id", "owner"]);
+    const summary = detailValue(detail, [
+      "summary",
+      "title",
+      "content",
+      "description",
+    ]);
+    const actor = detailValue(detail, [
+      "requester",
+      "actor",
+      "agent_id",
+      "owner",
+    ]);
     const commandOrStep =
       type === "workflow_gate"
         ? detailValue(detail, ["step_name", "task_id", "workflow_id"])
         : detailValue(detail, ["command", "tool", "name"]);
     const revisionOf = type === "skill_draft" ? revisionOfValue(detail) : "";
+    const gateTaskId =
+      type === "workflow_gate"
+        ? String(
+            detail?.task_id || selectedItem?.meta?.task_id || selectedId || "",
+          )
+        : "";
 
     return (
       <div className="detail-sections">
         <section className="detail-card">
           <h3>Summary</h3>
-          <p>{summary === "Not provided" ? selectedItem?.subtitle || summary : summary}</p>
+          <p>
+            {summary === "Not provided"
+              ? selectedItem?.subtitle || summary
+              : summary}
+          </p>
         </section>
         <section className="detail-card">
           <h3>Actor / requester</h3>
@@ -515,30 +605,57 @@ export function InboxPage({
         </section>
         <section className="detail-card">
           <h3>Timestamps</h3>
-          <p>{detailValue(timestampDetail, ["created_at", "updated_at", "submitted_at"])}</p>
+          <p>
+            {detailValue(timestampDetail, [
+              "created_at",
+              "updated_at",
+              "submitted_at",
+            ])}
+          </p>
         </section>
         {type === "tool_approval" && detail?.workflow_id ? (
           <section className="detail-card">
             <h3>Workflow</h3>
-            <p>Resumes workflow {String(detail.workflow_id)} when you decide.</p>
+            <p>
+              Resumes workflow {String(detail.workflow_id)} when you decide.
+            </p>
           </section>
         ) : null}
+        {type === "workflow_gate" && gateTaskId && (
+          <div className="detail-card">
+            <GateReview taskId={gateTaskId} />
+          </div>
+        )}
         {type === "workflow_gate" && Array.isArray(detail?.prd_checks) && (
-          <PrdChecksCard findings={(detail?.prd_checks as unknown[]).map(String)} />
+          <PrdChecksCard
+            findings={(detail?.prd_checks as unknown[]).map(String)}
+          />
         )}
         {type === "workflow_gate" && programId && (
           <p>
             <a href={`#/programs/${programId}`}>Open program</a>
           </p>
         )}
-        {type === "skill_draft" && detail && <SkillDraftProvenance detail={detail as SkillDraftDetail} />}
+        {type === "skill_draft" && detail && (
+          <SkillDraftProvenance detail={detail as SkillDraftDetail} />
+        )}
         {type === "skill_draft" && detail && selectedId && (
-          <SkillDraftFiles skillId={selectedId} detail={detail as SkillDraftDetail} />
+          <SkillDraftFiles
+            skillId={selectedId}
+            detail={detail as SkillDraftDetail}
+          />
         )}
         {type === "skill_draft" && revisionOf && (
-          <SkillDraftRevisionDiffs detail={(detail || {}) as SkillDraftDetail} revisionOf={revisionOf} />
+          <SkillDraftRevisionDiffs
+            detail={(detail || {}) as SkillDraftDetail}
+            revisionOf={revisionOf}
+          />
         )}
-        {type === "knowledge_note" && <KnowledgeNoteReview meta={(detail || selectedItem?.meta) as Record<string, unknown>} />}
+        {type === "knowledge_note" && (
+          <KnowledgeNoteReview
+            meta={(detail || selectedItem?.meta) as Record<string, unknown>}
+          />
+        )}
         <details className="detail-raw">
           <summary>Raw metadata</summary>
           <pre className="mono">{JSON.stringify(raw, null, 2)}</pre>
@@ -549,25 +666,42 @@ export function InboxPage({
 
   function renderActions(type: InboxType) {
     if (type === "skill_draft" && !skillsOk) return null;
-    if (!detail && type !== "workflow_gate" && type !== "stuck_step") return null;
+    if (!detail && type !== "workflow_gate" && type !== "stuck_step")
+      return null;
     return (
       <footer className="detail-actions" aria-label="Item actions">
         {type === "skill_draft" && (
           <>
-            <Button variant="danger" busy={busy} onClick={() => void actSkill(false)}>
+            <Button
+              variant="danger"
+              busy={busy}
+              onClick={() => void actSkill(false)}
+            >
               Reject
             </Button>
-            <Button variant="primary" busy={busy} onClick={() => void actSkill(true)}>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void actSkill(true)}
+            >
               Approve
             </Button>
           </>
         )}
         {type === "tool_approval" && (
           <>
-            <Button variant="danger" busy={busy} onClick={() => void actTool(false)}>
+            <Button
+              variant="danger"
+              busy={busy}
+              onClick={() => void actTool(false)}
+            >
               Reject
             </Button>
-            <Button variant="primary" busy={busy} onClick={() => void actTool(true)}>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void actTool(true)}
+            >
               Approve
             </Button>
           </>
@@ -585,20 +719,36 @@ export function InboxPage({
           ))}
         {type === "knowledge_note" && (
           <>
-            <Button variant="danger" busy={busy} onClick={() => void actNote("rejected")}>
+            <Button
+              variant="danger"
+              busy={busy}
+              onClick={() => void actNote("rejected")}
+            >
               Reject
             </Button>
-            <Button variant="primary" busy={busy} onClick={() => void actNote("active")}>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void actNote("active")}
+            >
               Approve
             </Button>
           </>
         )}
         {type === "workflow_gate" && (
           <>
-            <Button variant="danger" busy={busy} onClick={() => void actGate(false)}>
+            <Button
+              variant="danger"
+              busy={busy}
+              onClick={() => void actGate(false)}
+            >
               Reject
             </Button>
-            <Button variant="primary" busy={busy} onClick={() => void actGate(true)}>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void actGate(true)}
+            >
               Approve
             </Button>
           </>
@@ -622,11 +772,17 @@ export function InboxPage({
             {f.label} {counts[f.key]}
           </Button>
         ))}
-        <Button variant="ghost" busy={listLoading && items.length > 0} onClick={() => void load()}>
+        <Button
+          variant="ghost"
+          busy={listLoading && items.length > 0}
+          onClick={() => void load()}
+        >
           Refresh
         </Button>
       </div>
-      {notice && <PageState kind="error" title={notice.title} detail={notice.detail} />}
+      {notice && (
+        <PageState kind="error" title={notice.title} detail={notice.detail} />
+      )}
       {listError && items.length > 0 && (
         <PageState
           kind="stale"
@@ -658,9 +814,15 @@ export function InboxPage({
             >
               <span className="row-title">{item.title}</span>
               <div className="row-meta">
-                <span className={badgeClass(item.type)}>{typeLabel(item.type)}</span>
-                {derived && <StatusPill status={derived.status} label={derived.label} />}
-                {item.subtitle && <span className="row-subtitle">{item.subtitle}</span>}
+                <span className={badgeClass(item.type)}>
+                  {typeLabel(item.type)}
+                </span>
+                {derived && (
+                  <StatusPill status={derived.status} label={derived.label} />
+                )}
+                {item.subtitle && (
+                  <span className="row-subtitle">{item.subtitle}</span>
+                )}
               </div>
             </button>
           );
@@ -669,42 +831,52 @@ export function InboxPage({
     </div>
   );
 
-  const detailPane = !selectedType || !selectedId ? (
-    <PageState kind="empty" title="Select an item" detail="Choose work from the queue to review it." />
-  ) : !selectedItem ? (
-    <PageState
-      kind="empty"
-      title="Item unavailable"
-      detail="This item is not available for your current role."
-    />
-  ) : (
-    <section className="inbox-detail" aria-label={`${detailTitle} detail`}>
-      <header className="detail-header">
-        <div>
-          <h2>{detailTitle}</h2>
-          <p className="mono muted">{selectedId}</p>
-        </div>
-        {detailStatus ? (
-          <StatusPill status={detailStatus.status} label={detailStatus.label} />
+  const detailPane =
+    !selectedType || !selectedId ? (
+      <PageState
+        kind="empty"
+        title="Select an item"
+        detail="Choose work from the queue to review it."
+      />
+    ) : !selectedItem ? (
+      <PageState
+        kind="empty"
+        title="Item unavailable"
+        detail="This item is not available for your current role."
+      />
+    ) : (
+      <section className="inbox-detail" aria-label={`${detailTitle} detail`}>
+        <header className="detail-header">
+          <div>
+            <h2>{detailTitle}</h2>
+            <p className="mono muted">{selectedId}</p>
+          </div>
+          {detailStatus ? (
+            <StatusPill
+              status={detailStatus.status}
+              label={detailStatus.label}
+            />
+          ) : (
+            selectedItem?.subtitle && (
+              <span className="detail-subtitle">{selectedItem.subtitle}</span>
+            )
+          )}
+        </header>
+        {detailLoading ? (
+          <PageState kind="loading" title="Loading item detail" />
+        ) : detailError ? (
+          <PageState
+            kind="error"
+            title="Could not load item detail"
+            detail={detailError}
+            onRetry={() => void loadDetail()}
+          />
         ) : (
-          selectedItem?.subtitle && <span className="detail-subtitle">{selectedItem.subtitle}</span>
+          renderDetailSections(selectedType)
         )}
-      </header>
-      {detailLoading ? (
-        <PageState kind="loading" title="Loading item detail" />
-      ) : detailError ? (
-        <PageState
-          kind="error"
-          title="Could not load item detail"
-          detail={detailError}
-          onRetry={() => void loadDetail()}
-        />
-      ) : (
-        renderDetailSections(selectedType)
-      )}
-      {renderActions(selectedType)}
-    </section>
-  );
+        {renderActions(selectedType)}
+      </section>
+    );
 
   return (
     <SplitView

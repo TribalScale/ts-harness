@@ -161,6 +161,7 @@ def build_inbox(
             continue
         waiting = status.get("waiting_on") or {}
         if waiting.get("kind") != "approval":
+            items.extend(_child_gate_items(memory, program, status, approvable))
             continue
         if not approvable(program_id):
             continue
@@ -193,6 +194,47 @@ def build_inbox(
     items.extend(_knowledge_note_items(memory, auth, runtime))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+def _child_gate_items(memory: Any, program: dict[str, Any], status: dict[str, Any], approvable: Any) -> list[dict[str, Any]]:
+    """Gates waiting inside workflows a phase started, such as a release track's promote gates.
+
+    The phase itself waits for its children (``workflow.child_terminal``); the gate a human
+    must decide is on a child, listed in ``waiting_on.children``.
+    """
+    program_id = str(program.get("id") or "")
+    waiting = status.get("waiting_on") or {}
+    gates = [
+        child
+        for child in waiting.get("children") or []
+        if isinstance(child, dict) and child.get("waiting_for") == "approval" and child.get("task_id")
+    ]
+    if not gates or not approvable(program_id):
+        return []
+    items = []
+    for child in gates:
+        task_id = str(child["task_id"])
+        step = str(child.get("step") or "gate")
+        items.append(
+            {
+                "type": "workflow_gate",
+                "id": task_id,
+                "title": step,
+                "subtitle": f"Program {program.get('display_name') or program.get('summary') or program_id}",
+                "created_at": child.get("since") or waiting.get("since"),
+                "href": f"/#/inbox/workflow_gate/{quote(task_id, safe='')}",
+                "meta": {
+                    "program_id": program_id,
+                    "task_id": task_id,
+                    "step_name": step,
+                    "workflow_id": child.get("workflow_id"),
+                    "workflow_type": child.get("workflow_type"),
+                    "waiting_on": waiting,
+                    "recommended_action": status.get("recommended_action"),
+                },
+            }
+        )
+    return items
 
 
 def _gate_draft_checks(memory: Any, workflow_id: str) -> list[str] | None:

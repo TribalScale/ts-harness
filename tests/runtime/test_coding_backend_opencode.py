@@ -464,7 +464,7 @@ class OpenCodeBackendTests(unittest.TestCase):
                     result.stdout = "https://github.com/example/app/pull/9\n"
                     body_idx = cmd.index("--body") + 1 if "--body" in cmd else -1
                     if body_idx > 0:
-                        self.assertIn("Planning docs", cmd[body_idx])
+                        self.assertIn("Planning specs (Refinery, Foundry, Planner) under `docs/`", cmd[body_idx])
                 elif cmd[0] == "git" and "status" in cmd and "--porcelain" in cmd:
                     status_calls["n"] += 1
                     if status_calls["n"] <= 2:

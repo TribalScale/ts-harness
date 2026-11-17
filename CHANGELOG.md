@@ -11,6 +11,9 @@ First public release.
 
 ### Added
 
+- Approval gates show what they approve, in the inbox and on the program page: the PRD, FRDs, blueprints or work orders with the agent's summary and warnings, or for a release, the commit, the PRs in it, CI, a comparison with what the environment runs now, the rollback commit and how the previous environment went (`GET /admin/workflows/gate-review`).
+- QA posts its verdict on each PR as a comment (summary, defects with files and the requested change, acceptance criteria, evidence), one per run so a failed run stays visible after a later pass.
+- PR titles and descriptions follow a standard shape: the work order's title; summary, changed files, how to test (its acceptance tests as a checklist), verification, out of scope, design references, work order links and the security scan; a repository's PR template is added for the reviewer.
 - Design references: Figma links and images attached to a PRD request become `D1`, `D2`… images that travel with the program ([Design references](docs/runbooks/design-references.md)).
   - PRD intake, drafting and the planning stages see them as images; the planner names each UI work order's frames (`- Design: D1, D3`).
   - The coding job gets its work order's images in `.ts-harness/design/` (never committed) and a prompt section to match them; QA compares its Playwright screenshots against them.
@@ -313,6 +316,10 @@ First public release.
 
 ### Fixed
 
+- Release gates never reached the inbox: it listed only gates on a phase's own workflow, and the promote gates are on the release tracks it starts. The memory API's child tasks now carry their ids, and the inbox lists gates waiting inside started workflows.
+- Code reviews and QA results were posted under the PAT owner's name: the workflow runner had no GitHub App credentials. Compose now passes `GITHUB_APP_*` to it.
+- `FIGMA_TOKEN` never reached the containers: the compose wrapper did not pass it, so a stored Figma token would have been ignored.
+- A failed QA with defects that have no severity read "0 blocking of 1 defects"; it now says "1 defect".
 - Found in the end-to-end rehearsal (PRD → planning → delivery):
   - Work-order dependencies written the way the planner template writes them (`- Depends on: WO-001` in the Context Graph) were ignored; only table rows were read. Every work order looked independent, so dependent work orders started before their foundation. Bullet and bold forms are read now.
   - A cancelled work-order delivery counted as delivered (a child with only succeeded or cancelled steps was "succeeded"), so its work order would never be built. A cancelled child is now undelivered and the program schedules it again.

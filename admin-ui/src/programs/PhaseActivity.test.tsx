@@ -84,7 +84,17 @@ it("shows the stage's own steps and the work orders it started", async () => {
 it("approves a pending gate from the stage panel", async () => {
   const posts: string[] = [];
   mockFetch((url, init) => {
-    posts.push(`${url} ${init?.body}`);
+    if (init?.method === "POST") posts.push(`${url} ${init?.body}`);
+    if (String(url).startsWith("/admin/workflows/gate-review")) {
+      return jsonResponse({
+        task_id: "approve_prd",
+        kind: "documents",
+        from_step: "draft_prd",
+        summary: "Drafted PRD: Discussion Categories",
+        warnings: ["Chose the Lite profile."],
+        documents: [{ key: "prd_markdown", title: "PRD", markdown: "# PRD: Discussion Categories" }],
+      });
+    }
     return jsonResponse({ ok: true });
   });
   let changed = 0;
@@ -105,6 +115,11 @@ it("approves a pending gate from the stage panel", async () => {
 
   expect(screen.getByText("waiting for approval")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Work orders/ })).not.toBeInTheDocument();
+  // The PRD under approval is shown next to the buttons.
+  expect(await screen.findByText("# PRD: Discussion Categories")).toBeInTheDocument();
+  expect(screen.getByText("Chose the Lite profile.")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Hide review" }));
+  expect(screen.queryByText("# PRD: Discussion Categories")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(posts).toEqual(['/admin/workflows/approve {"id":"approve_prd"}']));
   expect(changed).toBe(1);
@@ -115,7 +130,23 @@ it("approves a release gate inside a started workflow (the release track)", asyn
   // started, and only the stage's own steps had buttons, so a release could not be approved.
   const posts: string[] = [];
   mockFetch((url, init) => {
-    posts.push(`${url} ${init?.body}`);
+    if (init?.method === "POST") posts.push(`${url} ${init?.body}`);
+    if (String(url).startsWith("/admin/workflows/gate-review")) {
+      return jsonResponse({
+        task_id: "gate-staging",
+        kind: "release",
+        release: {
+          environment: "staging",
+          repo: "acme/web",
+          sha: "a4d80707e51395b5",
+          base_branch: "fe-dev",
+          pr_urls: ["https://github.com/acme/web/pull/67"],
+          ci: { state: "success", checks: { e2e: "success" }, failed: [] },
+          rollback_sha: "22ebbfb1560c",
+          compare_url: "https://github.com/acme/web/compare/22ebbfb1560c...a4d80707e51395b5",
+        },
+      });
+    }
     return jsonResponse({ ok: true });
   });
   const release: PhaseActivity = {
@@ -146,6 +177,10 @@ it("approves a release gate inside a started workflow (the release track)", asyn
 
   // The track opens by itself because it has a gate waiting.
   expect(screen.getByRole("list", { name: "acme/web steps" })).toBeInTheDocument();
+  // The release under approval: commit, PRs, CI and the comparison with what staging runs.
+  expect(await screen.findByRole("link", { name: "PR #67" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Compare with what staging runs now" })).toBeInTheDocument();
+  expect(screen.getByText("a4d80707e513")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(posts).toEqual(['/admin/workflows/approve {"id":"gate-staging"}']));
 });
