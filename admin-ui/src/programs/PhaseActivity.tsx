@@ -96,13 +96,22 @@ function StepList({
   );
 }
 
-export function WorkflowRows({ items }: { items: WorkflowProgress[] }) {
+export function WorkflowRows({
+  items,
+  actions,
+}: {
+  items: WorkflowProgress[];
+  // Approve/Reject for gates inside started workflows (a release track's promote gates).
+  actions?: (step: WorkflowStep) => React.ReactNode;
+}) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   return (
     <ul className="workflow-list">
       {items.map((item) => {
-        const expanded = Boolean(open[item.workflow_id]);
+        // A row with a gate waiting for approval opens by default, so its Approve button shows.
+        const waiting = Boolean(actions) && item.steps.some((step) => step.approval_pending);
+        const expanded = open[item.workflow_id] ?? waiting;
         return (
           <li key={item.workflow_id} className="workflow-row">
             <div className="workflow-row-head">
@@ -137,7 +146,7 @@ export function WorkflowRows({ items }: { items: WorkflowProgress[] }) {
                 {item.coding_job.last_output && <code>{item.coding_job.last_output}</code>}
               </div>
             )}
-            {expanded && <StepList steps={item.steps} label={`${item.label} steps`} />}
+            {expanded && <StepList steps={item.steps} label={`${item.label} steps`} actions={actions} />}
           </li>
         );
       })}
@@ -221,7 +230,7 @@ export function PhaseActivityPanel({
           <h4>
             {childTitle} ({children.length})
           </h4>
-          <WorkflowRows items={children} />
+          <WorkflowRows items={children} actions={approvalActions} />
         </>
       )}
     </section>

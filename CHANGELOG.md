@@ -318,6 +318,7 @@ First public release.
   - A cancelled work-order delivery counted as delivered (a child with only succeeded or cancelled steps was "succeeded"), so its work order would never be built. A cancelled child is now undelivered and the program schedules it again.
   - The repo-onboarding check failed in the workflow runner with `No such file or directory: 'git'`; the runner image now includes git.
   - A GitHub webhook for a workflow with nothing waiting answered 500; it is acknowledged as ignored.
+  - Release gates could not be approved in the console: Approve and Reject showed only on a phase's own steps, and the promote gates live in the release track the phase starts. Started workflows' gates now have the buttons, and a row with a gate waiting opens by itself.
   - The console's program page showed a phase's first workflow: after a second work-order wave started, implement read "succeeded" and the new wave appeared as a nested row. A phase now shows its newest workflow, and its work-order list covers every wave, each work order at its latest attempt.
 
 - Approving or rejecting a gate in the console only updated the task in the memory API. The gate's hooks never ran (for `approve_prd`, `mark_prd_approved`), and when the gate was the workflow's last step the program phase never completed: the program kept neither the approved PRD nor its design references and could not continue. Console decisions on pending gates now go through the workflow engine, like chat decisions, and keep the approver's permissions.

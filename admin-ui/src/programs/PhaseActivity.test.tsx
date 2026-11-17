@@ -110,6 +110,46 @@ it("approves a pending gate from the stage panel", async () => {
   expect(changed).toBe(1);
 });
 
+it("approves a release gate inside a started workflow (the release track)", async () => {
+  // Found in the end-to-end rehearsal: the promote gates live in the release track the stage
+  // started, and only the stage's own steps had buttons, so a release could not be approved.
+  const posts: string[] = [];
+  mockFetch((url, init) => {
+    posts.push(`${url} ${init?.body}`);
+    return jsonResponse({ ok: true });
+  });
+  const release: PhaseActivity = {
+    phase: "release",
+    state: "blocked",
+    workflow_id: "wf-rel",
+    workflow: {
+      ...delivery("deploy release", {}),
+      state: "Waiting for the workflows it started",
+      kind: "waiting",
+      steps: [step("plan_release_tracks", "plan release tracks", "succeeded"), step("join_tracks", "join tracks", "blocked")],
+    },
+    children: [
+      delivery("acme/web", {
+        workflow_type: "release_track",
+        state: "Waiting for approval: approve promote staging",
+        kind: "waiting",
+        steps: [
+          step("await_ci_on_sha", "await ci on sha", "succeeded"),
+          step("approve_promote_staging", "approve promote staging", "pending", { approval_pending: true, task_id: "gate-staging" }),
+          step("trigger_deploy_staging", "trigger deploy staging", "pending"),
+        ],
+      }),
+    ],
+  };
+
+  render(<PhaseActivityPanel phase="release" activity={release} />);
+
+  // The track opens by itself because it has a gate waiting.
+  expect(screen.getByRole("list", { name: "acme/web steps" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(posts).toEqual(['/admin/workflows/approve {"id":"gate-staging"}']));
+});
+
 it("hides gate actions without the approve permission or once the program is closed", () => {
   const prd: PhaseActivity = {
     ...implement,
