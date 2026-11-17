@@ -29,8 +29,45 @@ def select_block_case(config: dict[str, Any], error: str) -> dict[str, Any]:
 
 
 _REVISION_ONLY_KEYS = frozenset(
-    {"_revision_budget", "refresh", "qa_feedback", "review_feedback", "revision_files"}
+    {"_revision_budget", "_revision_source", "refresh", "qa_feedback", "review_feedback", "revision_files"}
 )
+# Gates whose verdicts can contradict each other. When the revisions they ask for alternate
+# (review, QA, review), they are pulling the code in opposite directions, usually because the
+# work order asks for two incompatible things: a person decides instead of a further revision.
+CONFLICT_GATES = frozenset({"finalize_code_review", "code_review", "qa_gate"})
+CONFLICT_RUN = 3
+
+
+def _feedback(task: dict[str, Any]) -> str:
+    task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+    return str(task_input.get("review_feedback") or task_input.get("qa_feedback") or "").strip()
+
+
+def conflicting_gates(existing: list[dict[str, Any]], gate_step: str, comments: str) -> list[dict[str, str]] | None:
+    """The alternating rejections when review and QA keep undoing each other, else None.
+
+    ``existing`` are this budget's revisions, oldest first; each records the gate that asked
+    for it (``_revision_source``). Adding the gate blocking now, the last ``CONFLICT_RUN``
+    sources must alternate between two different conflict gates.
+    """
+    if gate_step not in CONFLICT_GATES:
+        return None
+    history = [
+        {"step": str((task.get("input") or {}).get("_revision_source") or ""), "feedback": _feedback(task)}
+        for task in sorted(existing, key=lambda task: str(task.get("created_at") or ""))
+        if isinstance(task.get("input"), dict) and (task.get("input") or {}).get("_revision_source")
+    ]
+    history.append({"step": gate_step, "feedback": comments.strip()})
+    run = history[-CONFLICT_RUN:]
+    if len(run) < CONFLICT_RUN or any(item["step"] not in CONFLICT_GATES for item in run):
+        return None
+    steps = [_gate_kind(item["step"]) for item in run]
+    alternating = all(steps[i] != steps[i + 1] for i in range(len(steps) - 1)) and len(set(steps)) == 2
+    return run if alternating else None
+
+
+def _gate_kind(step: str) -> str:
+    return "qa" if step == "qa_gate" else "review"
 
 
 def _revision_budget(task: dict[str, Any]) -> str:
@@ -209,6 +246,16 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         # The unbudgeted count includes the graph's own first run of the step;
         # a human grant restarts the count at the granted revision.
         limit = max_revisions if budget or grant or granted_at is not None else 1 + max_revisions
+        conflict = None if grant else conflicting_gates(existing, str(gate.get("step_name") or ""), ctx.reject_comments or "")
+        if conflict:
+            return {
+                "status": "revision_limit",
+                "reason": "conflicting_feedback",
+                "workflow_id": ctx.workflow_id,
+                "existing_revisions": len(existing),
+                "max_revisions": max_revisions,
+                "conflict": conflict,
+            }
         if len(existing) >= limit:
             return {
                 "status": "revision_limit",
@@ -234,6 +281,8 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         **{key: value for key, value in mapped.items() if value is not None},
     }
     revise_input.pop("_revision_grant", None)
+    if block_loop:
+        revise_input["_revision_source"] = str(gate.get("step_name") or "")
     if budget:
         revise_input["_revision_budget"] = budget
         if block_loop:

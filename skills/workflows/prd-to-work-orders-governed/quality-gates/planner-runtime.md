@@ -13,6 +13,7 @@
 | 9 | work_order_ids | Top-level IDs missing or mismatched | Set `work_order_ids` array |
 | 10 | Technical constraints | A WO lacks `## Technical Constraints`, or it omits a framework, storage, or named entity the PRD states | Copy the full constraint list into every WO |
 | 11 | Repositories | With `input.project_repositories`, a WO lacks a `Repository:` line, names a repository not in the list, or WO dependencies form a cycle between repositories. In any project, a WO keeps the placeholder `owner/name` | Name one listed repository per WO, or leave the line out when there is no list; split or reorder WOs so dependencies between repositories point one way |
+| 12 | Consistency | Within one WO, two statements cannot both hold: a requirement, constraint, implementation note or acceptance test asks for X while another asks for not-X (for example "sort the list newest first" and "keep the existing sort order unchanged"); or a WO contradicts a WO it depends on | Settle it from the PRD and FRDs and rewrite both statements to agree. If the PRD does not settle it, pick the reading that keeps the PRD's Must requirements, say which in the WO, and record the choice in `warnings` |
 
 Record unresolved items in `warnings`. Set `planner_complete: true` only when gates pass.
 

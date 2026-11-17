@@ -730,16 +730,27 @@ class WorkflowEngine:
                         "must decide next steps."
                     )
                     tasks = list(self._workflow_payload(workflow_id).get("tasks") or [])
+                    reason = str(revise_result.get("reason") or "revision_limit")
                     human_decisions.mark_awaiting_human_decision(
-                        self.client, str(task.get("id") or ""), tasks, reason="revision_limit"
+                        self.client, str(task.get("id") or ""), tasks, reason=reason
                     )
-                    ctx.extras["channel_text"] = human_decisions.revision_limit_text(
-                        label=human_decisions.work_order_label(tasks, ctx.workflow),
-                        cause=cause,
-                        feedback=ctx.reject_comments,
-                        max_revisions=int(revise_result.get("max_revisions") or 0),
-                        decisions=human_decisions.available_decisions(ctx.stage),
-                    )
+                    label = human_decisions.work_order_label(tasks, ctx.workflow)
+                    decisions = human_decisions.available_decisions(ctx.stage)
+                    if reason == "conflicting_feedback":
+                        ctx.extras["error"] = (
+                            "Code review and QA keep asking for opposite changes; a human must decide."
+                        )
+                        ctx.extras["channel_text"] = human_decisions.conflicting_feedback_text(
+                            label=label, conflict=list(revise_result.get("conflict") or []), decisions=decisions
+                        )
+                    else:
+                        ctx.extras["channel_text"] = human_decisions.revision_limit_text(
+                            label=label,
+                            cause=cause,
+                            feedback=ctx.reject_comments,
+                            max_revisions=int(revise_result.get("max_revisions") or 0),
+                            decisions=decisions,
+                        )
                 elif revise_result.get("status") == "stopped":
                     ctx.extras["error"] = f"{cause}; the work order is stopped."
                 notify_result = self._maybe_notify(ctx, "blocked")

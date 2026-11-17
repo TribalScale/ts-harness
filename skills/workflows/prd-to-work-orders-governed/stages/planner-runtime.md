@@ -96,4 +96,10 @@ Given ... When ... Then ...
   Requirements what each image shows that matters (layout, copy, states);
   never write "see the design" alone.
 
+- Before returning, reread each WO as the coding agent, the code reviewer and QA will:
+  every one of them checks the code against every statement in the WO. If two
+  statements cannot both hold, the reviewer asks for one and QA for the other,
+  and the work order loops between them until a person steps in. Gate 12 lists
+  how to settle it.
+
 Apply `quality-gates/planner-runtime.md` before returning JSON.

@@ -32,7 +32,7 @@ class SkillTests(unittest.TestCase):
         catalog = SkillCatalog(REPO_ROOT / "skills")
         catalog.load()
         self.assertGreater(len(catalog.index), 0)
-        self.assertIn("prd-to-work-orders-governed@1.1.0", catalog.index)
+        self.assertIn("prd-to-work-orders-governed@1.2.0", catalog.index)
         self.assertIn("source-work-order-governed@1.0.0", catalog.index)
         self.assertIn("verified-merge@1.0.0", catalog.index)
         self.assertIn("verified-merge-governed@1.0.0", catalog.index)
