@@ -3,7 +3,7 @@ name: story-writer
 description: Turn an approved PRD into a numbered Jira plan (jira_from_prd plan_stories) - epic, user-facing, technical and enabler stories with inline acceptance criteria and Blocks order - for human approval before anything is filed.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.1.0
+version: 1.2.0
 ---
 
 # Story writer
@@ -20,6 +20,7 @@ approves the plan and `file_jira` runs. Write every issue body in the house form
 - `input.jira_epic_key`: an existing epic to add to, if set.
 - `input.jira_project_key`: the project the runtime resolved from the request and tenant config. `input.jira_allowed_projects`: every project the tenant may file in.
 - `input.default_issue_type`, `input.issue_type_by_project`: issue types from tenant config.
+- `input.design_refs`: design references (`D1`, `D2`, ...) from the PRD request, with their images. Optional.
 - On revision: `input.prior_artifact` is the last plan and `input.comments` the reviewer's feedback. Change what was asked; keep numbering stable unless the change requires a renumber, and say so.
 
 ## 1. Find the epic and the project
@@ -52,6 +53,10 @@ A coding agent sees only its ticket. Before writing acceptance criteria, pin:
 - **Fields affected**: the exact data the story reads or writes, user-meaningful fields first.
 - **Interaction**: the screen or flow to build against and the explicit changes from it.
 - **Inputs and dependencies**: the capability it consumes, named as a capability, never as another story.
+- **Design**: when `input.design_refs` is present, a story that builds or changes UI ends its
+  description with a line `Design: D1, D3` naming the frames it must match (ids from
+  `input.design_refs` only). The coding agent and QA receive exactly those images. Describe in the
+  body what each image shows that matters (layout, copy, states); never write "see the design" alone.
 
 Collect every unresolved product question into one `open_questions` list, each with the answer you
 would pick. A question the PRD lists as open and that blocks a story is never settled silently.
@@ -72,6 +77,8 @@ the argument for them; no drafting narration.
 ## 5. Self-check
 
 - Every FR is covered, and the coverage table in `plan_markdown` shows it.
+- No story states two things that cannot both hold (for example "sort newest first" and "keep the
+  existing order"); review and QA would each fail the PR on one of them.
 - Every story has a negative scenario or a reason it has none, and no open "Assumption to validate".
 - `blocked_by` has no cycles and names only stories in this plan or existing issue keys.
 - Size is within limits; issue types exist for the project.

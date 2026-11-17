@@ -32,6 +32,12 @@ Without any designs, nothing changes.
   `design/figma/<file>/<version>/`, so later steps and later requests for the same version make no
   API calls. A new version (the design changed) is fetched again.
 
+- On the Jira path, `plan_stories` (PRD to Jira) sees the images and ends each UI story with
+  `Design: D1, D3`. When a ticket is implemented (`implement_jira_ticket`),
+  `prepare_ticket_delivery` loads the references of the program the ticket points at
+  (`Program:` in its description) and adds the ticket's own image attachments as further
+  references, named on its Design line (`runtime/ts_harness/jira/ticket_delivery.py`).
+
 `design/` is kept for a year (bucket lifecycle rule), unlike `intake/` (14 days), so references
 outlive the request.
 

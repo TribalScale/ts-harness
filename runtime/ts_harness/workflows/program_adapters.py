@@ -179,6 +179,9 @@ def _build_jira_inputs(
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
     if artifacts.get("approved_prd"):
         intake["approved_prd"] = artifacts["approved_prd"]
+    if artifacts.get("design_refs"):
+        # plan_stories sees the images and names them per story (`Design: D1`).
+        intake["design_refs"] = artifacts["design_refs"]
     return intake
 
 

@@ -103,6 +103,28 @@ class JiraClient:
         fields = "summary,status,issuetype,description,parent,labels,priority,assignee,issuelinks"
         return self.request("GET", f"{self._issue_path(key)}?fields={fields}") or {}
 
+    def image_attachments(self, key: str) -> list[dict[str, Any]]:
+        """The issue's image attachments: ``[{id, filename, mime, size}]``."""
+        payload = self.request("GET", f"{self._issue_path(key)}?fields=attachment") or {}
+        out = []
+        for item in (payload.get("fields") or {}).get("attachment") or []:
+            mime = str(item.get("mimeType") or "").lower()
+            if mime.startswith("image/") and item.get("id"):
+                out.append(
+                    {"id": str(item["id"]), "filename": str(item.get("filename") or ""), "mime": mime, "size": int(item.get("size") or 0)}
+                )
+        return out
+
+    def attachment_content(self, attachment_id: str) -> bytes:
+        """An attachment's bytes (Jira redirects to its media store; the transport follows it)."""
+        status, raw = self._send("GET", f"/rest/api/3/attachment/content/{urllib.parse.quote(str(attachment_id), safe='')}", None)
+        if status == 401 and self.auth.mode == "oauth":
+            self.auth.invalidate()
+            status, raw = self._send("GET", f"/rest/api/3/attachment/content/{urllib.parse.quote(str(attachment_id), safe='')}", None)
+        if status >= 400:
+            raise JiraError(status, raw.decode(errors="replace") if raw else "")
+        return raw or b""
+
     def list_projects(self, *, action: str = "browse") -> list[dict[str, Any]]:
         projects: list[dict[str, Any]] = []
         for _ in range(MAX_PROJECT_PAGES):

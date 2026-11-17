@@ -22,6 +22,19 @@ With a key: `entry_phase=implement` and `artifacts.jira_issue_key=PROJ-123`.
 
 The kickoff (`hydrate_ticket`) is a human gate. Approving it starts implementation in `deliver_work_order` as the dev agent.
 
+Between the kickoff and the coding job, `prepare_ticket_delivery` (no agent) gets the ticket ready:
+
+- **Design references**: those of the program the ticket points at, and the ticket's image
+  attachments (see [Design references](design-references.md)).
+- **Repository onboarding**: the same check as planned work orders. When the repository's CI runs
+  an e2e or integration suite and it has no `.ts-harness.yml`, the work order also asks the coding
+  job to add the file, so the ticket's PR sets the repository up. A queue runs one ticket at a time, so
+  only the first ticket's PR adds it. Two tickets started separately on the same repository before
+  that PR merges both add the file, and the second PR conflicts on it: keep the merged version.
+
+A lookup that fails (no Jira credentials, clone error) is listed in the step's `warnings`; the
+ticket still runs.
+
 ## Identity
 
 Requires `identity.slack_user_emails` plus `identity.jira_account_ids` (email → accountId).

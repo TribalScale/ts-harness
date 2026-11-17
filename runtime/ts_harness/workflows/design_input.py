@@ -31,7 +31,17 @@ from ts_harness.intake.design import (
 logger = logging.getLogger(__name__)
 
 PLANNING_STEPS = frozenset(
-    {"intake", "draft_prd", "revise_prd", "refine_requirements", "design_blueprints", "plan_work_orders"}
+    {
+        "intake",
+        "draft_prd",
+        "revise_prd",
+        "refine_requirements",
+        "design_blueprints",
+        "plan_work_orders",
+        # The PRD -> Jira path: stories name the frames each one builds (`Design: D1`).
+        "review_prd",
+        "plan_stories",
+    }
 )
 CODING_STEPS = frozenset({"deliver_work_order", "revise_work_order"})
 QA_STEPS = frozenset({"qa_gate"})
