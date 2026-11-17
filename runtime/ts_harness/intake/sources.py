@@ -7,6 +7,7 @@ A pointer is a small dict naming where a source lives, never its bytes:
 - ``discord_file``: ``attachment_id``, ``url``, ``name``, ``mime``, ``size``, ``object_key``
 - ``stored``: ``object_key``, ``sha256``, ``size``, ``name``, ``mime`` (console uploads)
 - ``drive``: ``url``, ``file_id``, ``drive_type``
+- ``figma``: ``url``, ``file_key``, ``node_id`` (API form ``1:2``; empty for a whole file)
 
 Any pointer may carry ``error``; it is then reported at gather, not fetched.
 """
@@ -28,7 +29,7 @@ MAX_TOTAL_TEXT_CHARS = 150_000
 MAX_FOLDER_CHILDREN = 50
 INTAKE_RETENTION_DAYS = 14
 
-POINTER_KINDS = frozenset({"slack_file", "telegram_file", "discord_file", "stored", "drive"})
+POINTER_KINDS = frozenset({"slack_file", "telegram_file", "discord_file", "stored", "drive", "figma"})
 
 # A DOCX's document.xml past this size is refused rather than inflated (zip bombs).
 _MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
@@ -42,6 +43,12 @@ _DRIVE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"https?://drive\.google\.com/drive/(?:u/\d+/)?folders/" + _DRIVE_ID), "folder"),
     (re.compile(r"https?://drive\.google\.com/open\?(?:[^\s#]*&)?id=" + _DRIVE_ID), "unknown"),
 )
+
+# figma.com/design|file|proto|board/<key>/<name>?node-id=12-34 (the URL writes node ids with "-").
+_FIGMA_LINK = re.compile(
+    r"https?://(?:www\.)?figma\.com/(?:design|file|proto)/([A-Za-z0-9]{10,})(?:/[^\s?#)>\]]*)?(?:\?[^\s#)>\]]*)?"
+)
+_FIGMA_NODE = re.compile(r"[?&]node-id=([0-9]+(?:[-:%3A]+[0-9]+)?)")
 
 _TEXT_MIMES = frozenset(
     {
@@ -97,6 +104,19 @@ def parse_drive_urls(text: str) -> list[dict[str, Any]]:
     return dedupe_pointers([pointer for _start, pointer in found])
 
 
+def parse_figma_urls(text: str) -> list[dict[str, Any]]:
+    """Figma pointers for every design, file or prototype link in ``text``, deduped."""
+    found: list[dict[str, Any]] = []
+    for match in _FIGMA_LINK.finditer(text or ""):
+        url = match.group(0).rstrip(".,;")
+        node = _FIGMA_NODE.search(url)
+        node_id = ""
+        if node:
+            node_id = node.group(1).replace("%3A", ":").replace("-", ":")
+        found.append({"kind": "figma", "url": url, "file_key": match.group(1), "node_id": node_id})
+    return dedupe_pointers(found)
+
+
 def pointer_identity(pointer: dict[str, Any]) -> str:
     kind = str(pointer.get("kind") or "")
     key = {
@@ -105,6 +125,7 @@ def pointer_identity(pointer: dict[str, Any]) -> str:
         "telegram_file": pointer.get("file_unique_id") or pointer.get("file_id"),
         "discord_file": pointer.get("attachment_id") or pointer.get("url"),
         "stored": pointer.get("sha256") or pointer.get("object_key"),
+        "figma": f"{pointer.get('file_key')}:{pointer.get('node_id') or ''}" if pointer.get("file_key") else None,
     }.get(kind)
     if key:
         return f"{kind}:{key}"
@@ -125,7 +146,7 @@ def dedupe_pointers(pointers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def pointers_from_message(*, text: str, attachments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Adapter-built attachment pointers first, then Drive links in the text; deduped.
+    """Adapter-built attachment pointers first, then Drive and Figma links in the text; deduped.
 
     Entries that are not dicts or name an unknown kind are dropped. An entry carrying raw
     file content is kept as an error pointer so the requester is told to upload instead.
@@ -147,6 +168,7 @@ def pointers_from_message(*, text: str, attachments: list[dict[str, Any]] | None
         if item.get("kind") in POINTER_KINDS:
             out.append(dict(item))
     out.extend(parse_drive_urls(text))
+    out.extend(parse_figma_urls(text))
     return dedupe_pointers(out)
 
 

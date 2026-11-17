@@ -1932,13 +1932,13 @@ def _run_effort(agent: Any, payload: dict[str, Any], source: str) -> str | None:
 
 
 def _with_images(text: str, images: Any) -> Any:
-    """Task text plus image parts (``{"name", "url"}``, data or https URLs) in Chat Completions form."""
+    """Task text plus image parts (``{"name", "url", "label"?}``, data or https URLs) in Chat Completions form."""
     parts: list[dict[str, Any]] = []
     for image in images if isinstance(images, list) else []:
         url = str((image or {}).get("url") or "") if isinstance(image, dict) else ""
         if url.startswith(("data:image/", "https://")):
             parts += [
-                {"type": "text", "text": f"Screenshot: {image.get('name') or 'image'}"},
+                {"type": "text", "text": str(image.get("label") or f"Screenshot: {image.get('name') or 'image'}")},
                 {"type": "image_url", "image_url": {"url": url}},
             ]
     return [{"type": "text", "text": text}, *parts] if parts else text

@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n with a priority, records intake decisions and assumptions, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.3.1
+version: 1.4.0
 ---
 
 # PRD drafter
@@ -168,3 +168,7 @@ reviewer next to the draft, so fix them before returning.
 Governed `prd_request`: return the PRD in `result.prd_markdown` only; the runtime publishes it
 to Google Drive. Outside a workflow, follow `skills/pm/google-workspace.md` to save a Doc, and
 continue with Markdown only if that fails.
+
+## Design references
+
+When `input.design_refs` is present, the request came with Figma frames or images (`D1`, `D2`…); the images follow the task message and `input.design_refs_text` names them. Read them as the source for the user interface: describe the screens, content, states and flows they show in the requirements, cite them by id ("per D2"), and list questions where a design and the text disagree. Never invent UI the designs and text don't support.

@@ -37,6 +37,9 @@ if [[ -d "$ENTERPRISE_ASSETS_DIR/.git" ]]; then
     # Ensure proper ownership before git operations (may have been cloned as root in bootstrap).
     chown -R "$ADMIN_USER:$ADMIN_USER" "$ENTERPRISE_ASSETS_DIR"
     sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" remote set-url origin "$ENTERPRISE_REPO_URL"
+    # Hosts made phase scripts executable before the runner switched to `bash <script>`; mode
+    # changes must not block the checkout below.
+    sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" config core.fileMode false
     if [[ -n "${ENTERPRISE_REPO_REF:-}" ]]; then
         # Run the configured branch (install YAML runtime.enterprise_repo_ref), not whatever is checked out.
         sudo -u "$ADMIN_USER" git -C "$ENTERPRISE_ASSETS_DIR" fetch --quiet origin "$ENTERPRISE_REPO_REF"

@@ -4,6 +4,8 @@ Transform Refinery JSON artifacts into technical Blueprints returned as JSON mar
 
 ## Inputs
 
+- `input.design_refs` / `input.design_refs_text` — design references (`D1`, `D2`…; images follow the task message) when the request had Figma links or images; derive UI requirements from what they show and cite their ids
+
 - `input.approved_prd` — source PRD
 - `input.prior_refinery` — refinery `output.artifacts` from `refine_requirements`
 - `input.stage` — must be `foundry`

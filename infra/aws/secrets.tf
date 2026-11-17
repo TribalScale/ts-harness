@@ -15,6 +15,7 @@ locals {
     "github-token"                        = { consumers = ["dev-agent"] }
     "github-app-private-key"              = { consumers = ["gateway"] }
     "github-app-webhook-secret"           = { consumers = ["gateway"] }
+    "figma-token"                         = { consumers = ["pm-agent"] }
     "coding-backend-api-key"              = { consumers = ["dev-agent"] }
     "coding-backend-provider"             = { consumers = ["dev-agent"] }
     "coding-backend-model"                = { consumers = ["dev-agent"] }

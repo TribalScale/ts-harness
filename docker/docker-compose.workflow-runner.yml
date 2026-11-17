@@ -52,6 +52,14 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TS_HARNESS_INTAKE_VISION_MODEL: ${TS_HARNESS_INTAKE_VISION_MODEL:-}
+      # gather_sources (runs here) describes attached images with the stage agent's model; without
+      # the provider keys every image attached to a request came back "image could not be read".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      # Figma links in requests become design references (gather_sources runs here).
+      FIGMA_TOKEN: ${FIGMA_TOKEN:-}
       # The runner has no env_file; point the Workspace client at the mounted key.
       GOOGLE_WORKSPACE_SA_JSON_PATH: /config/google-workspace-sa.json
       LLM_PROXY_URL: ${LLM_PROXY_URL:-}

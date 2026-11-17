@@ -243,3 +243,13 @@ class StaleTailnetDeviceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PhaseRunnerModeTests(unittest.TestCase):
+    def test_phases_run_through_bash_without_changing_file_modes(self):
+        # chmod +x on a phase script marks the checkout modified, and the next git checkout that
+        # edits that phase (phase 09, redeploys) refuses to run.
+        text = (REPO / "scripts" / "bootstrap" / "run.sh").read_text()
+        self.assertIn('bash "$script_path" </dev/null', text)
+        self.assertNotIn('chmod +x "$script_path"', text)
+        self.assertIn("config core.fileMode false", (PHASES / "09-clone-enterprise.sh").read_text())

@@ -112,6 +112,18 @@ resource "google_storage_bucket" "intake" {
     }
   }
 
+  # Design references (Figma frames, attached images) outlive the request; see
+  # docs/runbooks/design-references.md.
+  lifecycle_rule {
+    condition {
+      age            = 365
+      matches_prefix = ["design/"]
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
   labels = {
     purpose = "request-intake-files"
   }

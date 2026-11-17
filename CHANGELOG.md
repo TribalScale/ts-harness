@@ -11,6 +11,12 @@ First public release.
 
 ### Added
 
+- Design references: Figma links and images attached to a PRD request become `D1`, `D2`… images that travel with the program ([Design references](docs/runbooks/design-references.md)).
+  - PRD intake, drafting and the planning stages see them as images; the planner names each UI work order's frames (`- Design: D1, D3`).
+  - The coding job gets its work order's images in `.ts-harness/design/` (never committed) and a prompt section to match them; QA compares its Playwright screenshots against them.
+  - Figma frames are read through the REST API with a read-only `figma-token` (Dev seat), rendered to PNG, summarized (text, components, colors, fonts) and cached per file version. Without a token, links stay text and attached images still work.
+  - Images are kept under `design/` in the intake bucket for a year (Terraform: IAM and lifecycle rule; new `figma-token` secret).
+
 - Hosts can be rebuilt from the repo and the stored install config ([Rebuild a host](docs/runbooks/rebuild-a-host.md)):
   - `install.sh apply` stores the install YAML beside the Terraform state; `install.sh config pull|push|diff` manage it; `plan --replace` plans a rebuild.
   - `runtime.enterprise_repo_ref` picks the branch the host clones and runs; `redeploy.sh` warns when another branch is checked out.
@@ -306,6 +312,10 @@ First public release.
   at runtime, and `*.lkg` is now ignored.
 
 ### Fixed
+
+- Images attached to a PRD request were never described: `gather_sources` runs in the workflow runner, which had no model-provider keys, so every image came back "image could not be read" (`x-api-key header is required`). The runner now gets `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and `MISTRAL_API_KEY`. An image whose description fails is still kept as a design reference.
+
+- Rebuild path: the bootstrap runner made phase scripts executable (`chmod +x`), which marked the host's checkout modified, so the next `git checkout` of a branch that edits a phase (phase 09, redeploys) refused to run. Phases now run with `bash <script>`, and phase 09 sets `core.fileMode false`. The instance also ignores user data from its launch template, so the first apply after a rebuild no longer stops and restarts it.
 
 - Release gates say why they failed: a check can return a reason, `agent_redteam` names every failing case, and `agent_output_judge` re-runs a failing case once (a model grading free text can be wrong once) and records cases that passed only on the retry. The red-team gate is never retried. Before this, a single false fail from the output judge stopped a host bootstrap with no reason logged.
 
