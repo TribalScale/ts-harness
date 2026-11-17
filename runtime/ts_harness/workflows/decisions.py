@@ -11,6 +11,8 @@ class DecisionActor:
     actor_id: str
     email: str | None = None
     roles: tuple[str, ...] = field(default_factory=tuple)
+    # A console user's sign-in permissions (session ``actor_permissions``), beside role bundles.
+    permissions: tuple[str, ...] = field(default_factory=tuple)
 
     def as_fields(self) -> dict[str, Any]:
         fields: dict[str, Any] = {}
@@ -54,7 +56,7 @@ def _permissions_for_actor(actor: DecisionActor, config: Any = None) -> set[str]
     from ts_harness.policy.permissions import effective_bundles, permissions_for_roles
 
     cfg = config if config is not None else _live_config()
-    return permissions_for_roles(actor.roles, effective_bundles(cfg))
+    return permissions_for_roles(actor.roles, effective_bundles(cfg)) | set(actor.permissions)
 
 
 def refusal_for_permission(actor: DecisionActor, permission: str, config: Any = None) -> str | None:
@@ -179,4 +181,10 @@ def resolve_decision_actor(
         email = str(resolved or "").strip().lower() or None
     roles = set(roles_for_email(email, cfg))
     roles.update(str(role).strip().lower() for role in extra_roles or [] if str(role).strip())
-    return DecisionActor(actor_id=actor_id, email=email, roles=tuple(sorted(roles)))
+    granted = meta.get("actor_permissions") if isinstance(meta.get("actor_permissions"), list) else []
+    return DecisionActor(
+        actor_id=actor_id,
+        email=email,
+        roles=tuple(sorted(roles)),
+        permissions=tuple(str(p) for p in granted if str(p).strip()),
+    )

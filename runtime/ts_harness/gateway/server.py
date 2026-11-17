@@ -854,6 +854,18 @@ class RuntimeState:
         user_text = str(body.get("text") or "")
         actor_email = chat_actor_email(body, auth, channel, self.config)
 
+        from ts_harness.workflows.decisions import CHANNEL_SOURCES
+
+        if not getattr(auth, "is_service", False) and channel not in CHANNEL_SOURCES:
+            # A console user decides gates in chat with their sign-in permissions; refreshed on
+            # every message (channel replies authenticate as the webhook and never set this).
+            from ts_harness.policy.permissions import actor_permissions
+
+            granted = sorted(actor_permissions(auth, self.config))
+            if (session.metadata or {}).get("actor_permissions") != granted:
+                session.metadata = {**(session.metadata or {}), "actor_permissions": granted}
+                get_session_store().save(session)
+
         if actor_email:
             metadata = dict(session.metadata or {})
             if metadata.get("actor_email") != actor_email:

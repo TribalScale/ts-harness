@@ -182,3 +182,15 @@ class PickReplyGoAheadTests(unittest.TestCase):
         self.assertFalse(_intake_go_ahead(pick, "which ones are blocked?"))
         # Other intake gates still collect answers until "ready".
         self.assertFalse(_intake_go_ahead({"step_name": "intake", "input": {}}, "THD-33 is related"))
+
+
+class ConsoleGatePermissionTests(unittest.TestCase):
+    def test_a_console_user_decides_with_their_sign_in_permissions(self):
+        from ts_harness.workflows.decisions import refusal_for_permission, resolve_decision_actor
+
+        config = SimpleNamespace(identity=SimpleNamespace(provider="oidc", role_emails={}), permissions=None)
+        meta = {"channel": "web", "actor_email": "pm@example.com", "actor_permissions": ["approve_gate", "view"]}
+        actor = resolve_decision_actor(meta, fallback_actor="orchestrator", config=config)
+        self.assertIsNone(refusal_for_permission(actor, "approve_gate", config))
+        without = resolve_decision_actor({**meta, "actor_permissions": ["view"]}, fallback_actor="orchestrator", config=config)
+        self.assertEqual(refusal_for_permission(without, "approve_gate", config), "missing permission approve_gate")
