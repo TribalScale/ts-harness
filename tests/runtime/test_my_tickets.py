@@ -152,3 +152,15 @@ class PickGateTests(unittest.TestCase):
         output = client.approve_task.call_args.kwargs["output"]
         self.assertEqual(output["jira_issue_key"], "THD-34")
         self.assertNotIn("jira_epic_key", output)
+
+
+class ChatActorEmailTests(unittest.TestCase):
+    def test_console_messages_use_the_sign_in_email(self):
+        from ts_harness.gateway.auth import AuthContext
+        from ts_harness.gateway.server import chat_actor_email
+
+        person = AuthContext(actor_id="oidc-subject-1", tenant_id="t", email="pm@example.com", auth_provider="oidc")
+        self.assertEqual(chat_actor_email({"text": "show my tickets"}, person, "web", None), "pm@example.com")
+        self.assertEqual(chat_actor_email({"sender_email": "x@example.com"}, person, "web", None), "x@example.com")
+        service = AuthContext(actor_id="gateway", tenant_id="t", email="svc@example.com", is_service=True)
+        self.assertIsNone(chat_actor_email({}, service, "web", None))
