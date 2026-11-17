@@ -132,6 +132,9 @@ resource "aws_instance" "harness" {
   }
 
   lifecycle {
-    ignore_changes = [launch_template]
+    # The instance's user data comes from the launch template it was launched from. Without
+    # ignoring it, the next apply after a rebuild "removes" it, and changing user data stops and
+    # restarts the instance.
+    ignore_changes = [launch_template, user_data, user_data_base64]
   }
 }
