@@ -3,7 +3,7 @@ name: prd-intake
 description: Ask the clarifying questions for a PRD request (prd_request intake), each with a recommended answer the requester can accept with "yes". Never drafts the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.1.0
+version: 1.2.0
 ---
 
 # PRD intake
@@ -80,3 +80,7 @@ the requester how to reply.
 ```
 
 Tool, memory or recall problems go in `warnings`, never in a question.
+
+## Design references
+
+When `input.design_refs` is present, the request came with Figma frames or images (`D1`, `D2`…); the images follow the task message and `input.design_refs_text` names them. Read them as the source for the user interface: describe the screens, content, states and flows they show in the requirements, cite them by id ("per D2"), and list questions where a design and the text disagree. Never invent UI the designs and text don't support.

@@ -375,6 +375,7 @@ def build_implement_prompt(
     human_change_requests: list[str] | None = None,
     knowledge_notes: list[dict] | None = None,
     test_environment_note: str = "",
+    design_files: list[dict] | None = None,
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -409,6 +410,11 @@ def build_implement_prompt(
     notes = render_knowledge_notes(knowledge_notes, headings=True)
     if notes:
         hard_rules += "\n" + notes
+    from ts_harness.implementation.design_files import render_design_prompt
+
+    design = render_design_prompt(list(design_files or []))
+    if design:
+        hard_rules += "\n" + design
     cited = [path for path in (revision_files or []) if str(path).strip()]
     if cited:
         hard_rules += (
@@ -468,6 +474,18 @@ def build_implement_prompt(
         f"{hard_rules}\n"
         f"{work_order_body.strip()}"
     )
+
+
+def _materialize_design(repo_dir: Path, refs: list[dict] | None) -> list[dict]:
+    """Design images into the workspace's .ts-harness/design/; a failure never stops the run."""
+    if not refs:
+        return []
+    try:
+        from ts_harness.implementation.design_files import materialize_design_refs
+
+        return materialize_design_refs(repo_dir, refs)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def build_refresh_prompt(work_order_id: str, work_order_body: str, conflicted: list[str]) -> str:
@@ -1015,6 +1033,7 @@ class OpenCodeBackend:
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
             test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            design_files = _materialize_design(repo_dir, request.design_refs)
             prompt = build_implement_prompt(
                 request.work_order_id,
                 request.work_order_body,
@@ -1028,6 +1047,7 @@ class OpenCodeBackend:
                 human_change_requests=request.human_change_requests,
                 knowledge_notes=request.knowledge_notes,
                 test_environment_note=test_env.services_note,
+                design_files=design_files,
             )
             cmd = build_opencode_command(
                 binary=binary,

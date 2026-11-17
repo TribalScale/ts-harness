@@ -59,7 +59,7 @@ class GatherStepTests(unittest.TestCase):
         with mock.patch.object(connectors, "build_download") as download, \
                 mock.patch.object(connectors, "build_drive") as drive:
             result = self._run(self._tasks(None))
-        self.assertEqual(result["output"], {"sources": [], "sources_text": "", "skipped": []})
+        self.assertEqual(result["output"], {"sources": [], "sources_text": "", "skipped": [], "design_refs": []})
         download.assert_not_called()
         drive.assert_not_called()
 

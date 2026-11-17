@@ -1327,6 +1327,7 @@ class WorkflowRunner:
         from ts_harness.workflows import coding_job_stage
 
         if stage is not None and stage.execution == "coding_job" and coding_job_stage.enabled():
+            self._add_design_input(task, task_input)
             self._dispatch_coding_job(task, stage, task_input, contract, dispatch_started)
             return
 
@@ -1344,6 +1345,7 @@ class WorkflowRunner:
                 task_input.update(qa_screenshot_input(list(record.get("tasks") or [])))
             except Exception as exc:  # noqa: BLE001 - QA still runs on the text evidence
                 log_event("qa_screenshots_error", task_id=task.get("id"), error=str(exc))
+        self._add_design_input(task, task_input)
         payload = {
             "workflow_id": task.get("workflow_id"),
             "task_id": task.get("id"),
@@ -1376,6 +1378,28 @@ class WorkflowRunner:
         if is_qa:
             self._publish_qa_status(task, "qa_finished", task_input, result)
         self._apply_dispatch_result(task, stage, result, dispatch_started)
+
+    def _add_design_input(self, task: dict[str, Any], task_input: dict[str, Any]) -> None:
+        """Design references (Figma frames, attached images) for PRD, planning, coding and QA steps."""
+        from ts_harness.workflows.design_input import CODING_STEPS, PLANNING_STEPS, QA_STEPS, design_input
+
+        if str(task.get("step_name") or "") not in PLANNING_STEPS | CODING_STEPS | QA_STEPS:
+            return
+        try:
+            record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+            added = design_input(task, list(record.get("tasks") or []), task_input)
+        except Exception as exc:  # noqa: BLE001 - the step still runs without design input
+            log_event("design_input_error", task_id=task.get("id"), error=str(exc))
+            return
+        if added:
+            task_input.update(added)
+            log_event(
+                "design_input",
+                task_id=task.get("id"),
+                step=task.get("step_name"),
+                refs=[ref.get("id") for ref in added.get("design_refs") or []],
+                images=len(added.get("_images") or []),
+            )
 
     def _carry_forward(
         self,

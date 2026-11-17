@@ -19,7 +19,7 @@ ExtractOutputsFn = Callable[..., dict[str, Any]]
 # unconfirmed when they come from adapters rather than workflow contracts.
 # extract_declared_outputs trusts the node's produces_artifacts list (None).
 ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
-    "extract_prd_outputs": frozenset({"approved_prd"}),
+    "extract_prd_outputs": frozenset({"approved_prd", "design_refs"}),
     "extract_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "planning_track"}),
     "extract_work_orders_outputs": frozenset(
         {
@@ -137,6 +137,10 @@ def _extract_prd_outputs(
         approved = _approved_draft(tasks)
         if approved is not None:
             patch["approved_prd"] = approved
+    # Design references (Figma frames, attached images) follow the PRD into planning and delivery.
+    refs = merged.get("design_refs")
+    if isinstance(refs, list) and refs:
+        patch["design_refs"] = [ref for ref in refs if isinstance(ref, dict)]
     return patch
 
 
@@ -221,6 +225,8 @@ def _build_work_orders_inputs(
         intake["completed_work_order_ids"] = artifacts.get("completed_work_order_ids")
     if artifacts.get("project_repositories"):
         intake["project_repositories"] = artifacts["project_repositories"]
+    if artifacts.get("design_refs"):
+        intake["design_refs"] = artifacts["design_refs"]
     return intake
 
 
@@ -332,6 +338,7 @@ def _build_implement_inputs(
         "foundry_artifacts",
         "planner_artifacts",
         "jira_issue_key",
+        "design_refs",
     ):
         if artifacts.get(key) is not None:
             intake[key] = artifacts[key]

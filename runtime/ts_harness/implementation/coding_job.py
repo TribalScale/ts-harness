@@ -235,6 +235,7 @@ def build_coding_request(
         ]
         or None,
         "knowledge_notes": _note_list(bound.get("knowledge_notes") if "knowledge_notes" in bound else args.get("knowledge_notes")),
+        "design_refs": _note_list(args.get("design_refs")),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
         # Workers on Fargate have no runtime config file; carry what the run needs.
         "backend": {

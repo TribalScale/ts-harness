@@ -2594,3 +2594,32 @@ class LaneModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesignInputHookTests(unittest.TestCase):
+    """The runner adds design references to PRD, planning, coding and QA steps only."""
+
+    def test_adds_design_input_and_ignores_other_steps(self):
+        runner_module = load_runner()
+        memory = MagicMock()
+        memory.get_workflow_record.return_value = {"tasks": [{"status": "succeeded", "output": {"design_refs": [{"id": "D1"}]}}]}
+        runner = runner_module.WorkflowRunner.__new__(runner_module.WorkflowRunner)
+        runner.memory = memory
+        added = {"design_refs": [{"id": "D1"}], "_images": [{"name": "D1", "url": "data:image/png;base64,AA"}]}
+        with patch("ts_harness.workflows.design_input.design_input", return_value=added) as design_input:
+            task_input: dict = {}
+            runner._add_design_input({"id": "t1", "workflow_id": "wf", "step_name": "draft_prd"}, task_input)
+            self.assertEqual(task_input, added)
+            other: dict = {}
+            runner._add_design_input({"id": "t2", "workflow_id": "wf", "step_name": "approve_prd"}, other)
+            self.assertEqual(other, {})
+        self.assertEqual(design_input.call_count, 1)
+
+    def test_a_failure_leaves_the_task_input_alone(self):
+        runner_module = load_runner()
+        runner = runner_module.WorkflowRunner.__new__(runner_module.WorkflowRunner)
+        runner.memory = MagicMock()
+        runner.memory.get_workflow_record.side_effect = RuntimeError("memory api down")
+        task_input = {"x": 1}
+        runner._add_design_input({"id": "t1", "workflow_id": "wf", "step_name": "qa_gate"}, task_input)
+        self.assertEqual(task_input, {"x": 1})

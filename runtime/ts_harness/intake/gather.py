@@ -7,8 +7,9 @@ Barrier config:
 - ``agent_id``: whose Google Workspace mailbox reads Drive (default ``pm-agent``).
 - ``deadline_seconds``: time budget for the whole gather (default 120).
 
-Output: ``sources``, ``sources_text``, ``skipped``. A source that cannot be read is a
-record with ``error``; the step itself only fails when the pointer list is not a list.
+Output: ``sources``, ``sources_text``, ``skipped``, ``design_refs``. A source that cannot be
+read is a record with ``error``; the step itself only fails when the pointer list is not a list.
+Attached images and Figma frames become ``design_refs`` (``ts_harness.intake.design``).
 """
 
 from __future__ import annotations
@@ -46,10 +47,12 @@ def gather_intake_sources(task: dict[str, Any], config: dict[str, Any], *, memor
     if not isinstance(pointers, list):
         raise ValueError("intake_sources must be a list")
     if not pointers:
-        return {"sources": [], "sources_text": "", "skipped": []}
+        return {"sources": [], "sources_text": "", "skipped": [], "design_refs": []}
     tenant_id = str(workflow.get("tenant_id") or task.get("tenant_id") or "default")
     agent_id = str(config.get("agent_id") or DEFAULT_AGENT_ID)
     needs_drive = any(isinstance(p, dict) and p.get("kind") == "drive" and not p.get("error") for p in pointers)
+    needs_figma = any(isinstance(p, dict) and p.get("kind") == "figma" and not p.get("error") for p in pointers)
+    store = _design_store()
     scope = {
         "tenant": tenant_id,
         "program": workflow.get("program_id"),
@@ -64,5 +67,32 @@ def gather_intake_sources(task: dict[str, Any], config: dict[str, Any], *, memor
         describe_image=connectors.build_image_describer(
             agent_id=agent_id, scope={k: v for k, v in scope.items() if v}
         ),
+        figma=_figma(store, tenant_id) if needs_figma else None,
+        store_design=_store_design(store, tenant_id),
         deadline_s=float(config.get("deadline_seconds") or DEFAULT_DEADLINE_SECONDS),
     )
+
+
+def _design_store() -> Any:
+    try:
+        from ts_harness.intake.blobs import intake_store
+
+        return intake_store()
+    except Exception:  # noqa: BLE001 - without a store, images are only described
+        return None
+
+
+def _store_design(store: Any, tenant_id: str) -> Any:
+    if store is None:
+        return None
+    from ts_harness.intake.design import store_design_image
+
+    return lambda _name, mime, data: store_design_image(store, tenant_id=tenant_id, data=data, mime=mime)
+
+
+def _figma(store: Any, tenant_id: str) -> Any:
+    from ts_harness.intake.figma import build_figma_source
+
+    if store is None:
+        return None
+    return build_figma_source(store=store, tenant_id=tenant_id)

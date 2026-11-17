@@ -1,8 +1,12 @@
 """Turn intake pointers into capped text records.
 
-Fetching is injected (``download``, ``drive``, ``describe_image``) so this module is pure
-logic: caps, budgets, folder expansion, and error records. ``connectors`` holds the real
-clients. A bad source never raises; it becomes a record with ``error`` set.
+Fetching is injected (``download``, ``drive``, ``describe_image``, ``figma``,
+``store_design``) so this module is pure logic: caps, budgets, folder expansion, and error
+records. ``connectors`` holds the real clients. A bad source never raises; it becomes a record
+with ``error`` set.
+
+Images (attached, or Figma frames) also become design references (``ts_harness.intake.design``):
+stored once under ``design/`` and passed as images to the PRD, planning, coding and QA steps.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import logging
 import time
 from typing import Any, Callable, Protocol
 
+from ts_harness.intake.design import number_refs, render_design_refs
 from ts_harness.intake.sources import (
     MAX_FILE_BYTES,
     MAX_FOLDER_CHILDREN,
@@ -99,8 +104,29 @@ def _check_bytes(budget: _Budget, size: int) -> str | None:
     return None
 
 
+StoreDesign = Callable[[str, str, bytes], str]
+FigmaFrames = Callable[[dict[str, Any]], list[dict[str, Any]]]
+
+
+def _keep_design_image(
+    name: str, mime: str, data: bytes, summary: str, store_design: StoreDesign | None, design_refs: list[dict[str, Any]] | None
+) -> None:
+    """An attached image is also a design reference: stored as an image, not only described."""
+    if store_design is None or design_refs is None:
+        return
+    try:
+        key = store_design(name, mime, data)
+    except Exception as exc:  # noqa: BLE001 - the text description still reaches the agent
+        logger.warning("design image %s not stored: %s", name, exc)
+        return
+    design_refs.append(
+        {"title": name, "source": "upload", "mime": mime, "object_key": key, "summary": summary.strip()[:600]}
+    )
+
+
 def _text_record(
-    record: dict[str, Any], name: str, mime: str, data: bytes, budget: _Budget, describe_image: DescribeImage | None
+    record: dict[str, Any], name: str, mime: str, data: bytes, budget: _Budget, describe_image: DescribeImage | None,
+    store_design: StoreDesign | None = None, design_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     limit = min(MAX_TEXT_CHARS, budget.text_left())
     extracted = extract_document(name, mime, data, limit=limit)
@@ -118,6 +144,7 @@ def _text_record(
             record["error"] = "image could not be read"
             return record
         record.update(text=text, truncated=truncated)
+        _keep_design_image(name, mime, data, text, store_design, design_refs)
     elif extracted["error"]:
         record["error"] = extracted["error"]
         return record
@@ -211,9 +238,33 @@ def _resolve_drive(
             skipped.append(skip)
 
 
+def _resolve_figma(
+    pointer: dict[str, Any], figma: FigmaFrames | None, sources: list[dict[str, Any]],
+    design_refs: list[dict[str, Any]], budget: _Budget,
+) -> None:
+    from ts_harness.intake.figma import FigmaError
+
+    url = str(pointer.get("url") or "")
+    name = "Figma: " + url.split("/")[-1].split("?")[0] if url else "Figma link"
+    if figma is None:
+        sources.append(_record("figma", name, url=url, error="Figma is not connected; the link was kept as text"))
+        return
+    try:
+        refs = figma(pointer)
+    except FigmaError as exc:
+        sources.append(_record("figma", name, url=url, error=str(exc)))
+        return
+    text, truncated = clip_text("\n\n".join(str(ref.get("summary") or "") for ref in refs), budget.text_left())
+    budget.text_used += len(text)
+    record = _record("figma", name, url=url, mime="image/png", text=text, truncated=truncated)
+    sources.append(record)
+    design_refs.extend(refs)
+
+
 def _resolve_file(
     pointer: dict[str, Any], download: Download, budget: _Budget, describe_image: DescribeImage | None,
     sources: list[dict[str, Any]], skipped: list[dict[str, str]],
+    store_design: StoreDesign | None = None, design_refs: list[dict[str, Any]] | None = None,
 ) -> None:
     kind = str(pointer.get("kind") or "")
     name = _pointer_name(pointer)
@@ -240,7 +291,7 @@ def _resolve_file(
         skipped.append({"name": name, "reason": "byte budget reached"})
         return
     budget.bytes_used += len(data)
-    sources.append(_text_record(record, name, mime, data, budget, describe_image))
+    sources.append(_text_record(record, name, mime, data, budget, describe_image, store_design, design_refs))
 
 
 def resolve_intake_sources(
@@ -249,16 +300,19 @@ def resolve_intake_sources(
     download: Download,
     drive: DriveSource | None,
     describe_image: DescribeImage | None,
+    figma: FigmaFrames | None = None,
+    store_design: StoreDesign | None = None,
     deadline_s: float = 120,
     max_total_text: int = MAX_TOTAL_TEXT_CHARS,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    """``{sources, sources_text, skipped}`` for ``pointers``. Raises only when ``pointers`` is not a list."""
+    """``{sources, sources_text, skipped, design_refs}`` for ``pointers``. Raises only when ``pointers`` is not a list."""
     if not isinstance(pointers, list):
         raise ValueError("intake_sources must be a list")
     budget = _Budget(deadline_s=deadline_s, max_total_text=max_total_text, clock=clock)
     sources: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
+    design_refs: list[dict[str, Any]] = []
     unique = dedupe_pointers([p for p in pointers if isinstance(p, dict)])
     for index, pointer in enumerate(unique):
         kind = str(pointer.get("kind") or "")
@@ -277,8 +331,10 @@ def resolve_intake_sources(
         try:
             if kind == "drive":
                 _resolve_drive(pointer, drive, budget, describe_image, sources, skipped)
+            elif kind == "figma":
+                _resolve_figma(pointer, figma, sources, design_refs, budget)
             else:
-                _resolve_file(pointer, download, budget, describe_image, sources, skipped)
+                _resolve_file(pointer, download, budget, describe_image, sources, skipped, store_design, design_refs)
         except ObjectNotFound:
             sources.append(_record(kind, name, error=EXPIRED))
         except SourceUnavailable as exc:
@@ -286,7 +342,11 @@ def resolve_intake_sources(
         except Exception as exc:  # noqa: BLE001 - one bad source never fails the gather
             logger.warning("intake source %s (%s) failed: %s", name, kind, exc)
             sources.append(_record(kind, name, url=str(pointer.get("url") or ""), error="file could not be read"))
-    return {"sources": sources, "sources_text": render_sources_text(sources, skipped), "skipped": skipped}
+    refs = number_refs(design_refs)
+    text = render_sources_text(sources, skipped)
+    if refs:
+        text = (text + "\n" if text else "") + render_design_refs(refs)
+    return {"sources": sources, "sources_text": text, "skipped": skipped, "design_refs": refs}
 
 
 def render_sources_text(sources: list[dict[str, Any]], skipped: list[dict[str, str]]) -> str:

@@ -74,6 +74,10 @@ model that writes the brief.
 A model that cannot read images produces _image could not be read_; the run
 continues.
 
+Attached images are also kept as images: they become design references (`D1`, `D2`…) that the
+PRD, planning, coding and QA steps see as pictures, not only as this text description. Figma links
+work the same way once a Figma token is set. See [Design references](design-references.md).
+
 Set it with `intake_vision_model` in `terraform.tfvars` (or `runtime.intake_vision_model`
 in the install contract). Terraform stores it in the runtime-config store, not the
 secrets manager, because it is not a secret; the provider's API key already is.

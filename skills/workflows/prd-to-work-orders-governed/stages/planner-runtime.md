@@ -9,6 +9,7 @@ Transform Foundry JSON artifacts into implementation-ready Work Orders.
 - `input.prior_foundry` — foundry artifacts
 - `input.stage` — must be `planner`
 - `input.project_repositories` — the project's repositories (`full_name`, `role`, `default_branch`); absent for single-repository projects
+- `input.design_refs` / `input.design_refs_text` — design references (Figma frames, attached images) with ids `D1`, `D2`…; the images follow the task message
 
 ## Outputs (JSON artifacts)
 
@@ -59,6 +60,7 @@ Given ... When ... Then ...
 
 ## Context Graph
 - Depends on: WO-002
+- Design: D1, D3
 - Blueprints: FB-001
 - FRDs: FRD-001
 ```
@@ -85,5 +87,13 @@ Given ... When ... Then ...
 - Dependencies between repositories go one way. If WOs in `acme/web` depend on
   `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
   so the dependency points one way.
+
+- When `input.design_refs` is present, every WO that builds or changes UI lists
+  the design references it implements in its Context Graph as
+  `- Design: D1, D3` (ids from `input.design_refs`, nothing else). The coding
+  agent and QA receive exactly those images, so name every frame the WO's UI
+  must match and no others. Backend-only WOs omit the line. Describe in the
+  Requirements what each image shows that matters (layout, copy, states);
+  never write "see the design" alone.
 
 Apply `quality-gates/planner-runtime.md` before returning JSON.

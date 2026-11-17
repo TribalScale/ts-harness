@@ -35,7 +35,7 @@ locals {
         Sid      = "ReadWriteIntakeFiles"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
-        Resource = ["${local.intake_bucket_arn}/intake/*"]
+        Resource = ["${local.intake_bucket_arn}/intake/*", "${local.intake_bucket_arn}/design/*"]
       },
       {
         # Approved skill versions are immutable: the runtime may only delete drafts.
@@ -238,6 +238,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "intake" {
     }
     abort_incomplete_multipart_upload {
       days_after_initiation = 1
+    }
+  }
+
+  # Design references (Figma frames, attached images) outlive the request: planning, coding and
+  # QA use them until delivery (docs/runbooks/design-references.md).
+  rule {
+    id     = "expire-design"
+    status = "Enabled"
+    filter {
+      prefix = "design/"
+    }
+    expiration {
+      days = 365
     }
   }
 }

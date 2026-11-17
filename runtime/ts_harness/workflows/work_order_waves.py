@@ -31,6 +31,7 @@ SHARED_INPUT_KEYS = (
     "foundry_artifacts",
     "planner_artifacts",
     "summary",
+    "design_refs",
 )
 
 

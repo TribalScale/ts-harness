@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.5.0
+version: 1.6.0
 ---
 
 # Governed QA Gate
@@ -73,6 +73,13 @@ Then:
    screenshot shows one moment; judge behaviour over time (debounce, live
    updates) from the tests. No screenshots for a UI criterion is
    `unverified`, not a defect.
+   **Compare against the design.** When `input.design_refs` is present, the
+   design images (labelled `Design D1: …`) follow the screenshots. For each,
+   check the matching screenshot for layout, copy, components and states the
+   design shows. A clear mismatch the work order asked for (wrong or missing
+   text, a missing element or state, a broken layout) is a defect citing both
+   images by name; small spacing, font-rendering or color differences are not.
+   Without a screenshot of that screen, the design check is `unverified`.
    **Check the base branch before calling something missing.** The patch shows
    only what changed. When a criterion names something the patch does not add
    (a translation key, a config entry, a helper), call `read_pr_file` with the

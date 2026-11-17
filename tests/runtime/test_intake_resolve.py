@@ -71,7 +71,7 @@ def _drive(file_id: str) -> dict:
 class ResolveTests(unittest.TestCase):
     def test_empty_list(self):
         out = resolve_intake_sources([], download=_download_from({}), drive=None, describe_image=None)
-        self.assertEqual(out, {"sources": [], "sources_text": "", "skipped": []})
+        self.assertEqual(out, {"sources": [], "sources_text": "", "skipped": [], "design_refs": []})
 
     def test_not_a_list_raises(self):
         with self.assertRaises(ValueError):

@@ -5,6 +5,8 @@ returned as JSON markdown artifacts.
 
 ## Inputs
 
+- `input.design_refs` / `input.design_refs_text` — design references (`D1`, `D2`…; images follow the task message) when the request had Figma links or images; derive UI requirements from what they show and cite their ids
+
 - `input.approved_prd` — PRD object (`summary`, `prd_markdown`, or equivalent)
 - `input.stage` — must be `refinery`
 
