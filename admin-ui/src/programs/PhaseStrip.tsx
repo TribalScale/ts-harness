@@ -11,7 +11,11 @@ function humanize(value: string): string {
 }
 
 function progressClass(state?: string, current = false): string {
-  if (["succeeded", "complete", "completed"].includes(String(state || "").toLowerCase())) {
+  if (
+    ["succeeded", "complete", "completed"].includes(
+      String(state || "").toLowerCase(),
+    )
+  ) {
     return "complete";
   }
   if (current) return "current";
@@ -21,7 +25,7 @@ function progressClass(state?: string, current = false): string {
 function pinFor(
   phase: string,
   phases: Record<string, PhaseState>,
-  resolved?: Record<string, PinnedWorkflowVersion>
+  resolved?: Record<string, PinnedWorkflowVersion>,
 ): { workflowType?: string; version?: string } {
   const pinned = resolved?.[phase];
   const info = phases[phase];
@@ -33,22 +37,23 @@ function pinFor(
 
 function topologyNodeIds(topology?: ProgramTopology): string[] {
   const nodes = topology?.nodes || [];
-  return nodes
-    .map((node) => String(node?.id || "").trim())
-    .filter(Boolean);
+  return nodes.map((node) => String(node?.id || "").trim()).filter(Boolean);
 }
 
 function topologyEdges(topology?: ProgramTopology): ProgramTopologyEdge[] {
-  return (topology?.edges || []).filter(
-    (edge): edge is ProgramTopologyEdge =>
-      Boolean(edge && String(edge.source || "").trim() && String(edge.target || "").trim())
+  return (topology?.edges || []).filter((edge): edge is ProgramTopologyEdge =>
+    Boolean(
+      edge &&
+      String(edge.source || "").trim() &&
+      String(edge.target || "").trim(),
+    ),
   );
 }
 
 function resolvePhaseOrder(
   phaseOrder: string[] | undefined,
   phases: Record<string, PhaseState>,
-  topology?: ProgramTopology
+  topology?: ProgramTopology,
 ): string[] {
   if (phaseOrder && phaseOrder.length) return phaseOrder;
   const fromTopology = topologyNodeIds(topology);
@@ -95,7 +100,9 @@ export function PhaseStrip({
       <ol className="phase-strip" aria-label="Program phases">
         {visible.map((phase, index) => {
           const info = phases[phase] || { state: "not_started" };
-          const active = selectedPhase === phase || (!selectedPhase && currentPhase === phase);
+          const active =
+            selectedPhase === phase ||
+            (!selectedPhase && currentPhase === phase);
           const className = progressClass(info.state, phase === currentPhase);
           const pin = pinFor(phase, phases, resolvedWorkflowVersions);
           return (
@@ -117,7 +124,9 @@ export function PhaseStrip({
                       {pin.version ? `@${pin.version}` : ""}
                     </span>
                   )}
-                  {info.active_step && <span className="muted mono">{info.active_step}</span>}
+                  {info.active_step && (
+                    <span className="muted mono">{info.active_step}</span>
+                  )}
                 </span>
               </button>
             </li>
@@ -130,11 +139,14 @@ export function PhaseStrip({
           <summary>Full topology</summary>
           <div className="topology-body" aria-label="Full program topology">
             <p className="muted">
-              Showing the selected/executed branch above. Alternatives and edges from the pinned
-              snapshot appear here.
+              Showing the selected/executed branch above. Alternatives and edges
+              from the pinned snapshot appear here.
             </p>
             {alternateIds.length > 0 && (
-              <div className="topology-alternatives" aria-label="Alternate phases">
+              <div
+                className="topology-alternatives"
+                aria-label="Alternate phases"
+              >
                 <strong>Alternatives</strong>
                 <ul>
                   {alternateIds.map((phase) => {
@@ -142,7 +154,11 @@ export function PhaseStrip({
                     const pin = pinFor(phase, phases, resolvedWorkflowVersions);
                     return (
                       <li key={phase}>
-                        <button type="button" className="linkish" onClick={() => onSelect(phase)}>
+                        <button
+                          type="button"
+                          className="linkish"
+                          onClick={() => onSelect(phase)}
+                        >
                           {humanize(phase)}
                         </button>
                         <span className="muted"> · {humanize(info.state)}</span>
@@ -164,10 +180,15 @@ export function PhaseStrip({
                 <strong>Edges</strong>
                 <ul>
                   {edges.map((edge, index) => (
-                    <li key={`${edge.source}->${edge.target}-${index}`} className="mono">
+                    <li
+                      key={`${edge.source}->${edge.target}-${index}`}
+                      className="mono"
+                    >
                       {edge.source} → {edge.target}
                       {edge.mode ? ` (${edge.mode})` : ""}
-                      {visible.includes(String(edge.target)) ? "" : " · alternate"}
+                      {visible.includes(String(edge.target))
+                        ? ""
+                        : " · alternate"}
                     </li>
                   ))}
                 </ul>

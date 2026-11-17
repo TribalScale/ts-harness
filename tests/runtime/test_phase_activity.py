@@ -273,6 +273,9 @@ class PhaseActivityTests(unittest.TestCase):
 
         self.assertEqual((child["state"], child["kind"]), ("OpenCode implementing", "running"))
         self.assertEqual(child["coding_job"]["last_output"], "running tests")
+        # The parked step reads as coding, not as blocked with an error.
+        step = next(s for s in child["steps"] if s["step_name"] == "deliver_work_order")
+        self.assertEqual((step["status"], step["error"]), ("coding", ""))
         self.assertEqual(child["coding_job"]["started_at"], "2026-10-22T18:00:00Z")
         self.assertIsNone(phase_activity(memory, "program-1", "implement")["children"][0]["coding_job"])
 

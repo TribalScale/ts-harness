@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { setPermissions, setRoles } from "../auth/session";
 import { jsonResponse, mockFetch, renderPage } from "../test/render";
-import { endedAtPhase, formatAge, phaseLabel, portfolioUrl, ProgramsPage } from "./ProgramsPage";
+import {
+  endedAtPhase,
+  formatAge,
+  phaseLabel,
+  portfolioUrl,
+  ProgramsPage,
+} from "./ProgramsPage";
 import { findAlert } from "../test/alerts";
 
 const programId = "57249723-checkers-program";
@@ -23,10 +29,14 @@ function installMediaQuery(matches = true) {
 }
 
 function installDialogMethods() {
-  HTMLDialogElement.prototype.showModal = vi.fn(function showModal(this: HTMLDialogElement) {
+  HTMLDialogElement.prototype.showModal = vi.fn(function showModal(
+    this: HTMLDialogElement,
+  ) {
     this.setAttribute("open", "");
   });
-  HTMLDialogElement.prototype.close = vi.fn(function close(this: HTMLDialogElement) {
+  HTMLDialogElement.prototype.close = vi.fn(function close(
+    this: HTMLDialogElement,
+  ) {
     this.removeAttribute("open");
   });
 }
@@ -72,7 +82,11 @@ function programStatus(status = "running") {
         { id: "jira", default_workflow_type: "jira_from_prd" },
         { id: "work_orders", default_workflow_type: "work_orders_from_prd" },
         { id: "implement", default_workflow_type: "implement_delivery" },
-        { id: "deploy", default_workflow_type: "deploy_delivery", terminal: true },
+        {
+          id: "deploy",
+          default_workflow_type: "deploy_delivery",
+          terminal: true,
+        },
       ],
       edges: [
         { source: "prd", target: "jira", mode: "manual" },
@@ -85,12 +99,22 @@ function programStatus(status = "running") {
     resolved_workflow_versions: {
       prd: { workflow_type: "prd_request", definition_version: "1.0.0" },
       jira: { workflow_type: "jira_from_prd", definition_version: "1.0.0" },
-      work_orders: { workflow_type: "work_orders_from_prd", definition_version: "1.0.0" },
-      implement: { workflow_type: "implement_delivery", definition_version: "1.0.0" },
+      work_orders: {
+        workflow_type: "work_orders_from_prd",
+        definition_version: "1.0.0",
+      },
+      implement: {
+        workflow_type: "implement_delivery",
+        definition_version: "1.0.0",
+      },
       deploy: { workflow_type: "deploy_delivery", definition_version: "1.0.0" },
     },
     phases: {
-      prd: { state: "succeeded", workflow_id: "workflow-prd", workflow_type: "prd_request" },
+      prd: {
+        state: "succeeded",
+        workflow_id: "workflow-prd",
+        workflow_type: "prd_request",
+      },
       jira: { state: "not_started" },
       work_orders: { state: "not_started" },
       implement: {
@@ -124,8 +148,22 @@ function activityUrl(phase: string) {
   return `/admin/programs/${encodeURIComponent(programId)}/phases/${phase}/activity`;
 }
 
-function stepOf(task_id: string, label: string, status: string, approval_pending = false) {
-  return { task_id, step_name: label.toLowerCase().replace(/ /g, "_"), label, agent_id: "dev-agent", status, approval_pending, error: "", updated_at: "" };
+function stepOf(
+  task_id: string,
+  label: string,
+  status: string,
+  approval_pending = false,
+) {
+  return {
+    task_id,
+    step_name: label.toLowerCase().replace(/ /g, "_"),
+    label,
+    agent_id: "dev-agent",
+    status,
+    approval_pending,
+    error: "",
+    updated_at: "",
+  };
 }
 
 function phaseActivity() {
@@ -176,21 +214,35 @@ it("renders compact distinguishable program rows, the current stage's activity a
   expect(screen.getAllByText(/implement/i).length).toBeGreaterThan(0);
   expect(screen.getAllByText(/57249723/)).toHaveLength(2);
   expect(screen.getByRole("tab", { name: /overview/i })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: /artifacts \(2\)/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("tab", { name: /artifacts \(2\)/i }),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /tasks/i })).not.toBeInTheDocument();
 
-  const activity = await screen.findByRole("region", { name: "implement activity" });
-  expect(await within(activity).findByText("Implement board")).toBeInTheDocument();
-  expect(within(activity).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  const activity = await screen.findByRole("region", {
+    name: "implement activity",
+  });
+  expect(
+    await within(activity).findByText("Implement board"),
+  ).toBeInTheDocument();
+  expect(
+    within(activity).getByRole("button", { name: "Approve" }),
+  ).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("tab", { name: /artifacts/i }));
   expect(screen.getByRole("link", { name: /pull request/i })).toHaveAttribute(
     "href",
-    "https://github.com/example-org/project/pull/3"
+    "https://github.com/example-org/project/pull/3",
   );
   expect(screen.queryByText(/work_orders_markdown:/)).not.toBeInTheDocument();
   expect(screen.getByText(/work orders markdown/i)).toBeInTheDocument();
   expect(screen.getByText(/view value/i)).toBeInTheDocument();
+
+  // The PRD and planning documents have their own tab.
+  await userEvent.click(screen.getByRole("tab", { name: /documents \(1\)/i }));
+  const documents = screen.getByRole("region", { name: "Program documents" });
+  expect(within(documents).getByText("Work orders")).toBeInTheDocument();
+  expect(within(documents).getByText(/- Build board/)).toBeInTheDocument();
 });
 
 it("shows project memory controls on overview", async () => {
@@ -206,30 +258,47 @@ it("shows project memory controls on overview", async () => {
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
   expect(await screen.findByLabelText("Project memory")).toBeInTheDocument();
   expect(screen.getAllByText(/Project PROJ/).length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: /save project/i })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /exclude from auto-share/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /save project/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /exclude from auto-share/i }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /add link/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /unlink/i })).toBeInTheDocument();
 });
 
 it("saves project, exclude, link, and unlink through admin APIs", async () => {
-  const calls: Array<{ url: string; method?: string; body?: Record<string, unknown> }> = [];
+  const calls: Array<{
+    url: string;
+    method?: string;
+    body?: Record<string, unknown>;
+  }> = [];
   mockFetch((url, init) => {
-    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      : undefined;
     calls.push({ url, method: init?.method || "GET", body });
     if (url === LIST_URL) return jsonResponse(programList());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
       return jsonResponse(programStatus());
     }
     if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
-    if (url === `/admin/programs/${encodeURIComponent(programId)}` && init?.method === "PATCH") {
-      return jsonResponse({ ok: true });
-    }
-    if (url === `/admin/programs/${encodeURIComponent(programId)}/links` && init?.method === "POST") {
+    if (
+      url === `/admin/programs/${encodeURIComponent(programId)}` &&
+      init?.method === "PATCH"
+    ) {
       return jsonResponse({ ok: true });
     }
     if (
-      url === `/admin/programs/${encodeURIComponent(programId)}/links/other-program` &&
+      url === `/admin/programs/${encodeURIComponent(programId)}/links` &&
+      init?.method === "POST"
+    ) {
+      return jsonResponse({ ok: true });
+    }
+    if (
+      url ===
+        `/admin/programs/${encodeURIComponent(programId)}/links/other-program` &&
       init?.method === "DELETE"
     ) {
       return jsonResponse({ ok: true });
@@ -245,23 +314,38 @@ it("saves project, exclude, link, and unlink through admin APIs", async () => {
   await userEvent.type(projectInput, "RFP");
   await userEvent.click(screen.getByRole("button", { name: /save project/i }));
   await waitFor(() => {
-    expect(calls.some((call) => call.method === "PATCH" && call.body?.project_id === "RFP")).toBe(
-      true
-    );
-  });
-
-  await userEvent.click(screen.getByRole("button", { name: /exclude from auto-share/i }));
-  await waitFor(() => {
     expect(
-      calls.some((call) => call.method === "PATCH" && call.body?.excluded_from_autoshare === true)
+      calls.some(
+        (call) => call.method === "PATCH" && call.body?.project_id === "RFP",
+      ),
     ).toBe(true);
   });
 
-  await userEvent.type(screen.getByLabelText("Link target program"), "linked-program");
+  await userEvent.click(
+    screen.getByRole("button", { name: /exclude from auto-share/i }),
+  );
+  await waitFor(() => {
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "PATCH" &&
+          call.body?.excluded_from_autoshare === true,
+      ),
+    ).toBe(true);
+  });
+
+  await userEvent.type(
+    screen.getByLabelText("Link target program"),
+    "linked-program",
+  );
   await userEvent.click(screen.getByRole("button", { name: /add link/i }));
   await waitFor(() => {
     expect(
-      calls.some((call) => call.method === "POST" && call.body?.to_program_id === "linked-program")
+      calls.some(
+        (call) =>
+          call.method === "POST" &&
+          call.body?.to_program_id === "linked-program",
+      ),
     ).toBe(true);
   });
 
@@ -271,8 +355,10 @@ it("saves project, exclude, link, and unlink through admin APIs", async () => {
       calls.some(
         (call) =>
           call.method === "DELETE" &&
-          call.url.endsWith(`/admin/programs/${encodeURIComponent(programId)}/links/other-program`)
-      )
+          call.url.endsWith(
+            `/admin/programs/${encodeURIComponent(programId)}/links/other-program`,
+          ),
+      ),
     ).toBe(true);
   });
 });
@@ -296,22 +382,31 @@ it("opens a confirmation dialog before canceling and refreshes selected state af
   await screen.findAllByText("checkers");
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-  expect(screen.getByRole("dialog", { name: /cancel program/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("dialog", { name: /cancel program/i }),
+  ).toBeInTheDocument();
   expect(calls).not.toContainEqual({
     url: `/admin/programs/${encodeURIComponent(programId)}/cancel`,
     method: "POST",
   });
 
-  await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel program/i }));
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: /cancel program/i,
+    }),
+  );
 
   await waitFor(() =>
     expect(calls).toContainEqual({
       url: `/admin/programs/${encodeURIComponent(programId)}/cancel`,
       method: "POST",
-    })
+    }),
   );
   expect(
-    calls.filter((call) => call.url === `/admin/programs/${encodeURIComponent(programId)}/status`)
+    calls.filter(
+      (call) =>
+        call.url === `/admin/programs/${encodeURIComponent(programId)}/status`,
+    ),
   ).toHaveLength(2);
   expect(calls.filter((call) => call.url === LIST_URL)).toHaveLength(2);
   expect(screen.getAllByText("checkers").length).toBeGreaterThan(0);
@@ -348,7 +443,9 @@ it("shows the activity of whichever stage is clicked", async () => {
   expect(await screen.findByText("Implement board")).toBeInTheDocument();
 
   const phases = screen.getByRole("list", { name: /program phases/i });
-  await userEvent.click(within(phases).getByRole("button", { name: /^1\s*prd/i }));
+  await userEvent.click(
+    within(phases).getByRole("button", { name: /^1\s*prd/i }),
+  );
 
   const activity = await screen.findByRole("region", { name: "prd activity" });
   expect(await within(activity).findByText("Review PRD")).toBeInTheDocument();
@@ -374,12 +471,16 @@ it("keeps the program selected and surfaces the error when cancel fails", async 
   await screen.findAllByText("checkers");
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: /cancel program/i })
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: /cancel program/i,
+    }),
   );
 
   expect(await findAlert()).toHaveTextContent("program already cancelled");
   expect(onSelect).not.toHaveBeenCalled();
-  expect(screen.getByRole("group", { name: "Program actions" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: "Program actions" }),
+  ).toBeInTheDocument();
 });
 
 it("shows loading instead of a load error before the first status response", () => {
@@ -427,7 +528,9 @@ it("refetches program status when retrying after a status error", async () => {
   await userEvent.click(screen.getByRole("button", { name: /try again/i }));
 
   await waitFor(() => expect(statusCalls).toBeGreaterThan(callsBeforeRetry));
-  expect(await screen.findByRole("tab", { name: /overview/i })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("tab", { name: /overview/i }),
+  ).toBeInTheDocument();
 });
 
 it("keeps program status and actions visible above every tab", async () => {
@@ -444,15 +547,23 @@ it("keeps program status and actions visible above every tab", async () => {
   await screen.findAllByText("checkers");
 
   const header = screen.getByRole("region", { name: "Program detail header" });
-  expect(header.querySelector(".program-waiting")).toHaveTextContent(/waiting on/i);
+  expect(header.querySelector(".program-waiting")).toHaveTextContent(
+    /waiting on/i,
+  );
   expect(header.querySelector(".status-pill")).toHaveTextContent(/running/i);
-  expect(within(header).getByRole("group", { name: "Program actions" })).toBeInTheDocument();
+  expect(
+    within(header).getByRole("group", { name: "Program actions" }),
+  ).toBeInTheDocument();
 
   for (const tabName of [/artifacts/i, /overview/i]) {
     await userEvent.click(screen.getByRole("tab", { name: tabName }));
     const actions = screen.getByRole("group", { name: "Program actions" });
-    expect(within(actions).getByRole("button", { name: "Advance" })).toBeInTheDocument();
-    expect(within(actions).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(
+      within(actions).getByRole("button", { name: "Advance" }),
+    ).toBeInTheDocument();
+    expect(
+      within(actions).getByRole("button", { name: "Cancel" }),
+    ).toBeInTheDocument();
   }
 
   expect(screen.getAllByRole("button", { name: "Advance" })).toHaveLength(1);
@@ -476,10 +587,9 @@ it("connects each program tab to its rendered panel", async () => {
   expect(tab.getAttribute("aria-controls")).toBe(panel.id);
   expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
   const phases = screen.getByRole("list", { name: /program phases/i });
-  expect(within(phases).getByRole("button", { name: /^1\s*prd/i })).toHaveAttribute(
-    "aria-pressed",
-    "false"
-  );
+  expect(
+    within(phases).getByRole("button", { name: /^1\s*prd/i }),
+  ).toHaveAttribute("aria-pressed", "false");
 });
 
 it("shows pinned program/workflow definition links from the status payload", async () => {
@@ -496,14 +606,15 @@ it("shows pinned program/workflow definition links from the status payload", asy
   await screen.findAllByText("checkers");
 
   expect(screen.getByLabelText(/pinned program definition/i)).toHaveTextContent(
-    /software_delivery@1\.0\.0/
-  );
-  expect(screen.getByRole("link", { name: /software_delivery@1\.0\.0/i })).toHaveAttribute(
-    "href",
-    "#/workflows/programs/software_delivery"
+    /software_delivery@1\.0\.0/,
   );
   expect(
-    screen.getByRole("link", { name: /implement: implement_delivery@1\.0\.0/i })
+    screen.getByRole("link", { name: /software_delivery@1\.0\.0/i }),
+  ).toHaveAttribute("href", "#/workflows/programs/software_delivery");
+  expect(
+    screen.getByRole("link", {
+      name: /implement: implement_delivery@1\.0\.0/i,
+    }),
   ).toHaveAttribute("href", "#/workflows/implement_delivery");
   expect(screen.getByText(/full topology/i)).toBeInTheDocument();
 });
@@ -511,7 +622,10 @@ it("shows pinned program/workflow definition links from the status payload", asy
 it("surfaces a list error instead of a false empty state", async () => {
   mockFetch((url) => {
     if (url === LIST_URL) {
-      return jsonResponse({ error: "password authentication failed for user \"ts_harness\"" }, 502);
+      return jsonResponse(
+        { error: 'password authentication failed for user "ts_harness"' },
+        502,
+      );
     }
     throw new Error(`Unexpected URL ${url}`);
   });
@@ -519,7 +633,9 @@ it("surfaces a list error instead of a false empty state", async () => {
   renderPage(<ProgramsPage onSelect={() => undefined} />);
 
   expect(await findAlert()).toHaveTextContent("Unable to load programs");
-  expect(screen.getByText(/password authentication failed/i)).toBeInTheDocument();
+  expect(
+    screen.getByText(/password authentication failed/i),
+  ).toBeInTheDocument();
   expect(screen.queryByText("No delivery programs")).not.toBeInTheDocument();
 });
 
@@ -561,22 +677,31 @@ it("opens a confirmation dialog before advancing and refreshes selected state af
   await screen.findAllByText("checkers");
   await userEvent.click(screen.getByRole("button", { name: "Advance" }));
 
-  expect(screen.getByRole("dialog", { name: /advance program/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("dialog", { name: /advance program/i }),
+  ).toBeInTheDocument();
   expect(calls).not.toContainEqual({
     url: `/admin/programs/${encodeURIComponent(programId)}/advance`,
     method: "POST",
   });
 
-  await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /advance program/i }));
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: /advance program/i,
+    }),
+  );
 
   await waitFor(() =>
     expect(calls).toContainEqual({
       url: `/admin/programs/${encodeURIComponent(programId)}/advance`,
       method: "POST",
-    })
+    }),
   );
   expect(
-    calls.filter((call) => call.url === `/admin/programs/${encodeURIComponent(programId)}/status`)
+    calls.filter(
+      (call) =>
+        call.url === `/admin/programs/${encodeURIComponent(programId)}/status`,
+    ),
   ).toHaveLength(2);
   expect(calls.filter((call) => call.url === LIST_URL)).toHaveLength(2);
 });
@@ -603,25 +728,33 @@ it("shows portfolio columns for root programs", async () => {
 
   renderPage(<ProgramsPage onSelect={() => undefined} />);
 
-  expect(await screen.findByText("Owner alice@example.com")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Owner alice@example.com"),
+  ).toBeInTheDocument();
   expect(screen.getByText("3 child programs")).toBeInTheDocument();
   expect(screen.getByText("Waiting on external for 2h")).toBeInTheDocument();
   expect(screen.getByText("Escalated")).toBeInTheDocument();
-  expect(screen.getByText("Next: review and merge or cancel pr")).toBeInTheDocument();
+  expect(
+    screen.getByText("Next: review and merge or cancel pr"),
+  ).toBeInTheDocument();
 });
 
 it("applies portfolio filters to the list request", async () => {
   const urls: string[] = [];
   mockFetch((url) => {
     urls.push(url);
-    if (url.startsWith("/admin/programs?portfolio=1")) return jsonResponse(programList());
+    if (url.startsWith("/admin/programs?portfolio=1"))
+      return jsonResponse(programList());
     throw new Error(`Unexpected URL ${url}`);
   });
 
   renderPage(<ProgramsPage onSelect={() => undefined} />);
   await screen.findAllByText("checkers");
 
-  await userEvent.selectOptions(screen.getByLabelText("Filter by status"), "blocked");
+  await userEvent.selectOptions(
+    screen.getByLabelText("Filter by status"),
+    "blocked",
+  );
   await userEvent.type(screen.getByLabelText("Filter by phase"), "implement");
   await userEvent.type(screen.getByLabelText("Filter by owner"), "alice");
   await userEvent.type(screen.getByLabelText("Waiting more than hours"), "24");
@@ -629,8 +762,8 @@ it("applies portfolio filters to the list request", async () => {
 
   await waitFor(() =>
     expect(urls).toContain(
-      "/admin/programs?portfolio=1&status=blocked&phase=implement&owner=alice&waiting_hours=24"
-    )
+      "/admin/programs?portfolio=1&status=blocked&phase=implement&owner=alice&waiting_hours=24",
+    ),
   );
 });
 
@@ -644,7 +777,13 @@ it("shows cancel cleanup failures on the program detail", async () => {
         artifacts: {
           compensation: {
             status: "partial",
-            failures: [{ kind: "pull_request", ref: "https://github.com/o/r/pull/9", detail: "403 forbidden" }],
+            failures: [
+              {
+                kind: "pull_request",
+                ref: "https://github.com/o/r/pull/9",
+                detail: "403 forbidden",
+              },
+            ],
           },
         },
       });
@@ -657,7 +796,9 @@ it("shows cancel cleanup failures on the program detail", async () => {
 
   const cleanup = await screen.findByLabelText("Cancel cleanup");
   expect(cleanup).toHaveTextContent("Cancel cleanup: partial");
-  expect(cleanup).toHaveTextContent("pull request https://github.com/o/r/pull/9: 403 forbidden");
+  expect(cleanup).toHaveTextContent(
+    "pull request https://github.com/o/r/pull/9: 403 forbidden",
+  );
 });
 
 function mockProgramDetail(extra?: (url: string) => Response | undefined) {
@@ -680,8 +821,12 @@ it("hides the evidence download from non-admin roles", async () => {
 
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
 
-  expect(await screen.findByRole("button", { name: /advance/i })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /download evidence/i })).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("button", { name: /advance/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /download evidence/i }),
+  ).not.toBeInTheDocument();
 });
 
 it("downloads signed program evidence and shows the short hash", async () => {
@@ -693,20 +838,31 @@ it("downloads signed program evidence and shows the short hash", async () => {
     url === evidenceUrl
       ? new Response(JSON.stringify({ sha256: digest }), {
           status: 200,
-          headers: { "Content-Type": "application/json", "X-Evidence-SHA256": digest },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Evidence-SHA256": digest,
+          },
         })
-      : undefined
+      : undefined,
   );
   const createObjectURL = vi.fn(() => "blob:evidence");
   const revokeObjectURL = vi.fn();
   Object.assign(URL, { createObjectURL, revokeObjectURL });
-  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => undefined);
 
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
-  await userEvent.click(await screen.findByRole("button", { name: /download evidence/i }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: /download evidence/i }),
+  );
 
-  expect(await screen.findByLabelText("Evidence hash")).toHaveTextContent("sha256 ab12cd34ef56");
-  expect(fetchSpy.mock.calls.filter(([input]) => String(input) === evidenceUrl)).toHaveLength(1);
+  expect(await screen.findByLabelText("Evidence hash")).toHaveTextContent(
+    "sha256 ab12cd34ef56",
+  );
+  expect(
+    fetchSpy.mock.calls.filter(([input]) => String(input) === evidenceUrl),
+  ).toHaveLength(1);
   expect(createObjectURL).toHaveBeenCalledTimes(1);
   expect(click).toHaveBeenCalledTimes(1);
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:evidence");
@@ -714,7 +870,9 @@ it("downloads signed program evidence and shows the short hash", async () => {
 });
 
 it("builds portfolio URLs and formats wait ages", () => {
-  expect(portfolioUrl({ status: "", phase: " ", owner: "", waitingHours: "0" })).toBe(LIST_URL);
+  expect(
+    portfolioUrl({ status: "", phase: " ", owner: "", waitingHours: "0" }),
+  ).toBe(LIST_URL);
   expect(formatAge(undefined)).toBeUndefined();
   expect(formatAge(90)).toBe("2m");
   expect(formatAge(3 * 86400)).toBe("3d");
@@ -725,10 +883,19 @@ it("shows the visibility pill and limits actions to the viewer's access level", 
   mockFetch((url) => {
     if (url === LIST_URL) {
       const list = programList();
-      return jsonResponse({ programs: [{ ...list.programs[0], visibility: "private" }, list.programs[1]] });
+      return jsonResponse({
+        programs: [
+          { ...list.programs[0], visibility: "private" },
+          list.programs[1],
+        ],
+      });
     }
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
-      return jsonResponse({ ...programStatus(), access_level: "read", visibility: "public" });
+      return jsonResponse({
+        ...programStatus(),
+        access_level: "read",
+        visibility: "public",
+      });
     }
     if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     throw new Error(`Unexpected URL ${url}`);
@@ -739,13 +906,27 @@ it("shows the visibility pill and limits actions to the viewer's access level", 
   expect(await screen.findByText("Private")).toBeInTheDocument();
   expect(await screen.findByText("Public")).toBeInTheDocument();
   const actions = screen.getByRole("group", { name: "Program actions" });
-  expect(within(actions).queryByRole("button", { name: "Advance" })).not.toBeInTheDocument();
-  expect(within(actions).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-  expect(within(actions).queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Save project" })).not.toBeInTheDocument();
-  const activity = await screen.findByRole("region", { name: "implement activity" });
-  expect(await within(activity).findByText("Implement board")).toBeInTheDocument();
-  expect(within(activity).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  expect(
+    within(actions).queryByRole("button", { name: "Advance" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(actions).queryByRole("button", { name: "Cancel" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(actions).queryByRole("button", { name: "Share" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Save project" }),
+  ).not.toBeInTheDocument();
+  const activity = await screen.findByRole("region", {
+    name: "implement activity",
+  });
+  expect(
+    await within(activity).findByText("Implement board"),
+  ).toBeInTheDocument();
+  expect(
+    within(activity).queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
 });
 
 it("opens the share dialog for program admins", async () => {
@@ -753,11 +934,21 @@ it("opens the share dialog for program admins", async () => {
   mockFetch((url) => {
     if (url === LIST_URL) return jsonResponse(programList());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
-      return jsonResponse({ ...programStatus(), access_level: "admin", visibility: "private" });
+      return jsonResponse({
+        ...programStatus(),
+        access_level: "admin",
+        visibility: "private",
+      });
     }
     if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/access`) {
-      return jsonResponse({ program_id: programId, visibility: "private", owner: null, grants: [], access_level: "admin" });
+      return jsonResponse({
+        program_id: programId,
+        visibility: "private",
+        owner: null,
+        grants: [],
+        access_level: "admin",
+      });
     }
     throw new Error(`Unexpected URL ${url}`);
   });
@@ -765,19 +956,33 @@ it("opens the share dialog for program admins", async () => {
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
 
   const actions = await screen.findByRole("group", { name: "Program actions" });
-  expect(within(actions).getByRole("button", { name: "Advance" })).toBeInTheDocument();
+  expect(
+    within(actions).getByRole("button", { name: "Advance" }),
+  ).toBeInTheDocument();
   await userEvent.click(within(actions).getByRole("button", { name: "Share" }));
-  expect(await screen.findByRole("heading", { name: "Share program" })).toBeInTheDocument();
-  expect(await screen.findByRole("textbox", { name: "Search people and teams" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("heading", { name: "Share program" }),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByRole("textbox", { name: "Search people and teams" }),
+  ).toBeInTheDocument();
 });
 
 it("warns when the program's team reached its LLM budget", async () => {
   mockFetch((url) => {
     if (url === LIST_URL) return jsonResponse(programList());
-    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) return jsonResponse(programStatus());
+    if (url === `/admin/programs/${encodeURIComponent(programId)}/status`)
+      return jsonResponse(programStatus());
     if (url === `/admin/budgets/programs/${encodeURIComponent(programId)}`) {
       return jsonResponse({
-        team: { id: "t-web", slug: "web", display_name: "Web", status: "reached", percent: 101, held_tasks: 2 },
+        team: {
+          id: "t-web",
+          slug: "web",
+          display_name: "Web",
+          status: "reached",
+          percent: 101,
+          held_tasks: 2,
+        },
       });
     }
     if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
@@ -786,10 +991,14 @@ it("warns when the program's team reached its LLM budget", async () => {
 
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
 
-  const banner = (await screen.findByText("Web reached its monthly LLM budget")).closest(".budget-banner") as HTMLElement;
+  const banner = (
+    await screen.findByText("Web reached its monthly LLM budget")
+  ).closest(".budget-banner") as HTMLElement;
   expect(banner).toHaveAttribute("role", "status");
   expect(banner).toHaveTextContent("(2 waiting)");
-  expect(within(banner).getByRole("link", { name: "Open budgets" })).toHaveAttribute("href", "#/system/budgets");
+  expect(
+    within(banner).getByRole("link", { name: "Open budgets" }),
+  ).toHaveAttribute("href", "#/system/budgets");
 });
 
 function endedAtPrd() {
@@ -807,10 +1016,18 @@ it("labels a program that ended at the PRD and continues it to a chosen phase", 
   const calls: Array<{ url: string; method: string; body?: string }> = [];
   let ended = true;
   mockFetch((url, init) => {
-    calls.push({ url, method: init?.method || "GET", body: init?.body as string | undefined });
+    calls.push({
+      url,
+      method: init?.method || "GET",
+      body: init?.body as string | undefined,
+    });
     if (url === LIST_URL) {
       const list = programList("succeeded");
-      list.programs[0] = { ...list.programs[0], current_phase: "prd", artifacts: { ended_at_phase: "prd" } } as never;
+      list.programs[0] = {
+        ...list.programs[0],
+        current_phase: "prd",
+        artifacts: { ended_at_phase: "prd" },
+      } as never;
       return jsonResponse(list);
     }
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`) {
@@ -828,19 +1045,27 @@ it("labels a program that ended at the PRD and continues it to a chosen phase", 
   const actions = await screen.findByRole("group", { name: "Program actions" });
   expect(screen.getAllByText("Done at PRD").length).toBeGreaterThan(0);
   expect(within(actions).queryByRole("button", { name: "Advance" })).toBeNull();
-  expect(within(actions).getByRole("button", { name: "Continue to Work orders" })).toBeInTheDocument();
+  expect(
+    within(actions).getByRole("button", { name: "Continue to Work orders" }),
+  ).toBeInTheDocument();
 
-  await userEvent.click(within(actions).getByRole("button", { name: "Continue to Jira" }));
+  await userEvent.click(
+    within(actions).getByRole("button", { name: "Continue to Jira" }),
+  );
   const dialog = screen.getByRole("dialog", { name: /continue program/i });
-  expect(within(dialog).getByText(/reopens the program and starts Jira/)).toBeInTheDocument();
-  await userEvent.click(within(dialog).getByRole("button", { name: "Continue to Jira" }));
+  expect(
+    within(dialog).getByText(/reopens the program and starts Jira/),
+  ).toBeInTheDocument();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Continue to Jira" }),
+  );
 
   await waitFor(() =>
     expect(calls).toContainEqual({
       url: `/admin/programs/${encodeURIComponent(programId)}/advance`,
       method: "POST",
       body: JSON.stringify({ target_phase: "jira" }),
-    })
+    }),
   );
 });
 
@@ -857,14 +1082,23 @@ it("offers neither Advance nor Continue on a program that finished for good", as
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
   const actions = await screen.findByRole("group", { name: "Program actions" });
   expect(within(actions).queryByRole("button", { name: "Advance" })).toBeNull();
-  expect(within(actions).queryByRole("button", { name: /Continue to/ })).toBeNull();
+  expect(
+    within(actions).queryByRole("button", { name: /Continue to/ }),
+  ).toBeNull();
   expect(screen.getAllByText("succeeded").length).toBeGreaterThan(0);
 });
 
 it("names phases like the chat offer and only reads ended_at_phase on succeeded programs", () => {
   expect(phaseLabel("prd")).toBe("PRD");
   expect(phaseLabel("work_orders")).toBe("Work orders");
-  expect(endedAtPhase({ status: "succeeded", artifacts: { ended_at_phase: "jira" } })).toBe("jira");
-  expect(endedAtPhase({ status: "running", artifacts: { ended_at_phase: "jira" } })).toBeUndefined();
+  expect(
+    endedAtPhase({
+      status: "succeeded",
+      artifacts: { ended_at_phase: "jira" },
+    }),
+  ).toBe("jira");
+  expect(
+    endedAtPhase({ status: "running", artifacts: { ended_at_phase: "jira" } }),
+  ).toBeUndefined();
   expect(endedAtPhase({ status: "succeeded", artifacts: {} })).toBeUndefined();
 });

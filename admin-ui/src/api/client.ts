@@ -2,7 +2,11 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   path?: string;
-  constructor(status: number, message: string, extra: { code?: string; path?: string } = {}) {
+  constructor(
+    status: number,
+    message: string,
+    extra: { code?: string; path?: string } = {},
+  ) {
     super(message);
     this.status = status;
     this.code = extra.code;
@@ -23,7 +27,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 export async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
-  opts: { retries?: number } = {}
+  opts: { retries?: number } = {},
 ): Promise<T> {
   const method = (init.method || "GET").toUpperCase();
   const retries = opts.retries ?? (method === "GET" ? 2 : 0);
@@ -35,7 +39,11 @@ export async function apiFetch<T>(
       if (!headers.has("Content-Type") && init.body) {
         headers.set("Content-Type", "application/json");
       }
-      const res = await fetch(path, { ...init, headers, credentials: "include" });
+      const res = await fetch(path, {
+        ...init,
+        headers,
+        credentials: "include",
+      });
       if (res.status === 401) onUnauthorized?.();
       if (!res.ok) {
         let detail = `HTTP ${res.status}`;
@@ -70,7 +78,9 @@ export async function apiFetch<T>(
 }
 
 /** Fetch a file download. Never retried: each successful call may be audited server-side. */
-export async function apiDownload(path: string): Promise<{ blob: Blob; headers: Headers }> {
+export async function apiDownload(
+  path: string,
+): Promise<{ blob: Blob; headers: Headers }> {
   const res = await fetch(path, { credentials: "include" });
   if (res.status === 401) onUnauthorized?.();
   if (!res.ok) {
@@ -108,7 +118,7 @@ export async function uploadIntakeFile(file: File): Promise<IntakePointer> {
       method: "POST",
       body: file,
       headers: { "Content-Type": file.type || "application/octet-stream" },
-    }
+    },
   );
   return result.pointer;
 }

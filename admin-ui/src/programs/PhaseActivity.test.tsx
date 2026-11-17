@@ -1,16 +1,38 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
-import type { PhaseActivity, WorkflowProgress, WorkflowStep } from "../api/types";
+import type {
+  PhaseActivity,
+  WorkflowProgress,
+  WorkflowStep,
+} from "../api/types";
 import { setPermissions } from "../auth/session";
 import { jsonResponse, mockFetch } from "../test/render";
 import { codingJobLabel, PhaseActivityPanel } from "./PhaseActivity";
 
-function step(step_name: string, label: string, status: string, extra: Partial<WorkflowStep> = {}): WorkflowStep {
-  return { task_id: step_name, step_name, label, agent_id: "orchestrator", status, approval_pending: false, error: "", updated_at: "", ...extra };
+function step(
+  step_name: string,
+  label: string,
+  status: string,
+  extra: Partial<WorkflowStep> = {},
+): WorkflowStep {
+  return {
+    task_id: step_name,
+    step_name,
+    label,
+    agent_id: "orchestrator",
+    status,
+    approval_pending: false,
+    error: "",
+    updated_at: "",
+    ...extra,
+  };
 }
 
-function delivery(label: string, extra: Partial<WorkflowProgress>): WorkflowProgress {
+function delivery(
+  label: string,
+  extra: Partial<WorkflowProgress>,
+): WorkflowProgress {
   return {
     workflow_id: `wf-${label}`,
     workflow_type: "deliver_work_order",
@@ -37,10 +59,17 @@ const implement: PhaseActivity = {
     workflow_id: "wf-impl",
     state: "Waiting for the workflows it started",
     kind: "waiting",
-    steps: [step("fork_wave", "fork wave", "succeeded"), step("join_wave", "join wave", "blocked")],
+    steps: [
+      step("fork_wave", "fork wave", "succeeded"),
+      step("join_wave", "join wave", "blocked"),
+    ],
   },
   children: [
-    delivery("WO-001", { state: "Merged", kind: "done", pr_url: "https://github.com/o/r/pull/17" }),
+    delivery("WO-001", {
+      state: "Merged",
+      kind: "done",
+      pr_url: "https://github.com/o/r/pull/17",
+    }),
     delivery("WO-002", {
       state: "Stuck at code review: waiting for your decision",
       kind: "stuck",
@@ -51,7 +80,10 @@ const implement: PhaseActivity = {
       state: "QA running",
       revisions: 1,
       pr_url: "https://github.com/o/r/pull/19",
-      steps: [step("deliver_work_order", "OpenCode", "succeeded"), step("qa_gate", "QA", "running")],
+      steps: [
+        step("deliver_work_order", "OpenCode", "succeeded"),
+        step("qa_gate", "QA", "running"),
+      ],
     }),
   ],
 };
@@ -65,20 +97,42 @@ it("shows the stage's own steps and the work orders it started", async () => {
   render(<PhaseActivityPanel phase="implement" activity={implement} />);
 
   const panel = screen.getByRole("region", { name: "implement activity" });
-  expect(within(panel).getByText("Waiting for the workflows it started")).toBeInTheDocument();
-  expect(within(screen.getByRole("list", { name: "implement steps" })).getAllByRole("listitem")).toHaveLength(2);
-  expect(within(panel).getByRole("heading", { name: "Work orders (3)" })).toBeInTheDocument();
+  expect(
+    within(panel).getByText("Waiting for the workflows it started"),
+  ).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("list", { name: "implement steps" })).getAllByRole(
+      "listitem",
+    ),
+  ).toHaveLength(2);
+  expect(
+    within(panel).getByRole("heading", { name: "Work orders (3)" }),
+  ).toBeInTheDocument();
 
-  const wo3 = screen.getAllByRole("listitem").find((row) => row.classList.contains("workflow-row") && within(row).queryByText("WO-003"))!;
+  const wo3 = screen
+    .getAllByRole("listitem")
+    .find(
+      (row) =>
+        row.classList.contains("workflow-row") &&
+        within(row).queryByText("WO-003"),
+    )!;
   expect(within(wo3).getByText("QA running")).toBeInTheDocument();
   expect(within(wo3).getByText("1 revision")).toBeInTheDocument();
-  expect(within(wo3).getByRole("link", { name: "PR #19" })).toHaveAttribute("href", "https://github.com/o/r/pull/19");
-  expect(screen.getByRole("link", { name: "Decide in Inbox" })).toHaveAttribute("href", "#/inbox/stuck_step/finalize-4");
+  expect(within(wo3).getByRole("link", { name: "PR #19" })).toHaveAttribute(
+    "href",
+    "https://github.com/o/r/pull/19",
+  );
+  expect(screen.getByRole("link", { name: "Decide in Inbox" })).toHaveAttribute(
+    "href",
+    "#/inbox/stuck_step/finalize-4",
+  );
 
   const toggle = within(wo3).getByRole("button", { name: /WO-003/ });
   await userEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "true");
-  expect(within(screen.getByRole("list", { name: "WO-003 steps" })).getByText("QA")).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("list", { name: "WO-003 steps" })).getByText("QA"),
+  ).toBeInTheDocument();
 });
 
 it("approves a pending gate from the stage panel", async () => {
@@ -92,7 +146,13 @@ it("approves a pending gate from the stage panel", async () => {
         from_step: "draft_prd",
         summary: "Drafted PRD: Discussion Categories",
         warnings: ["Chose the Lite profile."],
-        documents: [{ key: "prd_markdown", title: "PRD", markdown: "# PRD: Discussion Categories" }],
+        documents: [
+          {
+            key: "prd_markdown",
+            title: "PRD",
+            markdown: "# PRD: Discussion Categories",
+          },
+        ],
       });
     }
     return jsonResponse({ ok: true });
@@ -106,22 +166,41 @@ it("approves a pending gate from the stage panel", async () => {
       ...delivery("prd request", {}),
       state: "Waiting for approval: approve prd",
       kind: "waiting",
-      steps: [step("draft_prd", "draft prd", "succeeded"), step("approve_prd", "approve prd", "blocked", { approval_pending: true })],
+      steps: [
+        step("draft_prd", "draft prd", "succeeded"),
+        step("approve_prd", "approve prd", "blocked", {
+          approval_pending: true,
+        }),
+      ],
     },
     children: [],
   };
 
-  render(<PhaseActivityPanel phase="prd" activity={prd} onChanged={() => (changed += 1)} />);
+  render(
+    <PhaseActivityPanel
+      phase="prd"
+      activity={prd}
+      onChanged={() => (changed += 1)}
+    />,
+  );
 
   expect(screen.getByText("waiting for approval")).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /Work orders/ })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: /Work orders/ }),
+  ).not.toBeInTheDocument();
   // The PRD under approval is shown next to the buttons.
-  expect(await screen.findByText("# PRD: Discussion Categories")).toBeInTheDocument();
+  expect(
+    await screen.findByText("# PRD: Discussion Categories"),
+  ).toBeInTheDocument();
   expect(screen.getByText("Chose the Lite profile.")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Hide review" }));
-  expect(screen.queryByText("# PRD: Discussion Categories")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("# PRD: Discussion Categories"),
+  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Approve" }));
-  await waitFor(() => expect(posts).toEqual(['/admin/workflows/approve {"id":"approve_prd"}']));
+  await waitFor(() =>
+    expect(posts).toEqual(['/admin/workflows/approve {"id":"approve_prd"}']),
+  );
   expect(changed).toBe(1);
 });
 
@@ -143,7 +222,8 @@ it("approves a release gate inside a started workflow (the release track)", asyn
           pr_urls: ["https://github.com/acme/web/pull/67"],
           ci: { state: "success", checks: { e2e: "success" }, failed: [] },
           rollback_sha: "22ebbfb1560c",
-          compare_url: "https://github.com/acme/web/compare/22ebbfb1560c...a4d80707e51395b5",
+          compare_url:
+            "https://github.com/acme/web/compare/22ebbfb1560c...a4d80707e51395b5",
         },
       });
     }
@@ -157,7 +237,10 @@ it("approves a release gate inside a started workflow (the release track)", asyn
       ...delivery("deploy release", {}),
       state: "Waiting for the workflows it started",
       kind: "waiting",
-      steps: [step("plan_release_tracks", "plan release tracks", "succeeded"), step("join_tracks", "join tracks", "blocked")],
+      steps: [
+        step("plan_release_tracks", "plan release tracks", "succeeded"),
+        step("join_tracks", "join tracks", "blocked"),
+      ],
     },
     children: [
       delivery("acme/web", {
@@ -166,7 +249,12 @@ it("approves a release gate inside a started workflow (the release track)", asyn
         kind: "waiting",
         steps: [
           step("await_ci_on_sha", "await ci on sha", "succeeded"),
-          step("approve_promote_staging", "approve promote staging", "pending", { approval_pending: true, task_id: "gate-staging" }),
+          step(
+            "approve_promote_staging",
+            "approve promote staging",
+            "pending",
+            { approval_pending: true, task_id: "gate-staging" },
+          ),
           step("trigger_deploy_staging", "trigger deploy staging", "pending"),
         ],
       }),
@@ -176,34 +264,61 @@ it("approves a release gate inside a started workflow (the release track)", asyn
   render(<PhaseActivityPanel phase="release" activity={release} />);
 
   // The track opens by itself because it has a gate waiting.
-  expect(screen.getByRole("list", { name: "acme/web steps" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("list", { name: "acme/web steps" }),
+  ).toBeInTheDocument();
   // The release under approval: commit, PRs, CI and the comparison with what staging runs.
-  expect(await screen.findByRole("link", { name: "PR #67" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Compare with what staging runs now" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("link", { name: "PR #67" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Compare with what staging runs now" }),
+  ).toBeInTheDocument();
   expect(screen.getByText("a4d80707e513")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Approve" }));
-  await waitFor(() => expect(posts).toEqual(['/admin/workflows/approve {"id":"gate-staging"}']));
+  await waitFor(() =>
+    expect(posts).toEqual(['/admin/workflows/approve {"id":"gate-staging"}']),
+  );
 });
 
 it("hides gate actions without the approve permission or once the program is closed", () => {
   const prd: PhaseActivity = {
     ...implement,
     children: [],
-    workflow: { ...implement.workflow!, steps: [step("approve_prd", "approve prd", "blocked", { approval_pending: true })] },
+    workflow: {
+      ...implement.workflow!,
+      steps: [
+        step("approve_prd", "approve prd", "blocked", {
+          approval_pending: true,
+        }),
+      ],
+    },
   };
-  const { rerender } = render(<PhaseActivityPanel phase="prd" activity={prd} programClosed />);
-  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  const { rerender } = render(
+    <PhaseActivityPanel phase="prd" activity={prd} programClosed />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
   setPermissions(["view"]);
   rerender(<PhaseActivityPanel phase="prd" activity={prd} />);
-  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
 });
 
 it("says when a stage has not started", () => {
   render(
     <PhaseActivityPanel
       phase="release"
-      activity={{ phase: "release", state: "not_started", workflow_id: "", workflow: null, children: [] }}
-    />
+      activity={{
+        phase: "release",
+        state: "not_started",
+        workflow_id: "",
+        workflow: null,
+        children: [],
+      }}
+    />,
   );
   expect(screen.getByText("This stage has not started.")).toBeInTheDocument();
 });
@@ -214,16 +329,38 @@ it("shows a running coding job's time and latest output", () => {
     children: [
       delivery("WO-004", {
         state: "OpenCode implementing",
-        coding_job: { id: "job-1", status: "running", last_output: "npm test", started_at: new Date(Date.now() - 5 * 60000).toISOString(), created_at: "" },
+        coding_job: {
+          id: "job-1",
+          status: "running",
+          last_output: "npm test",
+          started_at: new Date(Date.now() - 5 * 60000).toISOString(),
+          created_at: "",
+        },
       }),
     ],
   };
   render(<PhaseActivityPanel phase="implement" activity={activity} />);
-  expect(screen.getByText("Running for 5 min")).toBeInTheDocument();
+  expect(screen.getByText("Coding in progress · 5 min")).toBeInTheDocument();
   expect(screen.getByText("npm test")).toBeInTheDocument();
 });
 
 it("labels a queued coding job", () => {
-  expect(codingJobLabel({ id: "j", status: "queued", last_output: "", started_at: "", created_at: "" })).toBe("Waiting for a coding worker");
-  expect(codingJobLabel({ id: "j", status: "starting", last_output: "", started_at: "", created_at: "" })).toBe("Coding worker starting");
+  expect(
+    codingJobLabel({
+      id: "j",
+      status: "queued",
+      last_output: "",
+      started_at: "",
+      created_at: "",
+    }),
+  ).toBe("Queued: waiting for a free coding worker");
+  expect(
+    codingJobLabel({
+      id: "j",
+      status: "starting",
+      last_output: "",
+      started_at: "",
+      created_at: "",
+    }),
+  ).toBe("Coding worker starting");
 });

@@ -11,18 +11,28 @@ function access(extra: Partial<ProgramAccessList> = {}): ProgramAccessList {
   return {
     program_id: "p-1",
     visibility: "private",
-    owner: { subject: "auth0|alice", email: "alice@example.com", display_name: "Alice" },
-    grants: [{ principal_type: "team", principal_id: "payments", level: "write" }],
+    owner: {
+      subject: "auth0|alice",
+      email: "alice@example.com",
+      display_name: "Alice",
+    },
+    grants: [
+      { principal_type: "team", principal_id: "payments", level: "write" },
+    ],
     access_level: "admin",
     ...extra,
   };
 }
 
 beforeEach(() => {
-  HTMLDialogElement.prototype.showModal = vi.fn(function showModal(this: HTMLDialogElement) {
+  HTMLDialogElement.prototype.showModal = vi.fn(function showModal(
+    this: HTMLDialogElement,
+  ) {
     this.setAttribute("open", "");
   });
-  HTMLDialogElement.prototype.close = vi.fn(function close(this: HTMLDialogElement) {
+  HTMLDialogElement.prototype.close = vi.fn(function close(
+    this: HTMLDialogElement,
+  ) {
     this.removeAttribute("open");
   });
 });
@@ -33,10 +43,17 @@ it("lists the owner and grants, adds a person from the directory and removes a t
   mockFetch((url, init) => {
     const method = (init?.method || "GET").toUpperCase();
     calls.push(`${method} ${url}${init?.body ? ` ${init.body}` : ""}`);
-    if (url === `${base}/access` && method === "GET") return jsonResponse(current);
+    if (url === `${base}/access` && method === "GET")
+      return jsonResponse(current);
     if (url.startsWith("/admin/directory/search")) {
       return jsonResponse({
-        users: [{ subject: "auth0|bob", email: "bob@example.com", display_name: "Bob" }],
+        users: [
+          {
+            subject: "auth0|bob",
+            email: "bob@example.com",
+            display_name: "Bob",
+          },
+        ],
         teams: [],
       });
     }
@@ -44,13 +61,20 @@ it("lists the owner and grants, adds a person from the directory and removes a t
       current = access({
         grants: [
           ...current.grants,
-          { principal_type: "user", principal_id: "auth0|bob", level: "approve", display_name: "Bob" },
+          {
+            principal_type: "user",
+            principal_id: "auth0|bob",
+            level: "approve",
+            display_name: "Bob",
+          },
         ],
       });
       return jsonResponse(current);
     }
     if (url === `${base}/access/team/payments` && method === "DELETE") {
-      current = access({ grants: current.grants.filter((g) => g.principal_id !== "payments") });
+      current = access({
+        grants: current.grants.filter((g) => g.principal_id !== "payments"),
+      });
       return jsonResponse(current);
     }
     throw new Error(`Unexpected ${method} ${url}`);
@@ -64,25 +88,36 @@ it("lists the owner and grants, adds a person from the directory and removes a t
   expect(within(grants).getByText("Team payments")).toBeInTheDocument();
   expect(within(grants).getByText("Can contribute")).toBeInTheDocument();
 
-  await userEvent.type(screen.getByRole("textbox", { name: "Search people and teams" }), "bo");
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Search people and teams" }),
+    "bo",
+  );
   await userEvent.click(await screen.findByRole("option", { name: /Bob/ }));
-  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Access level" }), "approve");
+  await userEvent.selectOptions(
+    screen.getByRole("combobox", { name: "Access level" }),
+    "approve",
+  );
   await userEvent.click(screen.getByRole("button", { name: "Add" }));
 
   expect(await within(grants).findByText("Bob")).toBeInTheDocument();
   expect(calls).toContain(
-    `POST ${base}/access {"principal_type":"user","principal_id":"auth0|bob","level":"approve"}`
+    `POST ${base}/access {"principal_type":"user","principal_id":"auth0|bob","level":"approve"}`,
   );
 
-  await userEvent.click(screen.getByRole("button", { name: "Remove payments" }));
-  await waitFor(() => expect(within(grants).queryByText("Team payments")).not.toBeInTheDocument());
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove payments" }),
+  );
+  await waitFor(() =>
+    expect(within(grants).queryByText("Team payments")).not.toBeInTheDocument(),
+  );
 });
 
 it("switches visibility and reports the change", async () => {
   const changes: string[] = [];
   mockFetch((url, init) => {
     const method = (init?.method || "GET").toUpperCase();
-    if (url === `${base}/access` && method === "GET") return jsonResponse(access());
+    if (url === `${base}/access` && method === "GET")
+      return jsonResponse(access());
     if (url === `${base}/visibility` && method === "PATCH") {
       expect(init?.body).toBe('{"visibility":"public"}');
       return jsonResponse(access({ visibility: "public" }));
@@ -91,7 +126,12 @@ it("switches visibility and reports the change", async () => {
   });
 
   render(
-    <ShareDialog open programId="p-1" onClose={() => undefined} onChanged={(next) => changes.push(String(next.visibility))} />
+    <ShareDialog
+      open
+      programId="p-1"
+      onClose={() => undefined}
+      onChanged={(next) => changes.push(String(next.visibility))}
+    />,
   );
 
   const publicOption = await screen.findByRole("radio", { name: /Public/ });
@@ -107,7 +147,11 @@ it("is read-only for people who cannot manage the program", async () => {
   render(<ShareDialog open programId="p-1" onClose={() => undefined} />);
 
   expect(await screen.findByText("Team payments")).toBeInTheDocument();
-  expect(screen.queryByRole("textbox", { name: "Search people and teams" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Search people and teams" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Remove/ }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("radio", { name: /Public/ })).toBeDisabledControl();
 });

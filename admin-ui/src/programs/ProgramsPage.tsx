@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiDownload, apiFetch } from "../api/client";
-import { artifactRows } from "../api/normalizers";
+import { artifactRows, programDocuments } from "../api/normalizers";
 import type {
   PinnedWorkflowVersion,
   PortfolioFilters,
@@ -21,19 +21,32 @@ import { PhaseStrip } from "./PhaseStrip";
 import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
 import { ShareDialog } from "./ShareDialog";
 
-type ProgramTab = "overview" | "artifacts";
+type ProgramTab = "overview" | "documents" | "artifacts";
 type ProgramAction = "advance" | "cancel";
 
 const TABS_ID = "program-detail";
-const STATUS_OPTIONS = ["", "running", "blocked", "failed", "succeeded", "cancelled"];
-const EMPTY_FILTERS: PortfolioFilters = { status: "", phase: "", owner: "", waitingHours: "" };
+const STATUS_OPTIONS = [
+  "",
+  "running",
+  "blocked",
+  "failed",
+  "succeeded",
+  "cancelled",
+];
+const EMPTY_FILTERS: PortfolioFilters = {
+  status: "",
+  phase: "",
+  owner: "",
+  waitingHours: "",
+};
 
 export function portfolioUrl(filters: PortfolioFilters): string {
   const params = new URLSearchParams({ portfolio: "1" });
   if (filters.status) params.set("status", filters.status);
   if (filters.phase.trim()) params.set("phase", filters.phase.trim());
   if (filters.owner.trim()) params.set("owner", filters.owner.trim());
-  if (Number(filters.waitingHours) > 0) params.set("waiting_hours", filters.waitingHours.trim());
+  if (Number(filters.waitingHours) > 0)
+    params.set("waiting_hours", filters.waitingHours.trim());
   return `/admin/programs?${params.toString()}`;
 }
 
@@ -51,9 +64,13 @@ function humanize(value?: string): string {
 
 /** Short phase name, matching the chat offer: "prd" -> "PRD", "work_orders" -> "Work orders". */
 export function phaseLabel(phase?: string): string {
-  const text = String(phase || "").replace(/_/g, " ").trim();
+  const text = String(phase || "")
+    .replace(/_/g, " ")
+    .trim();
   if (!text) return "Unknown";
-  return text.length <= 3 ? text.toUpperCase() : text[0].toUpperCase() + text.slice(1);
+  return text.length <= 3
+    ? text.toUpperCase()
+    : text[0].toUpperCase() + text.slice(1);
 }
 
 /** The phase a succeeded program stopped at when it may still continue (a may_end node). */
@@ -61,17 +78,23 @@ export function endedAtPhase(program?: {
   status?: string;
   artifacts?: Record<string, unknown>;
 }): string | undefined {
-  if (String(program?.status || "").toLowerCase() !== "succeeded") return undefined;
+  if (String(program?.status || "").toLowerCase() !== "succeeded")
+    return undefined;
   const ended = program?.artifacts?.ended_at_phase;
   return typeof ended === "string" && ended ? ended : undefined;
 }
 
-function statusLabel(program?: { status?: string; artifacts?: Record<string, unknown> }): string {
+function statusLabel(program?: {
+  status?: string;
+  artifacts?: Record<string, unknown>;
+}): string {
   const ended = endedAtPhase(program);
   return ended ? `Done at ${phaseLabel(ended)}` : humanize(program?.status);
 }
 
-function parseJsonObject<T extends Record<string, unknown>>(value: unknown): T | undefined {
+function parseJsonObject<T extends Record<string, unknown>>(
+  value: unknown,
+): T | undefined {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as T;
   }
@@ -126,7 +149,13 @@ function linkLabel(key: string): string {
   return humanize(key);
 }
 
-const ACCESS_RANK: Record<string, number> = { none: 0, read: 1, write: 2, approve: 3, admin: 4 };
+const ACCESS_RANK: Record<string, number> = {
+  none: 0,
+  read: 1,
+  write: 2,
+  approve: 3,
+  admin: 4,
+};
 
 function VisibilityPill({ visibility }: { visibility: string }) {
   const isPublic = visibility === "public";
@@ -150,7 +179,9 @@ export function ProgramsPage({
   const [budget, setBudget] = useState<ProgramBudget["team"]>(null);
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
-  const [pendingAction, setPendingAction] = useState<ProgramAction | null>(null);
+  const [pendingAction, setPendingAction] = useState<ProgramAction | null>(
+    null,
+  );
   // Set when the pending advance continues an ended program to a chosen phase.
   const [advanceTarget, setAdvanceTarget] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
@@ -163,7 +194,9 @@ export function ProgramsPage({
   const [exporting, setExporting] = useState(false);
   const [sharing, setSharing] = useState(false);
   const canExportEvidence = hasPermission("edit_config");
-  const programClosed = ["succeeded", "cancelled", "failed"].includes(String(status?.status || "").toLowerCase());
+  const programClosed = ["succeeded", "cancelled", "failed"].includes(
+    String(status?.status || "").toLowerCase(),
+  );
   const accessRank = ACCESS_RANK[status?.access_level || "admin"] ?? 0;
   const canWrite = accessRank >= ACCESS_RANK.write;
   const canApproveProgram = accessRank >= ACCESS_RANK.approve;
@@ -172,13 +205,15 @@ export function ProgramsPage({
   const phaseActivity = usePhaseActivity(
     programId,
     status ? activityPhase : undefined,
-    tab === "overview" && !programClosed
+    tab === "overview" && !programClosed,
   );
 
   async function loadList() {
     setListLoading(true);
     try {
-      const data = await apiFetch<{ programs: ProgramSummary[] }>(portfolioUrl(filters));
+      const data = await apiFetch<{ programs: ProgramSummary[] }>(
+        portfolioUrl(filters),
+      );
       setPrograms(data.programs || []);
       if (!(programId && !status)) {
         setError(null);
@@ -192,7 +227,9 @@ export function ProgramsPage({
   }
 
   async function loadStatus(id: string) {
-    return apiFetch<ProgramStatus>(`/admin/programs/${encodeURIComponent(id)}/status`);
+    return apiFetch<ProgramStatus>(
+      `/admin/programs/${encodeURIComponent(id)}/status`,
+    );
   }
 
   const refreshStatus = useCallback(async (id: string) => {
@@ -222,7 +259,9 @@ export function ProgramsPage({
     void refreshStatus(programId);
     setBudget(null);
     let active = true;
-    apiFetch<ProgramBudget>(`/admin/budgets/programs/${encodeURIComponent(programId)}`)
+    apiFetch<ProgramBudget>(
+      `/admin/budgets/programs/${encodeURIComponent(programId)}`,
+    )
       .then((data) => {
         if (active) setBudget(data.team);
       })
@@ -238,17 +277,23 @@ export function ProgramsPage({
     if (!programId) return;
     setBusy(true);
     try {
-      await apiFetch(`/admin/programs/${encodeURIComponent(programId)}/${action}`, {
-        method: "POST",
-        body: JSON.stringify(
-          action === "cancel"
-            ? { reason: "cancelled from admin console" }
-            : advanceTarget
-              ? { target_phase: advanceTarget }
-              : {}
-        ),
-      });
-      const [nextStatus] = await Promise.all([loadStatus(programId), loadList()]);
+      await apiFetch(
+        `/admin/programs/${encodeURIComponent(programId)}/${action}`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            action === "cancel"
+              ? { reason: "cancelled from admin console" }
+              : advanceTarget
+                ? { target_phase: advanceTarget }
+                : {},
+          ),
+        },
+      );
+      const [nextStatus] = await Promise.all([
+        loadStatus(programId),
+        loadList(),
+      ]);
       setStatus(nextStatus);
       setSelectedPhase(nextStatus.current_phase);
     } catch (e: any) {
@@ -267,7 +312,7 @@ export function ProgramsPage({
     setExporting(true);
     try {
       const { blob, headers } = await apiDownload(
-        `/admin/programs/${encodeURIComponent(programId)}/evidence`
+        `/admin/programs/${encodeURIComponent(programId)}/evidence`,
       );
       const filename = `program-${programId}-evidence.json`;
       const href = URL.createObjectURL(blob);
@@ -305,7 +350,11 @@ export function ProgramsPage({
       >
         <label>
           Status
-          <select name="status" aria-label="Filter by status" defaultValue={filters.status}>
+          <select
+            name="status"
+            aria-label="Filter by status"
+            defaultValue={filters.status}
+          >
             {STATUS_OPTIONS.map((option) => (
               <option key={option || "all"} value={option}>
                 {option ? humanize(option) : "All"}
@@ -315,11 +364,19 @@ export function ProgramsPage({
         </label>
         <label>
           Phase
-          <input name="phase" aria-label="Filter by phase" defaultValue={filters.phase} />
+          <input
+            name="phase"
+            aria-label="Filter by phase"
+            defaultValue={filters.phase}
+          />
         </label>
         <label>
           Owner
-          <input name="owner" aria-label="Filter by owner" defaultValue={filters.owner} />
+          <input
+            name="owner"
+            aria-label="Filter by owner"
+            defaultValue={filters.owner}
+          />
         </label>
         <label>
           Waiting more than (hours)
@@ -343,7 +400,9 @@ export function ProgramsPage({
           Refresh
         </Button>
       </form>
-      {listLoading && !programs.length && <PageState kind="loading" title="Loading programs" />}
+      {listLoading && !programs.length && (
+        <PageState kind="loading" title="Loading programs" />
+      )}
       {!listLoading && error && !programs.length && (
         <PageState
           kind="error"
@@ -365,11 +424,16 @@ export function ProgramsPage({
               {title}
             </span>
             <span className="row-meta">
-              <StatusPill status={programStatus(p.status)} label={statusLabel(p)} />
+              <StatusPill
+                status={programStatus(p.status)}
+                label={statusLabel(p)}
+              />
               {p.visibility && <VisibilityPill visibility={p.visibility} />}
               <span>{humanize(p.current_phase)}</span>
               {p.owner && <span>Owner {p.owner}</span>}
-              {Boolean(p.child_count) && <span>{p.child_count} child programs</span>}
+              {Boolean(p.child_count) && (
+                <span>{p.child_count} child programs</span>
+              )}
               {p.waiting_on_kind && (
                 <span>
                   Waiting on {humanize(p.waiting_on_kind)}
@@ -381,16 +445,21 @@ export function ProgramsPage({
               <span className="short-id">{p.id.slice(0, 8)}</span>
             </span>
             {p.recommended_action && p.recommended_action !== "none" && (
-              <span className="row-meta">Next: {humanize(p.recommended_action)}</span>
+              <span className="row-meta">
+                Next: {humanize(p.recommended_action)}
+              </span>
             )}
           </button>
         );
       })}
-      {!listLoading && !error && !programs.length && <div className="empty">No delivery programs</div>}
+      {!listLoading && !error && !programs.length && (
+        <div className="empty">No delivery programs</div>
+      )}
     </div>
   );
 
   const rows = artifactRows(status?.artifacts || {});
+  const documents = programDocuments(status?.artifacts || {});
   const compensation = (status?.compensation ||
     status?.artifacts?.compensation) as ProgramStatus["compensation"];
   const links = rows.filter((row) => row.href);
@@ -398,7 +467,8 @@ export function ProgramsPage({
     pendingAction === "cancel"
       ? {
           title: "Cancel program?",
-          description: "This stops future phases for the selected delivery program.",
+          description:
+            "This stops future phases for the selected delivery program.",
           confirmLabel: "Cancel program",
           danger: true,
         }
@@ -411,7 +481,8 @@ export function ProgramsPage({
           }
         : {
             title: "Advance program?",
-            description: "This moves the selected delivery program to the next phase.",
+            description:
+              "This moves the selected delivery program to the next phase.",
             confirmLabel: "Advance program",
             danger: false,
           };
@@ -448,22 +519,25 @@ export function ProgramsPage({
       status.topology ||
       parseJsonObject<ProgramTopology>(status.program_definition_snapshot);
     const resolved = parseJsonObject<Record<string, PinnedWorkflowVersion>>(
-      status.resolved_workflow_versions
+      status.resolved_workflow_versions,
     );
-    const definitionHref = programDefinitionHref(status.program_type || topology?.program_type);
+    const definitionHref = programDefinitionHref(
+      status.program_type || topology?.program_type,
+    );
     const endedAt = endedAtPhase(status);
     const continueTargets = endedAt
       ? Array.from(
           new Set(
             (topology?.edges || [])
               .filter((edge) => edge.source === endedAt && edge.target)
-              .map((edge) => String(edge.target))
-          )
+              .map((edge) => String(edge.target)),
+          ),
         )
       : [];
     const pinnedWorkflowLinks = Object.entries(resolved || {})
       .map(([phase, pin]) => {
-        const workflowType = pin?.workflow_type || (status.phases || {})[phase]?.workflow_type;
+        const workflowType =
+          pin?.workflow_type || (status.phases || {})[phase]?.workflow_type;
         const href = workflowDefinitionHref(workflowType);
         if (!workflowType || !href) return null;
         const version =
@@ -484,32 +558,49 @@ export function ProgramsPage({
           <div className="program-header-main">
             <h2>{status.summary || status.program_id}</h2>
             <div className="program-header-meta">
-              <StatusPill status={programStatus(status.status)} label={statusLabel(status)} />
-              {status.visibility && <VisibilityPill visibility={status.visibility} />}
+              <StatusPill
+                status={programStatus(status.status)}
+                label={statusLabel(status)}
+              />
+              {status.visibility && (
+                <VisibilityPill visibility={status.visibility} />
+              )}
               {(status.program_type ||
                 status.program_definition_version ||
                 topology?.program_type) && (
-                <span className="program-pin" aria-label="Pinned program definition">
+                <span
+                  className="program-pin"
+                  aria-label="Pinned program definition"
+                >
                   {definitionHref ? (
                     <a
                       href={definitionHref}
                       title="Open pinned program definition (read-only history when available)"
                     >
-                      {status.program_type || topology?.program_type || "program"}
-                      {status.program_definition_version || topology?.definition_version
+                      {status.program_type ||
+                        topology?.program_type ||
+                        "program"}
+                      {status.program_definition_version ||
+                      topology?.definition_version
                         ? `@${status.program_definition_version || topology?.definition_version}`
                         : ""}
                     </a>
                   ) : (
                     <span>
-                      {status.program_type || topology?.program_type || "program"}
-                      {status.program_definition_version || topology?.definition_version
+                      {status.program_type ||
+                        topology?.program_type ||
+                        "program"}
+                      {status.program_definition_version ||
+                      topology?.definition_version
                         ? `@${status.program_definition_version || topology?.definition_version}`
                         : ""}
                     </span>
                   )}
                   {status.program_definition_revision && (
-                    <span className="muted mono"> rev {status.program_definition_revision}</span>
+                    <span className="muted mono">
+                      {" "}
+                      rev {status.program_definition_revision}
+                    </span>
                   )}
                 </span>
               )}
@@ -521,9 +612,17 @@ export function ProgramsPage({
               )}
             </div>
           </div>
-          <div className="program-actions" role="group" aria-label="Program actions">
+          <div
+            className="program-actions"
+            role="group"
+            aria-label="Program actions"
+          >
             {canWrite && !programClosed && (
-              <Button variant="primary" busy={busy} onClick={() => setPendingAction("advance")}>
+              <Button
+                variant="primary"
+                busy={busy}
+                onClick={() => setPendingAction("advance")}
+              >
                 Advance
               </Button>
             )}
@@ -542,7 +641,11 @@ export function ProgramsPage({
                 </Button>
               ))}
             {canManage && (
-              <Button variant="danger" busy={busy} onClick={() => setPendingAction("cancel")}>
+              <Button
+                variant="danger"
+                busy={busy}
+                onClick={() => setPendingAction("cancel")}
+              >
                 Cancel
               </Button>
             )}
@@ -552,7 +655,11 @@ export function ProgramsPage({
               </Button>
             )}
             {canExportEvidence && (
-              <Button variant="ghost" busy={exporting} onClick={() => void downloadEvidence()}>
+              <Button
+                variant="ghost"
+                busy={exporting}
+                onClick={() => void downloadEvidence()}
+              >
                 Download evidence
               </Button>
             )}
@@ -594,6 +701,7 @@ export function ProgramsPage({
           onChange={(id) => setTab(id as ProgramTab)}
           tabs={[
             { id: "overview", label: "Overview" },
+            { id: "documents", label: "Documents", count: documents.length },
             { id: "artifacts", label: "Artifacts", count: rows.length },
           ]}
         />
@@ -621,7 +729,10 @@ export function ProgramsPage({
                 )}
               </PhaseStrip>
               {pinnedWorkflowLinks.length > 0 && (
-                <div className="key-links" aria-label="Pinned workflow definitions">
+                <div
+                  className="key-links"
+                  aria-label="Pinned workflow definitions"
+                >
                   {pinnedWorkflowLinks.map((item) => (
                     <a
                       key={`${item.phase}-${item.workflowType}`}
@@ -638,123 +749,44 @@ export function ProgramsPage({
                 <strong>Project memory</strong>
                 <div>
                   Project {status.project_id || "unset"}
-                  {status.project_id_source ? ` (${status.project_id_source})` : ""}
+                  {status.project_id_source
+                    ? ` (${status.project_id_source})`
+                    : ""}
                   {" · "}
-                  Auto-share {status.excluded_from_autoshare ? "excluded" : "on"}
+                  Auto-share{" "}
+                  {status.excluded_from_autoshare ? "excluded" : "on"}
                   {" · "}
-                  Links out {status.outbound_link_count || 0} / in {status.inbound_link_count || 0}
+                  Links out {status.outbound_link_count || 0} / in{" "}
+                  {status.inbound_link_count || 0}
                 </div>
                 {canManage && (
-                <div className="program-actions" style={{ marginTop: 8 }}>
-                  <label>
-                    Project
-                    <input
-                      aria-label="Program project"
-                      value={projectDraft}
-                      onChange={(event) => setProjectDraft(event.target.value)}
-                    />
-                  </label>
-                  <Button
-                    variant="ghost"
-                    busy={busy}
-                    onClick={() =>
-                      void (async () => {
-                        if (!programId) return;
-                        setBusy(true);
-                        try {
-                          await apiFetch(`/admin/programs/${encodeURIComponent(programId)}`, {
-                            method: "PATCH",
-                            body: JSON.stringify({ project_id: projectDraft }),
-                          });
-                          await refreshStatus(programId);
-                        } catch (e: any) {
-                          setError(String(e.message || e));
-                        } finally {
-                          setBusy(false);
+                  <div className="program-actions" style={{ marginTop: 8 }}>
+                    <label>
+                      Project
+                      <input
+                        aria-label="Program project"
+                        value={projectDraft}
+                        onChange={(event) =>
+                          setProjectDraft(event.target.value)
                         }
-                      })()
-                    }
-                  >
-                    Save project
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    busy={busy}
-                    onClick={() =>
-                      void (async () => {
-                        if (!programId) return;
-                        setBusy(true);
-                        try {
-                          await apiFetch(`/admin/programs/${encodeURIComponent(programId)}`, {
-                            method: "PATCH",
-                            body: JSON.stringify({
-                              excluded_from_autoshare: !status.excluded_from_autoshare,
-                            }),
-                          });
-                          await refreshStatus(programId);
-                        } catch (e: any) {
-                          setError(String(e.message || e));
-                        } finally {
-                          setBusy(false);
-                        }
-                      })()
-                    }
-                  >
-                    {status.excluded_from_autoshare ? "Include in auto-share" : "Exclude from auto-share"}
-                  </Button>
-                </div>
-                )}
-                {canManage && (
-                <div className="program-actions" style={{ marginTop: 8 }}>
-                  <label>
-                    Link to program
-                    <input
-                      aria-label="Link target program"
-                      value={linkDraft}
-                      onChange={(event) => setLinkDraft(event.target.value)}
-                    />
-                  </label>
-                  <Button
-                    variant="ghost"
-                    busy={busy}
-                    onClick={() =>
-                      void (async () => {
-                        if (!programId || !linkDraft.trim()) return;
-                        setBusy(true);
-                        try {
-                          await apiFetch(`/admin/programs/${encodeURIComponent(programId)}/links`, {
-                            method: "POST",
-                            body: JSON.stringify({ to_program_id: linkDraft.trim() }),
-                          });
-                          setLinkDraft("");
-                          await refreshStatus(programId);
-                        } catch (e: any) {
-                          setError(String(e.message || e));
-                        } finally {
-                          setBusy(false);
-                        }
-                      })()
-                    }
-                  >
-                    Add link
-                  </Button>
-                </div>
-                )}
-                {(status.links?.outbound || []).map((link) => (
-                  <div key={link.to_program_id} className="program-actions">
-                    <span>Reads {link.to_program_id}</span>
-                    {canManage && (
+                      />
+                    </label>
                     <Button
                       variant="ghost"
                       busy={busy}
                       onClick={() =>
                         void (async () => {
-                          if (!programId || !link.to_program_id) return;
+                          if (!programId) return;
                           setBusy(true);
                           try {
                             await apiFetch(
-                              `/admin/programs/${encodeURIComponent(programId)}/links/${encodeURIComponent(link.to_program_id)}`,
-                              { method: "DELETE" }
+                              `/admin/programs/${encodeURIComponent(programId)}`,
+                              {
+                                method: "PATCH",
+                                body: JSON.stringify({
+                                  project_id: projectDraft,
+                                }),
+                              },
                             );
                             await refreshStatus(programId);
                           } catch (e: any) {
@@ -765,8 +797,109 @@ export function ProgramsPage({
                         })()
                       }
                     >
-                      Unlink
+                      Save project
                     </Button>
+                    <Button
+                      variant="ghost"
+                      busy={busy}
+                      onClick={() =>
+                        void (async () => {
+                          if (!programId) return;
+                          setBusy(true);
+                          try {
+                            await apiFetch(
+                              `/admin/programs/${encodeURIComponent(programId)}`,
+                              {
+                                method: "PATCH",
+                                body: JSON.stringify({
+                                  excluded_from_autoshare:
+                                    !status.excluded_from_autoshare,
+                                }),
+                              },
+                            );
+                            await refreshStatus(programId);
+                          } catch (e: any) {
+                            setError(String(e.message || e));
+                          } finally {
+                            setBusy(false);
+                          }
+                        })()
+                      }
+                    >
+                      {status.excluded_from_autoshare
+                        ? "Include in auto-share"
+                        : "Exclude from auto-share"}
+                    </Button>
+                  </div>
+                )}
+                {canManage && (
+                  <div className="program-actions" style={{ marginTop: 8 }}>
+                    <label>
+                      Link to program
+                      <input
+                        aria-label="Link target program"
+                        value={linkDraft}
+                        onChange={(event) => setLinkDraft(event.target.value)}
+                      />
+                    </label>
+                    <Button
+                      variant="ghost"
+                      busy={busy}
+                      onClick={() =>
+                        void (async () => {
+                          if (!programId || !linkDraft.trim()) return;
+                          setBusy(true);
+                          try {
+                            await apiFetch(
+                              `/admin/programs/${encodeURIComponent(programId)}/links`,
+                              {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  to_program_id: linkDraft.trim(),
+                                }),
+                              },
+                            );
+                            setLinkDraft("");
+                            await refreshStatus(programId);
+                          } catch (e: any) {
+                            setError(String(e.message || e));
+                          } finally {
+                            setBusy(false);
+                          }
+                        })()
+                      }
+                    >
+                      Add link
+                    </Button>
+                  </div>
+                )}
+                {(status.links?.outbound || []).map((link) => (
+                  <div key={link.to_program_id} className="program-actions">
+                    <span>Reads {link.to_program_id}</span>
+                    {canManage && (
+                      <Button
+                        variant="ghost"
+                        busy={busy}
+                        onClick={() =>
+                          void (async () => {
+                            if (!programId || !link.to_program_id) return;
+                            setBusy(true);
+                            try {
+                              await apiFetch(
+                                `/admin/programs/${encodeURIComponent(programId)}/links/${encodeURIComponent(link.to_program_id)}`,
+                                { method: "DELETE" },
+                              );
+                              await refreshStatus(programId);
+                            } catch (e: any) {
+                              setError(String(e.message || e));
+                            } finally {
+                              setBusy(false);
+                            }
+                          })()
+                        }
+                      >
+                        Unlink
+                      </Button>
                     )}
                   </div>
                 ))}
@@ -779,10 +912,13 @@ export function ProgramsPage({
               )}
               {compensation && (
                 <div className="callout" aria-label="Cancel cleanup">
-                  <strong>Cancel cleanup: {humanize(compensation.status)}</strong>
+                  <strong>
+                    Cancel cleanup: {humanize(compensation.status)}
+                  </strong>
                   {(compensation.failures || []).map((item, index) => (
                     <div key={`${item.ref}-${index}`}>
-                      {humanize(item.kind)} {item.ref}: {item.detail || "failed"}
+                      {humanize(item.kind)} {item.ref}:{" "}
+                      {item.detail || "failed"}
                     </div>
                   ))}
                 </div>
@@ -790,13 +926,43 @@ export function ProgramsPage({
               {links.length > 0 && (
                 <div className="key-links" aria-label="Key links">
                   {links.map((row) => (
-                    <a key={row.key} href={row.href} target="_blank" rel="noreferrer">
+                    <a
+                      key={row.key}
+                      href={row.href}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {linkLabel(row.key)}
                     </a>
                   ))}
                 </div>
               )}
-            </section>
+            </section>,
+          )}
+        {tab === "documents" &&
+          tabPanel(
+            <section
+              className="program-documents"
+              aria-label="Program documents"
+            >
+              {documents.map((doc, index) => (
+                <details
+                  key={doc.key}
+                  className="gate-review-doc"
+                  open={index === 0}
+                >
+                  <summary>
+                    {doc.title} <span className="muted">· {doc.stage}</span>
+                  </summary>
+                  <pre>{doc.markdown}</pre>
+                </details>
+              ))}
+              {!documents.length && (
+                <div className="empty">
+                  No documents yet. The PRD appears here once it is approved.
+                </div>
+              )}
+            </section>,
           )}
         {tab === "artifacts" &&
           tabPanel(
@@ -821,7 +987,7 @@ export function ProgramsPage({
                 </div>
               ))}
               {!rows.length && <div className="empty">No artifacts</div>}
-            </dl>
+            </dl>,
           )}
         <ConfirmDialog
           open={Boolean(pendingAction)}
@@ -842,7 +1008,11 @@ export function ProgramsPage({
             programId={programId}
             onClose={() => setSharing(false)}
             onChanged={(access) =>
-              setStatus((current) => (current ? { ...current, visibility: access.visibility } : current))
+              setStatus((current) =>
+                current
+                  ? { ...current, visibility: access.visibility }
+                  : current,
+              )
             }
           />
         )}

@@ -2483,7 +2483,8 @@ form {
   color: var(--muted);
 }
 
-.workflow-step-status.step-running {
+.workflow-step-status.step-running,
+.workflow-step-status.step-coding {
   color: var(--accent);
 }
 
@@ -2616,4 +2617,10 @@ form {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.program-documents {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
