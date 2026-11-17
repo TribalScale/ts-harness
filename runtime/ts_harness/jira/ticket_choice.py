@@ -42,3 +42,9 @@ def ticket_choice_from_reply(reply: str, listing: dict[str, Any]) -> dict[str, A
         if len(tickets) == 1:
             return {"jira_issue_key": tickets[0], "jira_project_key": tickets[0].split("-", 1)[0]}
     return {}
+
+
+def names_a_pick(reply: str) -> bool:
+    """True when a reply to the ticket list picks something: a ticket key, or ``all ...``."""
+    text = str(reply or "")
+    return bool(_ISSUE_KEY.search(text.upper()) or _ALL.search(text))

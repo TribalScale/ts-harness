@@ -83,7 +83,8 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 # A key in the reply is the ticket to implement (a filing gate reads it as an epic).
                 from ts_harness.jira.ticket_choice import ticket_choice_from_reply
 
-                output.update(ticket_choice_from_reply(reply, _ticket_listing(ctx)))
+                # Earlier replies kept as answers count too ("THD-33", then "ready").
+                output.update(ticket_choice_from_reply(combined, _ticket_listing(ctx)))
             else:
                 output.update(jira_choice_from_reply(reply, task_input))
         output = _carry_gate_inputs(output, task_input, reply)

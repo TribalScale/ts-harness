@@ -153,6 +153,12 @@ class PickGateTests(unittest.TestCase):
         self.assertEqual(output["jira_issue_key"], "THD-34")
         self.assertNotIn("jira_epic_key", output)
 
+        # A key kept as an earlier answer, then "ready".
+        tasks[1]["input"] = {"answers": ["THD-33"], "jira_allowed_projects": ["THD"]}
+        ctx.extras = {"decision": {}, "reply_text": "ready"}
+        approve_gate.handle(ctx)
+        self.assertEqual(client.approve_task.call_args.kwargs["output"]["jira_issue_key"], "THD-33")
+
 
 class ChatActorEmailTests(unittest.TestCase):
     def test_console_messages_use_the_sign_in_email(self):
@@ -164,3 +170,15 @@ class ChatActorEmailTests(unittest.TestCase):
         self.assertEqual(chat_actor_email({"sender_email": "x@example.com"}, person, "web", None), "x@example.com")
         service = AuthContext(actor_id="gateway", tenant_id="t", email="svc@example.com", is_service=True)
         self.assertIsNone(chat_actor_email({}, service, "web", None))
+
+
+class PickReplyGoAheadTests(unittest.TestCase):
+    def test_a_key_or_all_on_the_pick_gate_starts_it_without_ready(self):
+        from ts_harness.gateway.channel_confirmations import _intake_go_ahead
+
+        pick = {"step_name": "pick_ticket", "input": {"jira_project_key": ""}}
+        self.assertTrue(_intake_go_ahead(pick, "THD-33"))
+        self.assertTrue(_intake_go_ahead(pick, "all THD"))
+        self.assertFalse(_intake_go_ahead(pick, "which ones are blocked?"))
+        # Other intake gates still collect answers until "ready".
+        self.assertFalse(_intake_go_ahead({"step_name": "intake", "input": {}}, "THD-33 is related"))
