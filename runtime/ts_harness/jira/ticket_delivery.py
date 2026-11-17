@@ -1,18 +1,19 @@
-"""Get a Jira ticket ready to code: design references and the repository onboarding check.
+"""Read a Jira ticket and get it ready to code (the first step of ``implement_jira_ticket``).
 
-The ``prepare_ticket_delivery`` system step runs between ``hydrate_ticket`` and the coding job
-in ``implement_jira_ticket``, so a ticket gets what a planned work order gets:
+``prepare_ticket_delivery`` is a system step (no agent). It runs before the kickoff approval
+(``hydrate_ticket``), so the person approves what will actually be coded:
 
-- **Design references.** A ticket filed from a PRD points at its program (``Program:`` in the
-  description); that program's ``design_refs`` (D1, D2, ...) come along, and the coding job
-  and QA see the ones the ticket names (``Design: D1``). Images attached to the ticket are
-  stored as further references and named in the work order body, so they are always used.
-- **Onboarding.** A repository whose CI runs an e2e or integration suite but has no
-  ``.ts-harness.yml`` cannot be verified the way CI runs it. The work order then also asks
-  the coding job to add the file (the same instructions as an onboarding work order), so
-  the ticket's PR sets the repository up.
+- **The ticket**: summary and description from Jira become the work order body.
+- **Repository and branch**: the description's ``Repo: org/repo@branch`` line, else the
+  runtime's ``implement_jira_ticket`` repository; a branch named when approving overrides it.
+- **Design references**: those of the program the ticket was filed from (``Program:`` line),
+  else of the program running it, plus the ticket's image attachments, named on its Design
+  line. The coding job and QA see the references the body names.
+- **Onboarding**: a repository whose CI runs an e2e or integration suite but has no
+  ``.ts-harness.yml`` gets the onboarding instructions added, so the ticket's PR sets it up.
 
-Both are best effort: a lookup that fails is reported in ``warnings`` and the ticket runs.
+A ticket that can't be read, or names no repository when none is configured, blocks the step
+with what to fix. Every other lookup is best effort and listed in ``warnings``.
 """
 
 from __future__ import annotations
@@ -82,29 +83,53 @@ def _with_design_line(body: str, ids: list[str]) -> str:
     return body[: match.start(1)] + named + ", " + ", ".join(extra) + body[match.start(1) + len(named) :]
 
 
-_TICKET_KEYS = ("work_order_body", "repo_url", "base_branch", "jira_issue_key")
-
-
-def _ticket_values(task: dict[str, Any], config: dict[str, Any], memory: Any) -> dict[str, Any]:
-    """The ticket as ``hydrate_ticket`` read it, and the workflow's issue key."""
+def _workflow_input(memory: Any, task: dict[str, Any]) -> dict[str, Any]:
     from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
-    values = {k: config.get(k) for k in _TICKET_KEYS if config.get(k)}
-    values.update({k: v for k, v in (task.get("input") or {}).items() if k in _TICKET_KEYS and v})
-    if all(values.get(k) for k in _TICKET_KEYS):
-        return values
-    workflow, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
-    hydrated = [t for t in tasks if t.get("step_name") == "hydrate_ticket" and t.get("status") == "succeeded"]
-    if hydrated:
-        latest = max(hydrated, key=lambda t: str(t.get("updated_at") or t.get("created_at") or ""))
-        output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
-        for k in _TICKET_KEYS:
-            if not values.get(k) and output.get(k):
-                values[k] = output[k]
-    workflow_input = workflow.get("input") if isinstance(workflow.get("input"), dict) else {}
-    if not values.get("jira_issue_key"):
-        values["jira_issue_key"] = workflow_input.get("jira_issue_key") or workflow.get("external_ref")
-    return values
+    workflow, _tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
+    found = workflow.get("input") if isinstance(workflow.get("input"), dict) else {}
+    return {**found, "_external_ref": workflow.get("external_ref")}
+
+
+def _repo_url(repo_id: str) -> str:
+    repo_id = repo_id.strip()
+    if "://" in repo_id:
+        return repo_id.rstrip("/")
+    return f"https://github.com/{repo_id.strip('/')}"
+
+
+def _configured_repo() -> tuple[str, str]:
+    try:
+        from ts_harness.implementation.config import repo_for_workflow
+
+        repo = repo_for_workflow("implement_jira_ticket")
+        return str(repo.url or ""), str(repo.base_branch or "")
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
+def resolve_target(pointer: Any, requested_branch: str = "", configured: tuple[str, str] = ("", "")) -> tuple[str, str, str]:
+    """``(repo_url, base_branch, where it came from)`` for a ticket.
+
+    The repository is the ticket's ``Repo:`` line, else the runtime's ``implement_jira_ticket``
+    repository. The branch is the ``Repo:`` line's ``@branch``, else the configured branch for
+    that repository, else the one the request named, else ``dev``. A branch the person names
+    when approving the kickoff overrides it later (``approve_gate``).
+    """
+    configured_url, configured_branch = configured
+    if pointer.repo_id:
+        url = _repo_url(pointer.repo_id)
+        same = configured_url and configured_url.rstrip("/").lower() == url.lower()
+        branch = pointer.base_branch or (configured_branch if same else "") or requested_branch or "dev"
+        return url, branch, "the ticket's Repo line"
+    if configured_url:
+        return configured_url, configured_branch or requested_branch or "dev", "the runtime config"
+    return "", "", ""
+
+
+def _program_artifacts(memory: Any, program_id: str) -> dict[str, Any]:
+    status = memory.get_program_status(program_id) or {}
+    return status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
 
 
 def prepare_ticket_delivery(
@@ -115,32 +140,69 @@ def prepare_ticket_delivery(
     jira_factory: Callable[[], Any] | None = None,
     store_factory: Callable[[], Any] | None = None,
     inspect: Callable[..., Any] | None = None,
+    configured: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
-    values = _ticket_values(task, config, memory)
-    body = str(values.get("work_order_body") or "")
-    repo_url = str(values.get("repo_url") or "")
-    base_branch = str(values.get("base_branch") or "")
-    key = str(values.get("jira_issue_key") or "")
+    """Read the ticket from Jira and resolve everything the coding job needs.
+
+    Raises ``ValueError`` (the step blocks with the message) when the ticket can't be read
+    or names no repository and none is configured.
+    """
+    from ts_harness.integrations.adf import adf_to_text
+    from ts_harness.jira.pointer_block import parse_pointer_block
+
+    workflow_input = _workflow_input(memory, task)
+    task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+    key = str(task_input.get("jira_issue_key") or config.get("jira_issue_key") or workflow_input.get("jira_issue_key") or workflow_input.get("_external_ref") or "").strip()
+    if not key:
+        raise ValueError("no Jira issue key on this workflow")
     tenant_id = str(task.get("tenant_id") or "default")
     warnings: list[str] = []
 
+    from ts_harness.integrations.jira_client import JiraClient
+
+    try:
+        jira = (jira_factory or JiraClient.from_env)()
+        issue = jira.get_issue(key)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"could not read {key} from Jira: {exc}") from exc
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    summary = str(fields.get("summary") or "").strip()
+    raw = fields.get("description")
+    description = (adf_to_text(raw) if isinstance(raw, dict) else str(raw or "")).strip()
+    if not description:
+        warnings.append(f"{key} has no description; the coding job works from its summary alone")
+    pointer = parse_pointer_block(description)
+    requested = str(task_input.get("base_branch") or workflow_input.get("base_branch") or "")
+    repo_url, base_branch, repo_source = resolve_target(pointer, requested, configured if configured is not None else _configured_repo())
+    if not repo_url:
+        raise ValueError(
+            f"{key} names no repository and none is configured: add a line `Repo: org/repo@branch` "
+            "to its description (or set implementation.repos.implement_jira_ticket), then run it again"
+        )
+    body = f"# {key} {summary}\n\n{description}\n" if description else f"# {key} {summary}\n"
+
+    # The program the ticket was filed from (Program: line), else the program running it.
+    owner = str(pointer.program_id or "")
+    planning: dict[str, Any] = {}
     refs: list[dict[str, Any]] = []
     try:
-        refs = _program_design_refs(memory, str(task.get("id") or ""))
+        if owner:
+            artifacts = _program_artifacts(memory, owner)
+            refs = [r for r in artifacts.get("design_refs") or [] if isinstance(r, dict) and r.get("id")]
+            planning = {k: artifacts[k] for k in ("refinery_artifacts", "foundry_artifacts", "planner_artifacts") if artifacts.get(k)}
+        if not refs:
+            refs = _program_design_refs(memory, str(task.get("id") or ""))
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"program design references unavailable: {exc}")
     attached: list[dict[str, Any]] = []
-    if key:
-        try:
-            from ts_harness.intake.gather import _design_store
-            from ts_harness.integrations.jira_client import JiraClient
+    try:
+        from ts_harness.intake.gather import _design_store
 
-            store = (store_factory or _design_store)()
-            if store is not None:
-                jira = (jira_factory or JiraClient.from_env)()
-                attached = _attachment_refs(jira, key, store, tenant_id)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"ticket image attachments unavailable: {exc}")
+        store = (store_factory or _design_store)()
+        if store is not None:
+            attached = _attachment_refs(jira, key, store, tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"ticket image attachments unavailable: {exc}")
     if attached:
         # Program references are already D1..Dn in order, so they keep their ids (the ticket
         # names them); attachments follow and are named in the body.
@@ -149,28 +211,44 @@ def prepare_ticket_delivery(
         body = _with_design_line(body, [str(r["id"]) for r in refs if str(r.get("object_key")) not in program_keys])
 
     onboarding: dict[str, Any] = {"checked": False}
-    if repo_url and base_branch:
-        try:
-            from ts_harness.workflows.repo_onboarding_gate import Target, inspect_repository
+    try:
+        from ts_harness.workflows.repo_onboarding_gate import Target, inspect_repository
 
-            found = (inspect or inspect_repository)(Target(repo_url, base_branch), ONBOARDING_ID)
-            onboarding = {"checked": True, "needed": bool(found.needed), "reason": found.reason}
-            if found.needed and found.body:
-                body = (
-                    body.rstrip()
-                    + "\n\n## Repository setup (also in this PR)\n\n"
-                    + "This repository's CI runs a suite the harness cannot run yet. Before the ticket's "
-                    "change, do the following, so this PR also sets the repository up:\n\n"
-                    + found.body.strip()
-                    + "\n"
-                )
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"onboarding check failed: {exc}")
-            onboarding = {"checked": False, "reason": str(exc)}
+        found = (inspect or inspect_repository)(Target(repo_url, base_branch), ONBOARDING_ID)
+        onboarding = {"checked": True, "needed": bool(found.needed), "reason": found.reason}
+        if found.needed and found.body:
+            body = (
+                body.rstrip()
+                + "\n\n## Repository setup (also in this PR)\n\n"
+                + "This repository's CI runs a suite the harness cannot run yet. Before the ticket's "
+                "change, do the following, so this PR also sets the repository up:\n\n"
+                + found.body.strip()
+                + "\n"
+            )
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"onboarding check failed: {exc}")
+        onboarding = {"checked": False, "reason": str(exc)}
+
+    repo_name = repo_url.split("github.com/")[-1]
+    lines = [f"{key}: {summary}", f"PR against `{base_branch}` on `{repo_name}` (from {repo_source})."]
+    named = [str(r["id"]) for r in refs if str(r["id"]) in body]
+    if refs:
+        lines.append("Design: " + ", ".join(f"{r['id']} ({r.get('title') or r.get('source')})" for r in refs if str(r["id"]) in named or not named))
+    if onboarding.get("needed"):
+        lines.append("The repository has no .ts-harness.yml yet; this PR also adds it.")
+    lines += [f"Note: {w}" for w in warnings]
+    lines.append("Approve to start coding, or reply with `branch <name>` to target another branch.")
 
     return {
+        "summary": "\n".join(lines),
+        "work_order_id": key,
         "work_order_body": body,
+        "jira_issue_key": key,
+        "repo_url": repo_url,
+        "base_branch": base_branch,
+        "owner_program_id": owner or None,
         "design_refs": refs,
         "onboarding": onboarding,
         "warnings": warnings,
+        **planning,
     }

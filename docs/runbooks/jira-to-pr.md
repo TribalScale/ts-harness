@@ -20,20 +20,24 @@ propose_start_program(program_type=jira_to_pr, entry_phase=pick)
 
 With a key: `entry_phase=implement` and `artifacts.jira_issue_key=PROJ-123`.
 
-The kickoff (`hydrate_ticket`) is a human gate. Approving it starts implementation in `deliver_work_order` as the dev agent.
+The kickoff (`hydrate_ticket`) is a human gate. Approving it starts the coding job (`deliver_work_order`). Reply `branch <name>` instead to target another branch.
 
-Between the kickoff and the coding job, `prepare_ticket_delivery` (no agent) gets the ticket ready:
+Before the kickoff, `prepare_ticket_delivery` (no agent) reads the ticket and posts what it
+found, so the kickoff approves what will actually be coded:
 
-- **Design references**: those of the program the ticket points at, and the ticket's image
-  attachments (see [Design references](design-references.md)).
+- **The ticket**: its summary and description become the work order.
+- **Repository and branch**: the description's `Repo: org/repo@branch` line, else
+  `implementation.repos.implement_jira_ticket` (see PR base branch below). A ticket with
+  neither blocks with what to add.
+- **Design references**: those of the program the ticket was filed from (`Program:` line), and
+  the ticket's image attachments (see [Design references](design-references.md)).
 - **Repository onboarding**: the same check as planned work orders. When the repository's CI runs
   an e2e or integration suite and it has no `.ts-harness.yml`, the work order also asks the coding
   job to add the file, so the ticket's PR sets the repository up. A queue runs one ticket at a time, so
   only the first ticket's PR adds it. Two tickets started separately on the same repository before
   that PR merges both add the file, and the second PR conflicts on it: keep the merged version.
 
-A lookup that fails (no Jira credentials, clone error) is listed in the step's `warnings`; the
-ticket still runs.
+A lookup that fails (attachments, clone error) is listed as a note; the ticket still runs.
 
 ## Identity
 

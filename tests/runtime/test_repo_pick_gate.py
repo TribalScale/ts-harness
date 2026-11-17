@@ -168,8 +168,7 @@ class ImplementTicketGateTests(unittest.TestCase):
         self.assertEqual(patched["repo_url"], "https://github.com/org/thd")
         self.assertEqual(patched["base_branch"], "release/2")
         self.assertEqual(patched["jira_issue_key"], "THD-32")
-        # The body reaches the coding step through prepare_ticket_delivery (design refs, onboarding).
-        self.assertNotIn("work_order_body", patched)
+        self.assertEqual(patched["work_order_body"], "Keep the change small")
 
 
 class MemoryClientApproveOutputTests(unittest.TestCase):
