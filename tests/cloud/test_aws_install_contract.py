@@ -201,7 +201,7 @@ class AwsInstallContractFreezeTests(unittest.TestCase):
         self.assertIn("../../scripts/user-data.sh", ec2)
         self.assertIn('DATA_DIR="/vol/ts-harness-data"', user_data)
         self.assertIn('COMPLETION_MARKER="/vol/ts-harness-data/.setup-complete"', user_data)
-        self.assertIn("ignore_changes = [launch_template]", ec2)
+        self.assertIn("ignore_changes = [launch_template, user_data, user_data_base64]", ec2)
 
     def test_ebs_mount_and_device_contract(self):
         ebs = EBS_TF.read_text()
