@@ -131,17 +131,22 @@ def _text_record(
     limit = min(MAX_TEXT_CHARS, budget.text_left())
     extracted = extract_document(name, mime, data, limit=limit)
     if extracted["needs_vision"]:
+        # The image is a design reference even when its text description fails: the steps after
+        # this one see the image itself.
         if describe_image is None:
             record["error"] = "image reading is not enabled"
+            _keep_design_image(name, mime, data, "", store_design, design_refs)
             return record
         try:
             text, truncated = clip_text(describe_image(name, mime, data).strip(), limit)
         except SourceUnavailable as exc:
             record["error"] = str(exc)
+            _keep_design_image(name, mime, data, "", store_design, design_refs)
             return record
         except Exception as exc:  # noqa: BLE001 - provider failures become an error record
             logger.warning("intake image description failed for %s: %s", name, exc)
             record["error"] = "image could not be read"
+            _keep_design_image(name, mime, data, "", store_design, design_refs)
             return record
         record.update(text=text, truncated=truncated)
         _keep_design_image(name, mime, data, text, store_design, design_refs)

@@ -227,6 +227,20 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("not connected", out["sources"][0]["error"])
         self.assertIn("Could not be read", out["sources_text"])
 
+    def test_an_image_that_cannot_be_described_is_still_a_design_ref(self):
+        def failing(name, mime, data):
+            raise RuntimeError("provider down")
+
+        out = resolve_intake_sources(
+            [{"kind": "slack_file", "file_id": "F1", "name": "home.png", "mime": "image/png", "size": 10}],
+            download=lambda p: (p["name"], p["mime"], PNG),
+            drive=None,
+            describe_image=failing,
+            store_design=lambda name, mime, data: design.store_design_image(self.store, tenant_id="t1", data=data, mime=mime),
+        )
+        self.assertEqual(out["sources"][0]["error"], "image could not be read")
+        self.assertEqual([(r["id"], r["title"], r["summary"]) for r in out["design_refs"]], [("D1", "home.png", "")])
+
     def test_without_a_store_images_are_only_described(self):
         out = resolve_intake_sources(
             [{"kind": "slack_file", "file_id": "F1", "name": "home.png", "mime": "image/png", "size": 10}],
