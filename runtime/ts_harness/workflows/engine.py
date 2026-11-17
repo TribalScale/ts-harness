@@ -1223,10 +1223,14 @@ def _failed_checks_feedback(output: dict[str, Any]) -> str:
     """What OpenCode needs to fix failing CI: which checks failed and how each job's log ends."""
     failed = [str(item) for item in output.get("failed_checks") or [] if item]
     lines = ["The PR's CI checks failed: " + (", ".join(failed) or "see the PR checks") + "."]
-    lines.append("Fix the cause so these checks pass in CI, not only locally; CI may use a different environment.")
+    lines.append(
+        "Fix the cause so these checks pass in CI, not only locally; CI may use a different environment. "
+        "When CI retries a failed test, the retries often fail differently (on data the first attempt left "
+        "behind): fix the first failure. A test that builds random data can collide with other text on the page."
+    )
     logs = output.get("failed_check_logs") if isinstance(output.get("failed_check_logs"), dict) else {}
     for name, tail in logs.items():
-        lines.append(f"\nEnd of the log for {name}:\n{str(tail)[-4000:]}")
+        lines.append(f"\nLog of {name}:\n{str(tail)[-6000:]}")
     return "\n".join(lines)
 
 

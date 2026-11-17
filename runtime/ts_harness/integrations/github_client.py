@@ -374,7 +374,7 @@ class GitHubClient:
                 break  # checkout and runner cleanup follow; the failure is above
             if line.strip():
                 lines.append(line)
-        return "\n".join(lines[-max_lines:])
+        return _first_failure_and_tail(lines, max_lines)
 
     def failed_check_logs(self, owner: str, repo: str, ref: str, names: list[str]) -> dict[str, str]:
         """Log tails of the failed GitHub Actions jobs among ``names`` on ``ref``."""
@@ -535,6 +535,28 @@ def repo_token(repo_url: str) -> str:
         return app.repo_token(*parsed)
     except NotInstalled:
         return pat
+
+
+# Where a test runner's first failure starts: Playwright's "1) [chromium] › ...", Jest/Vitest
+# "FAIL"/"●", pytest's "FAILED"/"Traceback", or a bare error line.
+_FIRST_FAILURE_RE = re.compile(
+    r"^\s*(\d+\)\s+\[|FAIL\b|FAILED\b|● |✘|×|Traceback \(most recent call last\)|AssertionError|Error:)"
+)
+FIRST_FAILURE_LINES = 40
+
+
+def _first_failure_and_tail(lines: list[str], max_lines: int) -> str:
+    """The first failure block and the end of the log.
+
+    The end alone can mislead: with retries, it shows the retries' errors (often caused by
+    data the first attempt left behind), not the failure that started it.
+    """
+    tail_start = max(0, len(lines) - max_lines)
+    first = next((i for i, line in enumerate(lines) if _FIRST_FAILURE_RE.match(line)), None)
+    if first is None or first >= tail_start - 5:
+        return "\n".join(lines[tail_start:])
+    block = lines[first : min(first + FIRST_FAILURE_LINES, tail_start)]
+    return "First failure in the log:\n" + "\n".join(block) + "\n...\nEnd of the log:\n" + "\n".join(lines[tail_start:])
 
 
 def summarize_checks(

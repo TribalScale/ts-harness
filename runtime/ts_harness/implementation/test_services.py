@@ -954,22 +954,52 @@ def write_agent_command(bin_dir: Path) -> Path:
     path.write_text(
         "#!/bin/sh\n"
         "# Runs the repo's integration suite with this job's databases (reset first).\n"
-        f'exec {shlex.quote(sys.executable)} -m ts_harness.implementation.test_services integration "$PWD"\n',
+        "# With test files as arguments, runs only those: ts-harness-integration e2e/a.spec.ts\n"
+        f'exec {shlex.quote(sys.executable)} -m ts_harness.implementation.test_services integration "$PWD" "$@"\n',
         encoding="utf-8",
     )
     path.chmod(0o755)
     return path
 
 
+def scoped_plan(repo_dir: Path, plan: IntegrationPlan, tests: list[str]) -> IntegrationPlan:
+    """``plan`` running only ``tests``, with the same setup and background processes.
+
+    The coding agent runs the tests it added or changed; the host runs the whole suite after
+    it finishes. With a Playwright config the files go to ``playwright test``; otherwise they
+    are appended to the suite command (after ``--`` for ``npm run``).
+    """
+    from dataclasses import replace
+
+    from ts_harness.implementation.workspaces import find_bin
+
+    repo_dir = Path(repo_dir)
+    base = playwright_config(repo_dir, tests)
+    binary = find_bin(repo_dir, base.parent, "playwright") if base is not None else None
+    if base is not None and binary is not None:
+        relative = [os.path.relpath(repo_dir / test, base.parent) for test in tests]
+        command = f"cd {shlex.quote(str(base.parent))} && " + shlex.join(
+            [str(binary), "test", "--config", str(base), *relative]
+        )
+    else:
+        separator = " --" if plan.command.lstrip().startswith("npm run") else ""
+        command = plan.command + separator + " " + shlex.join(tests)
+    return replace(plan, command=command, evidence_specs=[], evidence_dir="")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2 or argv[0] != "integration":
-        print("usage: python -m ts_harness.implementation.test_services integration <repo_dir>", file=sys.stderr)
+        print("usage: python -m ts_harness.implementation.test_services integration <repo_dir> [test files]", file=sys.stderr)
         return 2
     repo_dir = Path(argv[1])
+    tests = [arg for arg in argv[2:] if arg.strip()]
     plan = integration_plan(repo_dir, services_running=bool(os.environ.get(SERVICES_ENV)))
     if plan is None:
         print("No integration suite: add an `integration` block to .ts-harness.yml or a test:integration script.")
         return 0
+    if tests:
+        plan = scoped_plan(repo_dir, plan, tests)
+        print(f"Running only: {' '.join(tests)} (the host runs the whole suite after you finish)")
     result = run_integration(repo_dir, plan, dict(os.environ))
     print(result.stdout)
     print(f"integration suite exit {result.returncode}")
