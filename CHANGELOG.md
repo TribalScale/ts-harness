@@ -313,6 +313,8 @@ First public release.
 
 ### Fixed
 
+- Rebuild path: the bootstrap runner made phase scripts executable (`chmod +x`), which marked the host's checkout modified, so the next `git checkout` of a branch that edits a phase (phase 09, redeploys) refused to run. Phases now run with `bash <script>`, and phase 09 sets `core.fileMode false`. The instance also ignores user data from its launch template, so the first apply after a rebuild no longer stops and restarts it.
+
 - Release gates say why they failed: a check can return a reason, `agent_redteam` names every failing case, and `agent_output_judge` re-runs a failing case once (a model grading free text can be wrong once) and records cases that passed only on the retry. The red-team gate is never retried. Before this, a single false fail from the output judge stopped a host bootstrap with no reason logged.
 
 - The `tenant_isolation` release gate passed only once per database when audit events are in Postgres: it wrote events for tenants `a` and `b` and expected exactly one for `a`, so earlier runs' events failed every later bootstrap or phase 16 re-run. It and `audit_export` now use fresh `release-gate-*` tenant ids each run and check by event id.

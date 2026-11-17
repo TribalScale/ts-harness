@@ -57,12 +57,13 @@ run_phase() {
         echo "ERROR: Phase script not found: $script_path" >&2
         exit 1
     fi
-    chmod +x "$script_path"
+    # Run with bash rather than chmod +x: a mode change marks the checkout modified, and the next
+    # `git checkout` of a branch that edits that phase (phase 09, redeploys) then refuses to run.
     echo "------------------------------------------"
     echo ">>> Running phase: $script_name"
     echo "[bootstrap] marker dir: $DATA_DIR/.setup (phase-*.done)"
     # stdin carries the phase list; docker compose exec in a phase would drain it.
-    "$script_path" </dev/null
+    bash "$script_path" </dev/null
 }
 
 while IFS= read -r phase_script; do
