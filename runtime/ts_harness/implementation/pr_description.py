@@ -25,8 +25,14 @@ _TEMPLATES = (
     "PULL_REQUEST_TEMPLATE.md",
     "docs/pull_request_template.md",
 )
-_HEADING = re.compile(r"^#{1,3}\s+(?P<id>WO-\d+)\b[\s:.\-–—]*(?P<title>.*)$", re.IGNORECASE | re.MULTILINE)
-_SECTION = re.compile(r"^#{2,4}\s+(?P<name>.+?)\s*$", re.MULTILINE)
+# A work order (WO-005) or a Jira ticket (THD-33) heading: "# THD-33 Show the comment count".
+_HEADING = re.compile(r"^#{1,3}\s+(?P<id>[A-Z][A-Z0-9_]*-\d+)\b[\s:.\-–—]*(?P<title>.*)$", re.IGNORECASE | re.MULTILINE)
+# "## Requirements" in a work order; a Jira description has the same names on a line of their own.
+_SECTION = re.compile(
+    r"^(?:#{2,4}\s+(?P<name>.+?)|(?P<bare>summary|description|requirements|acceptance criteria|e2e acceptance tests"
+    r"|acceptance tests|out of scope|non-goals|technical constraints|context graph|dependencies))\s*:?\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
 
 
 def _work_order(request: CodingRequest) -> str:
@@ -39,8 +45,17 @@ def _sections(markdown: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
-        out[match.group("name").strip().lower()] = markdown[match.end() : end].strip()
+        out[(match.group("name") or match.group("bare")).strip().lower()] = markdown[match.end() : end].strip()
     return out
+
+
+def _first_paragraph(markdown: str) -> str:
+    """The text between the title and the first section: a ticket's opening sentence."""
+    body = re.sub(r"^#\s+.*\n?", "", markdown.strip(), count=1).strip()
+    first = _SECTION.search(body)
+    lead = body[: first.start()] if first else body
+    paragraph = lead.strip().split("\n\n", 1)[0].strip()
+    return "" if paragraph.lower().startswith(("repo:", "wo:", "program:")) else paragraph
 
 
 def _section(sections: dict[str, str], *names: str) -> str:
@@ -56,12 +71,26 @@ def _bullets(text: str) -> list[str]:
 
 
 def pr_title(request: CodingRequest) -> str:
-    match = _HEADING.search(_work_order(request))
+    match = next(
+        (m for m in _HEADING.finditer(_work_order(request)) if m.group("id").upper() == request.work_order_id.upper()),
+        None,
+    ) or _HEADING.search(_work_order(request))
     title = (match.group("title") if match else "").strip().strip("#").strip()
     return f"{request.work_order_id}: {title}" if title else f"{request.work_order_id}: implement work order"
 
 
-def _verification(verification: dict[str, Any]) -> list[str]:
+def _short_command(command: str, repo_dir: Path | None) -> str:
+    """Commands as a reviewer would type them: paths relative to the repository."""
+    text = str(command or "")
+    if repo_dir is not None:
+        root = str(repo_dir).rstrip("/")
+        text = re.sub(rf"env -C {re.escape(root)}/(\S+) ", r"(in \1) ", text)
+        text = text.replace(root + "/", "").replace(root, ".")
+    text = re.sub(r"(?:\S*/)?node_modules/\.bin/", "", text)
+    return text if len(text) <= 160 else text[:157] + "..."
+
+
+def _verification(verification: dict[str, Any], repo_dir: Path | None = None) -> list[str]:
     checks = [c for c in verification.get("checks") or [] if isinstance(c, dict)]
     if not checks:
         return []
@@ -69,7 +98,7 @@ def _verification(verification: dict[str, Any]) -> list[str]:
     for check in checks:
         code = check.get("exit_code")
         result = "passed" if code == 0 else (f"exit {code}" if code is not None else "not run")
-        lines.append(f"| {check.get('check')} | `{check.get('command')}` | {result} |")
+        lines.append(f"| {check.get('check')} | `{_short_command(str(check.get('command') or ''), repo_dir)}` | {result} |")
     if verification.get("skipped"):
         lines += ["", "Not run: " + ", ".join(verification["skipped"]) + " (not required for this repo or work order)."]
     return lines
@@ -101,7 +130,7 @@ def pr_body(
     sections = _sections(_work_order(request))
     parts: list[str] = []
 
-    summary = _section(sections, "summary", "goal", "overview", "description")
+    summary = _section(sections, "summary", "goal", "overview", "description") or _first_paragraph(_work_order(request))
     parts += ["## Summary", "", summary or f"Implements work order `{request.work_order_id}`.", ""]
 
     files = [f for f in changed_files if f]
@@ -128,7 +157,7 @@ def pr_body(
         parts += ["", "Screenshots from the Playwright tests are in a comment below."]
     parts.append("")
 
-    checks = _verification(verification or {})
+    checks = _verification(verification or {}, repo_dir)
     if checks:
         result = (verification or {}).get("result")
         parts += [f"## Verification ({result})" if result else "## Verification", "", *checks, ""]

@@ -182,6 +182,13 @@ class SessionStore:
             self._by_routing[session.routing_key] = session
             self._by_id[session.session_id] = session
 
+    def reload(self) -> None:
+        """Load sessions saved by other processes since this one started (Postgres only)."""
+        if not self.db_url:
+            return
+        self._load_postgres()
+        self._postgres_loaded = True
+
     def _ensure_postgres_loaded(self) -> None:
         if not self.db_url or self._postgres_loaded:
             return
