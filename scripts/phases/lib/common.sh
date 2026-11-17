@@ -798,6 +798,12 @@ run_docker_compose_as_admin() {
             SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-}" \
             GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
             FIGMA_TOKEN="${FIGMA_TOKEN:-}" \
+            ATLASSIAN_SITE_URL="${ATLASSIAN_SITE_URL:-}" \
+            ATLASSIAN_EMAIL="${ATLASSIAN_EMAIL:-}" \
+            ATLASSIAN_API_TOKEN="${ATLASSIAN_API_TOKEN:-}" \
+            ATLASSIAN_CLIENT_ID="${ATLASSIAN_CLIENT_ID:-}" \
+            ATLASSIAN_CLIENT_SECRET="${ATLASSIAN_CLIENT_SECRET:-}" \
+            ATLASSIAN_CLOUD_ID="${ATLASSIAN_CLOUD_ID:-}" \
             GITHUB_APP_ID="${GITHUB_APP_ID:-}" \
             GITHUB_APP_SLUG="${GITHUB_APP_SLUG:-}" \
             GITHUB_APP_HOST="${GITHUB_APP_HOST:-}" \

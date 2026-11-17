@@ -321,6 +321,7 @@ First public release.
 ### Fixed
 
 - Redeploys cut off running coding jobs: workers share agent-runtime's network namespace. `redeploy.sh` and phase 12 now pause the coding launcher and wait for running `ts-coding-*` workers (`CODING_DRAIN_TIMEOUT_MINUTES`, default 120; `FORCE_REDEPLOY=1` skips the wait), and a failed redeploy starts the launcher again.
+- The workflow runner had no Jira credentials, which `prepare_ticket_delivery` needs for ticket attachments; compose now passes `ATLASSIAN_*` to it.
 - CI failure feedback showed only the end of the job log, which with retries is the retries' errors (often caused by data the first attempt left behind). It now leads with the first failure in the log.
 - A step parked on its coding job read "blocked" with an internal error line; it now reads "coding in progress", and the job line says "Coding in progress · N min" or "Queued: waiting for a free coding worker".
 - Release gates never reached the inbox: it listed only gates on a phase's own workflow, and the promote gates are on the release tracks it starts. The memory API's child tasks now carry their ids, and the inbox lists gates waiting inside started workflows.

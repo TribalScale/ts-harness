@@ -71,7 +71,11 @@ class WorkflowRunnerComposeTests(unittest.TestCase):
         # Reviews and QA results were posted as the PAT owner; FIGMA_TOKEN never reached compose.
         compose = COMPOSE.read_text()
         common = COMPOSE_COMMON.read_text()
-        for name in ("GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_APP_HOST", "GITHUB_APP_PRIVATE_KEY", "FIGMA_TOKEN"):
+        for name in (
+            "GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_APP_HOST", "GITHUB_APP_PRIVATE_KEY", "FIGMA_TOKEN",
+            "ATLASSIAN_SITE_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN",
+            "ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET", "ATLASSIAN_CLOUD_ID",
+        ):
             self.assertIn(f"{name}: ${{{name}:-}}", compose)
             self.assertIn(f'{name}="${{{name}:-}}"', common)
 
