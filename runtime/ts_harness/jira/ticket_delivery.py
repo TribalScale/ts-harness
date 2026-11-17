@@ -1,11 +1,13 @@
 """Read a Jira ticket and get it ready to code (the first step of ``implement_jira_ticket``).
 
-``prepare_ticket_delivery`` is a system step (no agent). It runs before the kickoff approval
-(``hydrate_ticket``), so the person approves what will actually be coded:
+``prepare_ticket_delivery`` is a system step (no agent) and the workflow's first step. The
+person confirmed when they started the program; this step posts what it resolved and the
+coding job starts:
 
 - **The ticket**: summary and description from Jira become the work order body.
 - **Repository and branch**: the description's ``Repo: org/repo@branch`` line, else the
-  runtime's ``implement_jira_ticket`` repository; a branch named when approving overrides it.
+  runtime's ``implement_jira_ticket`` repository; a branch named in the request
+  ("implement THD-33 on branch release/2") overrides the branch.
 - **Design references**: those of the program the ticket was filed from (``Program:`` line),
   else of the program running it, plus the ticket's image attachments, named on its Design
   line. The coding job and QA see the references the body names.
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENT_BYTES = 8_000_000
 ONBOARDING_ID = "WO-0000"
+_NAMED_BRANCH = re.compile(r"\bbranch\s+([A-Za-z0-9][A-Za-z0-9._/-]*)", re.IGNORECASE)
 
 
 def _program_design_refs(memory: Any, task_id: str) -> list[dict[str, Any]]:
@@ -113,8 +116,8 @@ def resolve_target(pointer: Any, requested_branch: str = "", configured: tuple[s
 
     The repository is the ticket's ``Repo:`` line, else the runtime's ``implement_jira_ticket``
     repository. The branch is the ``Repo:`` line's ``@branch``, else the configured branch for
-    that repository, else the one the request named, else ``dev``. A branch the person names
-    when approving the kickoff overrides it later (``approve_gate``).
+    that repository, else the program's default, else ``dev``. A branch named in the request
+    overrides it (``prepare_ticket_delivery``).
     """
     configured_url, configured_branch = configured
     if pointer.repo_id:
@@ -174,6 +177,11 @@ def prepare_ticket_delivery(
     pointer = parse_pointer_block(description)
     requested = str(task_input.get("base_branch") or workflow_input.get("base_branch") or "")
     repo_url, base_branch, repo_source = resolve_target(pointer, requested, configured if configured is not None else _configured_repo())
+    # A branch named in the request ("implement THD-33 on branch release/2") wins: there is no
+    # kickoff gate to name it at, the request is the confirmation.
+    named = _NAMED_BRANCH.search(str(task_input.get("summary") or workflow_input.get("summary") or ""))
+    if named and repo_url:
+        base_branch, repo_source = named.group(1), f"{repo_source}; branch from your request"
     if not repo_url:
         raise ValueError(
             f"{key} names no repository and none is configured: add a line `Repo: org/repo@branch` "
@@ -237,7 +245,7 @@ def prepare_ticket_delivery(
     if onboarding.get("needed"):
         lines.append("The repository has no .ts-harness.yml yet; this PR also adds it.")
     lines += [f"Note: {w}" for w in warnings]
-    lines.append("Approve to start coding, or reply with `branch <name>` to target another branch.")
+    lines.append("Starting the coding job now.")
 
     return {
         "summary": "\n".join(lines),

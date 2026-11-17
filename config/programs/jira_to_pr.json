@@ -1,6 +1,6 @@
 {
   "program_type": "jira_to_pr",
-  "definition_version": "1.1.0",
+  "definition_version": "1.2.0",
   "display_name": "Jira to PR",
   "startable_nodes": ["pick", "implement"],
   "config": {
@@ -50,8 +50,8 @@
     {
       "source": "pick",
       "target": "implement",
-      "mode": "manual",
-      "confirm_required": true,
+      "mode": "automatic",
+      "confirm_required": false,
       "signals": ["implement this ticket", "start this ticket"]
     },
     {

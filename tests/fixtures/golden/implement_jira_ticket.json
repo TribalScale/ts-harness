@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "1.8.0",
+  "definition_version": "2.0.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -235,7 +235,7 @@
   },
   "promotion": {
     "confirm_required": false,
-    "intake_stage": "hydrate_ticket",
+    "intake_stage": "prepare_ticket_delivery",
     "binding": {
       "format": "{channel}:{channel_id}:{thread_id}"
     }
@@ -267,7 +267,6 @@
       "on_complete": {
         "hook": "hydrate_input",
         "downstream": [
-          "hydrate_ticket",
           "deliver_work_order"
         ]
       },
@@ -283,40 +282,10 @@
       "present_body": "summary",
       "input_map": {
         "jira_issue_key": "$workflow.jira_issue_key",
-        "base_branch": "$workflow.base_branch"
-      }
-    },
-    {
-      "name": "hydrate_ticket",
-      "kind": "task",
-      "agent_id": "orchestrator",
-      "allowed_agents": [
-        "orchestrator"
-      ],
-      "approval_required": true,
+        "knowledge_notes": "$workflow.knowledge_notes"
+      },
       "skill_hints": [
         "jira-to-pr"
-      ],
-      "present_prompt": "intake",
-      "input_map": {
-        "jira_issue_key": "$workflow.jira_issue_key",
-        "knowledge_notes": "$workflow.knowledge_notes",
-        "repo_url": "$prior.prepare_ticket_delivery.output.repo_url",
-        "base_branch": "$prior.prepare_ticket_delivery.output.base_branch",
-        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body"
-      },
-      "on_complete": {
-        "hook": "hydrate_input",
-        "downstream": [
-          "deliver_work_order"
-        ]
-      },
-      "retry": {
-        "max_retries": 1,
-        "timeout_seconds": 1800
-      },
-      "depends_on": [
-        "prepare_ticket_delivery"
       ]
     },
     {
@@ -325,7 +294,7 @@
       "agent_id": "dev-agent",
       "execution": "coding_job",
       "depends_on": [
-        "hydrate_ticket"
+        "prepare_ticket_delivery"
       ],
       "allowed_agents": [
         "dev-agent"
@@ -338,9 +307,9 @@
       "present_prompt": "none",
       "input_map": {
         "work_order_id": "$prior.prepare_ticket_delivery.output.work_order_id",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
-        "repo_url": "$prior.hydrate_ticket.output.repo_url",
-        "base_branch": "$prior.hydrate_ticket.output.base_branch",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
+        "repo_url": "$prior.prepare_ticket_delivery.output.repo_url",
+        "base_branch": "$prior.prepare_ticket_delivery.output.base_branch",
         "refinery_artifacts": "$prior.prepare_ticket_delivery.output.refinery_artifacts",
         "foundry_artifacts": "$prior.prepare_ticket_delivery.output.foundry_artifacts",
         "planner_artifacts": "$prior.prepare_ticket_delivery.output.planner_artifacts",
@@ -540,7 +509,7 @@
       "barrier": {
         "hook": "review_precheck",
         "pr_url": "$prior.deliver_work_order.output.pr_url",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "refresh": "$prior.deliver_work_order.output.refresh_method"
       },
       "present_prompt": "",
@@ -573,7 +542,7 @@
         "pr_url": "$prior.deliver_work_order.output.pr_url",
         "work_order_id": "$prior.deliver_work_order.output.work_order_id",
         "work_order_ref": "$workflow.jira_issue_key",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
         "prs": "$prior.review_precheck.output.prs",
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",
@@ -722,9 +691,9 @@
         "pr_url": "$prior.deliver_work_order.output.pr_url",
         "work_order_id": "$prior.deliver_work_order.output.work_order_id",
         "work_order_ref": "$workflow.jira_issue_key",
-        "work_order_body": "$prior.hydrate_ticket.output.work_order_body",
-        "repo_url": "$prior.hydrate_ticket.output.repo_url",
-        "base_branch": "$prior.hydrate_ticket.output.base_branch",
+        "work_order_body": "$prior.prepare_ticket_delivery.output.work_order_body",
+        "repo_url": "$prior.prepare_ticket_delivery.output.repo_url",
+        "base_branch": "$prior.prepare_ticket_delivery.output.base_branch",
         "host_verify_summary": "$prior.deliver_work_order.output.verify_summary",
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",

@@ -97,19 +97,19 @@ class WorkflowEngineTests(unittest.TestCase):
         )
         self.assertEqual(result["approval_status"], "rejected")
 
-    def test_rejecting_a_queue_kickoff_fails_the_task(self):
+    def test_rejecting_the_ticket_list_stops_the_queue(self):
         tasks = [
-            {"id": "gate-1", "step_name": "hydrate_ticket", "status": "pending"},
-            {"id": "deliver-1", "step_name": "deliver_work_order", "status": "pending"},
+            {"id": "queue-1", "step_name": "prepare_ticket_queue", "status": "succeeded"},
+            {"id": "gate-1", "step_name": "pick_ticket", "status": "pending"},
         ]
 
         def get_workflow(workflow_id):
             return {
                 "workflow": {
                     "id": workflow_id,
-                    "workflow_type": "implement_jira_ticket",
+                    "workflow_type": "pick_assigned_jira",
                     "program_id": "prog-1",
-                    "program_phase": "implement",
+                    "program_phase": "pick",
                 },
                 "tasks": tasks,
             }
@@ -140,14 +140,13 @@ class WorkflowEngineTests(unittest.TestCase):
             workflow_id="wf-1",
             gate_task={
                 "id": "gate-1",
-                "workflow_type": "implement_jira_ticket",
-                "step_name": "hydrate_ticket",
+                "workflow_type": "pick_assigned_jira",
+                "step_name": "pick_ticket",
             },
             comments="stop",
             actor="orchestrator",
         )
         self.client.fail_task.assert_called_once()
-        self.client.cancel_task.assert_called_once()
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["phase"]["status"], "phase_failed")
 

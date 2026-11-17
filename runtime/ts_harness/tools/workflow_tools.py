@@ -1019,6 +1019,10 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
             department = department_for_email(get_runtime().config, starter_email)
         except Exception:
             department = None
+    if starter_email and not artifacts.get("requester_email"):
+        # Who "me" is for steps with no agent (the Jira ticket list): console users carry only an
+        # opaque subject on the workflow, and their email is known here, from the sign-in.
+        artifacts = {**artifacts, "requester_email": starter_email}
     from ts_harness.gateway.intake_pointers import clear_pointers, start_sources
 
     # Passed as first-task input, not artifacts: program artifacts never carry the files.

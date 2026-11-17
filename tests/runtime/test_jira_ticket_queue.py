@@ -147,7 +147,7 @@ class PrepareTicketQueueTests(unittest.TestCase):
             search=search,
             runtime=self._runtime(),
         )
-        self.assertEqual(result, {"queue": False})
+        self.assertEqual(result, {"queue": False, "jira_issue_key": "PROJ-184", "summary": "Ticket PROJ-184."})
 
     def test_unmapped_account_blocks_without_a_list(self):
         from ts_harness.workflows.system_steps import StepBlocked

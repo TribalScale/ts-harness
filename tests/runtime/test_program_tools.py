@@ -315,6 +315,19 @@ class ProgramToolTests(unittest.TestCase):
         self.assertEqual(create_kwargs.get("program_type"), "software_delivery")
         self.assertEqual(create_kwargs.get("project_id"), "PROJ")
         self.assertEqual(create_kwargs.get("link_program_ids"), ["prog-b"])
+        self.assertNotIn("requester_email", create_kwargs["artifacts"])
+
+        # A signed-in starter's email is kept, so steps without an agent know who "me" is.
+        signed_in = SessionRecord(
+            session_id="s-start-2", routing_key="rk2", tenant_id="default", agent_id="orchestrator", source="web",
+            metadata={"channel": "web", "pending_program": {"entry_phase": "jira", "summary": "File Jira",
+                      "artifacts": {"approved_prd": {"title": "PRD"}}, "program_type": "software_delivery"}},
+        )
+        get_session_store().save(signed_in)
+        web_ctx = ToolPolicyContext(tenant_id="default", agent_id="orchestrator", source="web", session_id="s-start-2")
+        web_ctx.actor_email = "pm@example.com"
+        start_program_handler({}, web_ctx)
+        self.assertEqual(service.create_program.call_args.kwargs["artifacts"]["requester_email"], "pm@example.com")
 
     @patch("ts_harness.workflows.delivery_program.get_delivery_program_service")
     def test_program_status_returns_aggregate(self, service_factory):

@@ -84,6 +84,15 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         self.assertIn("PR against `fe-dev` on `acme/web` (from the ticket's Repo line).", out["summary"])
         self.assertEqual(out["onboarding"], {"checked": True, "needed": False, "reason": "already has .ts-harness.yml"})
 
+    def test_a_branch_named_in_the_request_wins(self):
+        task = {**TASK, "input": {"jira_issue_key": "THD-33", "summary": "implement THD-33 on branch release/2"}}
+        out = prepare_ticket_delivery(
+            task, {}, memory=_memory(), jira_factory=lambda: _Jira(), store_factory=_Store, inspect=_not_needed, configured=("", "")
+        )
+        self.assertEqual(out["base_branch"], "release/2")
+        self.assertIn("PR against `release/2`", out["summary"])
+        self.assertIn("Starting the coding job now.", out["summary"])
+
     def test_a_ticket_without_a_repository_blocks_with_what_to_add(self):
         with self.assertRaisesRegex(ValueError, "Repo: org/repo@branch"):
             _run(jira=_Jira(description="Just do it"))
