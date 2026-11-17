@@ -313,6 +313,8 @@ First public release.
 
 ### Fixed
 
+- Approving or rejecting a gate in the console only updated the task in the memory API. The gate's hooks never ran (for `approve_prd`, `mark_prd_approved`), and when the gate was the workflow's last step the program phase never completed: the program kept neither the approved PRD nor its design references and could not continue. Console decisions on pending gates now go through the workflow engine, like chat decisions, and keep the approver's permissions.
+
 - Images attached to a PRD request were never described: `gather_sources` runs in the workflow runner, which had no model-provider keys, so every image came back "image could not be read" (`x-api-key header is required`). The runner now gets `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and `MISTRAL_API_KEY`. An image whose description fails is still kept as a design reference.
 
 - Rebuild path: the bootstrap runner made phase scripts executable (`chmod +x`), which marked the host's checkout modified, so the next `git checkout` of a branch that edits a phase (phase 09, redeploys) refused to run. Phases now run with `bash <script>`, and phase 09 sets `core.fileMode false`. The instance also ignores user data from its launch template, so the first apply after a rebuild no longer stops and restarts it.

@@ -350,9 +350,11 @@ def record_program_admin_access(conn, program_id: str, body: dict[str, Any]) -> 
 
 
 def task_program(conn, task_id: str) -> dict[str, Any]:
-    """The program a workflow task belongs to, walking up parent workflows."""
+    """The program a workflow task belongs to, walking up parent workflows, and the task's workflow."""
     tid = _uuid(task_id, "task_id")
     with conn.cursor() as cur:
+        cur.execute("SELECT workflow_id FROM workflow_tasks WHERE id = %s", (tid,))
+        own = cur.fetchone()
         cur.execute(
             """
             WITH RECURSIVE chain AS (
@@ -369,4 +371,8 @@ def task_program(conn, task_id: str) -> dict[str, Any]:
             (tid,),
         )
         row = cur.fetchone()
-    return {"task_id": tid, "program_id": str(row["program_id"]) if row else None}
+    return {
+        "task_id": tid,
+        "program_id": str(row["program_id"]) if row else None,
+        "workflow_id": str(own["workflow_id"]) if own else None,
+    }

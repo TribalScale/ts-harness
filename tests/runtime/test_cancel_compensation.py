@@ -497,6 +497,47 @@ class AdminEndpointsTests(unittest.TestCase):
         self.assertEqual(self.memory.approve_task.call_args.kwargs["tenant_id"], "default")
         self.assertEqual(self.memory.reject_task.call_args.kwargs["tenant_id"], "default")
 
+    def _pending_gate(self, status="pending"):
+        self.memory.task_program.return_value = {"task_id": "t1", "program_id": "prog-1", "workflow_id": "wf-prd"}
+        self.memory.get_workflow_tasks.return_value = {
+            "tasks": [{"id": "t1", "step_name": "approve_prd", "workflow_type": "prd_request",
+                       "approval_required": True, "approval_status": status}]
+        }
+
+    def test_console_approval_runs_through_the_engine_like_chat(self):
+        # A console approval of a workflow's last gate must complete the program phase
+        # (approved PRD and design references recorded), not only flip the task in memory.
+        self._pending_gate()
+        engine = mock.Mock()
+        engine.handle_approve.return_value = {"status": "approved", "phase": {"status": "phase_complete"}}
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine), \
+                mock.patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True):
+            response = self.client.post("/admin/workflows/approve", json={"id": "t1"})
+        self.assertEqual(response.json()["phase"]["status"], "phase_complete")
+        kwargs = engine.handle_approve.call_args.kwargs
+        self.assertEqual((kwargs["workflow_id"], kwargs["gate_task"]["id"], kwargs["tenant_id"]), ("wf-prd", "t1", "default"))
+        self.memory.approve_task.assert_not_called()
+
+    def test_console_rejection_runs_through_the_engine(self):
+        self._pending_gate()
+        engine = mock.Mock()
+        engine.handle_reject.return_value = {"status": "revising"}
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine), \
+                mock.patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True):
+            self.client.post("/admin/workflows/reject", json={"id": "t1", "reason": "Add the detail page"})
+        self.assertEqual(engine.handle_reject.call_args.kwargs["comments"], "Add the detail page")
+        self.memory.reject_task.assert_not_called()
+
+    def test_a_gate_that_is_not_pending_falls_back_to_memory(self):
+        self._pending_gate(status="approved")
+        self.memory.approve_task.return_value = {"id": "t1"}
+        engine = mock.Mock()
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine), \
+                mock.patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True):
+            self.client.post("/admin/workflows/approve", json={"id": "t1"})
+        engine.handle_approve.assert_not_called()
+        self.memory.approve_task.assert_called_once()
+
     def test_portfolio_mode_lists_roots_with_filters(self):
         self.memory.list_programs.return_value = {"programs": [], "total": 0}
         response = self.client.get("/admin/programs?portfolio=1&phase=implement&owner=alice&status=blocked&waiting_hours=4")
