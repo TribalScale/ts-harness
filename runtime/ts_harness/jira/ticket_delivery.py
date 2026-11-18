@@ -6,7 +6,8 @@ coding job starts:
 
 - **The ticket**: summary and description from Jira become the work order body.
 - **Repository and branch**: the description's ``Repo: org/repo@branch`` line, else the
-  runtime's ``implement_jira_ticket`` repository; a branch named in the request
+  project linked to the ticket's Jira project (its repository and branch), else the runtime's
+  ``implement_jira_ticket`` repository; a branch named in the request
   ("implement THD-33 on branch release/2") overrides the branch.
 - **Design references**: those of the program the ticket was filed from (``Program:`` line),
   else of the program running it, plus the ticket's image attachments, named on its Design
@@ -130,6 +131,47 @@ def resolve_target(pointer: Any, requested_branch: str = "", configured: tuple[s
     return "", "", ""
 
 
+def project_target(memory: Any, *, tenant_id: str, jira_project: str, ticket_text: str) -> tuple[str, str, str]:
+    """``(repo_url, base_branch, source)`` from the project linked to the ticket's Jira project.
+
+    A project (System → Projects) names its Jira project key and its repositories. One
+    repository is used as is; with several, the one the ticket names (``acme/web``). The branch
+    is the repository's, else the project's default base branch, else ``dev``. No linked project
+    gives ``("", "", "")``; several repositories and none named raises ``ValueError``.
+    """
+    jira_project = str(jira_project or "").strip().upper()
+    if not jira_project or not hasattr(memory, "list_projects"):
+        return "", "", ""
+    listed = memory.list_projects(tenant_id=tenant_id or "default") or {}
+    rows = listed.get("projects") if isinstance(listed, dict) else None
+    project = next(
+        (p for p in rows or [] if isinstance(p, dict) and str(p.get("jira_project_key") or "").strip().upper() == jira_project),
+        None,
+    )
+    if project is None:
+        return "", "", ""
+    found = memory.list_project_repositories(str(project["id"])) or {}
+    repositories = [r for r in (found.get("repositories") if isinstance(found, dict) else None) or [] if isinstance(r, dict) and r.get("full_name")]
+    name = str(project.get("name") or project.get("key") or jira_project)
+    if not repositories:
+        raise ValueError(f"project {name} (Jira {jira_project}) has no repositories: add one in System → Projects")
+    if len(repositories) > 1:
+        text = ticket_text.lower()
+        named = [r for r in repositories if str(r["full_name"]).lower() in text]
+        if len(named) != 1:
+            choices = ", ".join(str(r["full_name"]) for r in repositories)
+            raise ValueError(
+                f"project {name} has several repositories ({choices}) and the ticket names none of them: "
+                "add a line `Repo: org/repo` to the ticket"
+            )
+        repositories = named
+    repo = repositories[0]
+    host = str(repo.get("github_host") or "github.com").strip() or "github.com"
+    url = str(repo.get("repo_url") or f"https://{host}/{repo['full_name']}").rstrip("/")
+    branch = str(repo.get("default_branch") or project.get("default_base_branch") or "dev")
+    return url, branch, f"project {name}"
+
+
 def _program_artifacts(memory: Any, program_id: str) -> dict[str, Any]:
     status = memory.get_program_status(program_id) or {}
     return status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
@@ -176,7 +218,21 @@ def prepare_ticket_delivery(
         warnings.append(f"{key} has no description; the coding job works from its summary alone")
     pointer = parse_pointer_block(description)
     requested = str(task_input.get("base_branch") or workflow_input.get("base_branch") or "")
-    repo_url, base_branch, repo_source = resolve_target(pointer, requested, configured if configured is not None else _configured_repo())
+    if pointer.repo_id:
+        repo_url, base_branch, repo_source = resolve_target(pointer, requested, configured if configured is not None else _configured_repo())
+    else:
+        # No Repo line: the project linked to the ticket's Jira project, else the runtime default.
+        try:
+            repo_url, base_branch, repo_source = project_target(
+                memory, tenant_id=tenant_id, jira_project=key.split("-", 1)[0], ticket_text=f"{summary}\n{description}"
+            )
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"project lookup failed: {exc}")
+            repo_url, base_branch, repo_source = "", "", ""
+        if not repo_url:
+            repo_url, base_branch, repo_source = resolve_target(pointer, requested, configured if configured is not None else _configured_repo())
     # A branch named in the request ("implement THD-33 on branch release/2") wins: there is no
     # kickoff gate to name it at, the request is the confirmation.
     named = _NAMED_BRANCH.search(str(task_input.get("summary") or workflow_input.get("summary") or ""))
@@ -184,8 +240,8 @@ def prepare_ticket_delivery(
         base_branch, repo_source = named.group(1), f"{repo_source}; branch from your request"
     if not repo_url:
         raise ValueError(
-            f"{key} names no repository and none is configured: add a line `Repo: org/repo@branch` "
-            "to its description (or set implementation.repos.implement_jira_ticket), then run it again"
+            f"{key} names no repository: add a line `Repo: org/repo@branch` to its description, or link "
+            f"Jira project {key.split('-', 1)[0]} to a project with its repository in System → Projects, then run it again"
         )
     body = f"# {key} {summary}\n\n{description}\n" if description else f"# {key} {summary}\n"
 

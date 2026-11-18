@@ -57,6 +57,7 @@ def _memory(*, program_refs=None, owner_refs=None):
     }
     memory.get_program_status.side_effect = lambda pid: statuses[pid]
     memory.get_program.side_effect = lambda pid: {"program": {"id": pid, "parent_program_id": None}}
+    memory.list_projects.return_value = {"projects": []}
     return memory
 
 
@@ -144,6 +145,40 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         self.assertEqual(out["design_refs"], [])
         self.assertEqual(len(out["warnings"]), 2)
         self.assertIn("Note: onboarding check failed: clone failed", out["summary"])
+
+
+class ProjectRepositoryTests(unittest.TestCase):
+    def _memory(self, repositories, *, default_base="fe-dev"):
+        memory = _memory()
+        memory.list_projects.return_value = {"projects": [
+            {"id": "p-other", "key": "OTHER", "jira_project_key": "ABC"},
+            {"id": "p-thd", "key": "DISC", "name": "Discussions", "jira_project_key": "THD", "default_base_branch": default_base},
+        ]}
+        memory.list_project_repositories.return_value = {"repositories": repositories}
+        return memory
+
+    def test_a_ticket_without_a_repo_line_uses_its_jira_projects_repository(self):
+        memory = self._memory([{"full_name": "acme/web", "github_host": "github.com", "default_branch": None}])
+        out = _run(jira=_Jira(description="Add the count column."), memory=memory)
+        self.assertEqual((out["repo_url"], out["base_branch"]), ("https://github.com/acme/web", "fe-dev"))
+        self.assertIn("(from project Discussions)", out["summary"])
+        memory.list_project_repositories.assert_called_once_with("p-thd")
+
+    def test_the_repositorys_own_branch_wins_over_the_projects(self):
+        memory = self._memory([{"full_name": "acme/web", "default_branch": "release"}])
+        self.assertEqual(_run(jira=_Jira(description="x"), memory=memory)["base_branch"], "release")
+
+    def test_several_repositories_need_the_ticket_to_name_one(self):
+        repos = [{"full_name": "acme/web"}, {"full_name": "acme/api"}]
+        out = _run(jira=_Jira(description="Change acme/api only."), memory=self._memory(repos))
+        self.assertEqual(out["repo_url"], "https://github.com/acme/api")
+        with self.assertRaisesRegex(ValueError, "several repositories \\(acme/web, acme/api\\)"):
+            _run(jira=_Jira(description="Change something."), memory=self._memory(repos))
+
+    def test_a_repo_line_still_wins(self):
+        memory = self._memory([{"full_name": "acme/other"}])
+        self.assertEqual(_run(memory=memory)["repo_url"], "https://github.com/acme/web")
+        memory.list_projects.assert_not_called()
 
 
 class ResolveTargetTests(unittest.TestCase):
