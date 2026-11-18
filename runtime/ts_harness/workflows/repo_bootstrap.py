@@ -388,8 +388,13 @@ def annotate_repositories(
 ) -> list[dict[str, Any]]:
     """Project repositories with what planning and delivery need to know about each.
 
-    - ``template`` / ``template_conventions``: an empty repository that will start from a
-      template; planning builds on it with no scaffolding work orders.
+    - ``template`` / ``template_status``: the template the repository starts from, ``pending``
+      while it is empty (the bootstrap PR comes when work starts) or ``applied`` once merged
+      (its .ts-harness.yml names it). Either way planning builds on it, with no scaffolding
+      work orders.
+    - ``conventions``: the rules work in the repository follows, for planning: its own
+      ``AGENTS.md`` when it has one (a template-started repository's may have grown since),
+      else the template's for an empty repository that will start from one.
     - ``ci_on_pull_requests``: False for a repository with code but no CI on pull requests into
       its base branch; planning adds an "add CI" work order first (the CI safety net).
     - ``bdd`` / ``bdd_reason`` / ``has_gherkin_runner``: whether its work uses Gherkin, from the
@@ -414,16 +419,20 @@ def annotate_repositories(
             files = None
         empty = files is not None and is_starter_only(files)
         if files is not None and empty and template is not None:
-            entry["template"] = template.name
-            entry["template_conventions"] = template.conventions()
+            entry["template"], entry["template_status"] = template.name, "pending"
+            entry["conventions"] = template.conventions()
             facts = bdd_policy.inspect_files(_template_files_list(template), _template_package(template))
         elif files is not None:
-            package = None
-            if "package.json" in files:
-                payload = github.get_file(owner, repo, "package.json", ref=branch)
-                if isinstance(payload, dict) and payload.get("content"):
-                    package = base64.b64decode(str(payload["content"])).decode(errors="replace")
-            facts = bdd_policy.inspect_files(files, package)
+            applied = _TEMPLATE_LINE.search(_marker(github, owner, repo, branch)) if MARKER_FILE in files else None
+            if applied:
+                entry["template"], entry["template_status"] = applied.group(1), "applied"
+            own = _text_file(github, owner, repo, "AGENTS.md", branch) if "AGENTS.md" in files else ""
+            if own:
+                entry["conventions"] = own[:_CONVENTIONS_LIMIT]
+            elif applied and applied.group(1) in templates:
+                entry["conventions"] = templates[applied.group(1)].conventions()
+            package = _text_file(github, owner, repo, "package.json", branch) if "package.json" in files else None
+            facts = bdd_policy.inspect_files(files, package or None)
             if not empty:
                 entry["ci_on_pull_requests"] = _has_pr_ci(github, owner, repo, branch)
         else:
@@ -437,6 +446,17 @@ def annotate_repositories(
             entry["bdd"], entry["bdd_reason"] = bdd_policy.decide(item.get("bdd_mode") or "auto", facts)
         out.append(entry)
     return out
+
+
+# Enough for a contributor guide; a repository's planning input stays bounded.
+_CONVENTIONS_LIMIT = 20_000
+
+
+def _text_file(github: Any, owner: str, repo: str, path: str, branch: str) -> str:
+    payload = github.get_file(owner, repo, path, ref=branch)
+    if not isinstance(payload, dict) or not payload.get("content"):
+        return ""
+    return base64.b64decode(str(payload["content"])).decode(errors="replace")
 
 
 def _template_files_list(template: Template) -> list[str]:

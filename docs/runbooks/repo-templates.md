@@ -18,9 +18,13 @@ holds logic), GitHub Actions CI with the jobs `checks`, `bdd` and `docker`, and 
 ## How it works
 
 1. **Planning.** When a program's project has an empty repository whose role has a template,
-   `project_repositories` carries `template` and `template_conventions` (the template's
-   `AGENTS.md`) for it. The planner plans on top of the template: its folders and conventions,
-   no scaffolding or CI work orders.
+   `project_repositories` carries `template`, `template_status: pending` and `conventions`
+   (the template's `AGENTS.md`) for it. After the bootstrap PR merges the repository is no
+   longer empty, but its `.ts-harness.yml` names the template: planning keeps `template`
+   (`template_status: applied`) and reads `conventions` from the repository's own
+   `AGENTS.md`. Any repository with an `AGENTS.md` gets it as `conventions`. The planner
+   plans on top of the template, following its conventions, with no scaffolding or CI work
+   orders. Merging the bootstrap PR before planning therefore changes nothing for planning.
 2. **Bootstrap PR.** `implement all <PROJECT>` checks the project's repositories before the
    queue runs (`prepare_ticket_queue`). Each empty one gets a PR into its base branch from
    `ts-harness/bootstrap-<template>`: the template as one commit, with the project's name filled

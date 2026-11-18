@@ -207,9 +207,31 @@ class AnnotationTests(unittest.TestCase):
 
         with mock.patch.object(rb, "load_templates", return_value=TEMPLATES), mock.patch.object(rb, "live_settings", return_value=CONFIG):
             out = rb.annotate_repositories(GitHub({}), repos)
-        self.assertEqual(out[0]["template"], "node-api")
-        self.assertIn("modules/<name>/", out[0]["template_conventions"])
+        self.assertEqual((out[0]["template"], out[0]["template_status"]), ("node-api", "pending"))
+        self.assertIn("modules/<name>/", out[0]["conventions"])
         self.assertNotIn("template", out[1])
+        self.assertNotIn("conventions", out[1])
+
+    def test_a_repository_started_from_a_template_keeps_it_for_planning(self):
+        agents = "# Working in this repository\nOur own rules, grown since the template.\n"
+        merged = {"README.md": "x", "src/app.ts": "", rb.MARKER_FILE: "template: node-api\ntemplate_version: 1.1.0\n", "AGENTS.md": agents}
+        github = FakeGitHub(merged)
+        with mock.patch.object(rb, "load_templates", return_value=TEMPLATES), mock.patch.object(rb, "live_settings", return_value=CONFIG):
+            out = rb.annotate_repositories(github, [{"full_name": "acme/api", "role": "api", "default_branch": "dev"}])
+        self.assertEqual((out[0]["template"], out[0]["template_status"]), ("node-api", "applied"))
+        self.assertEqual(out[0]["conventions"], agents)
+        # No AGENTS.md left: the template's conventions still apply.
+        del merged["AGENTS.md"]
+        with mock.patch.object(rb, "load_templates", return_value=TEMPLATES), mock.patch.object(rb, "live_settings", return_value=CONFIG):
+            out = rb.annotate_repositories(FakeGitHub(merged), [{"full_name": "acme/api", "role": "api", "default_branch": "dev"}])
+        self.assertIn("modules/<name>/", out[0]["conventions"])
+
+    def test_any_repository_with_an_agents_file_shares_it(self):
+        github = FakeGitHub({"package.json": "{}", "src/a.ts": "", "AGENTS.md": "Use pnpm."})
+        with mock.patch.object(rb, "load_templates", return_value=TEMPLATES), mock.patch.object(rb, "live_settings", return_value=CONFIG):
+            out = rb.annotate_repositories(github, [{"full_name": "acme/svc", "role": "worker", "default_branch": "dev"}])
+        self.assertEqual(out[0]["conventions"], "Use pnpm.")
+        self.assertNotIn("template", out[0])
 
 
 class QueueTests(unittest.TestCase):
