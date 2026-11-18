@@ -293,6 +293,13 @@ def prepare_ticket_delivery(
         warnings.append(f"onboarding check failed: {exc}")
         onboarding = {"checked": False, "reason": str(exc)}
 
+    # Jira shows the ticket is being worked on (program_defaults.jira_tracking).
+    from ts_harness.jira.tracking import move_ticket
+
+    moved = move_ticket(key, "start", jira=jira)
+    if moved:
+        warnings.append(moved)
+
     repo_name = repo_url.split("github.com/")[-1]
     lines = [f"{key}: {summary}", f"PR against `{base_branch}` on `{repo_name}` (from {repo_source})."]
     named = [str(r["id"]) for r in refs if str(r["id"]) in body]
