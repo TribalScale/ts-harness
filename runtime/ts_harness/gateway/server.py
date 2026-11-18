@@ -853,6 +853,16 @@ class RuntimeState:
 
         user_text = str(body.get("text") or "")
         actor_email = chat_actor_email(body, auth, channel, self.config)
+        try:
+            from ts_harness.memory.client import get_memory_client
+            from ts_harness.workflows.session_compat import refreshed_program_link
+
+            relinked = refreshed_program_link(session.metadata, get_memory_client())
+            if relinked is not None:
+                session.metadata = relinked
+                get_session_store().save(session)
+        except Exception:  # noqa: BLE001 - the reply still runs on the stored link
+            pass
 
         from ts_harness.workflows.decisions import CHANNEL_SOURCES
 

@@ -159,3 +159,21 @@ class RequesterEmailTests(unittest.TestCase):
                 tenant_id="default", actor="a", memory_client=memory,
             )
         self.assertEqual(memory.create_program.call_args.kwargs["artifacts"], {"requester_email": "pm@example.com"})
+
+
+class ChatRelinkTests(unittest.TestCase):
+    def test_a_chat_on_a_finished_workflow_follows_the_programs_active_one(self):
+        from ts_harness.workflows.session_compat import refreshed_program_link
+
+        memory = mock.Mock()
+        memory.get_program_status.return_value = {"active_workflow_id": "wf-file", "current_phase": "file_jira"}
+        memory.get_workflow.return_value = {"workflow": {"id": "wf-plan", "status": "superseded"}}
+        meta = {"program_id": "prog-1", "workflow_id": "wf-plan", "program_phase": "work_orders_jira"}
+        updated = refreshed_program_link(meta, memory)
+        self.assertEqual((updated["workflow_id"], updated["active_workflow_id"]), ("wf-file", "wf-file"))
+
+        memory.get_workflow.return_value = {"workflow": {"id": "wf-plan", "status": "running"}}
+        self.assertIsNone(refreshed_program_link(meta, memory))
+        memory.get_program_status.return_value = {"active_workflow_id": "wf-plan"}
+        self.assertIsNone(refreshed_program_link(meta, memory))
+        self.assertIsNone(refreshed_program_link({"workflow_id": "wf-x"}, memory))
