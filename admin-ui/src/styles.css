@@ -645,7 +645,6 @@ a {
   background: var(--surface-subtle);
 }
 
-
 .workflow-node {
   display: grid;
   min-width: 150px;
@@ -1178,11 +1177,6 @@ a {
   font-size: 12px;
   margin-top: 6px;
 }
-
-
-
-
-
 
 .program-panel,
 .program-actions,
@@ -2175,52 +2169,447 @@ th {
   flex-wrap: wrap;
 }
 
-.projects-page {
+/* Knowledge notes editor (System → Notes, project notes) */
+.notes-editor {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr;
-  gap: 20px;
-  padding-top: 12px;
+  gap: 12px;
 }
 
-.projects-list ul {
-  list-style: none;
-  margin: 0 0 16px;
+.notes-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.notes-filters label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notes-filters select {
+  min-width: 9rem;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 400;
+}
+
+.notes-filters > :last-child:not(label) {
+  margin-left: auto;
+}
+
+.notes-editor > ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
   padding: 0;
+  list-style: none;
 }
 
-.projects-list li button {
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
+/* Projects (System → Projects) */
+.proj-page {
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
+}
+
+.proj-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proj-toolbar p {
+  margin: 0;
+}
+
+.proj-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 290px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.proj-list {
+  position: sticky;
+  top: 12px;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.proj-list ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proj-list li button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
   background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.projects-list li button.active,
-.projects-list li button:hover {
-  background: var(--surface);
+.proj-list li button:hover {
+  background: var(--surface-subtle);
 }
 
-.project-new,
-.project-form fieldset,
-.registry-form {
+.proj-list li button.active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.proj-list-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.proj-list-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proj-list-meta {
+  font-size: 12px;
+}
+
+.proj-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.proj-key {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.proj-main,
+.proj-detail {
   display: grid;
-  gap: 12px;
-  margin: 0 0 16px;
+  gap: 16px;
+  min-width: 0;
+}
+
+.proj-detail-head h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.proj-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.proj-readonly {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.proj-card {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+
+.proj-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.proj-card-head h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.proj-card-head p {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.proj-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px 18px;
+  min-width: 0;
+  margin: 0;
   padding: 0;
   border: 0;
 }
 
-.registries-panel {
-  margin-top: 24px;
+.proj-span-2 {
+  grid-column: 1 / -1;
 }
 
-@media (max-width: 760px) {
-  .projects-page {
+.proj-grid .form-field {
+  align-content: start;
+}
+
+.proj-grid .form-field > select,
+.proj-dialog .form-field > select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.proj-grid .form-field > input:disabled,
+.proj-grid .form-field > select:disabled {
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+
+.proj-grid .form-field > input,
+.proj-grid .form-field > select,
+.proj-dialog .form-field > input {
+  font-weight: 400;
+}
+
+.proj-table a,
+.proj-detail-head a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.proj-table a:hover {
+  text-decoration: underline;
+}
+
+.proj-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.proj-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.proj-saved {
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.proj-subform {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.proj-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.proj-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.proj-table th {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.proj-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.proj-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.proj-table td input {
+  width: 100%;
+  min-width: 8rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.proj-row-editing td {
+  background: var(--accent-soft);
+}
+
+.proj-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.proj-actions > * + * {
+  margin-left: 6px;
+}
+
+.proj-branch {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.proj-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.proj-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.proj-list .proj-empty {
+  border: 0;
+}
+
+.proj-subhead {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.proj-notes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.proj-card .registry-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+.proj-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.proj-dialog form {
+  display: grid;
+  gap: 14px;
+}
+
+.proj-dialog h2 {
+  margin: 0;
+}
+
+.proj-dialog p {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .proj-layout {
     grid-template-columns: 1fr;
+  }
+
+  .proj-list {
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .proj-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proj-card {
+    padding: 14px;
+  }
+
+  .proj-card-head {
+    flex-direction: column;
   }
 }
 

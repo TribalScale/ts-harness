@@ -156,8 +156,8 @@ export function RegistriesPanel({ projectId }: { projectId: string }) {
   const typeInfo = TYPES.find((t) => t.id === draft?.type) || TYPES[0];
 
   return (
-    <section aria-label="Package registries" className="registries-panel">
-      <div className="system-header">
+    <section aria-label="Package registries" className="proj-card">
+      <header className="proj-card-head">
         <div>
           <h3>Package registries</h3>
           <p className="muted">
@@ -166,26 +166,28 @@ export function RegistriesPanel({ projectId }: { projectId: string }) {
           </p>
         </div>
         {!draft && (
-          <Button variant="secondary" onClick={() => setDraft({ ...EMPTY })}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setDraft({ ...EMPTY })}
+          >
             Add registry
           </Button>
         )}
-      </div>
+      </header>
       {error && (
         <p className="field-error" role="alert">
           {error}
         </p>
       )}
       {registries && registries.length === 0 && !draft && (
-        <PageState
-          kind="empty"
-          title="No registries"
-          detail="Workers use the public registries only."
-        />
+        <p className="proj-empty">
+          No registries. Workers use the public registries only.
+        </p>
       )}
       {registries && registries.length > 0 && (
-        <div className="cron-table-wrap">
-          <table className="cron-table">
+        <div className="proj-table-wrap">
+          <table className="proj-table">
             <thead>
               <tr>
                 <th>Type</th>
@@ -208,7 +210,7 @@ export function RegistriesPanel({ projectId }: { projectId: string }) {
                       : "None"}
                   </td>
                   <td>{testStatus(registry)}</td>
-                  <td className="row-actions">
+                  <td className="proj-actions">
                     <Button
                       size="sm"
                       variant="ghost"

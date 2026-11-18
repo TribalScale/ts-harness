@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { Project } from "../api/types";
 import { Button } from "../components/Button";
@@ -15,6 +15,7 @@ const SIZES: Record<number, [number, number]> = {
   8192: [16384, 61440],
   16384: [32768, 122880],
 };
+const PROJECT_KEY = /^[A-Za-z][A-Za-z0-9_-]{1,31}$/;
 
 function sizeError(cpu: string, memory: string): string | null {
   if (!cpu && !memory) return null;
@@ -29,42 +30,76 @@ function sizeError(cpu: string, memory: string): string | null {
   return null;
 }
 
-function ProjectForm({
+type Fields = {
+  name: string;
+  team: string;
+  jira: string;
+  branch: string;
+  cpu: string;
+  memory: string;
+};
+
+function fieldsOf(project: Project): Fields {
+  return {
+    name: project.name,
+    team: project.team_slug || "",
+    jira: project.jira_project_key || "",
+    branch: project.default_base_branch || "",
+    cpu: project.worker_cpu ? String(project.worker_cpu) : "",
+    memory: project.worker_memory_mb ? String(project.worker_memory_mb) : "",
+  };
+}
+
+/** One card of project settings with its own Save; every card saves the whole project. */
+function SettingsCard({
+  title,
+  description,
+  label,
   project,
   isAdmin,
+  dirtyKeys,
+  validate,
   onSaved,
+  children,
 }: {
+  title: string;
+  description: string;
+  label: string;
   project: Project;
   isAdmin: boolean;
-  onSaved: (p: Project) => void;
+  dirtyKeys: (keyof Fields)[];
+  validate?: (fields: Fields) => string | null;
+  onSaved: (project: Project) => void;
+  children: (
+    fields: Fields,
+    set: (patch: Partial<Fields>) => void,
+    readOnly: boolean,
+  ) => React.ReactNode;
 }) {
-  const [name, setName] = useState(project.name);
-  const [team, setTeam] = useState(project.team_slug || "");
-  const [jira, setJira] = useState(project.jira_project_key || "");
-  const [branch, setBranch] = useState(project.default_base_branch || "");
-  const [cpu, setCpu] = useState(
-    project.worker_cpu ? String(project.worker_cpu) : "",
-  );
-  const [memory, setMemory] = useState(
-    project.worker_memory_mb ? String(project.worker_memory_mb) : "",
-  );
+  const [fields, setFields] = useState<Fields>(() => fieldsOf(project));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const invalid = sizeError(cpu, memory);
+  const [saved, setSaved] = useState(false);
   const readOnly = !project.can_manage;
+  const original = fieldsOf(project);
+  const dirty = dirtyKeys.some((key) => fields[key] !== original[key]);
+  const invalid = validate?.(fields) || null;
 
   async function save() {
     setBusy(true);
+    // This card's fields; the rest as last saved (another card may have changed them).
+    const merged: Fields = { ...fieldsOf(project) };
+    for (const key of dirtyKeys) merged[key] = fields[key];
     const body: Record<string, unknown> = {
-      name,
-      jira_project_key: jira,
-      default_base_branch: branch,
-      worker_cpu: cpu ? Number(cpu) : null,
-      worker_memory_mb: memory ? Number(memory) : null,
+      name: merged.name.trim() || project.name,
+      jira_project_key: merged.jira.trim().toUpperCase() || null,
+      default_base_branch: merged.branch.trim() || null,
+      worker_cpu: merged.cpu ? Number(merged.cpu) : null,
+      worker_memory_mb: merged.memory ? Number(merged.memory) : null,
     };
-    if (isAdmin) body.team_slug = team;
+    if (isAdmin) body.team_slug = merged.team.trim() || null;
     try {
-      const saved = await apiFetch<Project>(
+      const out = await apiFetch<Project>(
         `/admin/projects/${encodeURIComponent(project.id)}`,
         {
           method: "PUT",
@@ -72,7 +107,9 @@ function ProjectForm({
         },
       );
       setError(null);
-      onSaved(saved);
+      setSaved(true);
+      setFields(fieldsOf(out));
+      onSaved(out);
     } catch (e: any) {
       setError(String(e.message || e));
     } finally {
@@ -82,79 +119,29 @@ function ProjectForm({
 
   return (
     <form
-      aria-label="Project settings"
-      className="project-form"
+      aria-label={label}
+      className="proj-card"
       onSubmit={(event) => {
         event.preventDefault();
-        // Same rule as the disabled Save button; don't rely on the button alone.
-        if (invalid || busy) return;
+        if (invalid || busy || !dirty) return;
         void save();
       }}
     >
-      <fieldset disabled={readOnly}>
-        <label className="form-field">
-          <span>Name</span>
-          <input
-            aria-label="Project name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label className="form-field">
-          <span>Owning team</span>
-          <input
-            aria-label="Owning team"
-            value={team}
-            disabled={!isAdmin}
-            onChange={(e) => setTeam(e.target.value)}
-          />
-        </label>
-        <label className="form-field">
-          <span>Jira project key</span>
-          <input
-            aria-label="Jira project key"
-            value={jira}
-            onChange={(e) => setJira(e.target.value)}
-          />
-        </label>
-        <label className="form-field">
-          <span>Default base branch</span>
-          <input
-            aria-label="Default base branch"
-            value={branch}
-            placeholder="main"
-            onChange={(e) => setBranch(e.target.value)}
-          />
-        </label>
-        <label className="form-field">
-          <span>Worker CPU</span>
-          <select
-            aria-label="Worker CPU"
-            value={cpu}
-            onChange={(e) => setCpu(e.target.value)}
-          >
-            <option value="">Default</option>
-            {Object.keys(SIZES).map((units) => (
-              <option key={units} value={units}>
-                {Number(units) / 1024} vCPU
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="form-field">
-          <span>Worker memory (MiB)</span>
-          <input
-            aria-label="Worker memory"
-            inputMode="numeric"
-            value={memory}
-            placeholder={
-              cpu
-                ? `${SIZES[Number(cpu)][0]}–${SIZES[Number(cpu)][1]}`
-                : "Default"
-            }
-            onChange={(e) => setMemory(e.target.value.trim())}
-          />
-        </label>
+      <header className="proj-card-head">
+        <div>
+          <h3>{title}</h3>
+          <p className="muted">{description}</p>
+        </div>
+      </header>
+      <fieldset className="proj-grid" disabled={readOnly}>
+        {children(
+          fields,
+          (patch) => {
+            setSaved(false);
+            setFields((prev) => ({ ...prev, ...patch }));
+          },
+          readOnly,
+        )}
       </fieldset>
       {(invalid || error) && (
         <p className="field-error" role="alert">
@@ -162,14 +149,26 @@ function ProjectForm({
         </p>
       )}
       {!readOnly && (
-        <div className="dialog-actions">
+        <div className="proj-form-actions">
+          {saved && !dirty && <span className="proj-saved">Saved</span>}
+          {dirty && (
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setFields(fieldsOf(project))}
+            >
+              Discard
+            </Button>
+          )}
           <Button
             type="submit"
             variant="primary"
+            size="sm"
             busy={busy}
-            disabled={Boolean(invalid)}
+            disabled={!dirty || Boolean(invalid)}
           >
-            Save project
+            Save changes
           </Button>
         </div>
       )}
@@ -177,12 +176,49 @@ function ProjectForm({
   );
 }
 
-function NewProjectForm({ onCreated }: { onCreated: (p: Project) => void }) {
+function Hint({ children }: { children: React.ReactNode }) {
+  return <small className="proj-hint">{children}</small>;
+}
+
+function NewProjectDialog({
+  open,
+  isAdmin,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  isAdmin: boolean;
+  onClose: () => void;
+  onCreated: (p: Project) => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   const [key, setKey] = useState("");
   const [name, setName] = useState("");
   const [team, setTeam] = useState("");
+  const [jira, setJira] = useState("");
+  const [branch, setBranch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const keyOk = PROJECT_KEY.test(key.trim());
+
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      setKey("");
+      setName("");
+      setTeam("");
+      setJira("");
+      setBranch("");
+      setError(null);
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    } else if (!open && dialog.open) {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    }
+  }, [open]);
 
   async function create() {
     setBusy(true);
@@ -190,15 +226,13 @@ function NewProjectForm({ onCreated }: { onCreated: (p: Project) => void }) {
       const created = await apiFetch<Project>("/admin/projects", {
         method: "POST",
         body: JSON.stringify({
-          key,
-          name: name || key,
-          team_slug: team || null,
+          key: key.trim().toUpperCase(),
+          name: name.trim() || key.trim().toUpperCase(),
+          team_slug: team.trim() || null,
+          jira_project_key: (jira.trim() || "").toUpperCase() || null,
+          default_base_branch: branch.trim() || null,
         }),
       });
-      setKey("");
-      setName("");
-      setTeam("");
-      setError(null);
       onCreated(created);
     } catch (e: any) {
       setError(String(e.message || e));
@@ -208,49 +242,274 @@ function NewProjectForm({ onCreated }: { onCreated: (p: Project) => void }) {
   }
 
   return (
-    <form
-      aria-label="New project"
-      className="project-new"
-      onSubmit={(event) => {
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      className="dialog astryx-dialog proj-dialog"
+      onCancel={(event) => {
         event.preventDefault();
-        if (!key.trim() || busy) return;
-        void create();
+        onClose();
       }}
     >
-      <label className="form-field">
-        <span>Key</span>
-        <input
-          aria-label="New project key"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-      </label>
-      <label className="form-field">
-        <span>Name</span>
-        <input
-          aria-label="New project name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </label>
-      <label className="form-field">
-        <span>Team</span>
-        <input
-          aria-label="New project team"
-          value={team}
-          onChange={(e) => setTeam(e.target.value)}
-        />
-      </label>
-      {error && <p className="field-error">{error}</p>}
-      <Button
-        type="submit"
-        variant="secondary"
-        busy={busy}
-        disabled={!key.trim()}
+      <form
+        aria-label="New project"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (keyOk && !busy) void create();
+        }}
       >
-        Create project
-      </Button>
-    </form>
+        <h2 id={titleId}>New project</h2>
+        <p className="muted">
+          A project groups the repositories, workers and registries one team
+          delivers to. Link its Jira project so tickets there know where to go.
+        </p>
+        <div className="proj-grid">
+          <label className="form-field">
+            <span>Key</span>
+            <input
+              aria-label="New project key"
+              value={key}
+              placeholder="PAY"
+              autoFocus
+              onChange={(e) => setKey(e.target.value.toUpperCase())}
+            />
+            <Hint>Letters, digits, - and _. Used in links and the API.</Hint>
+          </label>
+          <label className="form-field">
+            <span>Name</span>
+            <input
+              aria-label="New project name"
+              value={name}
+              placeholder={key || "Payments"}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label className="form-field">
+            <span>Jira project key</span>
+            <input
+              aria-label="New project Jira key"
+              value={jira}
+              placeholder={key || "PAY"}
+              onChange={(e) => setJira(e.target.value.toUpperCase())}
+            />
+            <Hint>
+              Optional. Tickets in this Jira project use this project's
+              repositories.
+            </Hint>
+          </label>
+          <label className="form-field">
+            <span>Default base branch</span>
+            <input
+              aria-label="New project base branch"
+              value={branch}
+              placeholder="dev"
+              onChange={(e) => setBranch(e.target.value)}
+            />
+            <Hint>
+              Optional. PRs target it unless a repository sets its own.
+            </Hint>
+          </label>
+          {isAdmin && (
+            <label className="form-field proj-span-2">
+              <span>Owning team</span>
+              <input
+                aria-label="New project team"
+                value={team}
+                placeholder="payments"
+                onChange={(e) => setTeam(e.target.value)}
+              />
+              <Hint>
+                Optional. The team's managers can change this project.
+              </Hint>
+            </label>
+          )}
+        </div>
+        {error && (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" busy={busy} disabled={!keyOk}>
+            Create project
+          </Button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
+function ProjectDetail({
+  project,
+  isAdmin,
+  onSaved,
+}: {
+  project: Project;
+  isAdmin: boolean;
+  onSaved: (p: Project) => void;
+}) {
+  const manage = Boolean(project.can_manage);
+  return (
+    <div className="proj-detail">
+      <header className="proj-detail-head">
+        <div>
+          <h2>{project.name}</h2>
+          <p className="proj-meta">
+            <code className="proj-key">{project.key}</code>
+            {project.jira_project_key ? (
+              <span>Jira {project.jira_project_key}</span>
+            ) : (
+              <span className="muted">No Jira project</span>
+            )}
+            <span>
+              {project.team_slug
+                ? `Team ${project.team_slug}`
+                : "No owning team"}
+            </span>
+            {!manage && <span className="proj-readonly">Read only</span>}
+          </p>
+        </div>
+      </header>
+      <SettingsCard
+        key={`delivery-${project.id}`}
+        title="Delivery"
+        label="Project settings"
+        description="How work for this project reaches its repositories."
+        project={project}
+        isAdmin={isAdmin}
+        dirtyKeys={["name", "team", "jira", "branch"]}
+        onSaved={onSaved}
+      >
+        {(fields, set) => (
+          <>
+            <label className="form-field">
+              <span>Name</span>
+              <input
+                aria-label="Project name"
+                value={fields.name}
+                onChange={(e) => set({ name: e.target.value })}
+              />
+            </label>
+            <label className="form-field">
+              <span>Owning team</span>
+              <input
+                aria-label="Owning team"
+                value={fields.team}
+                disabled={!isAdmin}
+                placeholder="No team"
+                onChange={(e) => set({ team: e.target.value })}
+              />
+              {!isAdmin && (
+                <Hint>Only admins can move a project to another team.</Hint>
+              )}
+            </label>
+            <label className="form-field">
+              <span>Jira project key</span>
+              <input
+                aria-label="Jira project key"
+                value={fields.jira}
+                placeholder="None"
+                onChange={(e) => set({ jira: e.target.value.toUpperCase() })}
+              />
+              <Hint>
+                Tickets in this Jira project without a Repo: line use the
+                repositories below.
+              </Hint>
+            </label>
+            <label className="form-field">
+              <span>Default base branch</span>
+              <input
+                aria-label="Default base branch"
+                value={fields.branch}
+                placeholder="dev"
+                onChange={(e) => set({ branch: e.target.value })}
+              />
+              <Hint>
+                PRs target it unless a repository sets its own branch.
+              </Hint>
+            </label>
+          </>
+        )}
+      </SettingsCard>
+      <RepositoriesPanel
+        key={`repos-${project.id}`}
+        projectId={project.id}
+        canManage={manage}
+        projectDefaultBranch={project.default_base_branch}
+      />
+      <SettingsCard
+        key={`workers-${project.id}`}
+        title="Coding workers"
+        label="Coding workers"
+        description="The size of each coding job's container. Leave both blank for the install's default."
+        project={project}
+        isAdmin={isAdmin}
+        dirtyKeys={["cpu", "memory"]}
+        validate={(fields) => sizeError(fields.cpu, fields.memory)}
+        onSaved={onSaved}
+      >
+        {(fields, set) => (
+          <>
+            <label className="form-field">
+              <span>Worker CPU</span>
+              <select
+                aria-label="Worker CPU"
+                value={fields.cpu}
+                onChange={(e) => set({ cpu: e.target.value })}
+              >
+                <option value="">Default</option>
+                {Object.keys(SIZES).map((units) => (
+                  <option key={units} value={units}>
+                    {Number(units) / 1024} vCPU
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Worker memory (MiB)</span>
+              <input
+                aria-label="Worker memory"
+                inputMode="numeric"
+                value={fields.memory}
+                placeholder={
+                  fields.cpu
+                    ? `${SIZES[Number(fields.cpu)][0]}–${SIZES[Number(fields.cpu)][1]}`
+                    : "Default"
+                }
+                onChange={(e) => set({ memory: e.target.value.trim() })}
+              />
+            </label>
+          </>
+        )}
+      </SettingsCard>
+      {manage ? (
+        <RegistriesPanel
+          key={`registries-${project.id}`}
+          projectId={project.id}
+        />
+      ) : (
+        <section className="proj-card" aria-label="Package registries">
+          <header className="proj-card-head">
+            <div>
+              <h3>Package registries</h3>
+              <p className="muted">
+                Only admins and managers of the owning team can see this
+                project's registries.
+              </p>
+            </div>
+          </header>
+        </section>
+      )}
+      <ProjectNotesPanel
+        key={`notes-${project.id}`}
+        projectId={project.id}
+        canManage={manage}
+        isAdmin={isAdmin}
+      />
+    </div>
   );
 }
 
@@ -258,6 +517,8 @@ export function ProjectSettingsPage({ selectedId }: { selectedId?: string }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -292,50 +553,84 @@ export function ProjectSettingsPage({ selectedId }: { selectedId?: string }) {
   const select = (p: Project) => {
     window.location.hash = `#/system/projects/${encodeURIComponent(p.id)}`;
   };
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? projects.filter((p) =>
+        [p.name, p.key, p.team_slug, p.jira_project_key].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(needle),
+        ),
+      )
+    : projects;
 
   return (
-    <div className="projects-page">
-      <aside className="projects-list" aria-label="Projects">
-        {projects.length === 0 ? (
-          <PageState
-            kind="empty"
-            title="No projects"
-            detail="Projects appear here once created."
-          />
-        ) : (
-          <ul>
-            {projects.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className={p.id === selected?.id ? "active" : ""}
-                  onClick={() => select(p)}
-                >
-                  <strong>{p.name}</strong>
-                  <span className="muted">
-                    {" "}
-                    {p.key}
-                    {p.team_slug ? ` · ${p.team_slug}` : ""}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+    <div className="proj-page">
+      <div className="proj-toolbar">
+        <p className="muted">
+          {projects.length} {projects.length === 1 ? "project" : "projects"}
+        </p>
         {isAdmin && (
-          <NewProjectForm
-            onCreated={(p) => {
-              void load();
-              select(p);
-            }}
-          />
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            New project
+          </Button>
         )}
-      </aside>
-      <section className="projects-detail">
-        {selected ? (
-          <>
-            <h3>{selected.name}</h3>
-            <ProjectForm
+      </div>
+      <div className="proj-layout">
+        <aside className="proj-list" aria-label="Projects">
+          {projects.length > 5 && (
+            <input
+              className="proj-search"
+              type="search"
+              aria-label="Find a project"
+              placeholder="Find a project"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          )}
+          {projects.length === 0 ? (
+            <p className="proj-empty">
+              No projects yet.
+              {isAdmin
+                ? " Create one to link a Jira project to its repositories."
+                : ""}
+            </p>
+          ) : (
+            <ul>
+              {shown.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    aria-current={p.id === selected?.id ? "true" : undefined}
+                    className={p.id === selected?.id ? "active" : ""}
+                    onClick={() => select(p)}
+                  >
+                    <span className="proj-list-name">
+                      <strong>{p.name}</strong>
+                      <code className="proj-key">{p.key}</code>
+                    </span>
+                    <span className="proj-list-meta muted">
+                      {[
+                        p.team_slug ? `Team ${p.team_slug}` : null,
+                        p.jira_project_key
+                          ? `Jira ${p.jira_project_key}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "No team or Jira project"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {shown.length === 0 && (
+                <li className="proj-empty">No project matches “{query}”.</li>
+              )}
+            </ul>
+          )}
+        </aside>
+        <section className="proj-main">
+          {selected ? (
+            <ProjectDetail
               key={selected.id}
               project={selected}
               isAdmin={isAdmin}
@@ -345,34 +640,25 @@ export function ProjectSettingsPage({ selectedId }: { selectedId?: string }) {
                 )
               }
             />
-            <RepositoriesPanel
-              key={`repos-${selected.id}`}
-              projectId={selected.id}
-              canManage={Boolean(selected.can_manage)}
+          ) : (
+            <PageState
+              kind="empty"
+              title="Select a project"
+              detail="Choose a project to set its Jira link, repositories, workers and registries."
             />
-            <ProjectNotesPanel
-              key={`notes-${selected.id}`}
-              projectId={selected.id}
-              canManage={Boolean(selected.can_manage)}
-              isAdmin={isAdmin}
-            />
-            {selected.can_manage ? (
-              <RegistriesPanel projectId={selected.id} />
-            ) : (
-              <p className="muted">
-                Only admins and managers of the owning team can see this
-                project's registries.
-              </p>
-            )}
-          </>
-        ) : (
-          <PageState
-            kind="empty"
-            title="Select a project"
-            detail="Choose a project to change its workers and registries."
-          />
-        )}
-      </section>
+          )}
+        </section>
+      </div>
+      <NewProjectDialog
+        open={creating}
+        isAdmin={isAdmin}
+        onClose={() => setCreating(false)}
+        onCreated={(p) => {
+          setCreating(false);
+          void load();
+          select(p);
+        }}
+      />
     </div>
   );
 }

@@ -18,44 +18,70 @@ export function ProjectNotesPanel({
 
   useEffect(() => {
     apiFetch<{ notes: KnowledgeNote[] }>("/admin/notes")
-      .then((out) => setOrgNotes((out.notes || []).filter((note) => note.status === "active")))
+      .then((out) =>
+        setOrgNotes(
+          (out.notes || []).filter((note) => note.status === "active"),
+        ),
+      )
       .catch(() => setOrgNotes([]));
   }, []);
 
   useEffect(() => {
-    apiFetch<{ notes: KnowledgeNote[] }>(`/admin/projects/${encodeURIComponent(projectId)}/notes`)
+    apiFetch<{ notes: KnowledgeNote[] }>(
+      `/admin/projects/${encodeURIComponent(projectId)}/notes`,
+    )
       .then((out) => setProjectNotes(out.notes || []))
       .catch(() => setProjectNotes([]));
   }, [projectId]);
 
   async function promote(note: KnowledgeNote) {
-    await apiFetch(`/admin/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(note.id)}/promote`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    await apiFetch(
+      `/admin/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(note.id)}/promote`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    );
   }
 
   return (
-    <section aria-label="Project notes">
-      <h4>Org rules</h4>
+    <section aria-label="Project notes" className="proj-card">
+      <header className="proj-card-head">
+        <div>
+          <h3>Knowledge notes</h3>
+          <p className="muted">
+            Rules and facts loaded into every run for this project. Org rules
+            apply to every project.
+          </p>
+        </div>
+      </header>
+      <h4 className="proj-subhead">Org rules</h4>
       {orgNotes.length === 0 ? (
-        <p className="muted">No org rules yet.</p>
+        <p className="proj-empty">No org rules yet.</p>
       ) : (
-        <ul>
+        <ul className="proj-notes">
           {orgNotes.map((note) => (
             <li key={note.id}>
-              [{note.kind}] {note.title}: {note.body}
-              {isAdmin && <span className="muted"> Exception id {note.id}</span>}
+              <span className="proj-tag">{note.kind}</span>{" "}
+              <strong>{note.title}</strong>: {note.body}
+              {isAdmin && (
+                <span className="muted"> · exception id {note.id}</span>
+              )}
             </li>
           ))}
         </ul>
       )}
-      <h4>Project notes</h4>
-      {canManage && projectNotes.filter((note) => note.status === "active").map((note) => (
-        <p key={`promote-${note.id}`}>
-          <Button variant="ghost" onClick={() => void promote(note)}>Promote {note.title} to org</Button>
-        </p>
-      ))}
+      <h4 className="proj-subhead">Project notes</h4>
+      {canManage &&
+        projectNotes
+          .filter((note) => note.status === "active")
+          .map((note) => (
+            <p key={`promote-${note.id}`}>
+              <Button variant="ghost" onClick={() => void promote(note)}>
+                Promote {note.title} to org
+              </Button>
+            </p>
+          ))}
       <NotesEditor
         listUrl={`/admin/projects/${encodeURIComponent(projectId)}/notes`}
         canWrite={canManage}
