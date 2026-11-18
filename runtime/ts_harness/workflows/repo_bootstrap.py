@@ -35,6 +35,8 @@ MARKER_FILE = ".ts-harness.yml"
 _STARTER_FILES = ("README*", "readme*", "LICENSE*", "LICENCE*", "license*", ".gitignore", ".gitattributes", ".editorconfig", ".github/CODEOWNERS", "CODEOWNERS")
 _TEMPLATE_LINE = re.compile(r"^template:\s*([\w.-]+)\s*$", re.MULTILINE)
 _VERSION_LINE = re.compile(r"^template_version:\s*([\w.+-]+)\s*$", re.MULTILINE)
+# Set by the CI safety net's work order: once its CI merges, require the jobs.
+_REQUIRE_CI_LINE = re.compile(r"^require_ci_checks:\s*true\s*$", re.MULTILINE | re.IGNORECASE)
 
 
 class BootstrapError(Exception):
@@ -153,13 +155,25 @@ def package_name(repo_name: str) -> str:
     return name or "app"
 
 
+# Build output and dependencies a local run of a template's checks leaves behind.
+_SKIP_DIRS = frozenset({".git", "node_modules", "dist", "coverage", "test-results", "playwright-report", ".features-gen", ".turbo"})
+
+
+def _template_files(root: Path) -> list[Path]:
+    found: list[Path] = []
+    for directory, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
+        found.extend(Path(directory) / name for name in sorted(names) if name not in {".DS_Store", "cucumber-report.html"})
+    return sorted(found)
+
+
 def render(template: Template, *, repo_name: str, title: str | None = None) -> dict[str, str]:
     """``{path: text}`` for every template file, with substitutions applied and the marker set."""
     values = {"package_name": package_name(repo_name), "display_name": title or display_name(repo_name)}
     files: dict[str, str] = {}
-    for path in sorted(p for p in template.path.rglob("*") if p.is_file()):
+    for path in _template_files(template.path):
         relative = path.relative_to(template.path).as_posix()
-        if relative == "template.json" or "node_modules/" in relative or relative.startswith(".git/"):
+        if relative == "template.json":
             continue
         try:
             files[relative] = path.read_text(encoding="utf-8")
@@ -203,6 +217,12 @@ def _marker(github: Any, owner: str, repo: str, branch: str) -> str:
     if not isinstance(payload, dict) or not payload.get("content"):
         return ""
     return base64.b64decode(str(payload["content"])).decode(errors="replace")
+
+
+def wants_ci_required(github: Any, owner: str, repo: str, branch: str) -> bool:
+    """True for a repository started from a template, or whose CI the harness added."""
+    text = _marker(github, owner, repo, branch)
+    return bool(_TEMPLATE_LINE.search(text) or _REQUIRE_CI_LINE.search(text))
 
 
 def started_from(github: Any, owner: str, repo: str, branch: str) -> str | None:
@@ -317,8 +337,9 @@ def ensure_ready(
 ) -> Readiness:
     """Bootstrap ``repo_url`` when it is empty and its role has a template; otherwise ready.
 
-    Ready repositories that were started from a template get its CI jobs as required checks
-    the first time they are seen after the bootstrap PR merged.
+    Ready repositories that were started from a template, or whose CI an "add CI" work order
+    added (``require_ci_checks: true`` in .ts-harness.yml), get their CI jobs as required checks
+    the first time they are seen after that merged.
     """
     from ts_harness.integrations.github_client import parse_repo_slug
 
@@ -338,7 +359,7 @@ def ensure_ready(
         )
     if template is None or not is_starter_only(files):
         result = Readiness(repo=name, ready=True)
-        if files and not is_starter_only(files) and started_from(github, owner, repo, base_branch):
+        if files and not is_starter_only(files) and wants_ci_required(github, owner, repo, base_branch):
             try:
                 added = require_template_checks(github, owner, repo, base_branch)
                 if added:
@@ -362,25 +383,77 @@ def repositories_ready(github: Any, repositories: list[dict[str, Any]], *, title
     return results
 
 
-def annotate_repositories(github: Any, repositories: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Project repositories with ``template`` and ``template_conventions`` on the empty ones.
+def annotate_repositories(
+    github: Any, repositories: list[dict[str, Any]], *, previous: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """Project repositories with what planning and delivery need to know about each.
 
-    Planning reads these: a repository that will start from a template is planned on top of it
-    (its folders, tests and conventions), with no scaffolding work orders of its own.
+    - ``template`` / ``template_conventions``: an empty repository that will start from a
+      template; planning builds on it with no scaffolding work orders.
+    - ``ci_on_pull_requests``: False for a repository with code but no CI on pull requests into
+      its base branch; planning adds an "add CI" work order first (the CI safety net).
+    - ``bdd`` / ``bdd_reason`` / ``has_gherkin_runner``: whether its work uses Gherkin, from the
+      project's ``bdd_mode``. Decided once: a decision in ``previous`` (the program's artifacts)
+      is kept, so it no longer depends on what the first ticket set up.
     """
+    from ts_harness.workflows import bdd_policy
+
     templates, config = load_templates(), live_settings()
+    earlier = {str(r.get("full_name") or "").lower(): r for r in previous or [] if isinstance(r, dict)}
     out = []
     for item in repositories:
         entry = dict(item)
+        name = str(item.get("full_name") or "")
+        owner, _, repo = name.partition("/")
+        branch = str(item.get("default_branch") or "dev")
         template = template_for_role(item.get("role"), templates, config)
-        if template is not None:
-            try:
-                owner, _, repo = str(item.get("full_name") or "").partition("/")
-                files = repo_files(github, owner, repo, str(item.get("default_branch") or "dev"))
-                if files is not None and is_starter_only(files):
-                    entry["template"] = template.name
-                    entry["template_conventions"] = template.conventions()
-            except Exception as exc:  # noqa: BLE001 - planning goes on without the annotation
-                logger.info("template check for %s failed: %s", item.get("full_name"), exc)
+        try:
+            files = repo_files(github, owner, repo, branch)
+        except Exception as exc:  # noqa: BLE001 - planning goes on without the annotation
+            logger.info("repository inspection for %s failed: %s", name, exc)
+            files = None
+        empty = files is not None and is_starter_only(files)
+        if files is not None and empty and template is not None:
+            entry["template"] = template.name
+            entry["template_conventions"] = template.conventions()
+            facts = bdd_policy.inspect_files(_template_files_list(template), _template_package(template))
+        elif files is not None:
+            package = None
+            if "package.json" in files:
+                payload = github.get_file(owner, repo, "package.json", ref=branch)
+                if isinstance(payload, dict) and payload.get("content"):
+                    package = base64.b64decode(str(payload["content"])).decode(errors="replace")
+            facts = bdd_policy.inspect_files(files, package)
+            if not empty:
+                entry["ci_on_pull_requests"] = _has_pr_ci(github, owner, repo, branch)
+        else:
+            facts = None
+        if facts is not None:
+            entry["has_gherkin_runner"] = bool(facts.get("has_gherkin_runner"))
+        kept = earlier.get(name.lower()) or {}
+        if bdd_policy.repository_policy(kept) is not None:
+            entry["bdd"], entry["bdd_reason"] = kept["bdd"], kept.get("bdd_reason") or "decided when the program started"
+        elif facts is not None:
+            entry["bdd"], entry["bdd_reason"] = bdd_policy.decide(item.get("bdd_mode") or "auto", facts)
         out.append(entry)
     return out
+
+
+def _template_files_list(template: Template) -> list[str]:
+    return [p.relative_to(template.path).as_posix() for p in _template_files(template.path)]
+
+
+def _template_package(template: Template) -> str | None:
+    path = template.path / "package.json"
+    return path.read_text(encoding="utf-8") if path.is_file() else None
+
+
+def _has_pr_ci(github: Any, owner: str, repo: str, branch: str) -> bool | None:
+    """Whether any GitHub Actions workflow runs on pull requests into ``branch`` (None: unknown)."""
+    from ts_harness.workflows.repo_governance import _workflows, workflow_runs_on_pr
+
+    try:
+        return any(workflow_runs_on_pr(data, branch) for data in _workflows(github, owner, repo, branch).values())
+    except Exception as exc:  # noqa: BLE001
+        logger.info("CI check for %s/%s failed: %s", owner, repo, exc)
+        return None

@@ -54,6 +54,21 @@ Scenario: Join lobby API
   Then JSON has status joined
 ```
 
+## The work order decides
+
+The work order (or Jira ticket) has a `## Tests` section with `BDD: required` or `BDD: off`,
+decided for the project. It wins over what the repository looks like:
+
+- **`BDD: required`**: Gherkin scenarios for the acceptance criteria, in a feature file named
+  after the work order or ticket id (`features/PROJ-12-short-name.feature`), even when the
+  repository has its own test runner. When it has no Gherkin runner yet, add the lightest one
+  for its stack (Cucumber.js or playwright-bdd for Node, pytest-bdd or behave for Python,
+  godog for Go) with a `test:bdd` script or equivalent, and run it in CI if the repository has
+  CI.
+- **`BDD: off`**: no feature files; cover each criterion with the repository's own tests.
+
+Only without that line does the stack detection below decide.
+
 ## Stack detection
 
 Use the target repo’s existing BDD stack if present:

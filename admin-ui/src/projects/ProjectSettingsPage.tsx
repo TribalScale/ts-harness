@@ -35,6 +35,7 @@ type Fields = {
   team: string;
   jira: string;
   branch: string;
+  bdd: string;
   cpu: string;
   memory: string;
 };
@@ -45,6 +46,7 @@ function fieldsOf(project: Project): Fields {
     team: project.team_slug || "",
     jira: project.jira_project_key || "",
     branch: project.default_base_branch || "",
+    bdd: project.bdd_mode || "auto",
     cpu: project.worker_cpu ? String(project.worker_cpu) : "",
     memory: project.worker_memory_mb ? String(project.worker_memory_mb) : "",
   };
@@ -94,6 +96,7 @@ function SettingsCard({
       name: merged.name.trim() || project.name,
       jira_project_key: merged.jira.trim().toUpperCase() || null,
       default_base_branch: merged.branch.trim() || null,
+      bdd_mode: merged.bdd || "auto",
       worker_cpu: merged.cpu ? Number(merged.cpu) : null,
       worker_memory_mb: merged.memory ? Number(merged.memory) : null,
     };
@@ -440,6 +443,43 @@ function ProjectDetail({
         canManage={manage}
         projectDefaultBranch={project.default_base_branch}
       />
+      <SettingsCard
+        key={`testing-${project.id}`}
+        title="Testing"
+        label="Testing"
+        description="How this project's tickets prove their acceptance criteria. Each program fixes the choice for its repositories when it starts."
+        project={project}
+        isAdmin={isAdmin}
+        dirtyKeys={["bdd"]}
+        onSaved={onSaved}
+      >
+        {(fields, set) => (
+          <label className="form-field proj-span-2">
+            <span>Acceptance tests (BDD)</span>
+            <select
+              aria-label="Acceptance tests (BDD)"
+              value={fields.bdd}
+              onChange={(e) => set({ bdd: e.target.value })}
+            >
+              <option value="auto">
+                Auto: Gherkin for repositories with no tests yet or already
+                using it
+              </option>
+              <option value="always">
+                Always: Gherkin scenarios in every repository
+              </option>
+              <option value="never">
+                Never: the repository's own test runner
+              </option>
+            </select>
+            <Hint>
+              With Gherkin, every ticket adds a feature file named after its
+              key. A repository without a Gherkin runner gets one with its first
+              ticket. Unit tests are required either way.
+            </Hint>
+          </label>
+        )}
+      </SettingsCard>
       <SettingsCard
         key={`workers-${project.id}`}
         title="Coding workers"

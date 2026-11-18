@@ -242,6 +242,7 @@ def _extract_work_orders_outputs(
     **_: Any,
 ) -> dict[str, Any]:
     design_refs = (artifacts or {}).get("design_refs")
+    repositories = (artifacts or {}).get("project_repositories")
     merged = dict(outputs or {})
     merged.update(_merge_task_outputs(tasks))
     patch: dict[str, Any] = {"planning_track": "work_orders"}
@@ -261,9 +262,11 @@ def _extract_work_orders_outputs(
         markdown = merged["artifacts"].get("work_orders_markdown")
     if markdown:
         from ts_harness.intake.design import link_design_refs
+        from ts_harness.workflows.bdd_policy import with_tests_sections
 
-        # Each work order links the Figma frames it names (also what the Jira tickets carry).
-        patch["work_orders_markdown"] = link_design_refs(str(markdown), design_refs)
+        # Each work order links the Figma frames it names and says how it is tested (BDD or
+        # not, per its repository's decision); the Jira tickets carry both.
+        patch["work_orders_markdown"] = with_tests_sections(link_design_refs(str(markdown), design_refs), repositories)
 
     workflow_type_name = str(workflow_type or "")
     tracks_work_orders = (

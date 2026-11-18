@@ -308,11 +308,14 @@ def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> li
     script = str((package.get("scripts") or {}).get("test") or "")
     bin_dir = Path(repo_dir) / "node_modules" / ".bin"
     deps = {**(package.get("devDependencies") or {}), **(package.get("dependencies") or {})}
+    # Coverage off: a repo's thresholds measure the whole suite, and a partial run would fail
+    # them. CI still enforces them on the full suite.
     if "vitest" in deps and (bin_dir / "vitest").exists():
-        args = [a for a in _script_args(script, "vitest") if a not in {"run", "--watch"}]
-        return [str(bin_dir / "vitest"), "related", "--run", *args, *sources]
+        args = [a for a in _script_args(script, "vitest") if a not in {"run", "--watch"} and not a.startswith("--coverage")]
+        return [str(bin_dir / "vitest"), "related", "--run", *args, "--coverage.enabled=false", *sources]
     if "jest" in deps and (bin_dir / "jest").exists():
-        return [str(bin_dir / "jest"), *_script_args(script, "jest"), "--findRelatedTests", *sources, "--passWithNoTests"]
+        args = [a for a in _script_args(script, "jest") if not a.startswith("--coverage")]
+        return [str(bin_dir / "jest"), *args, "--coverage=false", "--findRelatedTests", *sources, "--passWithNoTests"]
     return None
 
 
@@ -386,7 +389,12 @@ def verify_implementation(
 
     behavioral = looks_behavioral(work_order_body)
     docs_text = collect_docs_text(repo_dir)
-    runs_bdd = repo_runs_bdd(repo_dir)
+    # The work order's `BDD: required|off` (the program's per-repository decision) wins over
+    # what the repository holds today; without it, decide from the repository.
+    from ts_harness.workflows.bdd_policy import marker as bdd_marker
+
+    declared = bdd_marker(work_order_body)
+    runs_bdd = repo_runs_bdd(repo_dir) if declared is None else declared
     bdd_required = runs_bdd and has_gwt_acceptance(work_order_body, docs_text)
 
     if changed_files is not None:
@@ -602,6 +610,12 @@ def build_verification_fix_prompt(
             f"Add a Gherkin feature file for {work_order_id} (name should include the WO id) "
             "plus step definitions covering the acceptance criteria."
         )
+        if "no_bdd_runner_or_features" in verify.reasons:
+            lines.append(
+                "This repository has no Gherkin runner yet and its work uses BDD: add the lightest one for "
+                "its stack (Cucumber.js or playwright-bdd for Node, pytest-bdd or behave for Python, godog "
+                "for Go) with a `test:bdd` script or equivalent, so the host and CI run the features."
+            )
     if "typecheck_failed" in verify.reasons:
         lines.append(
             "The type check failed. Fix the type errors in the code you changed or added; do not "

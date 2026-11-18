@@ -11,5 +11,14 @@ export default defineConfig({
     setupFiles: ['src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     env: { VITE_API_URL: 'http://api.test', VITE_AUTH_MODE: 'test' },
+    coverage: {
+      provider: 'v8',
+      // Pages and components hold the UI logic unit tests must cover (the Gherkin suite
+      // covers whole journeys in a browser).
+      include: ['src/features/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}'],
+      reporter: ['text-summary', 'text'],
+      thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },
+    },
   },
 });
