@@ -34,7 +34,7 @@ jobs:
   # Repository templates (templates/): each must stay a passing repository, since the harness
   # copies it as is into empty project repositories.
   template-node-api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: templates/node-api
@@ -68,7 +68,7 @@ jobs:
       - run: npm run test:bdd
 
   template-react-web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: templates/react-web

@@ -12,7 +12,7 @@ concurrency:
 jobs:
   checks:
     name: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,7 +32,7 @@ jobs:
 
   bdd:
     name: bdd
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -62,7 +62,7 @@ jobs:
 
   docker:
     name: docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t app:${{ github.sha }} .

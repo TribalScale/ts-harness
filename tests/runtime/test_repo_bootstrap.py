@@ -32,6 +32,10 @@ class FakeGitHub:
         return {"tree": [{"path": p, "type": "blob"} for p in {**self.files, **self.workflows}]}
 
     def get_file(self, owner, repo, path, *, ref):
+        if ref.startswith("ts-harness/") and self.tree_body:
+            pushed = {e["path"]: e["content"] for e in self.tree_body["tree"]}
+            text = pushed.get(path)
+            return {"content": base64.b64encode(text.encode()).decode()} if text is not None else None
         text = {**(self.files or {}), **self.workflows}.get(path)
         return {"content": base64.b64encode(text.encode()).decode()} if text is not None else None
 
@@ -58,6 +62,8 @@ class FakeGitHub:
             assert body["parents"] == ["base-sha"] and body["tree"] == "new-tree"
             return {"sha": "new-commit"}
         if method == "POST" and path.endswith("/git/refs"):
+            return {}
+        if method == "PATCH" and "/git/refs/heads/" in path:
             return {}
         if method == "POST" and path.endswith("/pulls"):
             pr = {"head": body["head"], "html_url": f"https://github.com/acme/web/pull/{len(self.pulls) + 1}", "body": body["body"]}
@@ -95,7 +101,8 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual((lock["name"], lock["packages"][""]["name"]), ("acme-api-test", "acme-api-test"))
         self.assertIn("title: 'Acme Test'", files["src/config/openapi.ts"])
         self.assertTrue(files["README.md"].startswith("# Acme Test\n"))
-        self.assertIn("template: node-api\n", files[rb.MARKER_FILE])
+        self.assertIn("template: node-api\ntemplate_version: ", files[rb.MARKER_FILE])
+        self.assertIn('"title": "Acme Test"', files["openapi.json"])
         self.assertIn("services: [postgres]", files[rb.MARKER_FILE])
         self.assertIn(".github/workflows/ci.yml", files)
         web = rb.render(TEMPLATES["react-web"], repo_name="acme-web")
@@ -136,6 +143,19 @@ class EnsureReadyTests(unittest.TestCase):
         self.assertEqual((second.ready, second.opened, second.pr_url), (False, False, first.pr_url))
         self.assertIn("Waiting on the bootstrap PR", second.message())
         self.assertEqual(len(github.pulls), 1)
+        self.assertEqual(sum(1 for c in github.calls if c == ("POST", "/repos/acme/web/git/commits")), 1)
+
+    def test_an_open_pr_from_an_older_template_version_is_refreshed(self):
+        import dataclasses
+
+        github = FakeGitHub({"README.md": "# web\n"})
+        self.ensure(github)
+        newer = {**TEMPLATES, "react-web": dataclasses.replace(TEMPLATES["react-web"], version="9.9.9")}
+        result = rb.ensure_ready(github, "https://github.com/acme/web", "dev", role="web", templates=newer, config=CONFIG)
+        self.assertEqual((result.ready, result.opened, result.refreshed), (False, False, True))
+        self.assertIn("Updated the bootstrap PR", result.message())
+        self.assertEqual(len(github.pulls), 1)
+        self.assertIn("template_version: 9.9.9", {e["path"]: e["content"] for e in github.tree_body["tree"]}[rb.MARKER_FILE])
 
     def test_a_repository_with_code_is_left_alone(self):
         github = FakeGitHub({"README.md": "x", "package.json": "{}"})

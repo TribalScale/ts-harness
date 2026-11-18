@@ -34,6 +34,7 @@ MARKER_FILE = ".ts-harness.yml"
 # What an "empty" repository may already hold: the files GitHub offers when creating one.
 _STARTER_FILES = ("README*", "readme*", "LICENSE*", "LICENCE*", "license*", ".gitignore", ".gitattributes", ".editorconfig", ".github/CODEOWNERS", "CODEOWNERS")
 _TEMPLATE_LINE = re.compile(r"^template:\s*([\w.-]+)\s*$", re.MULTILINE)
+_VERSION_LINE = re.compile(r"^template_version:\s*([\w.+-]+)\s*$", re.MULTILINE)
 
 
 class BootstrapError(Exception):
@@ -65,10 +66,11 @@ class Readiness:
     template: str | None = None
     pr_url: str | None = None
     opened: bool = False
+    refreshed: bool = False
     notes: list[str] = field(default_factory=list)
 
     def message(self) -> str:
-        verb = "Opened" if self.opened else "Waiting on"
+        verb = "Opened" if self.opened else "Updated" if self.refreshed else "Waiting on"
         return f"{self.repo} is empty, so it starts from the `{self.template}` template. {verb} the bootstrap PR: {self.pr_url}"
 
 
@@ -168,10 +170,10 @@ def render(template: Template, *, repo_name: str, title: str | None = None) -> d
         for name in rule.get("files") or []:
             if name in files:
                 files[name] = files[name].replace(str(rule.get("from") or ""), target)
-    marker = files.get(MARKER_FILE, "")
+    marker = _VERSION_LINE.sub("", _TEMPLATE_LINE.sub("", files.get(MARKER_FILE, "")))
     files[MARKER_FILE] = (
-        f"# Started from the TS Harness `{template.name}` template (version {template.version}).\n"
-        f"template: {template.name}\n" + _TEMPLATE_LINE.sub("", marker).lstrip("\n")
+        f"# Started from the TS Harness `{template.name}` template.\n"
+        f"template: {template.name}\ntemplate_version: {template.version}\n" + marker.lstrip("\n")
     )
     return files
 
@@ -196,13 +198,16 @@ def repo_files(github: Any, owner: str, repo: str, branch: str) -> list[str] | N
     return [str(item.get("path")) for item in tree.get("tree") or [] if item.get("type") == "blob"]
 
 
-def started_from(github: Any, owner: str, repo: str, branch: str) -> str | None:
-    """The template named in the repository's .ts-harness.yml, if any."""
+def _marker(github: Any, owner: str, repo: str, branch: str) -> str:
     payload = github.get_file(owner, repo, MARKER_FILE, ref=branch) if hasattr(github, "get_file") else None
     if not isinstance(payload, dict) or not payload.get("content"):
-        return None
-    text = base64.b64decode(str(payload["content"])).decode(errors="replace")
-    match = _TEMPLATE_LINE.search(text)
+        return ""
+    return base64.b64decode(str(payload["content"])).decode(errors="replace")
+
+
+def started_from(github: Any, owner: str, repo: str, branch: str) -> str | None:
+    """The template named in the repository's .ts-harness.yml, if any."""
+    match = _TEMPLATE_LINE.search(_marker(github, owner, repo, branch))
     return match.group(1) if match else None
 
 
@@ -212,13 +217,34 @@ def _branch(template: Template) -> str:
     return f"{BRANCH_PREFIX}-{template.name}"
 
 
-def open_bootstrap_pr(github: Any, owner: str, repo: str, base: str, template: Template, files: dict[str, str]) -> tuple[str, bool]:
-    """``(pr_url, opened)``: the open bootstrap PR, or a new one with the template as one commit."""
+def open_bootstrap_pr(
+    github: Any, owner: str, repo: str, base: str, template: Template, files: dict[str, str]
+) -> tuple[str, bool, bool]:
+    """``(pr_url, opened, refreshed)``: a new PR with the template as one commit, or the open one.
+
+    An open PR built from an older template version gets its branch rebuilt from the current
+    one (a fix to the template reaches PRs nobody has merged yet).
+    """
     branch = _branch(template)
     existing = github.request("GET", f"/repos/{owner}/{repo}/pulls", query={"state": "open", "head": f"{owner}:{branch}", "base": base}) or []
     if existing:
-        return str(existing[0].get("html_url")), False
+        found = _VERSION_LINE.search(_marker(github, owner, repo, branch))
+        if found and found.group(1) == template.version:
+            return str(existing[0].get("html_url")), False, False
+        _push_template_commit(github, owner, repo, base, branch, template, files)
+        return str(existing[0].get("html_url")), False, True
 
+    _push_template_commit(github, owner, repo, base, branch, template, files)
+    pr = github.request(
+        "POST",
+        f"/repos/{owner}/{repo}/pulls",
+        body={"title": f"Start from the {template.name} template", "head": branch, "base": base, "body": _pr_body(template, files)},
+    )
+    return str(pr.get("html_url")), True, False
+
+
+def _push_template_commit(github: Any, owner: str, repo: str, base: str, branch: str, template: Template, files: dict[str, str]) -> None:
+    """Point ``branch`` at one commit on top of ``base`` holding the template."""
     head = github.request("GET", f"/repos/{owner}/{repo}/git/ref/heads/{base}")
     base_sha = str(head["object"]["sha"])
     base_tree = str(github.request("GET", f"/repos/{owner}/{repo}/git/commits/{base_sha}")["tree"]["sha"])
@@ -244,12 +270,6 @@ def open_bootstrap_pr(github: Any, owner: str, repo: str, base: str, template: T
         github.request("PATCH", f"/repos/{owner}/{repo}/git/refs/heads/{branch}", body={"sha": commit["sha"], "force": True})
     else:
         github.request("POST", f"/repos/{owner}/{repo}/git/refs", body={"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
-    pr = github.request(
-        "POST",
-        f"/repos/{owner}/{repo}/pulls",
-        body={"title": f"Start from the {template.name} template", "head": branch, "base": base, "body": _pr_body(template, files)},
-    )
-    return str(pr.get("html_url")), True
 
 
 def _pr_body(template: Template, files: dict[str, str]) -> str:
@@ -327,8 +347,8 @@ def ensure_ready(
                 result.notes.append(f"{name}: could not require the template's CI checks ({exc})")
         return result
 
-    url, opened = open_bootstrap_pr(github, owner, repo, base_branch, template, render(template, repo_name=repo, title=title))
-    return Readiness(repo=name, ready=False, template=template.name, pr_url=url, opened=opened)
+    url, opened, refreshed = open_bootstrap_pr(github, owner, repo, base_branch, template, render(template, repo_name=repo, title=title))
+    return Readiness(repo=name, ready=False, template=template.name, pr_url=url, opened=opened, refreshed=refreshed)
 
 
 def repositories_ready(github: Any, repositories: list[dict[str, Any]], *, title: str | None = None) -> list[Readiness]:
