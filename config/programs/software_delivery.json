@@ -108,7 +108,7 @@
       ],
       "completion_adapter": "extract_file_jira_outputs",
       "terminal": true,
-      "complete_channel_text": "Filed the work orders as Jira tickets, assigned to you, with Blocks links in dependency order. Say `implement all <PROJECT>` (for example `implement all THD`) to build them one after another, or `implement <KEY>` for one ticket."
+      "complete_channel_text": "Filed the work orders as Jira tickets, with Blocks links in dependency order. Say `implement all <PROJECT>` (for example `implement all THD`) to build them one after another, or `implement <KEY>` for one ticket."
     },
     {
       "id": "implement",

@@ -1,6 +1,6 @@
 {
   "workflow_type": "file_work_orders_as_jira",
-  "definition_version": "1.3.0",
+  "definition_version": "1.4.0",
   "display_name": "File work orders as Jira tickets",
   "contracts": {
     "jira_filing": {
@@ -78,6 +78,18 @@
         "assignee_account_id": "$workflow.assignee_account_id"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
+    },
+    {
+      "name": "assign_tickets",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["file_tickets"],
+      "allowed_agents": ["orchestrator"],
+      "present_output": true,
+      "present_prompt": "inform",
+      "present_body": "summary",
+      "barrier": {"hook": "assign_filed_tickets"},
+      "retry": {"max_retries": 0, "timeout_seconds": 300}
     }
   ]
 }

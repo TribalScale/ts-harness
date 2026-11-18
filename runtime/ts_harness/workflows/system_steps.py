@@ -61,6 +61,12 @@ def _prepare_ticket_delivery(task: dict[str, Any], config: dict[str, Any], *, me
     return prepare_ticket_delivery(task, config, memory=memory)
 
 
+def _assign_filed_tickets(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    from ts_harness.jira.assign_filed import assign_filed_tickets
+
+    return assign_filed_tickets(task, config, memory=memory)
+
+
 SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     **release.SYSTEM_STEPS,
     "fork_work_order_wave": work_order_waves.fork_wave,
@@ -72,6 +78,7 @@ SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "gather_intake_sources": _gather_intake_sources,
     "prepare_ticket_queue": _prepare_ticket_queue,
     "prepare_ticket_delivery": _prepare_ticket_delivery,
+    "assign_filed_tickets": _assign_filed_tickets,
 }
 
 
