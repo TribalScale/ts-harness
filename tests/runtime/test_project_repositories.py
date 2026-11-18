@@ -197,6 +197,14 @@ class RepositoriesPostgresTests(PgTestCase):
             conn.execute("DELETE FROM projects WHERE key = 'PAY'")
             conn.commit()
 
+    def test_bdd_mode_defaults_to_auto_and_is_validated(self):
+        with self.db.connect() as conn:
+            project = projects.create_project(conn, {"key": "PAY"})
+            self.assertEqual(project["bdd_mode"], "auto")
+            self.assertEqual(projects.update_project(conn, project["id"], {"bdd_mode": "Always"})["bdd_mode"], "always")
+            with self.assertRaises(ValueError):
+                projects.update_project(conn, project["id"], {"bdd_mode": "sometimes"})
+
     def test_crud_and_case_insensitive_uniqueness(self):
         with self.db.connect() as conn:
             project = projects.create_project(conn, {"key": "PAY"})

@@ -76,8 +76,11 @@ as them, and this section. Role names must match the app roles defined in Entra 
   status and fields, remember values); add resource steps in `<resource>.steps.ts` only when the
   generic ones do not read well. Each scenario starts from empty tables. New personas go in
   `features/support/auth.ts`.
-- **Unit (CI).** Business rules in services get Vitest tests with a fake repository
-  (`*.service.test.ts`), including the error cases.
+- **Unit (CI).** Every service method gets Vitest tests with a fake repository
+  (`*.service.test.ts`): the normal case and each error it throws. `npm test` enforces at least
+  80% line coverage of `src/modules/**/*.service.ts` (75% of branches); a change that adds
+  logic without tests fails it. BDD covers routes, controllers and repositories end to end;
+  unit tests cover the rules and edge cases that would be slow to reach through the API.
 - Run locally: `docker compose up -d db`, `cp .env.example .env`, then `npm test` and
   `npm run test:bdd`.
 

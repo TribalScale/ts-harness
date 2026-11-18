@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.7.0
+version: 1.8.0
 ---
 
 # Governed QA Gate
@@ -85,6 +85,12 @@ Then:
    (a translation key, a config entry, a helper), call `read_pr_file` with the
    PR URL, the path and `ref: base`; if the base branch already has it, the
    criterion is met and is not a defect.
+   **Unit tests ran.** For a change with behaviour, the host verification or CI
+   must show the repository's unit tests running and passing. A unit test run
+   that failed (including a coverage threshold the repository sets) is a defect
+   citing the command and its output; a repository with a unit test runner whose
+   tests did not run at all is a defect too. A repository with no unit test
+   runner is noted, not failed.
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that

@@ -273,6 +273,29 @@ class VerifyNodeRepoTests(unittest.TestCase):
             self.assertIn("npm run typecheck", ran)
             self.assertTrue(any(c.endswith("eslint src/users/dto/query-user.dto.ts") for c in ran))
 
+    def test_bdd_required_by_the_work_order_wins_over_the_repo(self):
+        # A Jest repo with no Gherkin: BDD off by detection, but the program decided BDD.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            body = GWT_WORK_ORDER + "\n## Tests\n\nBDD: required\n"
+            result = verify_implementation(
+                repo, work_order_body=body, work_order_id="WO-101", changed_files=["src/users/dto/query-user.dto.ts"], runner=Runner()
+            )
+            self.assertTrue(result.bdd_required)
+            self.assertIn("missing_bdd_feature_for_work_order", result.reasons)
+            self.assertIn("no_bdd_runner_or_features", result.reasons)
+            self.assertIn("has no Gherkin runner yet", build_verification_fix_prompt("WO-101", result))
+
+    def test_bdd_off_by_the_work_order_wins_in_a_repo_with_no_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _package(repo, scripts={})
+            _write(repo / "src" / "a.ts", "export {}")
+            body = GWT_WORK_ORDER + "\n## Tests\n\nBDD: off\n"
+            result = verify_implementation(repo, work_order_body=body, work_order_id="WO-101", changed_files=["src/a.ts"], runner=Runner())
+            self.assertFalse(result.bdd_required)
+            self.assertNotIn("missing_bdd_feature_for_work_order", result.reasons)
+
     def test_failed_checks_are_reasons_and_every_failure_keeps_its_log(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)

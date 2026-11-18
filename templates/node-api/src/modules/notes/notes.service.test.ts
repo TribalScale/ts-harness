@@ -49,6 +49,36 @@ describe('NotesService', () => {
     });
   });
 
+  it('lists a page of notes with the total', async () => {
+    const service = new NotesService(fakeRepo());
+    await service.create({ title: 'One', body: '' }, 'user-1');
+    await service.create({ title: 'Two', body: '' }, 'user-1');
+    const page = await service.list({ page: 1, limit: 20 });
+    expect(page).toMatchObject({ page: 1, limit: 20, total: 2 });
+    expect(page.data.map((n) => n.title).sort()).toEqual(['One', 'Two']);
+  });
+
+  it('updates a note', async () => {
+    const service = new NotesService(fakeRepo());
+    const note = await service.create({ title: 'Draft', body: '' }, 'user-1');
+    const updated = await service.update(note.id, { body: 'Final' });
+    expect(updated).toMatchObject({ id: note.id, title: 'Draft', body: 'Final' });
+  });
+
+  it('refuses to update or delete a note that does not exist', async () => {
+    const service = new NotesService(fakeRepo());
+    const missing = crypto.randomUUID();
+    await expect(service.update(missing, { body: 'x' })).rejects.toMatchObject({ status: 404 });
+    await expect(service.delete(missing)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('deletes a note', async () => {
+    const service = new NotesService(fakeRepo());
+    const note = await service.create({ title: 'Old', body: '' }, 'user-1');
+    await service.delete(note.id);
+    await expect(service.get(note.id)).rejects.toMatchObject({ status: 404 });
+  });
+
   it('reports a missing note as not found', async () => {
     const service = new NotesService(fakeRepo());
     const error = await service.get(crypto.randomUUID()).catch((e: unknown) => e);
