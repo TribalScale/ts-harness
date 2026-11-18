@@ -37,4 +37,16 @@ def with_project_repositories(
     repositories = project_repositories(client, tenant_id=tenant_id, project_key=project_key)
     if not repositories:
         return artifacts
-    return {**artifacts, "project_repositories": repositories}
+    return {**artifacts, "project_repositories": _with_templates(repositories)}
+
+
+def _with_templates(repositories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the empty repositories that will start from a harness template, for planning."""
+    try:
+        from ts_harness.integrations.github_client import github_for
+        from ts_harness.workflows.repo_bootstrap import annotate_repositories
+
+        return annotate_repositories(github_for(None), repositories)
+    except Exception as exc:  # noqa: BLE001 - planning goes on without the annotation
+        logger.info("repository template annotation skipped: %s", exc)
+        return repositories

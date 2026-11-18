@@ -1,0 +1,3 @@
+# TS Harness: what a coding job needs to run this repo's checks.
+services: [postgres]
+env_file: .env.example

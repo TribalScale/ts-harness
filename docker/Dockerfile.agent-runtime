@@ -144,6 +144,7 @@ COPY runtime ./runtime
 COPY scripts ./scripts
 COPY config ./config
 COPY skills ./skills
+COPY templates ./templates
 COPY workspace ./workspace
 COPY evals ./evals
 

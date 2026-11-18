@@ -192,6 +192,54 @@ def project_target(memory: Any, *, tenant_id: str, jira_project: str, ticket_tex
     return url, branch, f"project {name}"
 
 
+def _project_repository(memory: Any, *, tenant_id: str, jira_project: str, repo_url: str) -> tuple[str, dict[str, Any]]:
+    """``(project name, repository row)`` for ``repo_url`` in the project linked to the Jira project."""
+    if not hasattr(memory, "list_projects"):
+        return "", {}
+    listed = memory.list_projects(tenant_id=tenant_id or "default") or {}
+    rows = listed.get("projects") if isinstance(listed, dict) else None
+    project = next(
+        (p for p in rows or [] if isinstance(p, dict) and str(p.get("jira_project_key") or "").strip().upper() == jira_project.upper()),
+        None,
+    )
+    if project is None:
+        return "", {}
+    found = memory.list_project_repositories(str(project["id"])) or {}
+    wanted = repo_url.rstrip("/").removesuffix(".git").lower()
+    for repo in (found.get("repositories") if isinstance(found, dict) else None) or []:
+        if isinstance(repo, dict) and wanted.endswith("/" + str(repo.get("full_name") or "").lower()):
+            return str(project.get("name") or ""), repo
+    return str(project.get("name") or ""), {}
+
+
+def _ensure_repository_ready(
+    memory: Any, *, tenant_id: str, jira_project: str, repo_url: str, base_branch: str, ready: Callable[..., Any] | None
+) -> list[str]:
+    """Notes for the summary; raises ``ValueError`` (the step blocks) while a bootstrap PR is open."""
+    from ts_harness.workflows.repo_bootstrap import BootstrapError, ensure_ready
+
+    try:
+        project_name, repository = _project_repository(memory, tenant_id=tenant_id, jira_project=jira_project, repo_url=repo_url)
+    except Exception as exc:  # noqa: BLE001
+        return [f"repository template check skipped: {exc}"]
+    if not repository.get("role"):
+        return []
+    try:
+        if ready is None:
+            from ts_harness.integrations.github_client import github_for
+
+            result = ensure_ready(github_for(repo_url), repo_url, base_branch, role=repository.get("role"), title=project_name or None)
+        else:
+            result = ready(repo_url, base_branch, role=repository.get("role"), title=project_name or None)
+    except BootstrapError as exc:
+        raise ValueError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - a failed check never blocks a repository that has code
+        return [f"repository template check failed: {exc}"]
+    if not result.ready:
+        raise ValueError(f"{result.message()}\nMerge it, then run this ticket again.")
+    return list(result.notes)
+
+
 def _program_artifacts(memory: Any, program_id: str) -> dict[str, Any]:
     status = memory.get_program_status(program_id) or {}
     return status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
@@ -206,6 +254,7 @@ def prepare_ticket_delivery(
     store_factory: Callable[[], Any] | None = None,
     inspect: Callable[..., Any] | None = None,
     configured: tuple[str, str] | None = None,
+    ready: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Read the ticket from Jira and resolve everything the coding job needs.
 
@@ -263,6 +312,8 @@ def prepare_ticket_delivery(
             f"{key} names no repository: add a line `Repo: org/repo@branch` to its description, or link "
             f"Jira project {key.split('-', 1)[0]} to a project with its repository in System → Projects, then run it again"
         )
+    # An empty repository starts from a harness template: a bootstrap PR that merges first.
+    warnings.extend(_ensure_repository_ready(memory, tenant_id=tenant_id, jira_project=key.split("-", 1)[0], repo_url=repo_url, base_branch=base_branch, ready=ready))
     body = f"# {key} {summary}\n\n{description}\n" if description else f"# {key} {summary}\n"
 
     # The program the ticket was filed from (Program: line), else the program running it.

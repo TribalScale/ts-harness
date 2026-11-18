@@ -1,0 +1,5 @@
+# TS Harness: the acceptance suite (Gherkin through playwright-bdd) starts its own dev server
+# and mocks the API, so it needs no services.
+env_file: .env.example
+integration:
+  command: npm run test:bdd -- --reporter=line
