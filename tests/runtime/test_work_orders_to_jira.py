@@ -99,3 +99,63 @@ class WorkflowRefTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpeningGateTests(unittest.TestCase):
+    def test_the_filing_gate_says_what_will_be_filed(self):
+        from ts_harness.workflows.hooks.complete_program_phase import opening_gate_text
+
+        text = opening_gate_text(
+            "file_work_orders_as_jira",
+            "choose_epic",
+            {"work_order_ids": ["WO-001", "WO-002", "WO-003"], "jira_project_key": "THD", "assignee_account_id": "a"},
+        )
+        self.assertIn("Ready to file 3 Jira tickets in THD under a new epic, assigned to you", text)
+        self.assertIn("Reply yes to file them", text)
+        self.assertIn("under epic THD-9", opening_gate_text("file_work_orders_as_jira", "choose_epic", {"jira_epic_key": "THD-9"}))
+        self.assertIn("(review plan) is waiting for you", opening_gate_text("x", "review_plan", {}))
+
+    def test_an_automatic_advance_into_a_gate_announces_it(self):
+        from ts_harness.workflows.hooks import complete_program_phase as cpp
+
+        ctx = mock.Mock()
+        ctx.memory_client.get_workflow_tasks.return_value = {"tasks": [
+            {"step_name": "choose_epic", "workflow_type": "file_work_orders_as_jira", "approval_required": True,
+             "approval_status": "pending", "depends_on": [], "input": {"work_order_ids": ["WO-001"], "jira_project_key": "THD"}},
+            {"step_name": "file_tickets", "approval_required": False, "depends_on": ["x"]},
+        ]}
+        with mock.patch.object(cpp, "_notify_channel") as notify:
+            cpp._announce_opening_gate(ctx, {"id": "wf-old", "source_channel": "web:web:t"}, {"workflow_id": "wf-new"})
+        workflow, text = notify.call_args.args[1], notify.call_args.args[2]
+        self.assertEqual(workflow["id"], "wf-new")
+        self.assertIn("Ready to file 1 Jira ticket in THD", text)
+        ctx.memory_client.get_workflow_tasks.return_value = {"tasks": [{"step_name": "plan", "approval_required": False}]}
+        with mock.patch.object(cpp, "_notify_channel") as notify:
+            cpp._announce_opening_gate(ctx, {}, {"workflow_id": "wf-2"})
+        notify.assert_not_called()
+
+
+class RequesterEmailTests(unittest.TestCase):
+    def test_a_promoted_program_keeps_the_requesters_email(self):
+        from types import SimpleNamespace
+
+        from ts_harness.workflows.hooks.promote import _with_requester_email
+
+        session = SimpleNamespace(metadata={"actor_email": "pm@example.com"})
+        self.assertEqual(_with_requester_email({"x": 1}, session), {"x": 1, "requester_email": "pm@example.com"})
+        self.assertIsNone(_with_requester_email(None, SimpleNamespace(metadata={})))
+
+    def test_a_registered_program_keeps_the_requesters_email(self):
+        from types import SimpleNamespace
+
+        from ts_harness.workflows.hooks.register_program import register_on_promote
+
+        memory = mock.Mock()
+        session = SimpleNamespace(metadata={"actor_email": "pm@example.com"})
+        skeleton = SimpleNamespace(program={"phase": "prd"})
+        with mock.patch("ts_harness.workflows.hooks.register_program.program_pin_fields", return_value={}):
+            register_on_promote(
+                skeleton=skeleton, session=session, workflow_id="wf-1", summary="s", binding_key="web:web:t",
+                tenant_id="default", actor="a", memory_client=memory,
+            )
+        self.assertEqual(memory.create_program.call_args.kwargs["artifacts"], {"requester_email": "pm@example.com"})

@@ -433,6 +433,44 @@ def _notify_queue_stopped(ctx: HookContext, workflow: dict[str, Any], program_id
     )
 
 
+def opening_gate_text(workflow_type: str, step_name: str, task_input: dict[str, Any]) -> str:
+    """What to tell the thread when a phase reached automatically starts with a gate."""
+    if workflow_type == "file_work_orders_as_jira" and step_name == "choose_epic":
+        count = len([wo for wo in task_input.get("work_order_ids") or [] if wo])
+        project = str(task_input.get("jira_project_key") or "").strip()
+        epic = str(task_input.get("jira_epic_key") or "").strip()
+        where = f"under epic {epic}" if epic else (f"in {project} under a new epic" if project else "under a new epic")
+        assignee = " assigned to you," if task_input.get("assignee_account_id") else ""
+        return (
+            f"The work orders are approved. Ready to file {count} Jira ticket{'' if count == 1 else 's'} {where},"
+            f"{assignee} with Blocks links in dependency order. Reply yes to file them, or name an existing "
+            "epic key (or another project) to file there instead."
+        )
+    label = step_name.replace("_", " ")
+    return f"The next step ({label}) is waiting for you. Reply yes to continue, or tell me what to change."
+
+
+def _announce_opening_gate(ctx: HookContext, workflow: dict[str, Any], advance: Any) -> None:
+    """A phase reached automatically that opens on a gate says so; nothing else would."""
+    next_id = str((advance or {}).get("workflow_id") or "") if isinstance(advance, dict) else ""
+    if not next_id:
+        return
+    try:
+        tasks = list((ctx.memory_client.get_workflow_tasks(next_id) or {}).get("tasks") or [])
+    except Exception:  # noqa: BLE001
+        return
+    gate = next(
+        (t for t in tasks if t.get("approval_required") and str(t.get("approval_status") or "") == "pending" and not t.get("depends_on")),
+        None,
+    )
+    if gate is None:
+        return
+    text = opening_gate_text(
+        str(gate.get("workflow_type") or ""), str(gate.get("step_name") or ""), dict(gate.get("input") or {})
+    )
+    _notify_channel(ctx, {**workflow, "id": next_id}, text)
+
+
 def _notify_channel(ctx: HookContext, workflow: dict[str, Any], text: str) -> None:
     if workflow:
         ctx.workflow = {**(ctx.workflow or {}), **workflow}
@@ -540,6 +578,7 @@ def _auto_advance(
         artifacts=advance_artifacts,
         binding_key=workflow.get("source_channel"),
     )
+    _announce_opening_gate(ctx, workflow, advance)
     return _with_brief(
         ctx,
         program_id,

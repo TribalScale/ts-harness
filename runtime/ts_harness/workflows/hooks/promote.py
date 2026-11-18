@@ -17,6 +17,15 @@ from ts_harness.workflows.registry import HookContext
 MAX_TRANSCRIPT_TURNS = 20
 
 
+def _with_requester_email(extra_input: Any, session: Any) -> dict[str, Any] | None:
+    """Program artifacts at creation, with the requester's sign-in email when the chat has it."""
+    artifacts = dict(extra_input) if extra_input else {}
+    email = str(((session.metadata or {}) if session is not None else {}).get("actor_email") or "").strip()
+    if email:
+        artifacts["requester_email"] = email
+    return artifacts or None
+
+
 def handle(ctx: HookContext) -> dict[str, Any]:
     session: SessionRecord = ctx.extras["session"]
     summary = str(ctx.extras.get("summary") or "")
@@ -62,7 +71,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             binding_key=binding_key or None,
             source_channel=binding_key or None,
             requester_actor_id=requester_actor_id,
-            artifacts=extra_input if extra_input else None,
+            artifacts=_with_requester_email(extra_input, session),
             actor=session.agent_id,
             **pin_fields,
         )
