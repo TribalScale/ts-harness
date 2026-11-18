@@ -6,7 +6,14 @@ import type {
   ProgramTopologyEdge,
 } from "../api/types";
 
+// Phases whose id reads badly as words.
+export const PHASE_NAMES: Record<string, string> = {
+  work_orders_jira: "work orders (Jira)",
+  file_jira: "file in Jira",
+};
+
 function humanize(value: string): string {
+  if (PHASE_NAMES[value]) return PHASE_NAMES[value];
   return value.replace(/_/g, " ");
 }
 

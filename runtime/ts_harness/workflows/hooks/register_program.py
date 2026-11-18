@@ -39,6 +39,10 @@ def register_on_promote(
         except Exception:
             # Legacy promote path: create without pins when registry unavailable.
             pin_fields = {}
+        email = str(metadata.get("actor_email") or "").strip()
+        if email:
+            # Steps with no agent (assigning Jira tickets, "my tickets") need to know who "me" is.
+            artifacts = {**(artifacts or {}), "requester_email": email}
         memory_client.create_program(
             program_id=resolved_program_id,
             tenant_id=tenant_id,

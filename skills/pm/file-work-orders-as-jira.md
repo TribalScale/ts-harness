@@ -21,7 +21,8 @@ Use on `file_work_orders_as_jira`.
    - Stop only if Jira rejects the write.
 2. Create an Epic when needed. Create one issue per work order.
 3. Issue type = `input.issue_type_by_project[project]`, else `input.default_issue_type`, else `Story`. If that type does not exist, stop.
-4. **Do not set assignee.**
+4. **Assignee:** when `input.assignee_account_id` is set, set it on every issue (the requester builds these
+   tickets with `implement all <PROJECT>`, which lists their own tickets). Otherwise do not set an assignee.
 5. Description, in this order (Markdown; see `jira-ticket-format`):
    - **Bug issues** with `input.bug_report`: the approved bug report body (Steps to reproduce through Notes) under `## Bug report`. Do not rewrite it.
    - **Other issues**: one line, `As a <persona>, I want <capability> so that <outcome>.` or `Outcome: <what the system does after this ships>.`
@@ -36,7 +37,9 @@ Library: https://drive.google.com/...
 Manifest: https://docs.google.com/...
 ```
 
-   `Program:` is the task input `root_program_id` (the program that owns the brief), not this filing program's id. `jira_to_pr` uses it to attach each ticket's program as a child.
+   `Program:` is the task input `root_program_id` (the program that owns the brief), not this filing program's id. `jira_to_pr` uses it to attach each ticket's program as a child, and the coding job loads that program's planning documents and design references through it. Never leave it out.
+
+   `Repo:` is the work order's own repository: its `Repository: owner/name` line, with the branch of that repository in `input.project_repositories` (`default_branch`), else `input.default_branch`. With no `Repository:` line, use `input.repo`. When neither is known, leave the `Repo:` line out: the ticket's Jira project is linked to a project whose repositories decide.
 
 6. Link WO dependencies with `jira_create_issue_link`: `link_type: Blocks`, `outward_issue_key` = the issue that must land first, `inward_issue_key` = the issue it blocks.
 7. Return `jira_epic_key` and `jira_story_keys`. List the keys in the channel as unassigned.

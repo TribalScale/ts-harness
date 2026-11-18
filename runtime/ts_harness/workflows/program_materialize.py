@@ -103,7 +103,12 @@ def node_is_terminal(snapshot: dict[str, Any], node_id: str) -> bool:
     return bool(node.get("terminal"))
 
 
+_PHASE_NAMES = {"work_orders_jira": "Work orders (Jira)", "file_jira": "File in Jira"}
+
+
 def _phase_label(node_id: str) -> str:
+    if node_id in _PHASE_NAMES:
+        return _PHASE_NAMES[node_id]
     text = str(node_id or "").replace("_", " ").strip()
     return text.upper() if len(text) <= 3 else text[:1].upper() + text[1:]
 
@@ -331,7 +336,24 @@ def resolve_bridge_candidates_from_text(
                 "artifact_patch": dict(patch) if isinstance(patch, dict) else {},
             }
         )
-    return candidates
+    return _most_specific(candidates)
+
+
+def _most_specific(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop a candidate whose every matched signal lies inside another candidate's longer match.
+
+    Signals match as substrings, so "file work orders in jira" also matches the plainer
+    "work orders" edge; the more specific edge is what the person asked for.
+    """
+    if len(candidates) < 2:
+        return candidates
+    kept = []
+    for candidate in candidates:
+        others = [s for other in candidates if other is not candidate for s in other["matched_signals"]]
+        shadowed = all(any(mine != theirs and mine in theirs for theirs in others) for mine in candidate["matched_signals"])
+        if not shadowed:
+            kept.append(candidate)
+    return kept or candidates
 
 
 def program_workflow_types_from_definitions(

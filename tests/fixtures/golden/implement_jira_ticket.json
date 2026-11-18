@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "2.0.0",
+  "definition_version": "2.1.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -1018,6 +1018,27 @@
             "action": "stop"
           }
         ]
+      }
+    },
+    {
+      "name": "close_ticket",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": [
+        "await_human_merge"
+      ],
+      "allowed_agents": [
+        "orchestrator"
+      ],
+      "present_output": true,
+      "present_prompt": "inform",
+      "present_body": "summary",
+      "barrier": {
+        "hook": "close_ticket"
+      },
+      "retry": {
+        "max_retries": 0,
+        "timeout_seconds": 300
       }
     }
   ]

@@ -224,7 +224,9 @@ def _resolve_program_bridge_identity(
 
     if snapshot is not None and source_node:
         if not resolved_target_node and resolved_target_workflow:
-            resolved_target_node = node_id_for_workflow_type(snapshot, resolved_target_workflow) or ""
+            resolved_target_node = _node_for_workflow_from(
+                snapshot, source_node, resolved_target_workflow, summary, workflow_type or "prd_request"
+            )
         if not resolved_target_node:
             candidates = resolve_bridge_candidates_from_text(
                 summary,
@@ -508,6 +510,47 @@ def cancel_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
         return {"error": "workflow_id required"}
     reason = str(args.get("reason") or "cancelled by user")
     return get_workflow_engine().cancel(workflow_id, actor=ctx.agent_id, tenant_id=ctx.tenant_id, reason=reason)
+
+
+def _node_for_workflow_from(
+    snapshot: dict[str, Any], source_node: str, workflow_type: str, summary: str, source_workflow_type: str
+) -> str:
+    """The node a continuation to ``workflow_type`` means, from ``source_node``.
+
+    Several nodes can run the same workflow (work orders, and work orders for Jira); the
+    request's wording picks between them, else the first node reachable from ``source_node``.
+    """
+    from ts_harness.workflows.program_materialize import (
+        node_id_for_workflow_type,
+        resolve_bridge_candidates_from_text,
+        snapshot_edges_from,
+    )
+
+    reachable = [
+        str(edge.get("target") or "")
+        for edge in snapshot_edges_from(snapshot, source_node)
+        if node_workflow_type(snapshot, str(edge.get("target") or "")) == workflow_type
+    ]
+    if len(reachable) > 1:
+        matched = [
+            c["target_node"]
+            for c in resolve_bridge_candidates_from_text(
+                summary, source_workflow_type=source_workflow_type, snapshot=snapshot, source_node=source_node
+            )
+            if c["target_node"] in reachable
+        ]
+        if len(matched) == 1:
+            return matched[0]
+    if reachable:
+        return reachable[0]
+    return node_id_for_workflow_type(snapshot, workflow_type) or ""
+
+
+def node_workflow_type(snapshot: dict[str, Any], node_id: str) -> str:
+    for node in snapshot.get("nodes") or []:
+        if isinstance(node, dict) and str(node.get("id") or "") == node_id:
+            return str(node.get("default_workflow_type") or "")
+    return ""
 
 
 def propose_bridge_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:

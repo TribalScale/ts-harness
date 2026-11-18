@@ -32,7 +32,8 @@ class FrozenLegacyCompatParityTests(unittest.TestCase):
         builtin = program_definitions.program_to_payload(
             program_definitions.load_program(programs_dir() / "software_delivery.json")
         )
-        release_nodes = {"release", "rollback"}
+        # 1.2.0 added release and rollback; 1.5.0 the work orders -> Jira route.
+        release_nodes = {"release", "rollback", "work_orders_jira", "file_jira"}
         frozen_view = program_legacy_compat.legacy_compat_topology_view()
         builtin_view = {
             "startable_nodes": [node for node in builtin["startable_nodes"] if node not in release_nodes],

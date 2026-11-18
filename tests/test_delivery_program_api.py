@@ -669,7 +669,7 @@ class ProgramDefinitionPinningApiTests(unittest.TestCase):
 
         self.assertEqual(
             phase_order([]),
-            ["prd", "jira", "work_orders", "implement", "release"],
+            ["prd", "jira", "work_orders", "work_orders_jira", "implement", "file_jira", "release"],
         )
         self.assertEqual(
             phase_order(
@@ -682,7 +682,22 @@ class ProgramDefinitionPinningApiTests(unittest.TestCase):
                     }
                 ]
             ),
-            ["prd", "jira", "work_orders", "implement", "release", "rollback"],
+            ["prd", "jira", "work_orders", "work_orders_jira", "implement", "file_jira", "release", "rollback"],
+        )
+        # The work orders -> Jira route: the other branches, and implement and release behind
+        # them, leave the strip.
+        self.assertEqual(
+            phase_order(
+                [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "program_phase": "work_orders_jira",
+                        "status": "running",
+                        "workflow_type": "work_orders_from_prd",
+                    }
+                ]
+            ),
+            ["prd", "work_orders_jira", "file_jira"],
         )
 
 

@@ -170,6 +170,10 @@ def resolve_token(
         "workflow.project_repositories",
         "workflow.knowledge_notes",
         "workflow.intake_sources",
+        # Filing work orders as Jira: the program the tickets point at, and who they are for.
+        "workflow.root_program_id",
+        "workflow.assignee_account_id",
+        "workflow.design_refs",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):

@@ -46,6 +46,13 @@ class _Jira:
     def attachment_content(self, attachment_id):
         return self.attachments[int(attachment_id)]
 
+    def transition(self, key, name):
+        self.moved = (key, name)
+        return True
+
+    def comment(self, key, text):
+        pass
+
 
 def _memory(*, program_refs=None, owner_refs=None):
     memory = mock.Mock()
@@ -77,7 +84,9 @@ def _run(jira=None, memory=None, inspect=_not_needed, configured=("", ""), store
 
 class PrepareTicketDeliveryTests(unittest.TestCase):
     def test_reads_the_ticket_and_its_repository_line(self):
-        out = _run()
+        jira = _Jira()
+        out = _run(jira=jira)
+        self.assertEqual(jira.moved, ("THD-33", "In Progress"))
         self.assertEqual((out["repo_url"], out["base_branch"]), ("https://github.com/acme/web", "fe-dev"))
         self.assertEqual(out["work_order_id"], "THD-33")
         self.assertTrue(out["work_order_body"].startswith("# THD-33 Show the comment count\n\nAs a member"))

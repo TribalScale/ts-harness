@@ -42,6 +42,15 @@ There is one confirmation: the yes that starts the program (or the pick reply). 
 
 A lookup that fails (attachments, clone error) is listed as a note; the ticket still runs.
 
+## Ticket status
+
+The ticket's status follows its delivery: it moves to **In Progress** when its coding starts
+(`prepare_ticket_delivery`) and to **Done** when its pull request merges (`close_ticket`, with a
+comment linking the PR), so `implement all` never picks up a merged ticket again. Set the
+transition names in Settings as `program_defaults.jira_tracking.start_transition` and
+`done_transition`, or `enabled: false` to leave statuses alone. A transition the ticket does
+not offer is reported in the step's notes; the delivery carries on.
+
 ## Identity
 
 "My" tickets are the signed-in person's. The program keeps their email from the sign-in

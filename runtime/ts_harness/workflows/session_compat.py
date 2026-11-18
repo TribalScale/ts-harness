@@ -270,3 +270,28 @@ def write_program_session(
     if artifacts is not None:
         updated = write_program_artifacts(updated, artifacts)
     return updated
+
+
+def refreshed_program_link(metadata: dict[str, Any] | None, memory: Any) -> dict[str, Any] | None:
+    """Metadata re-linked to the program's active workflow when the chat still points at a
+    finished one, else None.
+
+    A phase reached automatically (work orders -> file in Jira) starts a new workflow in the
+    workflow runner, which cannot update the chat session another process holds. Replies would
+    then look for a gate on the finished workflow and find none.
+    """
+    data = dict(metadata or {})
+    program_id = read_program_id(data)
+    if not program_id or memory is None:
+        return None
+    status = memory.get_program_status(program_id) or {}
+    active = str(status.get("active_workflow_id") or "")
+    linked = str(data.get("workflow_id") or "")
+    if not active or active == linked:
+        return None
+    if linked:
+        workflow = (memory.get_workflow(linked) or {}).get("workflow") or {}
+        if str(workflow.get("status") or "") == "running":
+            return None
+    phase = str(status.get("current_phase") or read_program_phase(data) or "")
+    return write_program_session(data, program_id=program_id, program_phase=phase, workflow_id=active)
