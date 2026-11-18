@@ -443,8 +443,8 @@ def _frame(i: int) -> dict:
 class FigmaPageTests(unittest.TestCase):
     """A page link: sections open down to their screens; frames render one per request."""
 
-    PAGE = {"id": "0:1", "name": "Hub", "type": "CANVAS", "children": [
-        {"id": "1:1", "name": "Hub screens", "type": "SECTION", "children": [
+    PAGE = {"id": "0:1", "name": "Main", "type": "CANVAS", "children": [
+        {"id": "1:1", "name": "Screens", "type": "SECTION", "children": [
             {"id": "1:2", "name": "Schedule", "type": "SECTION", "children": [_frame(1), _frame(2)]},
             {"id": "1:3", "name": "Holds", "type": "SECTION", "children": [_frame(3), {**_frame(99), "visible": False}]},
         ]},
@@ -481,7 +481,7 @@ class FigmaPageTests(unittest.TestCase):
     def frames(self):
         client = FigmaClient("figd_test", http=httpx.Client(transport=httpx.MockTransport(self.handler)))
         source = FigmaSource(client, self.store, tenant_id="default")
-        return source.frames(figma_pointer("https://www.figma.com/design/Gq3CTOQ6W2wksKcCBPdJ4a/MVP?node-id=0-1"))
+        return source.frames(figma_pointer("https://www.figma.com/design/PageFileKey0001/App?node-id=0-1"))
 
     def test_page_opens_nested_sections_to_screens_in_order(self):
         refs = self.frames()
