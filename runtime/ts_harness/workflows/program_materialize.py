@@ -103,7 +103,12 @@ def node_is_terminal(snapshot: dict[str, Any], node_id: str) -> bool:
     return bool(node.get("terminal"))
 
 
+_PHASE_NAMES = {"work_orders_jira": "Work orders (Jira)", "file_jira": "File in Jira"}
+
+
 def _phase_label(node_id: str) -> str:
+    if node_id in _PHASE_NAMES:
+        return _PHASE_NAMES[node_id]
     text = str(node_id or "").replace("_", " ").strip()
     return text.upper() if len(text) <= 3 else text[:1].upper() + text[1:]
 

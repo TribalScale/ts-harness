@@ -34,6 +34,25 @@ class RouteTests(unittest.TestCase):
         self.assertEqual([c["target_node"] for c in stories], ["jira"])
 
 
+class ContinuationTests(unittest.TestCase):
+    def test_a_continuation_by_workflow_type_follows_the_wording(self):
+        # The orchestrator names the workflow (work_orders_from_prd), which two nodes run.
+        from ts_harness.tools.workflow_tools import _node_for_workflow_from
+
+        node = _node_for_workflow_from(SNAPSHOT, "prd", "work_orders_from_prd", "file work orders in jira", "prd_request")
+        self.assertEqual(node, "work_orders_jira")
+        plain = _node_for_workflow_from(SNAPSHOT, "prd", "work_orders_from_prd", "start work orders", "prd_request")
+        self.assertEqual(plain, "work_orders")
+        unclear = _node_for_workflow_from(SNAPSHOT, "prd", "work_orders_from_prd", "go on", "prd_request")
+        self.assertEqual(unclear, "work_orders")
+
+    def test_the_offer_names_the_jira_route_plainly(self):
+        from ts_harness.workflows.program_materialize import may_end_offer
+
+        text = may_end_offer(SNAPSHOT, "prd")["text"]
+        self.assertIn('"work orders in jira" for Work orders (Jira)', text)
+
+
 class FilingInputTests(unittest.TestCase):
     def test_the_requester_is_the_assignee_on_this_route(self):
         artifacts = {
