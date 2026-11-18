@@ -1,5 +1,5 @@
 # Reference feature for the notes page. Name each feature file after the ticket it covers
-# (JMT-14-week-view.feature): TS Harness checks a ticket's change includes its feature file.
+# (PROJ-14-week-view.feature): TS Harness checks a ticket's change includes its feature file.
 Feature: Notes page
   As a signed-in user
   I want to see and add notes

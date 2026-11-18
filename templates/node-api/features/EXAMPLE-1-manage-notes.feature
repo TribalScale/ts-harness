@@ -1,5 +1,5 @@
 # Reference feature for the notes module. Name each feature file after the ticket it covers
-# (JMT-12-create-order.feature): TS Harness checks a ticket's change includes its feature file.
+# (PROJ-12-create-order.feature): TS Harness checks a ticket's change includes its feature file.
 Feature: Manage notes
   As a signed-in user
   I want to keep notes

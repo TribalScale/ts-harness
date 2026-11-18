@@ -70,7 +70,7 @@ as them, and this section. Role names must match the app roles defined in Entra 
 ## Tests
 
 - **Acceptance (BDD, CI).** Every ticket with acceptance criteria adds or updates a feature file
-  named after the ticket key: `features/JMT-12-create-order.feature`. Write one scenario per
+  named after the ticket key: `features/PROJ-12-create-order.feature`. Write one scenario per
   Given/When/Then criterion, in the ticket's words. Reuse the generic steps in
   `features/step_definitions/http.steps.ts` (sign in as a persona, send a request, check the
   status and fields, remember values); add resource steps in `<resource>.steps.ts` only when the

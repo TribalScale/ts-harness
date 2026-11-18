@@ -66,7 +66,7 @@ and this section. Role names must match the API's and Entra ID's.
 ## Tests
 
 - **Acceptance (BDD, CI).** Every ticket with acceptance criteria adds or updates a feature file
-  named after the ticket key: `features/JMT-14-week-view.feature`. One scenario per
+  named after the ticket key: `features/PROJ-14-week-view.feature`. One scenario per
   Given/When/Then criterion, in the ticket's words. Reuse the steps in
   `features/steps/common.steps.ts` (sign in as a persona, seed the API, open a page, fill, click,
   see). Seed data with `Given the API has <table>:` and a data table. When a page calls an

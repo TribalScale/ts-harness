@@ -24,7 +24,7 @@ roles `Admin` and `User`.
    queue runs (`prepare_ticket_queue`). Each empty one gets a PR into its base branch from
    `ts-harness/bootstrap-<template>`: the template as one commit, with the project's name filled
    in, and `.ts-harness.yml` recording `template: <name>`. The queue stops and lists the PRs. A
-   single ticket (`implement JMT-12`) does the same check for its repository
+   single ticket (`implement PROJ-12`) does the same check for its repository
    (`prepare_ticket_delivery`). Asking again while the PR is open points at the same PR; if the
    template's `version` changed since, the PR's branch is rebuilt from the current template.
 3. **Review and merge.** The PR's own CI runs; review it like any other PR (the harness checks
