@@ -59,6 +59,7 @@ class ProgramDefinitionValidationTests(unittest.TestCase):
                 "extract_work_orders_outputs",
                 "extract_implement_outputs",
                 "extract_deploy_outputs",
+                "extract_file_jira_outputs",
                 "extract_declared_outputs",
             },
             "built_in_types": {"software_delivery"},

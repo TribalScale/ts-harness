@@ -13,15 +13,29 @@ Phase order, forks, workflow selection, and artifact handoffs come from the
 - Each running program pins a definition snapshot + workflow versions at start;
   later advances read that pin
 
-After PRD approval, delivery **forks** into one of two planning tracks (edges on
+After PRD approval, delivery **forks** into one of three planning tracks (edges on
 the `software_delivery` definition):
 
 | Track | Planning phase | Implement skeleton | Best for |
 | --- | --- | --- | --- |
 | **Jira** | `jira_from_prd` | `implement_delivery` | Teams that plan in Jira epics/stories |
 | **Work orders** | `work_orders_from_prd` | `implement_work_orders` | Teams using governed TS work-order planning (`prd-to-work-orders-governed`) |
+| **Work orders in Jira** | `work_orders_from_prd`, then `file_work_orders_as_jira` | `jira_to_pr` (`implement all <PROJECT>`) | Detailed, unattended delivery tracked in Jira |
 
 Both tracks share the same program nodes (`prd` → planning → `implement` → `release`). `implement` advances automatically to `release` once the merge SHA is known and every child program has finished. `rollback` is a startable node for redeploying the last good SHA.
+
+### Work orders in Jira (`software_delivery` 1.5.0)
+
+Say "file work orders in jira" (or "plan and file in jira", "track in jira") after the PRD.
+The program runs the full planning stages (Refinery, Foundry, Planner, each approved), then
+files every work order as a Jira ticket (`file_jira`): the work order section unchanged, a
+pointer block (`WO:`, `Repo:` from the work order's `Repository:` line, `Program:` the root
+program), and Blocks links for its dependencies. The tickets are assigned to the requester
+(their sign-in email, through the Settings mapping or Jira's user search), so
+`implement all <PROJECT>` lists them and builds them one after another in dependency order.
+Each ticket's coding job loads the program's planning documents and design references
+through `Program:`. Link the Jira project to a project with its repositories first (System →
+Projects) so the planner splits work per repository.
 
 Each change is one **root** program; `content_to_jira_work_orders`, `bug_to_jira_work_orders`, and `jira_to_pr` runs for that change are **child** programs (`parent_program_id`). See [`prd-first-delivery-flow.md`](../architecture/prd-first-delivery-flow.md#one-program-per-change).
 

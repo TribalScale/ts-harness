@@ -17,7 +17,7 @@ import { PageState } from "../components/PageState";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { Tabs, tabButtonId, tabPanelId } from "../components/Tabs";
 import { SplitView } from "../layout/SplitView";
-import { PhaseStrip } from "./PhaseStrip";
+import { PHASE_NAMES, PhaseStrip } from "./PhaseStrip";
 import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
 import { ShareDialog } from "./ShareDialog";
 
@@ -64,6 +64,8 @@ function humanize(value?: string): string {
 
 /** Short phase name, matching the chat offer: "prd" -> "PRD", "work_orders" -> "Work orders". */
 export function phaseLabel(phase?: string): string {
+  const named = PHASE_NAMES[String(phase || "")];
+  if (named) return named[0].toUpperCase() + named.slice(1);
   const text = String(phase || "")
     .replace(/_/g, " ")
     .trim();

@@ -188,6 +188,10 @@ class ProgramDefinitionLoaderTests(unittest.TestCase):
         self.assertEqual(edge_schema.get("additionalProperties"), False)
 
 
+def by_id_file_jira_terminal(definition) -> bool:
+    return next(node for node in definition.nodes if node.id == "file_jira").terminal
+
+
 class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
     def load_builtin(self):
         import program_definitions
@@ -198,7 +202,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
     def test_builtin_file_loads(self):
         definition, payload = self.load_builtin()
         self.assertEqual(definition.program_type, "software_delivery")
-        self.assertEqual(definition.definition_version, "1.4.0")
+        self.assertEqual(definition.definition_version, "1.5.0")
         self.assertTrue(definition.display_name)
         self.assertEqual(payload["program_type"], "software_delivery")
 
@@ -215,7 +219,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
         frozen = program_legacy_compat.frozen_legacy_compatibility_topology()
         by_id = {node.id: node for node in definition.nodes}
         frozen_by_id = {node["id"]: node for node in frozen["nodes"]}
-        self.assertEqual(set(by_id), set(frozen_by_id) | {"release", "rollback"})
+        self.assertEqual(set(by_id), set(frozen_by_id) | {"release", "rollback", "work_orders_jira", "file_jira"})
         for phase, node in frozen_by_id.items():
             self.assertEqual(by_id[phase].default_workflow_type, node["default_workflow_type"])
             self.assertEqual(
@@ -241,7 +245,8 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
         frozen = program_legacy_compat.frozen_legacy_compatibility_topology()
         successors: dict[str, set[str]] = {}
         for edge in definition.edges:
-            if edge.target in {"release", "rollback"}:
+            # 1.2.0 added release and rollback; 1.5.0 the work orders -> Jira route.
+            if edge.target in {"release", "rollback", "work_orders_jira", "file_jira"}:
                 continue
             successors.setdefault(edge.source, set()).add(edge.target)
         frozen_successors: dict[str, set[str]] = {}
@@ -250,7 +255,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
         self.assertEqual(successors, frozen_successors)
 
         prd_edges = [edge for edge in definition.edges if edge.source == "prd"]
-        self.assertEqual({edge.target for edge in prd_edges}, {"jira", "work_orders"})
+        self.assertEqual({edge.target for edge in prd_edges}, {"jira", "work_orders", "work_orders_jira"})
         for edge in prd_edges:
             self.assertEqual(edge.mode, "manual")
             self.assertTrue(edge.confirm_required)
@@ -259,6 +264,10 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
         work_orders_edges = [edge for edge in definition.edges if edge.source == "work_orders"]
         self.assertEqual(len(work_orders_edges), 1)
         self.assertEqual(work_orders_edges[0].mode, "automatic")
+
+        jira_route = [(edge.source, edge.target, edge.mode) for edge in definition.edges if edge.source == "work_orders_jira"]
+        self.assertEqual(jira_route, [("work_orders_jira", "file_jira", "automatic")])
+        self.assertTrue(by_id_file_jira_terminal(definition))
 
         implement_edges = [edge for edge in definition.edges if edge.source == "implement"]
         self.assertEqual([(edge.target, edge.mode) for edge in implement_edges], [("release", "automatic")])

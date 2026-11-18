@@ -1,6 +1,6 @@
 {
   "workflow_type": "file_work_orders_as_jira",
-  "definition_version": "1.2.0",
+  "definition_version": "1.3.0",
   "display_name": "File work orders as Jira tickets",
   "contracts": {
     "jira_filing": {
@@ -72,7 +72,10 @@
         "default_branch": "$workflow.default_branch",
         "drive_library": "$workflow.drive_library",
         "default_issue_type": "$workflow.default_issue_type",
-        "issue_type_by_project": "$workflow.issue_type_by_project"
+        "issue_type_by_project": "$workflow.issue_type_by_project",
+        "root_program_id": "$workflow.root_program_id",
+        "project_repositories": "$workflow.project_repositories",
+        "assignee_account_id": "$workflow.assignee_account_id"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 1800 }
     }

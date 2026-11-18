@@ -644,6 +644,23 @@ def _extract_declared_outputs(
     return patch
 
 
+def _requester_jira_account(email: str) -> str:
+    """The Jira account for ``email`` (Settings mapping, else Jira's user search), or ""."""
+    if not email:
+        return ""
+    try:
+        from ts_harness.implementation.config import load_active_runtime_config
+        from ts_harness.integrations.jira_client import JiraClient
+        from ts_harness.jira.identity import UNMAPPED, jira_account_for_email
+
+        runtime = load_active_runtime_config()
+        mapping = getattr(getattr(runtime, "identity", None), "jira_account_ids", None) or {}
+        account = jira_account_for_email(email, mapping, JiraClient.from_env())
+    except Exception:  # noqa: BLE001 - tickets are filed unassigned instead
+        return ""
+    return "" if account == UNMAPPED else account
+
+
 def _build_file_jira_inputs(
     *,
     summary: str,
@@ -665,9 +682,16 @@ def _build_file_jira_inputs(
         "default_branch",
         "planner_complete",
         "drive_library",
+        "project_repositories",
     ):
         if artifacts.get(key) is not None:
             intake[key] = artifacts[key]
+    if artifacts.get("assign_jira_to_requester"):
+        # PRD -> work orders -> Jira: the requester builds these tickets themselves
+        # (`implement all <PROJECT>` lists their own tickets), so they are assigned.
+        account = _requester_jira_account(str(artifacts.get("requester_email") or ""))
+        if account:
+            intake["assignee_account_id"] = account
     if snapshot:
         filing = resolved_program_config(snapshot).get("jira_filing") or {}
         default_type = str(filing.get("default_issue_type") or "").strip()

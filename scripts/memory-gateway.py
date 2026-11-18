@@ -2382,6 +2382,19 @@ def _visible_phase_order(
         if state == "not_started":
             hidden.add(node_id)
 
+    # A phase reachable only through hidden branches is not on this program's path either
+    # (PRD -> work orders for Jira -> file in Jira never reaches implement or release).
+    parents: dict[str, set[str]] = {}
+    for source, targets in by_source.items():
+        for target in targets:
+            parents.setdefault(target, set()).add(source)
+    for phase in order:
+        if phase in started or phase in hidden:
+            continue
+        sources = parents.get(phase) or set()
+        if sources and sources <= hidden:
+            hidden.add(phase)
+
     return [phase for phase in order if phase not in hidden]
 
 

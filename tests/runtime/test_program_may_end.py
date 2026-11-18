@@ -77,7 +77,7 @@ class OfferTests(unittest.TestCase):
         offer = may_end_offer(_snapshot(), "prd")
         self.assertEqual(
             [(step["target_node"], step["say"]) for step in offer["next_steps"]],
-            [("jira", "create jira"), ("work_orders", "work orders")],
+            [("jira", "create jira"), ("work_orders", "work orders"), ("work_orders_jira", "work orders in jira")],
         )
         self.assertIn("The PRD step is done, so this program is complete.", offer["text"])
         self.assertIn('"create jira"', offer["text"])
