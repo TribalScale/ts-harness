@@ -426,6 +426,24 @@ class SharedStateContractTests(unittest.TestCase):
         runner = _compose("docker-compose.workflow-runner.yml")["services"]["workflow-runner"]["environment"]
         self.assertEqual(runner[name], f"${{{name}:-}}")
 
+    def test_intake_text_limits_flow_from_runtime_config_to_both_containers(self):
+        common = COMMON.read_text()
+        keys = common[common.index("INSTANCE_ENV_KEYS=("):common.index("instance_env_path()")]
+        compose_env = common[common.index("run_docker_compose_as_admin()"):common.index("with_runtime_replicas()")]
+        runner = _compose("docker-compose.workflow-runner.yml")["services"]["workflow-runner"]["environment"]
+        runtime = _compose("docker-compose.agent-runtime.yml")["services"]
+        for name, var in (("TS_HARNESS_INTAKE_MAX_DOC_CHARS", "intake_max_doc_chars"),
+                          ("TS_HARNESS_INTAKE_MAX_TOTAL_CHARS", "intake_max_total_chars")):
+            self.assertIn(f"    {name}\n", keys)
+            self.assertIn(f'{name}="${{{name}:-}}"', compose_env)
+            self.assertIn(f'echo "export {name}=', (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text())
+            for cloud in ("aws", "gcp"):
+                runtime_config = (REPO_ROOT / "infra" / cloud / "runtime_config.tf").read_text()
+                self.assertRegex(runtime_config, rf"{name}\s+= tostring\(var.{var}\)")
+            self.assertEqual(runner[name], f"${{{name}:-}}")
+            for service in ("agent-runtime", "agent-runtime-prod"):
+                self.assertEqual(runtime[service]["environment"][name], f"${{{name}:-}}")
+
     def test_profile_defaults(self):
         self.assertEqual(
             _resolve_storage(),

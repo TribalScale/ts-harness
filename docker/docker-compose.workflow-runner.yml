@@ -65,6 +65,8 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TS_HARNESS_INTAKE_VISION_MODEL: ${TS_HARNESS_INTAKE_VISION_MODEL:-}
+      TS_HARNESS_INTAKE_MAX_DOC_CHARS: ${TS_HARNESS_INTAKE_MAX_DOC_CHARS:-}
+      TS_HARNESS_INTAKE_MAX_TOTAL_CHARS: ${TS_HARNESS_INTAKE_MAX_TOTAL_CHARS:-}
       # gather_sources (runs here) describes attached images with the stage agent's model; without
       # the provider keys every image attached to a request came back "image could not be read".
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

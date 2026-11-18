@@ -20,12 +20,12 @@ from ts_harness.intake.sources import (
     MAX_FILE_BYTES,
     MAX_FOLDER_CHILDREN,
     MAX_POINTERS,
-    MAX_TEXT_CHARS,
     MAX_TOTAL_BYTES,
-    MAX_TOTAL_TEXT_CHARS,
     clip_text,
     dedupe_pointers,
     extract_document,
+    max_doc_chars,
+    max_total_chars,
 )
 from ts_harness.storage.objects import ObjectNotFound
 
@@ -128,7 +128,7 @@ def _text_record(
     record: dict[str, Any], name: str, mime: str, data: bytes, budget: _Budget, describe_image: DescribeImage | None,
     store_design: StoreDesign | None = None, design_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    limit = min(MAX_TEXT_CHARS, budget.text_left())
+    limit = min(max_doc_chars(), budget.text_left())
     extracted = extract_document(name, mime, data, limit=limit)
     if extracted["needs_vision"]:
         # The image is a design reference even when its text description fails: the steps after
@@ -308,13 +308,15 @@ def resolve_intake_sources(
     figma: FigmaFrames | None = None,
     store_design: StoreDesign | None = None,
     deadline_s: float = 120,
-    max_total_text: int = MAX_TOTAL_TEXT_CHARS,
+    max_total_text: int | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """``{sources, sources_text, skipped, design_refs}`` for ``pointers``. Raises only when ``pointers`` is not a list."""
     if not isinstance(pointers, list):
         raise ValueError("intake_sources must be a list")
-    budget = _Budget(deadline_s=deadline_s, max_total_text=max_total_text, clock=clock)
+    budget = _Budget(
+        deadline_s=deadline_s, max_total_text=max_total_chars() if max_total_text is None else max_total_text, clock=clock
+    )
     sources: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     design_refs: list[dict[str, Any]] = []
@@ -368,7 +370,9 @@ def render_sources_text(sources: list[dict[str, Any]], skipped: list[dict[str, s
             lines.append(f"_Could not be read: {source['error']}._")
         else:
             if source.get("truncated"):
-                lines.append("_Cut at the size limit; later content is missing._")
+                lines.append(
+                    "_Cut at the size limit; later content is missing. Tell the requester which source was cut._"
+                )
             lines.append(source.get("text") or "_(empty)_")
         lines.append("")
     if skipped:

@@ -3,7 +3,7 @@ name: prd-intake
 description: Ask the clarifying questions for a PRD request (prd_request intake), each with a recommended answer the requester can accept with "yes". Never drafts the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.2.0
+version: 1.3.0
 ---
 
 # PRD intake
@@ -27,6 +27,9 @@ Facts are your job; decisions are the requester's. Before writing a question:
   recommended answer instead.
 - A source marked _Could not be read_ or listed under _Not read_ is missing. Ask about it once,
   naming it, and recommend how to proceed without it.
+- A source marked _Cut at the size limit_ was read only up to that point. Say so in your reply,
+  naming the source and its last section you saw, and ask whether the rest matters (and if so,
+  to attach it as a separate, smaller document).
 
 ## Choose the questions
 

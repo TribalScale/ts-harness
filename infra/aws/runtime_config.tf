@@ -20,6 +20,8 @@ locals {
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider
     EMBEDDINGS_MODEL                      = var.embeddings_model
     TS_HARNESS_INTAKE_VISION_MODEL        = var.intake_vision_model
+    TS_HARNESS_INTAKE_MAX_DOC_CHARS       = tostring(var.intake_max_doc_chars)
+    TS_HARNESS_INTAKE_MAX_TOTAL_CHARS     = tostring(var.intake_max_total_chars)
     EMBEDDINGS_DIMENSIONS                 = tostring(var.embeddings_dimensions)
     EMBEDDINGS_FALLBACK                   = var.embeddings_fallback
     IMPLEMENT_WORK_ORDERS_REPO_URL        = var.implement_work_orders_repo_url
