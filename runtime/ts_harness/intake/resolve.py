@@ -262,7 +262,11 @@ def _resolve_figma(
     except Exception as exc:  # noqa: BLE001 - a Figma failure must not stop the other sources
         sources.append(_record("figma", name, url=url, error=f"Figma could not be read: {str(exc)[:200]}"))
         return
-    text, truncated = clip_text("\n\n".join(str(ref.get("summary") or "") for ref in refs), budget.text_left())
+    # Each frame's text is under "Design references" below; the source lists the frames read.
+    index = [f"{len(refs)} frame(s) read; each one's text is under Design references."]
+    notes = [line for line in str(refs[0].get("summary") or "").splitlines()[:1] if line.startswith("Note:")] if refs else []
+    index += notes + [f"- {ref.get('title') or 'frame'}" for ref in refs]
+    text, truncated = clip_text("\n".join(index), budget.text_left())
     budget.text_used += len(text)
     record = _record("figma", name, url=url, mime="image/png", text=text, truncated=truncated)
     sources.append(record)

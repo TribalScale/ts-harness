@@ -10,6 +10,7 @@ import base64
 import json
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -259,10 +260,32 @@ def ref(i: int, key: str = "", **extra) -> dict:
 
 class DesignModuleTests(unittest.TestCase):
     def test_numbering_drops_duplicate_images_and_caps(self):
-        raw = [{"object_key": "a"}, {"object_key": "a"}, {"object_key": "b"}] + [{"object_key": str(i)} for i in range(20)]
+        raw = [{"object_key": "a"}, {"object_key": "a"}, {"object_key": "b"}] + [{"object_key": str(i)} for i in range(300)]
         numbered = design.number_refs(raw)
         self.assertEqual([r["id"] for r in numbered[:2]], ["D1", "D2"])
-        self.assertEqual(len(numbered), design.MAX_DESIGN_REFS)
+        self.assertEqual(len(numbered), design.DEFAULT_MAX_DESIGN_REFS)
+        self.assertEqual(numbered[-1]["id"], "D200")
+
+    def test_figma_frames_that_render_alike_stay_separate(self):
+        def frame(node):
+            return {"object_key": "same.png", "figma": {"file_key": "F", "node_id": node}}
+
+        numbered = design.number_refs([frame("1:1"), frame("1:2"), frame("1:1")])
+        self.assertEqual([(r["id"], r["figma"]["node_id"]) for r in numbered], [("D1", "1:1"), ("D2", "1:2")])
+
+    def test_three_digit_ids_are_read(self):
+        refs = [ref(i) for i in range(1, 121)]
+        self.assertEqual([r["id"] for r in design.refs_named_by_work_order(refs, "- Design: D7, D120")], ["D7", "D120"])
+
+    def test_work_orders_link_the_frames_they_name(self):
+        refs = [ref(1, url="https://www.figma.com/design/F/?node-id=2-1"), ref(2)]
+        md = "# WO-001 Week view\n\n## Summary\nx\n\n## Context Graph\n- Design: D2, D1\n\n# WO-002 API\n\n## Summary\nbackend\n"
+        linked = design.link_design_refs(md, refs)
+        wo1, wo2 = linked.split("# WO-002")
+        self.assertIn("## Design frames\n\nDesign: D2, D1\n\n- D2 — Screen 2 (attached image)\n- D1 — [Screen 1](https://www.figma.com/design/F/?node-id=2-1)", wo1)
+        self.assertNotIn("Design frames", wo2)
+        self.assertEqual(design.link_design_refs(linked, refs), linked)
+        self.assertEqual([r["id"] for r in design.refs_named_by_work_order(refs, wo1)], ["D2", "D1"])
 
     def test_work_order_names_its_references(self):
         refs = [ref(1), ref(2), ref(3)]
@@ -463,7 +486,7 @@ class FigmaPageTests(unittest.TestCase):
     def test_page_opens_nested_sections_to_screens_in_order(self):
         refs = self.frames()
         self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 2", "Screen 3", "Screen 4"])
-        self.assertEqual(sorted(self.render_calls), ["9:1", "9:2", "9:3", "9:4"])
+        self.assertEqual(self.render_calls, ["9:1,9:2,9:3,9:4"])
         self.assertNotIn("Note:", refs[0]["summary"])
 
     def test_one_slow_frame_is_noted_and_the_rest_are_read(self):
@@ -471,6 +494,26 @@ class FigmaPageTests(unittest.TestCase):
         refs = self.frames()
         self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 3", "Screen 4"])
         self.assertIn("Screen 2: Figma did not answer in time", refs[0]["summary"])
+        self.assertEqual(self.render_calls[0], "9:1,9:2,9:3,9:4")
+        self.assertEqual(sorted(self.render_calls[1:]), ["9:1", "9:2", "9:3", "9:4"])
+
+    def test_rate_limit_waits_and_retries(self):
+        from ts_harness.intake import figma
+
+        hits = {"n": 0}
+        original = self.handler
+
+        def limited(request):
+            if request.url.path.startswith("/v1/images/") and hits["n"] < 2:
+                hits["n"] += 1
+                return httpx.Response(429, headers={"Retry-After": "3"})
+            return original(request)
+
+        self.handler = limited
+        waits: list[float] = []
+        with unittest.mock.patch.object(figma, "_sleep", waits.append):
+            refs = self.frames()
+        self.assertEqual((len(refs), waits), (4, [3.0, 3.0]))
 
     def test_every_frame_failing_is_a_figma_error(self):
         from ts_harness.intake.figma import FigmaError

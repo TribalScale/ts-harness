@@ -2,8 +2,10 @@
 
 A Figma link in a request (``parse_figma_urls``) becomes one reference per frame: a PNG
 rendered by Figma and a text summary (size, text content, components, colors, fonts). A link
-to a frame gives that frame; a link to a page or a whole file gives its top-level frames, up
-to ``MAX_FRAMES``.
+to a frame gives that frame; a link to a page, a section or a whole file gives every frame
+inside it (sections opened however deeply nested), up to ``max_frames()``
+(``TS_HARNESS_FIGMA_MAX_FRAMES``, default 200), so planning can name the exact frame each work
+order builds.
 
 Each file version is fetched once: results are cached in the intake bucket under
 ``design/figma/<file>/<version>/``, so the PRD, planning, coding and QA steps, and later
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 import httpx
@@ -23,7 +27,7 @@ import httpx
 from ts_harness.intake.design import DESIGN_PREFIX, store_design_image
 
 API = "https://api.figma.com/v1"
-MAX_FRAMES = 12
+DEFAULT_MAX_FRAMES = 200
 IMAGE_SCALE = 1
 # Screens. Sections, pages and the document are containers: the frames inside them are read.
 _FRAME_TYPES = {"FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE"}
@@ -31,7 +35,23 @@ _CONTAINER_TYPES = {"DOCUMENT", "CANVAS", "SECTION", "GROUP"}
 _TIMEOUT = 30.0
 _RENDER_TIMEOUT = 120.0
 _RENDER_WORKERS = 4
+# Frames per render request: screens render in seconds, so a few per call keeps under Figma's
+# rate limit; a batch that fails is retried frame by frame.
+_RENDER_BATCH = 6
+_DETAIL_BATCH = 10
 _STRUCTURE_DEPTH = 5
+_RATE_LIMIT_RETRIES = 3
+_MAX_RETRY_WAIT = 30.0
+_sleep = time.sleep
+
+
+def max_frames() -> int:
+    """Frames read from one Figma link (``TS_HARNESS_FIGMA_MAX_FRAMES``)."""
+    try:
+        value = int(os.environ.get("TS_HARNESS_FIGMA_MAX_FRAMES", "") or DEFAULT_MAX_FRAMES)
+    except ValueError:
+        value = DEFAULT_MAX_FRAMES
+    return max(1, value)
 
 
 class FigmaError(Exception):
@@ -48,15 +68,25 @@ class FigmaClient:
         self.http = http or httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
 
     def _get(self, path: str, params: dict[str, Any] | None = None, *, timeout: float | None = None) -> dict[str, Any]:
-        try:
-            response = self.http.get(
-                f"{API}{path}", params=params, headers={"X-Figma-Token": self.token},
-                **({"timeout": timeout} if timeout else {}),
-            )
-        except httpx.TimeoutException as exc:
-            raise FigmaError("Figma did not answer in time") from exc
-        except httpx.HTTPError as exc:
-            raise FigmaError(f"Figma could not be reached: {exc}") from exc
+        for attempt in range(_RATE_LIMIT_RETRIES + 1):
+            try:
+                response = self.http.get(
+                    f"{API}{path}", params=params, headers={"X-Figma-Token": self.token},
+                    **({"timeout": timeout} if timeout else {}),
+                )
+            except httpx.TimeoutException as exc:
+                raise FigmaError("Figma did not answer in time") from exc
+            except httpx.HTTPError as exc:
+                raise FigmaError(f"Figma could not be reached: {exc}") from exc
+            if response.status_code != 429 or attempt == _RATE_LIMIT_RETRIES:
+                break
+            try:
+                wait = float(response.headers.get("Retry-After") or 0)
+            except ValueError:
+                wait = 0.0
+            if wait > _MAX_RETRY_WAIT:
+                break
+            _sleep(wait or 2.0 * (attempt + 1))
         if response.status_code == 429:
             wait = response.headers.get("Retry-After", "")
             kind = response.headers.get("X-Figma-Rate-Limit-Type", "")
@@ -97,13 +127,14 @@ class FigmaClient:
         return response.content
 
 
-def _frames_under(node: dict[str, Any], limit: int = MAX_FRAMES) -> tuple[list[dict[str, Any]], int]:
+def _frames_under(node: dict[str, Any], limit: int | None = None) -> tuple[list[dict[str, Any]], int]:
     """``(frames, total)``: the screens a link points at, opening sections and pages.
 
     A frame link is that frame. A page, a section (however deeply nested) or the whole file
     gives the frames inside, in Figma's order; ``total`` counts them all, ``frames`` holds the
     first ``limit``.
     """
+    limit = max_frames() if limit is None else limit
     found: list[dict[str, Any]] = []
     total = 0
 
@@ -222,7 +253,7 @@ class FigmaSource:
         notes: list[str] = []
         if missing:
             full = self._full_frames(file_key, [str(f.get("id")) for f in missing])
-            for frame, image in self._render_each(file_key, missing, notes):
+            for frame, image in self._render(file_key, missing, notes):
                 frame_id = str(frame.get("id"))
                 detail = full.get(frame_id) or frame
                 ref = {
@@ -242,8 +273,8 @@ class FigmaSource:
         refs.sort(key=lambda r: order.get(str((r.get("figma") or {}).get("node_id")), 0))
         if total > len(frames):
             notes.append(
-                f"this link has {total} frames; the first {len(frames)} were read. Link a section or "
-                "single frames to read others"
+                f"this link has {total} frames; the first {len(frames)} were read "
+                "(TS_HARNESS_FIGMA_MAX_FRAMES). Link a section or single frames to read others"
             )
         if notes:
             refs[0] = {**refs[0], "summary": "Note: " + ". ".join(notes) + ".\n" + str(refs[0].get("summary") or "")}
@@ -251,32 +282,46 @@ class FigmaSource:
 
     def _full_frames(self, file_key: str, ids: list[str]) -> dict[str, dict[str, Any]]:
         """The frames with all their layers, for summaries (the structure fetch stops early)."""
-        try:
-            payload = self.client.nodes(file_key, ",".join(ids), depth=None)
-        except FigmaError:
-            return {}
-        return {key: (value or {}).get("document") or {} for key, value in (payload.get("nodes") or {}).items()}
-
-    def _render_each(self, file_key: str, frames: list[dict[str, Any]], notes: list[str]):
-        """Render frames one per request, a few at a time: one slow frame must not sink the rest."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        def one(frame: dict[str, Any]) -> tuple[dict[str, Any], bytes | None, str]:
-            frame_id = str(frame.get("id"))
+        out: dict[str, dict[str, Any]] = {}
+        for start in range(0, len(ids), _DETAIL_BATCH):
             try:
-                urls = self.client.render(file_key, [frame_id])
-                if frame_id not in urls:
-                    return frame, None, f"{frame.get('name')}: Figma returned no image"
-                return frame, self.client.download(urls[frame_id]), ""
-            except FigmaError as exc:
-                return frame, None, f"{frame.get('name')}: {exc}"
+                payload = self.client.nodes(file_key, ",".join(ids[start : start + _DETAIL_BATCH]), depth=None)
+            except FigmaError:
+                continue
+            out.update({key: (value or {}).get("document") or {} for key, value in (payload.get("nodes") or {}).items()})
+        return out
 
-        with ThreadPoolExecutor(max_workers=min(_RENDER_WORKERS, len(frames))) as pool:
-            for frame, image, problem in pool.map(one, frames):
-                if image:
-                    yield frame, image
-                else:
-                    notes.append(problem)
+    def _render(self, file_key: str, frames: list[dict[str, Any]], notes: list[str]):
+        """``(frame, png)`` per rendered frame, in order: a few frames per request, a few requests
+        at a time. A batch that fails is retried frame by frame, so one slow frame sinks only itself."""
+
+        def fetch(batch: list[dict[str, Any]]) -> list[tuple[dict[str, Any], bytes | None, str]]:
+            ids = [str(frame.get("id")) for frame in batch]
+            try:
+                urls = self.client.render(file_key, ids)
+            except FigmaError as exc:
+                if len(batch) > 1:
+                    return [item for frame in batch for item in fetch([frame])]
+                return [(batch[0], None, f"{batch[0].get('name')}: {exc}")]
+            out: list[tuple[dict[str, Any], bytes | None, str]] = []
+            for frame, frame_id in zip(batch, ids):
+                if frame_id not in urls:
+                    out.append((frame, None, f"{frame.get('name')}: Figma returned no image"))
+                    continue
+                try:
+                    out.append((frame, self.client.download(urls[frame_id]), ""))
+                except FigmaError as exc:
+                    out.append((frame, None, f"{frame.get('name')}: {exc}"))
+            return out
+
+        batches = [frames[i : i + _RENDER_BATCH] for i in range(0, len(frames), _RENDER_BATCH)]
+        with ThreadPoolExecutor(max_workers=min(_RENDER_WORKERS, len(batches))) as pool:
+            for results in pool.map(fetch, batches):
+                for frame, image, problem in results:
+                    if image:
+                        yield frame, image
+                    else:
+                        notes.append(problem)
 
 
 def build_figma_source(*, store: Any, tenant_id: str, token: str | None = None) -> Callable[[dict[str, Any]], list[dict[str, Any]]]:

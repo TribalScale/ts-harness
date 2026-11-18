@@ -18,9 +18,15 @@ Without any designs, nothing changes.
 - `gather_sources` (PRD workflow) reads the request's attachments and links
   (`runtime/ts_harness/intake/`). An attached image is still described in text for the PRD, and
   is also stored as an image under `design/<tenant>/<sha256>.<ext>` in the intake bucket. A Figma
-  link is read through the REST API: a link to a frame gives that frame; a link to a page or file
-  gives its top-level frames (up to 8). Each frame is rendered to PNG and summarized (size, text,
-  components, colors, fonts).
+  link is read through the REST API: a link to a frame gives that frame; a link to a page, a
+  section or a file gives every frame inside it, opening sections however deeply nested (up to
+  200 per link, `TS_HARNESS_FIGMA_MAX_FRAMES`). Frames render a few per request, four requests
+  at a time; a batch that fails is retried frame by frame, a frame that still fails is noted and
+  the rest are kept, and a rate limit asking for 30 s or less is waited out. Each frame is
+  rendered to PNG and summarized (size, text, components, colors, fonts). Frames that render
+  alike (two states drawn the same) stay separate references.
+- Up to 200 references per request (`TS_HARNESS_MAX_DESIGN_REFS`), with ids `D1`…`D200`. With
+  more than 24, prompts carry a shorter summary of each (title, Figma link, first lines of text).
 - The references (`id`, `title`, `source`, `url`, `object_key`, `summary`) are saved in the program
   artifacts with the approved PRD (`design_refs`) and carried to planning, the work orders and
   their deliveries.
@@ -31,6 +37,12 @@ Without any designs, nothing changes.
 - Figma is read once per file version: frames are cached under
   `design/figma/<file>/<version>/`, so later steps and later requests for the same version make no
   API calls. A new version (the design changed) is fetched again.
+- Planning names the frames each work order builds (`- Design: D1, D3`, from every frame's title
+  and text; only the first 6 images are attached to a planning call). When the work orders are
+  saved, the harness adds a `## Design frames` section to each one that names frames: the
+  `Design:` line plus each frame's title linked to the frame in Figma. Filing work orders as Jira
+  copies that section into the ticket, and a ticket filed without it gets it back from its work
+  order when it is implemented. The coding job and QA receive exactly those frames' images.
 
 - On the Jira path, `plan_stories` (PRD to Jira) sees the images and ends each UI story with
   `Design: D1, D3`. When a ticket is implemented (`implement_jira_ticket`),
@@ -88,7 +100,8 @@ stays as text; attached images still work.
 | "Figma rate limit reached (low)" | The account's seat is View/Collab, or the plan's limit | Give the account a Dev seat; cached versions don't count again |
 | "Figma file or frame not found" | Wrong or deleted link | Copy the link again (Share → Copy link to selection) |
 | A design image is missing for coding or QA | The work order's `Design` line doesn't name it | Edit the work order, or re-run planning |
-| Only the first frames of a file arrive | Links to a page or file take up to 8 top-level frames | Link the specific frames |
+| "this link has N frames; the first 200 were read" | The page holds more frames than `TS_HARNESS_FIGMA_MAX_FRAMES` | Link sections separately, or raise the setting |
+| "<frame>: Figma did not answer in time" | That frame is very large (a whole board, not a screen) | Link its inner frames, or ignore if it is not a screen |
 
 Figma's official MCP server and the community plugin-based servers are not used: the official
 server only accepts approved desktop clients with per-person OAuth, and plugin servers need a
