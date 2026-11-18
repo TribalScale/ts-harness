@@ -806,7 +806,11 @@ class DeliveryProgramService:
         if not markdown and isinstance(outputs.get("artifacts"), dict):
             markdown = outputs["artifacts"].get("work_orders_markdown")
         if markdown:
-            artifact_patch["work_orders_markdown"] = markdown
+            from ts_harness.intake.design import link_design_refs
+
+            artifact_patch["work_orders_markdown"] = link_design_refs(
+                str(markdown), (existing_artifacts or {}).get("design_refs")
+            )
 
         if workflow_type == "work_orders_from_prd":
             stage_artifact_steps = {

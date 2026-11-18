@@ -25,7 +25,7 @@ import logging
 import re
 from typing import Any, Callable
 
-from ts_harness.intake.design import MAX_DESIGN_REFS, number_refs, store_design_image
+from ts_harness.intake.design import max_design_refs, number_refs, store_design_image
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,26 @@ def _with_design_line(body: str, ids: list[str]) -> str:
     if not extra:
         return body
     return body[: match.start(1)] + named + ", " + ", ".join(extra) + body[match.start(1) + len(named) :]
+
+
+def _with_work_order_design(body: str, artifacts: dict[str, Any], work_order_id: str | None, refs: list[dict[str, Any]]) -> str:
+    """A ticket filed without its work order's design frames gets them from the work order.
+
+    The coding job and QA receive the frames the body's ``Design:`` line names; a filing agent
+    that dropped the section would leave the ticket with no design at all.
+    """
+    from ts_harness.intake.design import FRAMES_HEADING, _DESIGN_LINE, _DESIGN_ROW, link_design_refs, refs_named_by_work_order
+
+    if not refs or not work_order_id or _DESIGN_ROW.search(body) or _DESIGN_LINE.search(body):
+        return body
+    from ts_harness.implementation.work_order_context import extract_work_order_section
+
+    section = extract_work_order_section(str(artifacts.get("work_orders_markdown") or ""), work_order_id)
+    if not section or not refs_named_by_work_order(refs, section):
+        return body
+    linked = link_design_refs(section, refs)
+    frames = linked[linked.find(FRAMES_HEADING) :].strip()
+    return body.rstrip() + "\n\n" + frames + "\n"
 
 
 def _workflow_input(memory: Any, task: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +274,7 @@ def prepare_ticket_delivery(
             artifacts = _program_artifacts(memory, owner)
             refs = [r for r in artifacts.get("design_refs") or [] if isinstance(r, dict) and r.get("id")]
             planning = {k: artifacts[k] for k in ("refinery_artifacts", "foundry_artifacts", "planner_artifacts") if artifacts.get(k)}
+            body = _with_work_order_design(body, artifacts, pointer.work_order_id, refs)
         if not refs:
             refs = _program_design_refs(memory, str(task.get("id") or ""))
     except Exception as exc:  # noqa: BLE001
@@ -271,7 +292,7 @@ def prepare_ticket_delivery(
         # Program references are already D1..Dn in order, so they keep their ids (the ticket
         # names them); attachments follow and are named in the body.
         program_keys = {str(ref.get("object_key")) for ref in refs}
-        refs = number_refs([*refs, *attached])[:MAX_DESIGN_REFS]
+        refs = number_refs([*refs, *attached])[: max_design_refs()]
         body = _with_design_line(body, [str(r["id"]) for r in refs if str(r.get("object_key")) not in program_keys])
 
     onboarding: dict[str, Any] = {"checked": False}

@@ -120,8 +120,9 @@ def design_input(
             ]
         }
 
+    # The summaries are in design_refs_text; repeating them in the list doubles a large page.
     out: dict[str, Any] = {
-        "design_refs": [public_ref(ref) for ref in refs],
+        "design_refs": [{k: v for k, v in public_ref(ref).items() if k != "summary"} for ref in refs],
         "design_refs_text": render_design_refs(refs),
     }
     if store is None:

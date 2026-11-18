@@ -138,6 +138,16 @@ class DeclaredOutputsAdapterTests(unittest.TestCase):
         self.assertEqual(patch["planner_artifacts"], {"plan": "a"})
         self.assertEqual(patch["next_work_order_id"], "WO-001")
 
+    def test_work_orders_link_the_design_frames_they_name(self):
+        markdown = "# WO-001 Week view\n\n## Context Graph\n- Design: D1\n"
+        patch = self.registry.extract_outputs(
+            "extract_work_orders_outputs",
+            workflow_type="work_orders_from_prd",
+            tasks=[{"status": "succeeded", "step_name": "plan_work_orders", "output": {"work_orders_markdown": markdown}}],
+            artifacts={"design_refs": [{"id": "D1", "title": "Hub / Week", "url": "https://www.figma.com/design/F/?node-id=2-1"}]},
+        )
+        self.assertIn("- D1 — [Hub / Week](https://www.figma.com/design/F/?node-id=2-1)", patch["work_orders_markdown"])
+
     def test_implement_jira_ticket_prefers_default_branch_over_generic_main(self):
         intake = self.registry.build_inputs(
             "extract_implement_outputs",

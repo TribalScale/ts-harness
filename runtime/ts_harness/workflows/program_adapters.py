@@ -241,7 +241,7 @@ def _extract_work_orders_outputs(
     artifacts: dict[str, Any] | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    del artifacts
+    design_refs = (artifacts or {}).get("design_refs")
     merged = dict(outputs or {})
     merged.update(_merge_task_outputs(tasks))
     patch: dict[str, Any] = {"planning_track": "work_orders"}
@@ -260,7 +260,10 @@ def _extract_work_orders_outputs(
     if not markdown and isinstance(merged.get("artifacts"), dict):
         markdown = merged["artifacts"].get("work_orders_markdown")
     if markdown:
-        patch["work_orders_markdown"] = markdown
+        from ts_harness.intake.design import link_design_refs
+
+        # Each work order links the Figma frames it names (also what the Jira tickets carry).
+        patch["work_orders_markdown"] = link_design_refs(str(markdown), design_refs)
 
     workflow_type_name = str(workflow_type or "")
     tracks_work_orders = (

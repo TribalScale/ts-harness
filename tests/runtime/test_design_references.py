@@ -10,6 +10,7 @@ import base64
 import json
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -259,10 +260,32 @@ def ref(i: int, key: str = "", **extra) -> dict:
 
 class DesignModuleTests(unittest.TestCase):
     def test_numbering_drops_duplicate_images_and_caps(self):
-        raw = [{"object_key": "a"}, {"object_key": "a"}, {"object_key": "b"}] + [{"object_key": str(i)} for i in range(20)]
+        raw = [{"object_key": "a"}, {"object_key": "a"}, {"object_key": "b"}] + [{"object_key": str(i)} for i in range(300)]
         numbered = design.number_refs(raw)
         self.assertEqual([r["id"] for r in numbered[:2]], ["D1", "D2"])
-        self.assertEqual(len(numbered), design.MAX_DESIGN_REFS)
+        self.assertEqual(len(numbered), design.DEFAULT_MAX_DESIGN_REFS)
+        self.assertEqual(numbered[-1]["id"], "D200")
+
+    def test_figma_frames_that_render_alike_stay_separate(self):
+        def frame(node):
+            return {"object_key": "same.png", "figma": {"file_key": "F", "node_id": node}}
+
+        numbered = design.number_refs([frame("1:1"), frame("1:2"), frame("1:1")])
+        self.assertEqual([(r["id"], r["figma"]["node_id"]) for r in numbered], [("D1", "1:1"), ("D2", "1:2")])
+
+    def test_three_digit_ids_are_read(self):
+        refs = [ref(i) for i in range(1, 121)]
+        self.assertEqual([r["id"] for r in design.refs_named_by_work_order(refs, "- Design: D7, D120")], ["D7", "D120"])
+
+    def test_work_orders_link_the_frames_they_name(self):
+        refs = [ref(1, url="https://www.figma.com/design/F/?node-id=2-1"), ref(2)]
+        md = "# WO-001 Week view\n\n## Summary\nx\n\n## Context Graph\n- Design: D2, D1\n\n# WO-002 API\n\n## Summary\nbackend\n"
+        linked = design.link_design_refs(md, refs)
+        wo1, wo2 = linked.split("# WO-002")
+        self.assertIn("## Design frames\n\nDesign: D2, D1\n\n- D2 — Screen 2 (attached image)\n- D1 — [Screen 1](https://www.figma.com/design/F/?node-id=2-1)", wo1)
+        self.assertNotIn("Design frames", wo2)
+        self.assertEqual(design.link_design_refs(linked, refs), linked)
+        self.assertEqual([r["id"] for r in design.refs_named_by_work_order(refs, wo1)], ["D2", "D1"])
 
     def test_work_order_names_its_references(self):
         refs = [ref(1), ref(2), ref(3)]
@@ -411,3 +434,96 @@ class AgentImageLabelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _frame(i: int) -> dict:
+    return {"id": f"9:{i}", "name": f"Screen {i}", "type": "FRAME", "absoluteBoundingBox": {"width": 1440, "height": 900}, "children": []}
+
+
+class FigmaPageTests(unittest.TestCase):
+    """A page link: sections open down to their screens; frames render one per request."""
+
+    PAGE = {"id": "0:1", "name": "Main", "type": "CANVAS", "children": [
+        {"id": "1:1", "name": "Screens", "type": "SECTION", "children": [
+            {"id": "1:2", "name": "Schedule", "type": "SECTION", "children": [_frame(1), _frame(2)]},
+            {"id": "1:3", "name": "Holds", "type": "SECTION", "children": [_frame(3), {**_frame(99), "visible": False}]},
+        ]},
+        _frame(4),
+    ]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = LocalObjectStore(self.tmp.name)
+        self.render_calls: list[str] = []
+        self.fail_ids: set[str] = set()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.url.host == "figma-alpha-api.s3.us-west-2.amazonaws.com":
+            return httpx.Response(200, content=PNG + path.encode())
+        if path.endswith("/nodes"):
+            ids = request.url.params["ids"]
+            if ids == "0:1":
+                self.assertEqual(request.url.params.get("depth"), "5")
+                return httpx.Response(200, json={"version": "v7", "nodes": {"0:1": {"document": self.PAGE}}})
+            return httpx.Response(200, json={"version": "v7", "nodes": {i: {"document": _frame(int(i.split(":")[1]))} for i in ids.split(",")}})
+        if path.startswith("/v1/images/"):
+            ids = request.url.params["ids"].split(",")
+            self.render_calls.append(",".join(ids))
+            if set(ids) & self.fail_ids:
+                raise httpx.ReadTimeout("slow", request=request)
+            return httpx.Response(200, json={"err": None, "images": {i: f"https://figma-alpha-api.s3.us-west-2.amazonaws.com/img/{i}.png" for i in ids}})
+        return httpx.Response(404)
+
+    def frames(self):
+        client = FigmaClient("figd_test", http=httpx.Client(transport=httpx.MockTransport(self.handler)))
+        source = FigmaSource(client, self.store, tenant_id="default")
+        return source.frames(figma_pointer("https://www.figma.com/design/PageFileKey0001/App?node-id=0-1"))
+
+    def test_page_opens_nested_sections_to_screens_in_order(self):
+        refs = self.frames()
+        self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 2", "Screen 3", "Screen 4"])
+        self.assertEqual(self.render_calls, ["9:1,9:2,9:3,9:4"])
+        self.assertNotIn("Note:", refs[0]["summary"])
+
+    def test_one_slow_frame_is_noted_and_the_rest_are_read(self):
+        self.fail_ids = {"9:2"}
+        refs = self.frames()
+        self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 3", "Screen 4"])
+        self.assertIn("Screen 2: Figma did not answer in time", refs[0]["summary"])
+        self.assertEqual(self.render_calls[0], "9:1,9:2,9:3,9:4")
+        self.assertEqual(sorted(self.render_calls[1:]), ["9:1", "9:2", "9:3", "9:4"])
+
+    def test_rate_limit_waits_and_retries(self):
+        from ts_harness.intake import figma
+
+        hits = {"n": 0}
+        original = self.handler
+
+        def limited(request):
+            if request.url.path.startswith("/v1/images/") and hits["n"] < 2:
+                hits["n"] += 1
+                return httpx.Response(429, headers={"Retry-After": "3"})
+            return original(request)
+
+        self.handler = limited
+        waits: list[float] = []
+        with unittest.mock.patch.object(figma, "_sleep", waits.append):
+            refs = self.frames()
+        self.assertEqual((len(refs), waits), (4, [3.0, 3.0]))
+
+    def test_every_frame_failing_is_a_figma_error(self):
+        from ts_harness.intake.figma import FigmaError
+
+        self.fail_ids = {"9:1", "9:2", "9:3", "9:4"}
+        with self.assertRaises(FigmaError):
+            self.frames()
+
+    def test_frame_cap_is_reported(self):
+        from ts_harness.intake import figma
+
+        frames, total = figma._frames_under(self.PAGE, limit=2)
+        self.assertEqual(([f["id"] for f in frames], total), (["9:1", "9:2"], 4))

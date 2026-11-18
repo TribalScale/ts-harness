@@ -54,13 +54,16 @@ class _Jira:
         pass
 
 
-def _memory(*, program_refs=None, owner_refs=None):
+def _memory(*, program_refs=None, owner_refs=None, owner_markdown=None):
     memory = mock.Mock()
     memory.get_workflow.return_value = {"workflow": {"id": "wf-1", "input": {"jira_issue_key": "THD-33", "base_branch": "dev"}}, "tasks": []}
     memory.task_program.return_value = {"program_id": "jira-prog", "workflow_id": "wf-1"}
     statuses = {
         "jira-prog": {"artifacts": {"design_refs": program_refs} if program_refs else {}},
-        "prd-prog": {"artifacts": {"design_refs": owner_refs or [], "planner_artifacts": {"work_orders_markdown": "# WOs"}}},
+        "prd-prog": {"artifacts": {
+            "design_refs": owner_refs or [], "planner_artifacts": {"work_orders_markdown": "# WOs"},
+            **({"work_orders_markdown": owner_markdown} if owner_markdown else {}),
+        }},
     }
     memory.get_program_status.side_effect = lambda pid: statuses[pid]
     memory.get_program.side_effect = lambda pid: {"program": {"id": pid, "parent_program_id": None}}
@@ -132,6 +135,15 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         # The ticket named D2; the attachment joins that line.
         self.assertIn("Design: D2, D3", out["work_order_body"])
         self.assertEqual(out["work_order_body"].count("Design:"), 1)
+
+    def test_a_ticket_filed_without_its_frames_gets_them_from_its_work_order(self):
+        refs = [*PROGRAM_REFS[:1], {**PROGRAM_REFS[1], "url": "https://www.figma.com/design/F/?node-id=2-9"}]
+        markdown = "# WO-001 List\n\n## Summary\nx\n\n# WO-002 Drawer\n\n## Context Graph\n- Design: D2\n"
+        description = DESCRIPTION + "\nWO: WO-002\nProgram: prd-prog"
+        out = _run(jira=_Jira(description=description), memory=_memory(owner_refs=refs, owner_markdown=markdown))
+        body = out["work_order_body"]
+        self.assertIn("## Design frames\n\nDesign: D2\n\n- D2 — [Drawer](https://www.figma.com/design/F/?node-id=2-9)", body)
+        self.assertIn("Design: D2 (Drawer)", out["summary"])
 
     def test_a_repository_without_harness_config_is_set_up_in_the_same_pr(self):
         def needed(target, wo_id):

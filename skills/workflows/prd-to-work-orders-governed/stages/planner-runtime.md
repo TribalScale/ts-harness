@@ -94,7 +94,11 @@ Given ... When ... Then ...
   agent and QA receive exactly those images, so name every frame the WO's UI
   must match and no others. Backend-only WOs omit the line. Describe in the
   Requirements what each image shows that matters (layout, copy, states);
-  never write "see the design" alone.
+  never write "see the design" alone. A page can bring a hundred frames and only
+  the first few images are attached here: choose frames by their titles and
+  text in `input.design_refs_text`, including every state the WO builds (empty,
+  loading, error, open/closed variants). Write ids only; the harness adds each
+  frame's title and Figma link to the work order (`## Design frames`).
 
 - Before returning, reread each WO as the coding agent, the code reviewer and QA will:
   every one of them checks the code against every statement in the WO. If two
