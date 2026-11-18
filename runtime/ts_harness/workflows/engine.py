@@ -79,11 +79,11 @@ def _keyword_workflow(*_: Any, workflow_id: str = "", **__: Any) -> str:
     return workflow_id
 
 
-_QUEUE_GATE_STEPS = frozenset({"hydrate_ticket", "pick_ticket"})
+_QUEUE_GATE_STEPS = frozenset({"pick_ticket"})
 
 
 def _queue_gate_rejection(client: Any, payload: dict[str, Any], gate_task: dict[str, Any]) -> bool:
-    """A queue stops when its kickoff or the ticket list is rejected."""
+    """A queue stops when its ticket list is rejected."""
     if str(gate_task.get("step_name") or "") not in _QUEUE_GATE_STEPS:
         return False
     workflow = payload.get("workflow") if isinstance(payload.get("workflow"), dict) else {}

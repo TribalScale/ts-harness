@@ -65,6 +65,8 @@ class PrDescriptionTests(unittest.TestCase):
     def test_title_uses_the_work_order_heading(self):
         self.assertEqual(pr_title(_request()), "WO-005: Category Filter in the Discussions List")
         self.assertEqual(pr_title(_request(work_order_body="no headings")), "WO-005: implement work order")
+        jira = _request(work_order_id="THD-33", work_order_body="# THD-33 Show the comment count\n\nBody")
+        self.assertEqual(pr_title(jira), "THD-33: Show the comment count")
 
     def test_body_has_the_standard_sections_from_the_work_order(self):
         body = pr_body(
@@ -105,3 +107,35 @@ class PrDescriptionTests(unittest.TestCase):
         body = pr_body(_request(work_order_body="", design_refs=None), changed_files=["x.py"])
         self.assertIn("Implements work order `WO-005`.", body)
         self.assertIn("the work order lists no separate acceptance tests", body)
+
+
+class JiraTicketDescriptionTests(unittest.TestCase):
+    BODY = """# THD-33 Show the comment count
+
+As a member, I want comment counts in the list.
+
+Requirements
+- A Comments column.
+
+Acceptance criteria
+- Given a discussion with 3 comments, When I open the list, Then its row shows 3.
+
+Out of scope
+- Sorting by count.
+
+Repo: acme/web@fe-dev
+"""
+
+    def test_a_jira_ticket_fills_summary_tests_and_scope(self):
+        repo = Path("/workspace/dev-agent/coding-backend/THD-33-x/repo")
+        verification = {"result": "passed", "checks": [
+            {"check": "lint", "command": f"env -C {repo}/e2e {repo}/node_modules/.bin/eslint tests/a.spec.ts", "exit_code": 0},
+            {"check": "unit", "command": "yarn test", "exit_code": 0},
+        ]}
+        body = pr_body(_request(work_order_id="THD-33", work_order_body=self.BODY, design_refs=None),
+                       changed_files=["src/a.tsx"], verification=verification, repo_dir=repo)
+        self.assertIn("## Summary\n\nAs a member, I want comment counts in the list.", body)
+        self.assertIn("- [ ] Given a discussion with 3 comments, When I open the list, Then its row shows 3.", body)
+        self.assertIn("## Out of scope\n\n- Sorting by count.", body)
+        self.assertIn("| lint | `(in e2e) eslint tests/a.spec.ts` | passed |", body)
+        self.assertNotIn("/workspace/", body)

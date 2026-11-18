@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -878,6 +879,24 @@ class WorkflowRunnerTests(unittest.TestCase):
         prepare.assert_called_once()
         kwargs = engine.resume_external.call_args.kwargs
         self.assertEqual((kwargs["event_type"], kwargs["payload"]), ("github.deployment_status", ready))
+
+    def test_a_failed_post_holds_only_output_someone_must_answer(self):
+        # THD-33: the coding job opened its PR, then the chat post failed and blocked the step.
+        runner_module = load_runner()
+        failed = {"hook": "present_specialist_output", "status": "error", "error": "no linked session for workflow"}
+        engine = SimpleNamespace(on_task_transition=lambda *a, **k: failed, reload_if_changed=lambda: False)
+        for prompt, blocks in (("approval", True), ("intake", True), ("inform", False), ("none", False)):
+            memory = FakeMemoryClient(ready=[])
+            workflow_runner = runner_module.WorkflowRunner(memory, FakeAdapter({}), runner_id="runner-1")
+            stage = SimpleNamespace(present_prompt=prompt, kind="task", barrier=None, name="deliver_work_order")
+            task = {"id": "t-1", "workflow_id": "wf-1", "workflow_type": "implement_jira_ticket",
+                    "step_name": "deliver_work_order", "agent_id": "dev-agent", "input": {}}
+            with patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True), patch(
+                "ts_harness.workflows.engine.get_workflow_engine", return_value=engine
+            ):
+                workflow_runner._apply_dispatch_result(task, stage, {"status": "succeeded", "output": {"pr_url": "x"}}, 0.0)
+            self.assertEqual(bool(memory.blocked), blocks, prompt)
+            self.assertEqual(bool(memory.completed), not blocks, prompt)
 
     def test_runner_blocks_when_artifact_presentation_fails(self):
         runner_module = load_runner()

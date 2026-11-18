@@ -119,6 +119,20 @@ def _build_channel_system_context(
     return "\n".join(parts)
 
 
+
+def chat_actor_email(body: dict[str, Any], auth: Any, channel: str, config: Any) -> str | None:
+    """Who sent a chat message: the channel's ``sender_email``, Slack's user map, else the
+    signed-in person's email (the console sends no ``sender_email``)."""
+    actor_email = body.get("sender_email")
+    if not actor_email and channel == "slack":
+        from ts_harness.gateway.channels.slack_users import resolve_slack_user_email
+
+        raw_user = str((body.get("actor") or {}).get("actor_id") or auth.actor_id or "")
+        actor_email = resolve_slack_user_email(raw_user.removeprefix("slack:"), config=config)
+    if not actor_email and not getattr(auth, "is_service", False):
+        actor_email = str(getattr(auth, "email", None) or "").strip() or None
+    return actor_email
+
 class RuntimeState:
     def __init__(self, config_path: str):
         config_file = Path(config_path)
@@ -838,13 +852,19 @@ class RuntimeState:
         get_session_store().save(session)
 
         user_text = str(body.get("text") or "")
-        actor_email = body.get("sender_email")
-        if not actor_email and channel == "slack":
-            from ts_harness.gateway.channels.slack_users import resolve_slack_user_email
+        actor_email = chat_actor_email(body, auth, channel, self.config)
 
-            raw_user = str((body.get("actor") or {}).get("actor_id") or auth.actor_id or "")
-            user_id = raw_user.removeprefix("slack:")
-            actor_email = resolve_slack_user_email(user_id, config=self.config)
+        from ts_harness.workflows.decisions import CHANNEL_SOURCES
+
+        if not getattr(auth, "is_service", False) and channel not in CHANNEL_SOURCES:
+            # A console user decides gates in chat with their sign-in permissions; refreshed on
+            # every message (channel replies authenticate as the webhook and never set this).
+            from ts_harness.policy.permissions import actor_permissions
+
+            granted = sorted(actor_permissions(auth, self.config))
+            if (session.metadata or {}).get("actor_permissions") != granted:
+                session.metadata = {**(session.metadata or {}), "actor_permissions": granted}
+                get_session_store().save(session)
 
         if actor_email:
             metadata = dict(session.metadata or {})

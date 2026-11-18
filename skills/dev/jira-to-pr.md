@@ -9,7 +9,7 @@ Use on `pick_assigned_jira` and `implement_jira_ticket`.
 
 ## Identity
 
-Map Slack/OIDC email → `identity.jira_account_ids`. Never match display names. If unmapped, ask for a ticket key. Do not list other people’s tickets.
+The `prepare_ticket_queue` step lists the signed-in person's tickets: their email from the sign-in or Slack, then `identity.jira_account_ids` or Jira's user search by that email. Never match display names. If it finds no account, ask for a ticket key. Do not list other people’s tickets.
 
 ## Pick
 

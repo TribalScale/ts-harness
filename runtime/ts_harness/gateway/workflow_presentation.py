@@ -43,6 +43,19 @@ def _session_for_workflow(
     channel key is ``web:web:<id>``. Later phases keep the original
     ``workflow_id`` and are linked by ``program_id`` or ``active_workflow_id``.
     """
+    found = _find_session(workflow_id, tenant_id, source_channel, program_id)
+    if found is None:
+        # Sessions load from Postgres once per process; a chat started in another process
+        # (the workflow runner, a second agent-runtime) is invisible until reloaded.
+        store = get_session_store()
+        reload = getattr(store, "reload", None)
+        if callable(reload):
+            reload()
+            found = _find_session(workflow_id, tenant_id, source_channel, program_id)
+    return found
+
+
+def _find_session(workflow_id: str, tenant_id: str, source_channel: str, program_id: str) -> SessionRecord | None:
     raw = str(source_channel or "").strip()
     canonical = binding_key_from_source_channel(raw) or ""
     bindings = {item for item in (raw, canonical) if item}

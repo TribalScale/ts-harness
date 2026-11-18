@@ -1607,14 +1607,24 @@ class WorkflowRunner:
                     or hook_result.get("reason")
                     or "specialist output presentation failed"
                 )
-                self.memory.block_task(task["id"], error)
+                # Only output a person must approve holds the step: a coding job that opened its
+                # PR, or a summary posted for information, carries on when the chat post fails.
+                prompt = str(getattr(stage, "present_prompt", "") or "").strip().lower()
+                if stage is None or prompt in {"approval", "intake"}:
+                    self.memory.block_task(task["id"], error)
+                    log_event(
+                        "presentation_blocked",
+                        workflow_id=task.get("workflow_id"),
+                        task_id=task.get("id"),
+                        error=error,
+                    )
+                    return
                 log_event(
-                    "presentation_blocked",
+                    "presentation_failed",
                     workflow_id=task.get("workflow_id"),
                     task_id=task.get("id"),
                     error=error,
                 )
-                return
 
             proposed_tasks = result.get("proposed_tasks")
             if proposed_tasks and hook_result is None:

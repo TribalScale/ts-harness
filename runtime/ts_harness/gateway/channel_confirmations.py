@@ -798,6 +798,11 @@ def _intake_go_ahead(gate: dict[str, Any], user_text: str) -> bool:
     a plain yes, or an epic key named on a Jira filing gate."""
     if looks_like_ready_to_draft(user_text) or looks_like_plain_approval(user_text):
         return True
+    if str(gate.get("step_name") or "") == "pick_ticket":
+        # The reply to the ticket list is the pick: a key, or `all <PROJECT>`, starts it.
+        from ts_harness.jira.ticket_choice import names_a_pick
+
+        return names_a_pick(user_text)
     from ts_harness.jira.target_project import jira_choice_from_reply
 
     task_input = gate.get("input") if isinstance(gate.get("input"), dict) else {}

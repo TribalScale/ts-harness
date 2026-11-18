@@ -43,6 +43,19 @@ def _carry_gate_inputs(
     return carried
 
 
+def _ticket_listing(ctx: HookContext) -> dict[str, Any]:
+    """``prepare_ticket_queue``'s output: the tickets and per-project queues the reply picks from."""
+    from ts_harness.workflows.hooks._helpers import load_workflow_payload
+
+    tasks = list(ctx.tasks or [])
+    if not tasks and ctx.memory_client is not None and ctx.workflow_id:
+        _, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
+    for task in tasks:
+        if task.get("step_name") == "prepare_ticket_queue" and isinstance(task.get("output"), dict):
+            return task["output"]
+    return {}
+
+
 def handle(ctx: HookContext) -> dict[str, Any]:
     if ctx.task is None:
         raise ValueError("task required for approve_gate")
@@ -66,7 +79,14 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             output = {"reply_text": reply, "summary": combined}
             if answers:
                 output["answers"] = [*answers, reply]
-            output.update(jira_choice_from_reply(reply, task_input))
+            if str(getattr(ctx.stage, "contract_ref", "") or "") == "ticket_pick":
+                # A key in the reply is the ticket to implement (a filing gate reads it as an epic).
+                from ts_harness.jira.ticket_choice import ticket_choice_from_reply
+
+                # Earlier replies kept as answers count too ("THD-33", then "ready").
+                output.update(ticket_choice_from_reply(combined, _ticket_listing(ctx)))
+            else:
+                output.update(jira_choice_from_reply(reply, task_input))
         output = _carry_gate_inputs(output, task_input, reply)
     on_complete = dict(ctx.stage.on_complete or {})
     if on_complete.get("hook") == "freeze_ticket_queue":
