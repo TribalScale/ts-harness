@@ -320,6 +320,7 @@ First public release.
 
 ### Fixed
 
+- `scripts/ops/live-test/cancel.py --program` cancelled only the program's workflows and left the program "running" in the console. It now cancels the program the way the console does (`cancel_program`, cascading to its workflows); `--compensate` also runs the console's cancel compensation.
 - Redeploys cut off running coding jobs: workers share agent-runtime's network namespace. `redeploy.sh` and phase 12 now pause the coding launcher and wait for running `ts-coding-*` workers (`CODING_DRAIN_TIMEOUT_MINUTES`, default 120; `FORCE_REDEPLOY=1` skips the wait), and a failed redeploy starts the launcher again.
 - Console: the Projects page is redesigned. A toolbar with **New project** opens a dialog that also takes the Jira project key and default base branch. The project list shows key, team and Jira link. Settings are grouped into cards (Delivery, Repositories, Coding workers, Package registries, Knowledge notes), each with its own Save and Discard. Repositories can now be edited (base branch, role), removing one asks first, and a repository without its own branch shows the project default it uses. The knowledge-notes filters are styled.
 - A Jira ticket without a `Repo:` line uses the project linked to its Jira project (System → Projects: Jira project key, repositories, branch); with several repositories the ticket names one.
