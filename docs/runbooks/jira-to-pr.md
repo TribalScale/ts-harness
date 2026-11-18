@@ -26,9 +26,12 @@ There is one confirmation: the yes that starts the program (or the pick reply). 
 (`deliver_work_order`) starts:
 
 - **The ticket**: its summary and description become the work order.
-- **Repository and branch**: the description's `Repo: org/repo@branch` line, else
-  `implementation.repos.implement_jira_ticket` (see PR base branch below). A ticket with
-  neither blocks with what to add.
+- **Repository and branch**: the description's `Repo: org/repo@branch` line; else the project
+  linked to the ticket's Jira project (**System → Projects**: set its Jira project key, add the
+  repository, and set the branch on the repository or as the project's default base branch);
+  else `implementation.repos.implement_jira_ticket`. With several repositories on the project,
+  the ticket names the one it changes (`acme/api`). A ticket with none of these blocks with
+  what to add.
 - **Design references**: those of the program the ticket was filed from (`Program:` line), and
   the ticket's image attachments (see [Design references](design-references.md)).
 - **Repository onboarding**: the same check as planned work orders. When the repository's CI runs
@@ -59,8 +62,9 @@ Blocked is hidden; an explicit key still works with a warning.
 
 ## PR base branch
 
-1. Engineer names a branch.
+1. A branch named in the request (`implement THD-33 on branch release/2`).
 2. Pointer `Repo: org/repo@branch`.
+3. The linked project's repository branch, else its default base branch.
 3. Allowlist `default_branch` (omit → `dev`).
 4. Runtime `implementation.repos.implement_jira_ticket.base_branch` if the URL matches.
 5. `dev`.
