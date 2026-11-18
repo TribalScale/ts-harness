@@ -25,7 +25,12 @@ Without any designs, nothing changes.
   the rest are kept, and a rate limit asking for 30 s or less is waited out. Each frame is
   rendered to PNG and summarized (size, text, components, colors, fonts). Frames that render
   alike (two states drawn the same) stay separate references.
-- Up to 200 references per request (`TS_HARNESS_MAX_DESIGN_REFS`), with ids `D1`…`D200`. With
+- A request can carry several Figma links (pages, sections, frames, from one file or several).
+  They are read in order and their frames numbered in that order; a frame reached by two links
+  (a page and a frame inside it) is one reference. Figma links are never skipped by the intake
+  time or text budget (a large page takes about two minutes the first time).
+- Up to 200 references per request across all links (`TS_HARNESS_MAX_DESIGN_REFS`), with ids
+  `D1`…`D200`; frames beyond it are listed under the skipped sources with how many. With
   more than 24, prompts carry a shorter summary of each (title, Figma link, first lines of text).
 - The references (`id`, `title`, `source`, `url`, `object_key`, `summary`) are saved in the program
   artifacts with the approved PRD (`design_refs`) and carried to planning, the work orders and
