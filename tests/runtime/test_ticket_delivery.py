@@ -183,7 +183,7 @@ class ProjectRepositoryTests(unittest.TestCase):
         out = _run(jira=_Jira(description="Add the count column."), memory=memory)
         self.assertEqual((out["repo_url"], out["base_branch"]), ("https://github.com/acme/web", "fe-dev"))
         self.assertIn("(from project Discussions)", out["summary"])
-        memory.list_project_repositories.assert_called_once_with("p-thd")
+        memory.list_project_repositories.assert_called_with("p-thd")
 
     def test_the_repositorys_own_branch_wins_over_the_projects(self):
         memory = self._memory([{"full_name": "acme/web", "default_branch": "release"}])
@@ -199,7 +199,25 @@ class ProjectRepositoryTests(unittest.TestCase):
     def test_a_repo_line_still_wins(self):
         memory = self._memory([{"full_name": "acme/other"}])
         self.assertEqual(_run(memory=memory)["repo_url"], "https://github.com/acme/web")
-        memory.list_projects.assert_not_called()
+
+    def test_an_empty_repository_waits_for_its_bootstrap_pr(self):
+        from ts_harness.workflows.repo_bootstrap import Readiness
+
+        memory = self._memory([{"full_name": "acme/web", "role": "web"}])
+        pending = Readiness(repo="acme/web", ready=False, template="react-web", pr_url="https://github.com/acme/web/pull/9")
+        ready = mock.Mock(return_value=pending)
+        with self.assertRaisesRegex(ValueError, "starts from the `react-web` template. Waiting on the bootstrap PR: https://github.com/acme/web/pull/9\nMerge it, then run this ticket again."):
+            prepare_ticket_delivery(
+                TASK, {}, memory=memory, jira_factory=lambda: _Jira(description="x"), store_factory=_Store,
+                inspect=_not_needed, configured=("", ""), ready=ready,
+            )
+        self.assertEqual(ready.call_args.kwargs, {"role": "web", "title": "Discussions"})
+        ready.return_value = Readiness(repo="acme/web", ready=True, notes=["acme/web: made checks required"])
+        out = prepare_ticket_delivery(
+            TASK, {}, memory=memory, jira_factory=lambda: _Jira(description="x"), store_factory=_Store,
+            inspect=_not_needed, configured=("", ""), ready=ready,
+        )
+        self.assertIn("Note: acme/web: made checks required", out["summary"])
 
 
 class ResolveTargetTests(unittest.TestCase):

@@ -51,8 +51,12 @@ ALLOWED_DEFAULTS = (
     "release",
     "delivery",
     "compensation",
+    "jira_tracking",
+    "repo_templates",
 )
 ALLOWED_DELIVERY = ("max_parallel_work_orders",)
+ALLOWED_JIRA_TRACKING = ("enabled", "start_transition", "done_transition")
+ALLOWED_REPO_TEMPLATES = ("enabled", "by_role")
 ALLOWED_COMPENSATION = ("jira", "jira_close_transition", "delete_branches")
 COMPENSATION_JIRA_MODES = ("label", "close")
 MAX_PARALLEL_WORK_ORDERS_LIMIT = 10
@@ -416,6 +420,45 @@ def _canonicalize_delivery(raw: Any, *, path: str, issues: list[dict[str, str]])
     return out
 
 
+def _canonicalize_jira_tracking(raw: Any, *, path: str, issues: list[dict[str, str]]) -> dict[str, Any]:
+    """Jira status follows delivery (jira/tracking.py): transitions by name, or off."""
+    if not isinstance(raw, dict):
+        issues.append(_issue("invalid_section", f"{path} must be an object", path=path))
+        return {}
+    issues.extend(_unknown_keys(raw, ALLOWED_JIRA_TRACKING, path))
+    out: dict[str, Any] = {}
+    if "enabled" in raw:
+        out["enabled"] = raw.get("enabled") is not False
+    for key in ("start_transition", "done_transition"):
+        if key in raw:
+            value = str(raw.get(key) or "").strip()
+            if value:
+                out[key] = value
+            else:
+                issues.append(_issue("invalid_transition", f"{path}.{key} must be a status name", path=f"{path}.{key}"))
+    return out
+
+
+def _canonicalize_repo_templates(raw: Any, *, path: str, issues: list[dict[str, str]]) -> dict[str, Any]:
+    """Templates for empty repositories (workflows/repo_bootstrap.py): on/off, and role → template."""
+    if not isinstance(raw, dict):
+        issues.append(_issue("invalid_section", f"{path} must be an object", path=path))
+        return {}
+    issues.extend(_unknown_keys(raw, ALLOWED_REPO_TEMPLATES, path))
+    out: dict[str, Any] = {}
+    if "enabled" in raw:
+        out["enabled"] = raw.get("enabled") is not False
+    if "by_role" in raw:
+        by_role = raw.get("by_role")
+        if not isinstance(by_role, dict) or not all(str(k).strip() and isinstance(v, str) and v.strip() for k, v in by_role.items()):
+            issues.append(
+                _issue("invalid_map", f"{path}.by_role must map repository roles to template names (or \"none\")", path=f"{path}.by_role")
+            )
+        else:
+            out["by_role"] = {str(k).strip().lower(): str(v).strip() for k, v in by_role.items()}
+    return out
+
+
 def _canonicalize_compensation(raw: Any, *, path: str, issues: list[dict[str, str]]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         issues.append(_issue("invalid_section", f"{path} must be an object", path=path))
@@ -717,6 +760,10 @@ def _canonicalize_program_defaults(
         out["compensation"] = _canonicalize_compensation(
             raw.get("compensation"), path=f"{path}.compensation", issues=issues
         )
+    if "jira_tracking" in raw:
+        out["jira_tracking"] = _canonicalize_jira_tracking(raw.get("jira_tracking"), path=f"{path}.jira_tracking", issues=issues)
+    if "repo_templates" in raw:
+        out["repo_templates"] = _canonicalize_repo_templates(raw.get("repo_templates"), path=f"{path}.repo_templates", issues=issues)
     if "ticket_picker" in raw:
         picker = raw.get("ticket_picker")
         if not isinstance(picker, dict):

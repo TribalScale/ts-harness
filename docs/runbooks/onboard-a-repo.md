@@ -1,5 +1,8 @@
 # Onboard a team repository
 
+An **empty** repository (only a README, `.gitignore` or LICENSE) needs none of this: TS Harness
+starts it from a template with a bootstrap PR. See [repo-templates.md](repo-templates.md).
+
 Three steps per repository, about ten minutes of a person's time. Run the scripts inside the
 agent-runtime container (`sudo docker exec -it docker-agent-runtime-1 bash` on a Compose
 host); they use its GitHub and memory-api credentials.

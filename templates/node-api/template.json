@@ -1,0 +1,29 @@
+{
+  "name": "node-api",
+  "version": "1.0.2",
+  "description": "TypeScript REST API: Express 5, Postgres (Prisma), Entra ID auth, Zod + OpenAPI, Cucumber BDD, GitHub Actions CI, Docker",
+  "roles": ["api", "backend", "server", "service"],
+  "required_checks": ["checks", "bdd", "docker"],
+  "substitutions": [
+    {
+      "files": ["package.json", "package-lock.json"],
+      "from": "\"name\": \"backend-template\"",
+      "to": "\"name\": \"{package_name}\""
+    },
+    {
+      "files": ["src/config/openapi.ts"],
+      "from": "title: 'API'",
+      "to": "title: '{display_name}'"
+    },
+    {
+      "files": ["openapi.json"],
+      "from": "\"title\": \"API\"",
+      "to": "\"title\": \"{display_name}\""
+    },
+    {
+      "files": ["README.md"],
+      "from": "# Backend template",
+      "to": "# {display_name}"
+    }
+  ]
+}

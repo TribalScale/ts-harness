@@ -113,6 +113,8 @@ unknown keys and bad values with the issue code shown.
 | `release.environments` | `staging`, `production` via the Deployments API | Per repo, exactly two environments: pre-production, then production (`invalid_environments`). `workflow_dispatch` runs the named workflow on the base branch with the SHA as `ref_input`; `deployment` creates a GitHub deployment for the SHA. TS Harness never touches infrastructure. |
 | `delivery.max_parallel_work_orders` | `3` | Size of each work-order wave, 1 to 10 (`invalid_max_parallel`). `1` delivers work orders one at a time. |
 | `compensation.jira` | `label` | On program cancel, Jira issues get the `harness-cancelled` label and a comment. `close` also applies `jira_close_transition` (`invalid_compensation_jira`). |
+| `jira_tracking` | on, `In Progress` / `Done` | Moves a Jira ticket when its coding starts and when its PR merges (`enabled`, `start_transition`, `done_transition`; `invalid_transition` for an empty name). |
+| `repo_templates` | on, roles from each template | Starts empty project repositories from `templates/` with a bootstrap PR (`enabled`, `by_role` with `"none"` to turn a role off; `invalid_map`). See [repo-templates.md](repo-templates.md). |
 | `compensation.delete_branches` | `false` | On cancel, delete branches TS Harness created whose PR is closed and not merged (`invalid_compensation_branches`). Open PRs are always commented on and closed; merged PRs are left alone. |
 
 Approval gates can also carry `approval: { required_roles, expires_after_seconds,

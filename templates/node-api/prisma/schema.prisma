@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Reference model for the notes module. Replace with your own models.
+model Note {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String
+  body      String   @default("")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@map("notes")
+}

@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: OpenAPI is up to date
+        run: |
+          npm run openapi
+          git diff --exit-code openapi.json || (echo "::error::openapi.json is out of date: run npm run openapi and commit it" && exit 1)
+      - run: npm run build
+
+  bdd:
+    name: bdd
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://app:app@localhost:5432/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test:bdd
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cucumber-report
+          path: cucumber-report.html
+          if-no-files-found: ignore
+
+  docker:
+    name: docker
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t app:${{ github.sha }} .

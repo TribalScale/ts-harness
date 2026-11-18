@@ -163,6 +163,46 @@ def _queues(issues: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _ensure_project_ready(memory: Any, workflow: dict[str, Any], project_key: str, ready: Callable[..., Any] | None) -> None:
+    """Before a queue runs, start the project's empty repositories from their templates.
+
+    Each empty repository gets a bootstrap PR; the queue blocks until they merge, so no ticket
+    builds on a repository with no structure, CI or tests.
+    """
+    from ts_harness.workflows.project_repos import project_repositories
+    from ts_harness.workflows.repo_bootstrap import BootstrapError, repositories_ready
+    from ts_harness.workflows.system_steps import StepBlocked
+
+    tenant_id = str(workflow.get("tenant_id") or "default")
+    repositories = project_repositories(memory, tenant_id=tenant_id, project_key=project_key)
+    if not repositories:
+        return
+    title = _project_name(memory, tenant_id, project_key)
+    try:
+        if ready is None:
+            from ts_harness.integrations.github_client import github_for
+
+            results = repositories_ready(github_for(None), repositories, title=title)
+        else:
+            results = ready(repositories, title=title)
+    except BootstrapError as exc:
+        raise StepBlocked(str(exc), output={"queue": False}) from exc
+    pending = [r for r in results if not r.ready]
+    if pending:
+        lines = ["Before building, these repositories need their starting code:"]
+        lines += [f"- {r.message()}" for r in pending]
+        lines.append(f"Review and merge them, then say `implement all {project_key}` again.")
+        raise StepBlocked("\n".join(lines), output={"queue": False, "bootstrap_prs": [r.pr_url for r in pending]})
+
+
+def _project_name(memory: Any, tenant_id: str, project_key: str) -> str | None:
+    try:
+        rows = (memory.list_projects(tenant_id=tenant_id, key=project_key) or {}).get("projects") or []
+        return str(rows[0].get("name") or "") or None if rows else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def prepare_ticket_queue(
     task: dict[str, Any],
     config: dict[str, Any],
@@ -171,6 +211,7 @@ def prepare_ticket_queue(
     search: Search | None = None,
     runtime: Any = None,
     jira: Any = None,
+    ready: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """List the person's assigned tickets, or freeze a queue for ``implement all``.
 
@@ -234,6 +275,7 @@ def prepare_ticket_queue(
                 "No tickets are ready for a queue." + (f" {detail}" if detail else " Ask for a ticket key."),
                 output={"queue": True, "queue_exclusions": exclusions, "jira_issue_keys": []},
             )
+        _ensure_project_ready(memory, workflow, project, ready)
         return {
             "queue": True,
             "jira_project_key": project,

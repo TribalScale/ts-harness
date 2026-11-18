@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Replace with the values from the Figma file (colors, type, spacing, radii)
+ * so components use the design system instead of raw values.
+ */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}

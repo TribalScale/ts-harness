@@ -88,6 +88,15 @@ Given ... When ... Then ...
   `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
   so the dependency points one way.
 
+- A repository in `input.project_repositories` with a `template` is empty today. TS Harness
+  starts it from that template (a bootstrap PR merged before any work order runs), so plan
+  on top of it: follow its `template_conventions` (folders, layers, how tests are named and
+  written), extend its reference module rather than inventing a structure, and plan no work
+  orders for scaffolding, CI, linting or test runners: the template has them. Its acceptance
+  tests are Gherkin features named after the ticket key. Its app roles are `Admin` and `User`;
+  when the PRD defines other roles, plan a work order that changes them as the conventions'
+  Roles section describes, before the work orders that rely on them.
+
 - When `input.design_refs` is present, every WO that builds or changes UI lists
   the design references it implements in its Context Graph as
   `- Design: D1, D3` (ids from `input.design_refs`, nothing else). The coding

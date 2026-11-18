@@ -31,6 +31,63 @@ jobs:
       - name: Scan repository history
         run: gitleaks git . --no-banner --redact
 
+  # Repository templates (templates/): each must stay a passing repository, since the harness
+  # copies it as is into empty project repositories.
+  template-node-api:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: templates/node-api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://app:app@localhost:5432/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: templates/node-api/.nvmrc
+          cache: npm
+          cache-dependency-path: templates/node-api/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: OpenAPI is up to date
+        run: npm run openapi && git diff --exit-code openapi.json
+      - run: npm run build
+      - run: npm run test:bdd
+
+  template-react-web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: templates/react-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: templates/react-web/.nvmrc
+          cache: npm
+          cache-dependency-path: templates/react-web/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: cp .env.example .env.production.local && npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:bdd
+
   admin-ui:
     runs-on: ubuntu-latest
     defaults:
