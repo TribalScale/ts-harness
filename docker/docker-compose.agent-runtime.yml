@@ -62,6 +62,9 @@ services:
       TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
       # Chat attachments (docs/runbooks/intake-sources.md). Shared with workflow-runner.
       TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
+      # Text kept per request source and in total (docs/runbooks/intake-sources.md).
+      TS_HARNESS_INTAKE_MAX_DOC_CHARS: ${TS_HARNESS_INTAKE_MAX_DOC_CHARS:-}
+      TS_HARNESS_INTAKE_MAX_TOTAL_CHARS: ${TS_HARNESS_INTAKE_MAX_TOTAL_CHARS:-}
       TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       TS_HARNESS_SESSION_DB_URL: ${TS_HARNESS_SESSION_DB_URL:-}
@@ -161,6 +164,9 @@ services:
       TS_HARNESS_WORKSPACE_BUCKET: ${TS_HARNESS_WORKSPACE_BUCKET:-}
       # Chat attachments (docs/runbooks/intake-sources.md). Shared with workflow-runner.
       TS_HARNESS_INTAKE_BUCKET: ${TS_HARNESS_INTAKE_BUCKET:-}
+      # Text kept per request source and in total (docs/runbooks/intake-sources.md).
+      TS_HARNESS_INTAKE_MAX_DOC_CHARS: ${TS_HARNESS_INTAKE_MAX_DOC_CHARS:-}
+      TS_HARNESS_INTAKE_MAX_TOTAL_CHARS: ${TS_HARNESS_INTAKE_MAX_TOTAL_CHARS:-}
       TS_HARNESS_MIRROR_DIR: /var/lib/ts-harness/mirror
       TS_HARNESS_SCRATCH_DIR: /var/tmp/ts-harness
       SANDBOX_STRICT: "true"

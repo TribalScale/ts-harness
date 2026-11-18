@@ -300,6 +300,16 @@
           "type": "string",
           "description": "Model that reads images attached to requests (provider/model). Blank uses the stage agent's model; off turns image reading off."
         },
+        "intake_max_doc_chars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Characters of text kept from one request source. 0 uses the default (300000)."
+        },
+        "intake_max_total_chars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Characters of text kept across a request's sources. 0 uses the default (400000)."
+        },
         "agent_timezone": { "type": "string", "minLength": 1 },
         "implement_work_orders_repo_url": { "type": "string" },
         "implement_work_orders_base_branch": { "type": "string" },

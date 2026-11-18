@@ -140,7 +140,7 @@ def resolve_reply_sources(
     """Read a reply's attachments now (half the text budget, 60 s) and return the markdown."""
     from ts_harness.intake import connectors
     from ts_harness.intake.resolve import resolve_intake_sources
-    from ts_harness.intake.sources import MAX_TOTAL_TEXT_CHARS
+    from ts_harness.intake.sources import max_total_chars
 
     agent_id = drive_agent_for(workflow_type)
     capped = apply_arrival_caps(pointers)
@@ -152,7 +152,7 @@ def resolve_reply_sources(
         drive=connectors.build_drive(tenant_id=tenant_id, agent_id=agent_id) if needs_drive else None,
         describe_image=connectors.build_image_describer(agent_id=agent_id, scope={"tenant": tenant_id, "agent": agent_id}),
         deadline_s=REPLY_DEADLINE_SECONDS,
-        max_total_text=MAX_TOTAL_TEXT_CHARS // 2,
+        max_total_text=max_total_chars() // 2,
     )
     return str(result.get("sources_text") or "")
 

@@ -14,6 +14,8 @@ Any pointer may carry ``error``; it is then reported at gather, not fetched.
 
 from __future__ import annotations
 
+import os
+
 import io
 import mimetypes
 import re
@@ -24,8 +26,32 @@ from xml.etree import ElementTree
 MAX_POINTERS = 25
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_TOTAL_BYTES = 80 * 1024 * 1024
-MAX_TEXT_CHARS = 80_000
-MAX_TOTAL_TEXT_CHARS = 150_000
+# Text kept per source and across a request's sources. A rules document for a whole plant
+# runs to ~275k characters; the earlier 80k/150k cut such a document at its fourth section.
+# Override with TS_HARNESS_INTAKE_MAX_DOC_CHARS / TS_HARNESS_INTAKE_MAX_TOTAL_CHARS.
+MAX_TEXT_CHARS = 300_000
+MAX_TOTAL_TEXT_CHARS = 400_000
+DOC_CHARS_ENV = "TS_HARNESS_INTAKE_MAX_DOC_CHARS"
+TOTAL_CHARS_ENV = "TS_HARNESS_INTAKE_MAX_TOTAL_CHARS"
+
+
+def _env_chars(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip().replace("_", "")
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def max_doc_chars() -> int:
+    """Characters kept from one source (``TS_HARNESS_INTAKE_MAX_DOC_CHARS``, default 300,000)."""
+    return _env_chars(DOC_CHARS_ENV, MAX_TEXT_CHARS)
+
+
+def max_total_chars() -> int:
+    """Characters kept across a request's sources (``TS_HARNESS_INTAKE_MAX_TOTAL_CHARS``, default 400,000)."""
+    return _env_chars(TOTAL_CHARS_ENV, MAX_TOTAL_TEXT_CHARS)
 MAX_FOLDER_CHILDREN = 50
 INTAKE_RETENTION_DAYS = 14
 
@@ -78,7 +104,8 @@ def _result(text: str = "", *, truncated: bool = False, error: str | None = None
     return {"text": text, "truncated": truncated, "error": error, "needs_vision": needs_vision}
 
 
-def clip_text(text: str, limit: int = MAX_TEXT_CHARS) -> tuple[str, bool]:
+def clip_text(text: str, limit: int | None = None) -> tuple[str, bool]:
+    limit = max_doc_chars() if limit is None else limit
     if len(text) <= limit:
         return text, False
     return text[:limit], True
@@ -284,7 +311,8 @@ def _pdf_text(data: bytes, limit: int) -> tuple[str, bool]:
     return clip_text("\n\n".join(pages).strip(), limit)
 
 
-def extract_document(name: str, mime: str | None, data: bytes, *, limit: int = MAX_TEXT_CHARS) -> ExtractResult:
+def extract_document(name: str, mime: str | None, data: bytes, *, limit: int | None = None) -> ExtractResult:
+    limit = max_doc_chars() if limit is None else limit
     """Text from ``data``; images ask for vision; unreadable or unknown types set ``error``."""
     kind = guess_mime(name, mime)
     if kind.startswith("image/"):

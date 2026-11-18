@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
 from ts_harness.intake.resolve import (
     DRIVE_FOLDER_MIME,
@@ -155,6 +157,29 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(sum(len(s["text"]) for s in texts), 150_000)
         self.assertTrue(texts[2]["truncated"])
         self.assertEqual(out["skipped"], [{"name": "f.txt", "reason": "text budget reached"}])
+
+    def test_text_limits_default_high_and_follow_their_settings(self):
+        # A plant's rules document (~275k characters) was cut at its fourth section by 80k/150k.
+        from ts_harness.intake import sources as intake_sources
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(intake_sources.DOC_CHARS_ENV, None)
+            os.environ.pop(intake_sources.TOTAL_CHARS_ENV, None)
+            self.assertEqual((intake_sources.max_doc_chars(), intake_sources.max_total_chars()), (300_000, 400_000))
+            table = {"big": ("rules.txt", "text/plain", b"r" * 275_000)}
+            out = resolve_intake_sources([_stored("big", 275_000)], download=_download_from(table), drive=None,
+                                         describe_image=None)
+            self.assertEqual(len(out["sources"][0]["text"]), 275_000)
+            self.assertFalse(out["sources"][0]["truncated"])
+        with mock.patch.dict(os.environ, {intake_sources.DOC_CHARS_ENV: "1_000", intake_sources.TOTAL_CHARS_ENV: "5000"}):
+            self.assertEqual((intake_sources.max_doc_chars(), intake_sources.max_total_chars()), (1_000, 5_000))
+            table = {"big": ("rules.txt", "text/plain", b"r" * 2_000)}
+            out = resolve_intake_sources([_stored("big", 2_000)], download=_download_from(table), drive=None,
+                                         describe_image=None)
+            self.assertEqual(len(out["sources"][0]["text"]), 1_000)
+            self.assertIn("Tell the requester which source was cut", out["sources_text"])
+        with mock.patch.dict(os.environ, {intake_sources.DOC_CHARS_ENV: "nonsense", intake_sources.TOTAL_CHARS_ENV: "0"}):
+            self.assertEqual((intake_sources.max_doc_chars(), intake_sources.max_total_chars()), (300_000, 400_000))
 
     def test_per_file_cap_from_the_declared_size(self):
         calls: list = []

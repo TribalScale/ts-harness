@@ -470,6 +470,18 @@ variable "intake_vision_model" {
   default     = ""
 }
 
+variable "intake_max_doc_chars" {
+  description = "Characters of text kept from one request source (attachment, Drive doc). 0 uses the default, 300000."
+  type        = number
+  default     = 0
+}
+
+variable "intake_max_total_chars" {
+  description = "Characters of text kept across a request's sources. 0 uses the default, 400000."
+  type        = number
+  default     = 0
+}
+
 variable "embeddings_dimensions" {
   description = "Output dimensionality. MUST equal the vector() width in database/migrations/001_init_memory.sql (currently 1536)."
   type        = number

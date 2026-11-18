@@ -45,14 +45,23 @@ from the person's text only, never from a file.
 | Attachments per program | 25 (a Drive folder counts as 1) |
 | Per file | 20 MB |
 | Total bytes per program | 80 MB |
-| Text per source | 80,000 characters |
-| Text per gather | 150,000 characters (75,000 for a reply) |
+| Text per source | 300,000 characters, `TS_HARNESS_INTAKE_MAX_DOC_CHARS` |
+| Text per gather | 400,000 characters (half for a reply), `TS_HARNESS_INTAKE_MAX_TOTAL_CHARS` |
 | Drive folder | one level, first 50 files; subfolders are listed as not read |
 | Time | 120 s per gather, 60 s per reply |
 | Image sent to the model | 5 MB |
 | JSON request bodies (any route except uploads) | 10 MB, `TS_HARNESS_MAX_JSON_BODY_BYTES` |
 
-Over-cap files are reported to the requester; they are not silently dropped.
+Over-cap files are reported to the requester; they are not silently dropped. A source cut at
+the text limit is marked in what the agents read, and the intake agent tells the requester which
+source was cut and where.
+
+Set the two text limits with `intake_max_doc_chars` and `intake_max_total_chars` in
+`terraform.tfvars` (or `runtime.intake_max_doc_chars` / `runtime.intake_max_total_chars` in the
+install YAML); `0` keeps the default. They reach the workflow runner and agent-runtime through
+the runtime-config store ([Runtime config store](runtime-config.md)): apply Terraform, then
+redeploy. 300,000 characters is about 75,000 tokens; both PRD intake steps read the sources, so
+raising the limit raises their cost.
 
 ## Google Drive access
 

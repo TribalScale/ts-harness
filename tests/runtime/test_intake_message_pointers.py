@@ -179,7 +179,7 @@ class SessionHoldTests(_StoreCase):
             _s, text, _n, sources = self._collect(session, {}, text=f"see {DOC}")
         self.assertEqual(sources, "## Shared sources\nrfp body\n")
         self.assertEqual(calls["deadline_s"], 60.0)
-        self.assertEqual(calls["max_total_text"], 75_000)
+        self.assertEqual(calls["max_total_text"], 200_000)
         build_drive.assert_called_once_with(tenant_id="default", agent_id="sales-agent")
         with mock.patch("ts_harness.intake.resolve.resolve_intake_sources", side_effect=RuntimeError("down")):
             _s, text, _n, sources = self._collect(session, {"attachments": [self._stored()]}, text="")
