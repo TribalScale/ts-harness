@@ -339,7 +339,10 @@ def resolve_intake_sources(
                                    error=str(pointer["error"])))
             continue
         reason = budget.stop_reason()
-        if reason:
+        # A request can carry several Figma links, and a large page takes minutes to read the
+        # first time. Figma requests have their own timeouts, and what a link gives is frames
+        # (images and links), not document text, so neither budget skips one.
+        if reason and kind != "figma":
             skipped.append({"name": name, "reason": reason})
             continue
         try:
@@ -357,6 +360,13 @@ def resolve_intake_sources(
             logger.warning("intake source %s (%s) failed: %s", name, kind, exc)
             sources.append(_record(kind, name, url=str(pointer.get("url") or ""), error="file could not be read"))
     refs = number_refs(design_refs)
+    dropped = _over_cap(design_refs, refs)
+    if dropped:
+        skipped.append({
+            "name": "Design frames",
+            "reason": f"{dropped} more frame(s) across the links were not kept: the limit is {len(refs)} "
+            "per request (TS_HARNESS_MAX_DESIGN_REFS). Link fewer pages, or sections",
+        })
     text = render_sources_text(sources, skipped)
     if refs:
         text = (text + "\n" if text else "") + render_design_refs(refs)
@@ -387,3 +397,12 @@ def render_sources_text(sources: list[dict[str, Any]], skipped: list[dict[str, s
         lines.extend(f"- {item['name']}: {item['reason']}" for item in skipped)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _over_cap(found: list[dict[str, Any]], kept: list[dict[str, Any]]) -> int:
+    """Distinct references found beyond the ones ``number_refs`` kept."""
+    from ts_harness.intake.design import _identity
+
+    distinct = {_identity(ref) for ref in found if str(ref.get("object_key") or "")}
+    return max(0, len(distinct) - len(kept))
+
