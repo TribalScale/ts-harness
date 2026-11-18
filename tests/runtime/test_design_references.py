@@ -219,6 +219,38 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNone(record["error"])
         self.assertIn("Checkout / Done", record["text"])
 
+    def test_several_figma_links_are_all_read_and_overlaps_kept_once(self):
+        def frames_of(pointer):
+            nodes = {"0:1": ["1:1", "1:2", "1:3"], "1:2": ["1:2"], "5:5": ["5:1", "5:2"]}[pointer["node_id"]]
+            return [{"title": f"Frame {n}", "source": "figma", "url": f"https://www.figma.com/design/{pointer['file_key']}/?node-id={n}",
+                     "object_key": f"design/t1/{n}.png", "figma": {"file_key": pointer["file_key"], "node_id": n}} for n in nodes]
+
+        ticks = iter(range(0, 10_000, 100))  # every source finds the time budget spent
+        out = self.resolve(
+            [figma_pointer("https://www.figma.com/design/PageA000000001/A?node-id=0-1"),
+             figma_pointer("https://www.figma.com/design/PageA000000001/A?node-id=1-2"),
+             figma_pointer("https://www.figma.com/design/PageB000000002/B?node-id=5-5")],
+            figma=frames_of, deadline_s=50, clock=lambda: next(ticks),
+        )
+        self.assertEqual([(r["id"], r["figma"]["node_id"]) for r in out["design_refs"]],
+                         [("D1", "1:1"), ("D2", "1:2"), ("D3", "1:3"), ("D4", "5:1"), ("D5", "5:2")])
+        self.assertEqual(out["skipped"], [])
+
+    def test_frames_over_the_total_cap_are_reported(self):
+        def frames_of(pointer):
+            return [{"title": f"F{i}", "source": "figma", "object_key": f"design/t1/{pointer['node_id']}-{i}.png",
+                     "figma": {"file_key": "K", "node_id": f"{pointer['node_id']}:{i}"}} for i in range(3)]
+
+        with unittest.mock.patch.dict("os.environ", {"TS_HARNESS_MAX_DESIGN_REFS": "4"}):
+            out = self.resolve(
+                [figma_pointer("https://www.figma.com/design/PageA000000001/A?node-id=1-1"),
+                 figma_pointer("https://www.figma.com/design/PageA000000001/A?node-id=2-2")],
+                figma=frames_of,
+            )
+        self.assertEqual(len(out["design_refs"]), 4)
+        self.assertEqual(out["skipped"][0]["name"], "Design frames")
+        self.assertIn("2 more frame(s)", out["skipped"][0]["reason"])
+
     def test_figma_without_token_is_an_error_record_not_a_failure(self):
         out = self.resolve(
             [figma_pointer("https://www.figma.com/file/ZZZZZZZZZZZZ/Name")],
