@@ -61,6 +61,7 @@ ORDER=(
   044_knowledge_notes.sql
   045_program_may_end_audit.sql
   046_llm_usage_agent.sql
+  047_project_bdd_mode.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

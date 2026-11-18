@@ -96,6 +96,7 @@ class CatalogTests(unittest.TestCase):
     def test_render_fills_in_the_project_and_marks_the_template(self):
         files = rb.render(TEMPLATES["node-api"], repo_name="Acme-API-Test", title="Acme Test")
         self.assertNotIn("template.json", files)
+        self.assertFalse([p for p in files if p.startswith(("node_modules/", ".features-gen/", "test-results/", "coverage/"))])
         self.assertEqual(json.loads(files["package.json"])["name"], "acme-api-test")
         lock = json.loads(files["package-lock.json"])
         self.assertEqual((lock["name"], lock["packages"][""]["name"]), ("acme-api-test", "acme-api-test"))

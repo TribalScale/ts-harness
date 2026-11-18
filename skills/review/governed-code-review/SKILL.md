@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.4.0
+version: 1.5.0
 ---
 
 # Governed Code Review
@@ -68,7 +68,7 @@ Then:
 | `correctness` | Logic matches the work order's requirements, edge cases, null safety, error handling, off-by-one, concurrency |
 | `security` | No secrets, input validation, injection, authn/authz checks, unsafe deserialization, OWASP top 10 |
 | `scope` | Changes stay inside In Scope; nothing from Out of Scope; no unrelated refactors |
-| `tests` | New behaviour has meaningful tests; assertions check outcomes; no flaky patterns |
+| `tests` | New behaviour has meaningful tests; assertions check outcomes; no flaky patterns. Unit tests for new logic, acceptance tests for each criterion (see below) |
 | `maintainability` | Naming, dead code, duplication, following the repo's existing patterns |
 
 ## Severity
@@ -82,6 +82,21 @@ Then:
 
 A `blocker` in any category, or a `major` in `correctness`, `security` or
 `scope`, blocks the PR and sends it back to the dev agent with your findings.
+
+Unit tests for new logic, in a repository with a unit test runner:
+
+- New or changed business logic (a service method, a calculation, a validation
+  rule, a state or branch in a UI component) with **no** unit test exercising it
+  is a `blocker` `tests` finding. Name the function and the cases to test.
+  Acceptance tests (BDD scenarios, end-to-end tests) do not replace these: they
+  prove the criterion end to end, unit tests cover the rules and edge cases.
+- Logic that has tests for its normal case but not for an error or branch the
+  change adds (a thrown not-found, a refused duplicate, an empty or error state)
+  is a `major` `tests` finding naming the missing case.
+- When the repository's `AGENTS.md` (or similar contributor guide) sets test
+  rules, such as coverage thresholds or where tests live, hold the change to them.
+- Plumbing with no logic of its own (wiring, configuration, generated code,
+  pure markup) needs no unit test.
 
 Calibrate `correctness` against the work order, not your preferences:
 

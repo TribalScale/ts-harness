@@ -11,8 +11,9 @@ repository from a tested template kept in this repo (`templates/`).
 | `react-web` | web, frontend, ui, spa, app | React 19, Vite, Entra ID sign-in (MSAL), typed client from the API's `openapi.json`, Tailwind, Vitest, Gherkin via Playwright, CI, Docker |
 
 Both come with an `AGENTS.md` (the conventions coding agents follow), a reference module with
-unit and BDD tests, GitHub Actions CI with the jobs `checks`, `bdd` and `docker`, and the app
-roles `Admin` and `User`.
+unit and BDD tests, unit-test coverage thresholds in `npm test` (80% of lines of the code that
+holds logic), GitHub Actions CI with the jobs `checks`, `bdd` and `docker`, and the app roles
+`Admin` and `User`. See [testing-policy.md](testing-policy.md) for how tickets are tested.
 
 ## How it works
 

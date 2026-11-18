@@ -97,6 +97,20 @@ Given ... When ... Then ...
   when the PRD defines other roles, plan a work order that changes them as the conventions'
   Roles section describes, before the work orders that rely on them.
 
+- A repository in `input.project_repositories` with `ci_on_pull_requests: false` has code
+  but no CI on pull requests. Plan one work order for it first, "Add CI to <repo>": a GitHub
+  Actions workflow on `pull_request` into its base branch that runs what the repository has
+  (install, lint, type check, unit tests, its BDD or integration suite, build), and the line
+  `require_ci_checks: true` in its `.ts-harness.yml` (create the file if needed), so TS
+  Harness makes the jobs required checks once it merges. Every other work order for that
+  repository depends on it.
+
+- Testing: each repository in `input.project_repositories` carries `bdd` (true or false),
+  decided for this program. TS Harness adds a `## Tests` section to each work order from it
+  (`BDD: required` or `BDD: off`); write acceptance tests to match: Given/When/Then criteria
+  either way, and unit tests for every rule with its error cases. When `bdd` is true and
+  `has_gherkin_runner` is false, the repository's first work order also adds a Gherkin runner.
+
 - When `input.design_refs` is present, every WO that builds or changes UI lists
   the design references it implements in its Context Graph as
   `- Design: D1, D3` (ids from `input.design_refs`, nothing else). The coding

@@ -72,8 +72,11 @@ and this section. Role names must match the API's and Entra ID's.
   see). Seed data with `Given the API has <table>:` and a data table. When a page calls an
   endpoint the fake API does not know, extend `FakeApi` in `features/support/fixtures.ts` with
   the backend's real paths, bodies and error shape.
-- **Unit (CI).** Components with logic get Testing Library tests with MSW handlers for the API
-  (`server.use(http.get(...))`), including error states.
+- **Unit (CI).** Pages and components with logic get Testing Library tests with MSW handlers
+  for the API (`server.use(http.get(...))`): the normal case, loading, empty and error states.
+  `npm test` enforces at least 80% line coverage of `src/features` and `src/components` (75% of
+  branches); a change that adds UI logic without tests fails it. The Gherkin suite covers whole
+  journeys in a browser; unit tests cover the states and edge cases.
 - Run locally: `npm test`, and `npx playwright install chromium` once, then `npm run test:bdd`.
 
 ## Commands

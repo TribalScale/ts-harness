@@ -281,14 +281,15 @@ class RelatedTestsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(Path(tmp), 130)
             command = related_tests_command(repo, ["src/stats.tsx", "README.md"])
-            self.assertEqual(command[1:], ["related", "--run", "src/stats.tsx"])
+            # Coverage off: thresholds measure the full suite, which CI runs.
+            self.assertEqual(command[1:], ["related", "--run", "--coverage.enabled=false", "src/stats.tsx"])
 
     def test_large_jest_repo_and_small_repos(self):
         from ts_harness.implementation.verification import related_tests_command
 
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(Path(tmp), 130, runner="jest")
-            self.assertEqual(related_tests_command(repo, ["src/stats.tsx"])[1:], ["--findRelatedTests", "src/stats.tsx", "--passWithNoTests"])
+            self.assertEqual(related_tests_command(repo, ["src/stats.tsx"])[1:], ["--coverage=false", "--findRelatedTests", "src/stats.tsx", "--passWithNoTests"])
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(related_tests_command(self._repo(Path(tmp), 10), ["src/stats.tsx"]))
 

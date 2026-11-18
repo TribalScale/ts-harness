@@ -406,6 +406,8 @@ export interface Project {
   team_slug: string | null;
   jira_project_key: string | null;
   default_base_branch: string | null;
+  /** Gherkin acceptance tests: auto (repos with no tests or already using Gherkin), always, never. */
+  bdd_mode?: "auto" | "always" | "never";
   worker_cpu: number | null;
   worker_memory_mb: number | null;
   can_manage?: boolean;

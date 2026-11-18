@@ -208,8 +208,57 @@ def _project_repository(memory: Any, *, tenant_id: str, jira_project: str, repo_
     wanted = repo_url.rstrip("/").removesuffix(".git").lower()
     for repo in (found.get("repositories") if isinstance(found, dict) else None) or []:
         if isinstance(repo, dict) and wanted.endswith("/" + str(repo.get("full_name") or "").lower()):
-            return str(project.get("name") or ""), repo
+            return str(project.get("name") or ""), {**repo, "bdd_mode": project.get("bdd_mode") or "auto"}
     return str(project.get("name") or ""), {}
+
+
+def _with_test_policy(
+    body: str,
+    memory: Any,
+    *,
+    tenant_id: str,
+    jira_project: str,
+    repo_url: str,
+    owner_repositories: list[dict[str, Any]],
+    warnings: list[str],
+    inspect_repo: Callable[..., Any] | None,
+) -> str:
+    """``body`` with a ``## Tests`` section (``BDD: required|off``) when it has none.
+
+    A ticket filed from a program carries its work order's section; one filed without it (or
+    written by hand) gets the decision its program made for the repository, else the project's
+    setting applied to the repository as it is now (workflows/bdd_policy.py).
+    """
+    from ts_harness.workflows import bdd_policy
+
+    if bdd_policy.marker(body) is not None:
+        return body
+    wanted = repo_url.rstrip("/").removesuffix(".git").lower()
+    entry = next((r for r in owner_repositories if wanted.endswith("/" + str(r.get("full_name") or "").lower())), None)
+    if entry is None or bdd_policy.repository_policy(entry) is None:
+        try:
+            _name, repository = _project_repository(memory, tenant_id=tenant_id, jira_project=jira_project, repo_url=repo_url)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"test policy lookup failed: {exc}")
+            return body
+        if not repository:
+            return body
+        try:
+            if inspect_repo is not None:
+                found = inspect_repo([repository])
+            else:
+                from ts_harness.integrations.github_client import github_for
+                from ts_harness.workflows.repo_bootstrap import annotate_repositories
+
+                found = annotate_repositories(github_for(repo_url), [repository])
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"test policy check failed: {exc}")
+            return body
+        entry = found[0] if found else None
+    if entry is None or bdd_policy.repository_policy(entry) is None:
+        return body
+    use = bool(entry["bdd"])
+    return body.rstrip() + "\n\n" + bdd_policy.tests_section(use, needs_runner=use and not entry.get("has_gherkin_runner"))
 
 
 def _ensure_repository_ready(
@@ -255,6 +304,7 @@ def prepare_ticket_delivery(
     inspect: Callable[..., Any] | None = None,
     configured: tuple[str, str] | None = None,
     ready: Callable[..., Any] | None = None,
+    inspect_repo: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Read the ticket from Jira and resolve everything the coding job needs.
 
@@ -318,6 +368,7 @@ def prepare_ticket_delivery(
 
     # The program the ticket was filed from (Program: line), else the program running it.
     owner = str(pointer.program_id or "")
+    owner_repositories: list[dict[str, Any]] = []
     planning: dict[str, Any] = {}
     refs: list[dict[str, Any]] = []
     try:
@@ -326,6 +377,7 @@ def prepare_ticket_delivery(
             refs = [r for r in artifacts.get("design_refs") or [] if isinstance(r, dict) and r.get("id")]
             planning = {k: artifacts[k] for k in ("refinery_artifacts", "foundry_artifacts", "planner_artifacts") if artifacts.get(k)}
             body = _with_work_order_design(body, artifacts, pointer.work_order_id, refs)
+            owner_repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
         if not refs:
             refs = _program_design_refs(memory, str(task.get("id") or ""))
     except Exception as exc:  # noqa: BLE001
@@ -345,6 +397,9 @@ def prepare_ticket_delivery(
         program_keys = {str(ref.get("object_key")) for ref in refs}
         refs = number_refs([*refs, *attached])[: max_design_refs()]
         body = _with_design_line(body, [str(r["id"]) for r in refs if str(r.get("object_key")) not in program_keys])
+
+    # How the ticket is tested: its program's decision for the repository, else the project setting.
+    body = _with_test_policy(body, memory, tenant_id=tenant_id, jira_project=key.split("-", 1)[0], repo_url=repo_url, owner_repositories=owner_repositories, warnings=warnings, inspect_repo=inspect_repo)
 
     onboarding: dict[str, Any] = {"checked": False}
     try:

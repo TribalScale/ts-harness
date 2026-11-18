@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { API, server } from '../../test/server';
@@ -23,6 +23,51 @@ describe('NotesPage', () => {
     );
     renderWithProviders(<NotesPage />);
     expect(await screen.findByRole('heading', { name: 'Shift handover' })).toBeInTheDocument();
+  });
+
+  it('adds a note and clears the form', async () => {
+    const notes: ReturnType<typeof note>[] = [];
+    server.use(
+      http.get(`${API}/notes`, () =>
+        HttpResponse.json({ data: notes, page: 1, limit: 50, total: notes.length }),
+      ),
+      http.post(`${API}/notes`, async ({ request }) => {
+        const body = (await request.json()) as { title: string; body: string };
+        const created = { ...note(body.title), body: body.body };
+        notes.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
+    renderWithProviders(<NotesPage />);
+    await userEvent.type(screen.getByLabelText('Title'), 'Weekly plan');
+    await userEvent.type(screen.getByLabelText('Body'), 'Line 3 first');
+    await userEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(await screen.findByRole('heading', { name: 'Weekly plan' })).toBeInTheDocument();
+    expect(screen.getByText('Line 3 first')).toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+  });
+
+  it('searches notes by title', async () => {
+    let search: string | null = null;
+    server.use(
+      http.get(`${API}/notes`, ({ request }) => {
+        search = new URL(request.url).searchParams.get('search');
+        return HttpResponse.json({ data: [], page: 1, limit: 50, total: 0 });
+      }),
+    );
+    renderWithProviders(<NotesPage />);
+    await userEvent.type(screen.getByLabelText('Search notes'), 'plan');
+    await waitFor(() => expect(search).toBe('plan'));
+  });
+
+  it('says when notes cannot be loaded', async () => {
+    server.use(
+      http.get(`${API}/notes`, () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'x' } }, { status: 500 }),
+      ),
+    );
+    renderWithProviders(<NotesPage />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Notes could not be loaded.');
   });
 
   it('shows the API error when a note cannot be saved', async () => {

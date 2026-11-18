@@ -807,9 +807,11 @@ class DeliveryProgramService:
             markdown = outputs["artifacts"].get("work_orders_markdown")
         if markdown:
             from ts_harness.intake.design import link_design_refs
+            from ts_harness.workflows.bdd_policy import with_tests_sections
 
-            artifact_patch["work_orders_markdown"] = link_design_refs(
-                str(markdown), (existing_artifacts or {}).get("design_refs")
+            artifact_patch["work_orders_markdown"] = with_tests_sections(
+                link_design_refs(str(markdown), (existing_artifacts or {}).get("design_refs")),
+                (existing_artifacts or {}).get("project_repositories"),
             )
 
         if workflow_type == "work_orders_from_prd":
