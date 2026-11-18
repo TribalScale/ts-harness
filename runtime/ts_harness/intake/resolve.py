@@ -259,6 +259,9 @@ def _resolve_figma(
     except FigmaError as exc:
         sources.append(_record("figma", name, url=url, error=str(exc)))
         return
+    except Exception as exc:  # noqa: BLE001 - a Figma failure must not stop the other sources
+        sources.append(_record("figma", name, url=url, error=f"Figma could not be read: {str(exc)[:200]}"))
+        return
     text, truncated = clip_text("\n\n".join(str(ref.get("summary") or "") for ref in refs), budget.text_left())
     budget.text_used += len(text)
     record = _record("figma", name, url=url, mime="image/png", text=text, truncated=truncated)

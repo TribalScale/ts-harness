@@ -411,3 +411,76 @@ class AgentImageLabelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _frame(i: int) -> dict:
+    return {"id": f"9:{i}", "name": f"Screen {i}", "type": "FRAME", "absoluteBoundingBox": {"width": 1440, "height": 900}, "children": []}
+
+
+class FigmaPageTests(unittest.TestCase):
+    """A page link: sections open down to their screens; frames render one per request."""
+
+    PAGE = {"id": "0:1", "name": "Hub", "type": "CANVAS", "children": [
+        {"id": "1:1", "name": "Hub screens", "type": "SECTION", "children": [
+            {"id": "1:2", "name": "Schedule", "type": "SECTION", "children": [_frame(1), _frame(2)]},
+            {"id": "1:3", "name": "Holds", "type": "SECTION", "children": [_frame(3), {**_frame(99), "visible": False}]},
+        ]},
+        _frame(4),
+    ]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = LocalObjectStore(self.tmp.name)
+        self.render_calls: list[str] = []
+        self.fail_ids: set[str] = set()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.url.host == "figma-alpha-api.s3.us-west-2.amazonaws.com":
+            return httpx.Response(200, content=PNG + path.encode())
+        if path.endswith("/nodes"):
+            ids = request.url.params["ids"]
+            if ids == "0:1":
+                self.assertEqual(request.url.params.get("depth"), "5")
+                return httpx.Response(200, json={"version": "v7", "nodes": {"0:1": {"document": self.PAGE}}})
+            return httpx.Response(200, json={"version": "v7", "nodes": {i: {"document": _frame(int(i.split(":")[1]))} for i in ids.split(",")}})
+        if path.startswith("/v1/images/"):
+            ids = request.url.params["ids"].split(",")
+            self.render_calls.append(",".join(ids))
+            if set(ids) & self.fail_ids:
+                raise httpx.ReadTimeout("slow", request=request)
+            return httpx.Response(200, json={"err": None, "images": {i: f"https://figma-alpha-api.s3.us-west-2.amazonaws.com/img/{i}.png" for i in ids}})
+        return httpx.Response(404)
+
+    def frames(self):
+        client = FigmaClient("figd_test", http=httpx.Client(transport=httpx.MockTransport(self.handler)))
+        source = FigmaSource(client, self.store, tenant_id="default")
+        return source.frames(figma_pointer("https://www.figma.com/design/Gq3CTOQ6W2wksKcCBPdJ4a/MVP?node-id=0-1"))
+
+    def test_page_opens_nested_sections_to_screens_in_order(self):
+        refs = self.frames()
+        self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 2", "Screen 3", "Screen 4"])
+        self.assertEqual(sorted(self.render_calls), ["9:1", "9:2", "9:3", "9:4"])
+        self.assertNotIn("Note:", refs[0]["summary"])
+
+    def test_one_slow_frame_is_noted_and_the_rest_are_read(self):
+        self.fail_ids = {"9:2"}
+        refs = self.frames()
+        self.assertEqual([r["title"] for r in refs], ["Screen 1", "Screen 3", "Screen 4"])
+        self.assertIn("Screen 2: Figma did not answer in time", refs[0]["summary"])
+
+    def test_every_frame_failing_is_a_figma_error(self):
+        from ts_harness.intake.figma import FigmaError
+
+        self.fail_ids = {"9:1", "9:2", "9:3", "9:4"}
+        with self.assertRaises(FigmaError):
+            self.frames()
+
+    def test_frame_cap_is_reported(self):
+        from ts_harness.intake import figma
+
+        frames, total = figma._frames_under(self.PAGE, limit=2)
+        self.assertEqual(([f["id"] for f in frames], total), (["9:1", "9:2"], 4))

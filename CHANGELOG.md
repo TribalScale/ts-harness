@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Figma page and section links read the screens inside them: sections open (however deeply nested) down to their frames, each frame renders in its own request a few at a time with a longer timeout, and a slow or failed frame is noted while the rest are read. A link with more frames than the cap (now 12) says how many it has and which were read. A Figma network failure is an intake source error, not a failed intake (a large page timed out rendering every section as one image).
 - Jira ticket status follows delivery: In Progress when coding starts, Done (with a comment linking the PR) when the PR merges (`close_ticket`, `implement_jira_ticket` 2.1.0), configurable in `program_defaults.jira_tracking`. Merged tickets stayed To Do and `implement all` would have built them again.
 - Filed work-order tickets are assigned to the requester by a deterministic step (`assign_tickets`, `file_work_orders_as_jira` 1.4.0): the filing agent's Jira tools cannot set an assignee. It reports what it assigned, and does nothing when no assignee is asked for. A chat linked to a finished workflow follows its program's active one, so a reply reaches a gate in a phase reached automatically.
 - A phase reached automatically that opens on a gate now says so in the thread (for Jira filing: how many tickets, which project or epic, assigned to whom). Programs created by promoting a chat workflow keep the requester's email too.
