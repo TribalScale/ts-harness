@@ -418,8 +418,18 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
     # The program the workflow registered gets the project picked in the chat.
     from ts_harness.gateway.chat_project import set_program_project_if_missing
 
-    started = get_session_store().get(session.session_id) or session
-    set_program_project_if_missing(started, memory=get_memory_client(), tenant_id=ctx.tenant_id, actor=ctx.agent_id)
+    # The chat is linked to the new program only after this returns: take it from the workflow.
+    try:
+        started_workflow = (get_memory_client().get_workflow(str(result.workflow_id)) or {}).get("workflow") or {}
+    except Exception:  # noqa: BLE001
+        started_workflow = {}
+    set_program_project_if_missing(
+        session,
+        memory=get_memory_client(),
+        tenant_id=ctx.tenant_id,
+        actor=ctx.agent_id,
+        program_id=str(started_workflow.get("program_id") or "") or None,
+    )
     return {
         "status": "started",
         "workflow_id": result.workflow_id,

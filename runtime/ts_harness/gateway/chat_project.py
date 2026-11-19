@@ -54,10 +54,12 @@ def apply_chat_project(session: Any, body: dict[str, Any], *, tenant_id: str, me
     return set_program_project_if_missing(session, memory=memory, tenant_id=tenant_id, actor=actor)
 
 
-def set_program_project_if_missing(session: Any, *, memory: Any, tenant_id: str, actor: str) -> str:
-    """Give the chat's program the picked project when it has none yet."""
+def set_program_project_if_missing(
+    session: Any, *, memory: Any, tenant_id: str, actor: str, program_id: str | None = None
+) -> str:
+    """Give the chat's program (or ``program_id``) the picked project when it has none yet."""
     project = held_project(session.metadata)
-    program_id = str((session.metadata or {}).get("program_id") or "")
+    program_id = str(program_id or (session.metadata or {}).get("program_id") or "")
     if not project or not program_id:
         return ""
     try:

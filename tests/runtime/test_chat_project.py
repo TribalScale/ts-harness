@@ -72,11 +72,10 @@ class ChatProjectTests(unittest.TestCase):
         memory = _memory()
 
         def start(**kwargs):
-            # Promotion registers the program and links the chat to it.
-            linked = get_session_store().get("s1")
-            linked.metadata = {**linked.metadata, "program_id": "p1"}
-            get_session_store().save(linked)
+            # Promotion registers the program; the chat is linked to it only after the start returns.
             return SimpleNamespace(workflow_id="w1", workflow_type="prd_request", first_step="gather_sources", binding_key="b", task_ids=[])
+
+        memory.get_workflow.return_value = {"workflow": {"id": "w1", "program_id": "p1"}}
 
         with mock.patch("ts_harness.tools.workflow_tools.WorkflowPromotionService") as service, \
                 mock.patch("ts_harness.tools.workflow_tools.get_memory_client", return_value=memory):
