@@ -297,9 +297,11 @@ def render_for_agents(specs: list[dict[str, Any]]) -> str:
         for label, key in (("Purpose", "purpose"), ("Users", "users")):
             if spec.get(key):
                 lines.append(f"- {label}: {spec[key]}")
-        for label, key in (("Layout", "layout"), ("Components", "components"), ("States shown", "states")):
+        # Layout and components are what the frames show (agents also get the images and the
+        # frame text): a few items each keep prompts small. The full lists are in the document.
+        for label, key, limit in (("Layout", "layout", 4), ("Components", "components", 6), ("States shown", "states", _LIST_LIMIT)):
             if spec.get(key):
-                lines.append(f"- {label}: " + "; ".join(spec[key]))
+                lines.append(f"- {label}: " + "; ".join(spec[key][:limit]))
         if spec.get("data_shown"):
             lines.append("- Data shown: " + "; ".join(f"{d['field']} (e.g. {d['example']})" for d in spec["data_shown"]))
         if spec.get("actions"):
