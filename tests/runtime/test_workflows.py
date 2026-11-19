@@ -132,6 +132,7 @@ class WorkflowPromotionTests(unittest.TestCase):
             {"id": "t3"},
             {"id": "t4"},
             {"id": "t5"},
+            {"id": "t6"},
         ]
         session = SessionRecord(
             session_id="s-promote",
@@ -160,7 +161,7 @@ class WorkflowPromotionTests(unittest.TestCase):
             workflow_call["program_id"],
         )
         client.get_workflow.assert_not_called()
-        self.assertEqual(len(client.create_task.call_args_list), 5)
+        self.assertEqual(len(client.create_task.call_args_list), 6)
         saved = get_session_store().get("s-promote")
         self.assertEqual(saved.metadata.get("mode"), "workflow_linked")
         self.assertEqual(saved.metadata.get("workflow_type"), "prd_request")

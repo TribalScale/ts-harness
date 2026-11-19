@@ -49,6 +49,28 @@ def _gather_intake_sources(task: dict[str, Any], config: dict[str, Any], *, memo
     return gather_intake_sources(task, config, memory=memory)
 
 
+def _draft_screen_specs(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    """One spec per Figma screen, for the requester to correct at intake (intake/screen_specs.py)."""
+    from ts_harness.intake.screen_specs import build_describer, draft_screen_specs
+    from ts_harness.workflows.hooks._helpers import load_workflow_payload
+
+    workflow, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
+    gathered = [
+        item for item in tasks
+        if item.get("step_name") == "gather_sources" and item.get("status") == "succeeded" and isinstance(item.get("output"), dict)
+    ]
+    refs = list((gathered[-1]["output"].get("design_refs") if gathered else None) or [])
+    try:
+        from ts_harness.intake.blobs import intake_store
+
+        store = intake_store()
+    except Exception:  # noqa: BLE001 - specs are drafted from the frame text alone
+        store = None
+    agent_id = str(config.get("agent_id") or "pm-agent")
+    scope = {k: v for k, v in {"tenant": workflow.get("tenant_id"), "workflow": task.get("workflow_id"), "agent": agent_id}.items() if v}
+    return draft_screen_specs(refs, describe=build_describer(agent_id=agent_id, scope=scope) if refs else None, store=store)
+
+
 def _prepare_ticket_queue(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
     from ts_harness.jira.prepare_ticket_queue import prepare_ticket_queue
 
@@ -82,6 +104,7 @@ SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "finalize_code_review": _finalize_code_review,
     "gather_bug_context": _gather_bug_context,
     "gather_intake_sources": _gather_intake_sources,
+    "draft_screen_specs": _draft_screen_specs,
     "prepare_ticket_queue": _prepare_ticket_queue,
     "prepare_ticket_delivery": _prepare_ticket_delivery,
     "assign_filed_tickets": _assign_filed_tickets,

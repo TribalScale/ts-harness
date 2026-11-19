@@ -441,15 +441,16 @@ def prd_request_smoke() -> bool:
         from ts_harness.workflows.materialize import load_skeleton
 
         skeleton = load_skeleton("prd_request")
-        # Shared files are read before the intake agent runs.
-        if [stage.name for stage in skeleton.stages[:2]] != ["gather_sources", "intake"]:
+        # Shared files are read first; screen specs (from any Figma frames) come before intake.
+        names = [stage.name for stage in skeleton.stages]
+        if names[:3] != ["gather_sources", "draft_screen_specs", "intake"]:
             return False
 
         # In-memory store: these smokes must never write fake sessions to the live session database.
         reset_session_store(SessionStore())
         client = MagicMock()
         client.create_workflow.return_value = {"id": "wf-prd-rg"}
-        # prd_request materializes gather + intake + await + draft + approve.
+        # prd_request materializes gather + screen specs + intake + await + draft + approve.
         client.create_task.side_effect = [{"id": f"t{i}"} for i in range(8)]
         client.get_workflow.return_value = {
             "workflow": {"workflow_type": "prd_request", "source_channel": "slack:rg:1"},

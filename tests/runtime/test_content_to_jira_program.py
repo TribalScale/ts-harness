@@ -98,7 +98,7 @@ class ContentToJiraProgramTests(unittest.TestCase):
         cases = {
             "content_to_plan": ("gather_context", ["compare_codebase", "clarify", "draft_plan"], "1.4.0"),
             "bug_to_plan": ("gather_context", ["investigate", "clarify", "draft_bug"], "1.4.0"),
-            "prd_request": ("gather_sources", ["intake", "draft_prd"], "1.6.0"),
+            "prd_request": ("gather_sources", ["intake", "draft_prd"], "1.7.0"),
             "rfp_request": ("gather_sources", ["intake", "draft_rfp"], "1.2.0"),
         }
         for workflow_type, (barrier_step, consumers, version) in cases.items():
@@ -112,7 +112,9 @@ class ContentToJiraProgramTests(unittest.TestCase):
                 else:
                     self.assertEqual(barrier["hook"], "gather_intake_sources")
                     self.assertEqual(skeleton.intake_stage_name(), "intake")
-                    self.assertIn(barrier_step, skeleton.stage("intake").depends_on)
+                    # prd_request drafts screen specs from the gathered frames before intake.
+                    upstream = skeleton.stage("intake").depends_on
+                    self.assertTrue(barrier_step in upstream or upstream == ["draft_screen_specs"], upstream)
                 self.assertEqual(
                     barrier["agent_id"], "sales-agent" if workflow_type == "rfp_request" else "pm-agent"
                 )

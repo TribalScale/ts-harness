@@ -58,6 +58,33 @@ Without any designs, nothing changes.
 `design/` is kept for a year (bucket lifecycle rule), unlike `intake/` (14 days), so references
 outlive the request.
 
+## Screen specs (PRD requests)
+
+A design shows layout, copy and the states someone drew. It does not show what an action does,
+where data comes from, the rules behind a screen or how it works on a phone, so agents guessed
+those. A PRD request with Figma frames now drafts **one spec per screen** before intake
+(`draft_screen_specs` in `prd_request` 1.7.0, `runtime/ts_harness/intake/screen_specs.py`):
+
+- Frames are grouped into screens by name: the part before ` · ` or ` — ` is the screen
+  ("Hub / Schedule / 02 Week · Base" and "… · Pilot" are one screen). Name variants that way in
+  Figma.
+- For each screen, the intake vision model (`TS_HARNESS_INTAKE_VISION_MODEL`, else the stage
+  agent's model) gets up to 4 of its frame images and their text and returns what is visible
+  (purpose, layout, components, data shown, actions, states drawn) and up to 4 questions for what
+  is not, each with a recommended answer. Screens are numbered `SC1`…, questions `S1`…. Up to 40
+  screens (`TS_HARNESS_SCREEN_SPECS_MAX`), 4 at a time.
+- The specs are posted in the thread (a Google Doc when long), with each screen's frames linked.
+- Each question is rated by impact (high: data, rules, permissions, what an action does; low:
+  wording, icons). Intake drops the screen questions the sources already answer and asks at most
+  20 of the rest, highest impact first, under **Screen questions**, next to its own. Every other
+  question keeps its recommended answer unless you answer it by S-number. Answer by S-number ("S3: no, show an error"), correct a spec with
+  its SC-number ("SC2: supervisors also see this screen"), then say **ready**; "yes" accepts every
+  recommendation.
+- The draft and every revision get the specs and the answers; each screen's requirements and
+  Given/When/Then criteria come from them.
+
+Without Figma frames (or with image reading off) the step is skipped and posts nothing.
+
 ## Set up Figma
 
 Attached images need no setup. Figma links need a read-only token:
