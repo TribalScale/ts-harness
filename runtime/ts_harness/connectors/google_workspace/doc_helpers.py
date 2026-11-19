@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -14,6 +15,8 @@ _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+[.)])\s+(.*)$")
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 DOCUMENT_MIME = "application/vnd.google-apps.document"
+
+logger = logging.getLogger(__name__)
 
 
 def gw_config(runtime_config: RuntimeConfig):
@@ -198,6 +201,32 @@ def write_markdown_to_document(
         insert_plain_chunks(docs_api, document_id, body, chunk_chars)
 
 
+def _import_markdown(drive_api: Any, create_body: dict[str, Any], content: str) -> dict[str, Any] | None:
+    """Create the Doc by uploading the markdown for Drive to convert; None when that fails.
+
+    Google's own converter renders headings, bold and italics, bullet, numbered and checkbox
+    lists, tables, links and code blocks. The line-by-line writer below (the fallback) only
+    styled headings and left the rest as raw markdown.
+    """
+    body = (content or "").strip()
+    if not body:
+        return None
+    try:
+        import io
+
+        from googleapiclient.http import MediaIoBaseUpload
+
+        media = MediaIoBaseUpload(io.BytesIO(body.encode("utf-8")), mimetype="text/markdown", resumable=False)
+        return (
+            drive_api.files()
+            .create(body=create_body, media_body=media, fields="id,name,webViewLink", supportsAllDrives=True)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001 - fall back to writing the text ourselves
+        logger.warning("markdown import to Google Docs failed, writing it line by line: %s", exc)
+        return None
+
+
 def create_document_with_markdown(
     drive_api: Any,
     docs_api: Any,
@@ -222,16 +251,21 @@ def create_document_with_markdown(
     if parent_folder_id:
         create_body["parents"] = [parent_folder_id]
 
-    created = (
-        drive_api.files()
-        .create(body=create_body, fields="id,name,webViewLink", supportsAllDrives=True)
-        .execute()
-    )
+    imported = _import_markdown(drive_api, create_body, content)
+    if imported is not None:
+        created = imported
+    else:
+        created = (
+            drive_api.files()
+            .create(body=create_body, fields="id,name,webViewLink", supportsAllDrives=True)
+            .execute()
+        )
     document_id = str(created.get("id") or "")
     if not document_id:
         raise ValueError("drive create returned no document id")
 
-    write_markdown_to_document(docs_api, document_id, content, chunk_chars=chunk_chars)
+    if imported is None:
+        write_markdown_to_document(docs_api, document_id, content, chunk_chars=chunk_chars)
     return {
         "document_id": document_id,
         "document_title": created.get("name"),

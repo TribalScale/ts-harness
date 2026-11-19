@@ -252,8 +252,9 @@ routing:
   intents:
     - id: governed_prd
       workflow_type: prd_request
-      signals: ["create a prd", "create prd", "draft prd", "write a prd", "product requirements document"]
-      exclude: ["quick", "rough draft", "no approval"]
+      # "a prd" / "prd for" also catch "draft a PRD", "write a PRD for…" and a typo in the verb.
+      signals: ["create a prd", "create prd", "draft prd", "write a prd", "a prd", "prd for", "product requirements document"]
+      exclude: ["quick prd", "quick draft", "rough draft", "no approval"]
       orchestrator_hint: >
         User request requires a governed workflow. Call propose_start_workflow
         with workflow_type=prd_request. Do not call propose_delegate_task.
@@ -281,8 +282,10 @@ routing:
     - id: bug_to_jira
       program_type: bug_to_jira_work_orders
       entry_phase: bug_intake
-      signals: ["file this bug", "investigate this error", "bug report", "production incident", "fix bug", "regression", "broken", "error"]
-      exclude: ["what error", "error handling"]
+      # Phrases a bug report uses. Bare "error" and "broken" also match specifications
+      # ("error states", "the PRD will be broken into work orders") and sent PRDs here.
+      signals: ["file this bug", "report a bug", "bug report", "investigate this error", "production incident", "fix bug", "fix the bug", "regression", "is broken", "are broken", "was broken", "got broken", "getting an error", "gives an error", "throws an error", "throwing an error", "error in production", "500 error", "stack trace", "stopped working", "doesn't work", "does not work", "isn't working", "not working"]
+      exclude: ["what error", "error handling", "broken into", "broken down"]
       orchestrator_hint: >
         User wants a bug filed as one unassigned Jira Bug. Call propose_start_program
         with program_type=bug_to_jira_work_orders and entry_phase=bug_intake.

@@ -97,3 +97,50 @@ class DocPublishHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarkdownImportTests(unittest.TestCase):
+    """Docs are created by uploading markdown for Drive to convert (tables, lists, bold...)."""
+
+    MARKDOWN = "# PRD\n\n**Status:** Draft\n\n- [ ] **FR-1** One app\n\n| Role | Can |\n|---|---|\n| Admin | All |\n"
+
+    def _drive(self, *, fail_media: bool = False):
+        drive = MagicMock()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            if fail_media and "media_body" in kwargs:
+                raise RuntimeError("conversion unavailable")
+            request = MagicMock()
+            request.execute.return_value = {"id": "doc-1", "name": kwargs["body"]["name"], "webViewLink": "https://docs/x"}
+            return request
+
+        drive.files.return_value.create.side_effect = create
+        return drive, calls
+
+    def test_markdown_is_uploaded_for_drive_to_convert(self):
+        from ts_harness.connectors.google_workspace.doc_helpers import DOCUMENT_MIME, create_document_with_markdown
+
+        drive, calls = self._drive()
+        docs = MagicMock()
+        out = create_document_with_markdown(drive, docs, title="PRD", content=self.MARKDOWN, parent_folder_id="f1")
+        self.assertEqual(out["document_id"], "doc-1")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["body"], {"name": "PRD", "mimeType": DOCUMENT_MIME, "parents": ["f1"]})
+        media = calls[0]["media_body"]
+        self.assertEqual(media.mimetype(), "text/markdown")
+        self.assertEqual(media.getbytes(0, media.size()).decode(), self.MARKDOWN.strip())
+        docs.documents.return_value.batchUpdate.assert_not_called()
+
+    def test_a_failed_import_falls_back_to_writing_the_text(self):
+        from ts_harness.connectors.google_workspace.doc_helpers import create_document_with_markdown
+
+        drive, calls = self._drive(fail_media=True)
+        docs = MagicMock()
+        with self.assertLogs("ts_harness.connectors.google_workspace.doc_helpers", level="WARNING"):
+            out = create_document_with_markdown(drive, docs, title="PRD", content=self.MARKDOWN)
+        self.assertEqual(out["document_id"], "doc-1")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("media_body", calls[1])
+        docs.documents.return_value.batchUpdate.assert_called()

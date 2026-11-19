@@ -110,6 +110,19 @@ def clear_pointers(metadata: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
+def source_labels(pointers: list[dict[str, Any]]) -> list[str]:
+    """What a proposal will read, for the person confirming it: file names, then link counts."""
+    files = [str(p.get("name") or "attachment") for p in pointers if not p.get("error") and p.get("kind") not in {"drive", "figma"}]
+    docs = sum(1 for p in pointers if p.get("kind") == "drive" and not p.get("error"))
+    figma = sum(1 for p in pointers if p.get("kind") == "figma" and not p.get("error"))
+    labels = list(files)
+    if docs:
+        labels.append(f"{docs} Google Drive link{'s' if docs != 1 else ''}")
+    if figma:
+        labels.append(f"{figma} Figma link{'s' if figma != 1 else ''}")
+    return labels
+
+
 def attachment_note(pointers: list[dict[str, Any]]) -> str:
     """One line for the agent: names only, never extracted text."""
     readable = [str(p.get("name") or p.get("url") or "attachment") for p in pointers if not p.get("error")]
