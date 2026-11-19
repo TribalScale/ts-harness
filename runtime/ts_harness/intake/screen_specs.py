@@ -44,7 +44,7 @@ Return JSON only, no prose:
  "data_shown": [{{"field": "name", "example": "value shown"}}],
  "actions": [{{"control": "button, link, drag...", "appears_to": "what its label or placement suggests"}}],
  "states": ["each state shown, with its frame id (D…)"],
- "questions": [{{"question": "…?", "recommended": "a concrete answer and why, in a few words"}}]}}
+ "questions": [{{"question": "…?", "recommended": "a concrete answer and why, in a few words", "impact": "high|medium|low"}}]}}
 
 Rules:
 - Describe only what is visible in the frames. Never invent behaviour.
@@ -52,6 +52,8 @@ Rules:
   from and how fresh it is, rules and validation, who may do what, what happens on failure or with
   no data, and how the screen works on a tablet and a phone. At most {max_questions} questions,
   the most consequential first, each answerable with "yes" to accept the recommendation.
+- "impact" is how much the build changes if the recommendation is wrong: "high" for data,
+  rules, permissions, what an action does; "low" for wording, icons and tooltips.
 - At most {list_limit} items per list. Use the screen's own words for labels."""
 
 
@@ -176,9 +178,21 @@ def describe_screen(screen: dict[str, Any], *, describe: Describe, store: Any) -
         data_shown=_pairs(data.get("data_shown"), ("field", "example")),
         actions=_pairs(data.get("actions"), ("control", "appears_to")),
         states=_strings(data.get("states")),
-        questions=_pairs(data.get("questions"), ("question", "recommended"), limit=QUESTIONS_PER_SCREEN),
+        questions=_questions(data.get("questions")),
     )
     return spec
+
+
+_IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _questions(value: Any) -> list[dict[str, str]]:
+    found = _pairs(value, ("question", "recommended"), limit=QUESTIONS_PER_SCREEN)
+    raw = value if isinstance(value, list) else []
+    for question, item in zip(found, (i for i in raw if isinstance(i, dict) and str(i.get("question") or "").strip())):
+        impact = str(item.get("impact") or "medium").strip().lower()
+        question["impact"] = impact if impact in _IMPACT_ORDER else "medium"
+    return found
 
 
 def max_screens() -> int:
@@ -198,7 +212,7 @@ def draft_screen_specs(refs: list[dict[str, Any]], *, describe: Describe | None,
     with ThreadPoolExecutor(max_workers=min(_WORKERS, len(capped))) as pool:
         specs = list(pool.map(lambda s: describe_screen(s, describe=describe, store=store), capped))
     number = 0
-    questions: list[str] = []
+    ranked: list[tuple[int, int, str]] = []
     for index, spec in enumerate(specs, start=1):
         spec["id"] = f"SC{index}"
         for question in spec.get("questions") or []:
@@ -206,7 +220,11 @@ def draft_screen_specs(refs: list[dict[str, Any]], *, describe: Describe | None,
             question["id"] = f"S{number}"
             text = question["question"].rstrip()
             rec = question.get("recommended") or ""
-            questions.append(f"S{number}. {spec['screen']}: {text}" + (f" Recommended: {rec.rstrip('.')}." if rec else ""))
+            line = f"S{number}. {spec['screen']}: {text}" + (f" Recommended: {rec.rstrip('.')}." if rec else "")
+            ranked.append((_IMPACT_ORDER.get(question.get("impact", "medium"), 1), number, line))
+    # Highest impact first (then in screen order): intake asks the first ones, the rest keep
+    # their recommended answers.
+    questions = [line for _impact, _number, line in sorted(ranked)]
     notes = []
     if len(screens) > len(capped):
         notes.append(f"{len(screens) - len(capped)} more screens were not specified (TS_HARNESS_SCREEN_SPECS_MAX).")
@@ -233,8 +251,9 @@ def render_document(specs: list[dict[str, Any]], notes: list[str] | None = None)
         "# Screen specs",
         "",
         f"Drafted from the Figma frames: {len(specs)} screens. Each lists what its frames show, then questions "
-        f"for what they don't ({count} in all, S1–S{count}). The intake asks the ones the sources don't answer; "
-        "correct anything else here in your reply (\"SC3: …\").",
+        f"for what they don't ({count} in all, S1–S{count}, rated by impact). The intake asks the highest-impact "
+        "ones the sources don't answer; every other question keeps its recommended answer unless you answer it "
+        "by S-number. Correct a spec with its SC-number (\"SC3: …\").",
         "",
     ]
     lines += [f"_{note}_" for note in notes or []]
@@ -258,7 +277,11 @@ def render_document(specs: list[dict[str, Any]], notes: list[str] | None = None)
             lines += [f"| {a['control']} | {a['appears_to']} |" for a in spec["actions"]] + [""]
         if spec.get("questions"):
             lines += ["**Questions**", ""]
-            lines += [f"- **{q['id']}** {q['question']}" + (f" _Recommended: {q['recommended']}_" if q.get("recommended") else "") for q in spec["questions"]]
+            lines += [
+                f"- **{q['id']}** ({q.get('impact', 'medium')}) {q['question']}"
+                + (f" _Recommended: {q['recommended']}_" if q.get("recommended") else "")
+                for q in spec["questions"]
+            ]
     return "\n".join(lines).rstrip() + "\n"
 
 

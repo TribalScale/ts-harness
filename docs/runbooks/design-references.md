@@ -74,8 +74,10 @@ those. A PRD request with Figma frames now drafts **one spec per screen** before
   is not, each with a recommended answer. Screens are numbered `SC1`…, questions `S1`…. Up to 40
   screens (`TS_HARNESS_SCREEN_SPECS_MAX`), 4 at a time.
 - The specs are posted in the thread (a Google Doc when long), with each screen's frames linked.
-- Intake drops the screen questions the sources already answer and asks the rest under **Screen
-  questions**, next to its own. Answer by S-number ("S3: no, show an error"), correct a spec with
+- Each question is rated by impact (high: data, rules, permissions, what an action does; low:
+  wording, icons). Intake drops the screen questions the sources already answer and asks at most
+  20 of the rest, highest impact first, under **Screen questions**, next to its own. Every other
+  question keeps its recommended answer unless you answer it by S-number. Answer by S-number ("S3: no, show an error"), correct a spec with
   its SC-number ("SC2: supervisors also see this screen"), then say **ready**; "yes" accepts every
   recommendation.
 - The draft and every revision get the specs and the answers; each screen's requirements and

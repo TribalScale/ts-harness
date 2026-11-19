@@ -89,10 +89,13 @@ Tool, memory or recall problems go in `warnings`, never in a question.
 
 When `input.screen_specs` is present, the runtime drafted one spec per Figma screen (`SC1`,
 `SC2`…: what its frames show) and `input.screen_questions` lists what the frames cannot show
-(`S1. <screen>: <question>? Recommended: …`). Return the ones still open as
-`screen_questions`, unchanged and with their `S` ids, after deleting each one the request or the
-sources already answer. Do not renumber them, merge them into `questions`, or count them in the
-3 to 7 limit. Return an empty list when none are left.
+(`S1. <screen>: <question>? Recommended: …`), highest impact first. Delete each one the request
+or the sources already answer, then return **at most 20** of the rest as `screen_questions`, in
+the order given, unchanged and with their `S` ids: the ones where a wrong recommendation would
+change the build the most. Every question you leave out keeps its recommended answer (the
+requester can still answer it by S-number from the screen specs). Do not renumber them, merge
+them into `questions`, or count them in the 3 to 7 limit. Return an empty list when none are
+left.
 
 ## Design references
 

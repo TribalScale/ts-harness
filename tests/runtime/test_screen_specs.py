@@ -30,8 +30,8 @@ REPLY = {
     "actions": [{"control": "Drag a block", "appears_to": "move the order"}],
     "states": ["Pilot banner (D2)"],
     "questions": [
-        {"question": "What happens when a block is dropped on a machine that is down?", "recommended": "Block the drop and say why"},
-        {"question": "How does the week view work on a phone?", "recommended": "A day list per machine"},
+        {"question": "Should the card icons have tooltips?", "recommended": "Yes", "impact": "low"},
+        {"question": "What happens when a block is dropped on a machine that is down?", "recommended": "Block the drop and say why", "impact": "high"},
     ],
 }
 
@@ -65,13 +65,15 @@ class ScreenSpecTests(unittest.TestCase):
         self.assertIn("Text: Save | Cancel", week_prompt)
         first = out["screen_specs"][0]
         self.assertEqual((first["id"], first["purpose"], first["questions"][0]["id"]), ("SC1", "Plan the week by machine.", "S1"))
-        self.assertEqual(out["screen_questions"][0], "S1. Hub / Schedule / 02 Week: What happens when a block is dropped on a machine that is down? Recommended: Block the drop and say why.")
-        self.assertEqual(out["screen_questions"][-1].split(".")[0], "S4")
+        # Highest impact first across screens (S2 and S4 are high), screen order within an impact.
+        self.assertEqual([q.split(".")[0] for q in out["screen_questions"]], ["S2", "S4", "S1", "S3"])
+        self.assertEqual(out["screen_questions"][0], "S2. Hub / Schedule / 02 Week: What happens when a block is dropped on a machine that is down? Recommended: Block the drop and say why.")
         doc = out["summary"]
         self.assertIn("## SC1 · Hub / Schedule / 02 Week", doc)
         self.assertIn("[D1 Hub / Schedule / 02 Week · Base](https://www.figma.com/design/F/?node-id=1-1)", doc)
         self.assertIn("| Order number | 1034036 |", doc)
-        self.assertIn("**S2** How does the week view work on a phone?", doc)
+        self.assertIn("**S2** (high) What happens when a block is dropped", doc)
+        self.assertIn("**S1** (low) Should the card icons have tooltips?", doc)
         self.assertIn("### SC2 Hub / Holds / 01 List (frames D3)", out["screen_specs_text"])
         self.assertIn("Question S3:", out["screen_specs_text"])
 
@@ -103,6 +105,11 @@ class IntakeMessageTests(unittest.TestCase):
                                            presentation={"questions": "all"})
         self.assertIn("1. Should admins edit machines?", text)
         self.assertIn("**Screen questions** (answer by S-number):\nS2. Hub / Schedule / 02 Week", text)
+        self.assertIn("Every other question in the screen specs keeps its recommended answer", text)
+        many = {**output, "screen_questions": [f"S{i}. Screen: Q{i}? Recommended: yes." for i in range(1, 31)]}
+        listed = format_artifact_for_channel(many, display_name="PRD review", present_prompt="intake", presentation={"questions": "all"}, max_length=100000)
+        self.assertIn("S20. Screen: Q20?", listed)
+        self.assertNotIn("S21. Screen", listed)
         self.assertTrue(text.rstrip().endswith("then say ready when you want a draft."))
 
 

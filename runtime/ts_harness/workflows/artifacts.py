@@ -706,6 +706,9 @@ def _usable_summary_text(output: dict[str, Any]) -> str:
     return ""
 
 
+SCREEN_QUESTIONS_SHOWN = 20
+
+
 def _screen_questions(output: dict[str, Any]) -> list[str]:
     """Intake's screen questions, each already carrying its ``S<n>.`` id."""
     for source in (output, output.get("result") if isinstance(output.get("result"), dict) else {}):
@@ -725,7 +728,12 @@ def _intake_questions_body(output: dict[str, Any]) -> str:
     screens = _screen_questions(output)
     if screens:
         # Their own section, ids kept: they map to the screen specs posted before intake.
-        numbered += "\n\n**Screen questions** (answer by S-number):\n" + "\n".join(screens)
+        shown = screens[:SCREEN_QUESTIONS_SHOWN]
+        numbered += "\n\n**Screen questions** (answer by S-number):\n" + "\n".join(shown)
+        numbered += (
+            "\n\nEvery other question in the screen specs keeps its recommended answer; answer any of them "
+            "by S-number to change it."
+        )
     summary = _usable_summary_text(output)
     # A plain-text reply is normalized into summary + questions; don't show the questions twice.
     repeats = any(question[:40] in summary for question in questions)
