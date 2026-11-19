@@ -48,7 +48,7 @@ class ChatProjectTests(unittest.TestCase):
         session = self._session(program_id="p1")
         memory = _memory()
         note = cp.apply_chat_project(session, {"project_key": "ACME"}, tenant_id="t", memory=memory, actor="u")
-        memory.patch_program.assert_called_once_with("p1", tenant_id="t", project_id="ACME", project_id_source="chat", actor="u")
+        memory.patch_program.assert_called_once_with("p1", tenant_id="t", project_id="ACME", project_id_source="user", actor="u")
         self.assertEqual(note, "Project set to Acme Scheduler (ACME).")
         other = _memory(program_project="OTHER")
         cp.apply_chat_project(self._session(program_id="p1"), {"project_key": "ACME"}, tenant_id="t", memory=other, actor="u")
@@ -82,7 +82,7 @@ class ChatProjectTests(unittest.TestCase):
             service.return_value.start.side_effect = start
             result = start_workflow_handler({}, ctx)
         self.assertEqual(result["status"], "started")
-        memory.patch_program.assert_called_once_with("p1", tenant_id="t", project_id="ACME", project_id_source="chat", actor="orchestrator")
+        memory.patch_program.assert_called_once_with("p1", tenant_id="t", project_id="ACME", project_id_source="user", actor="orchestrator")
 
 
 if __name__ == "__main__":

@@ -68,9 +68,9 @@ def set_program_project_if_missing(
         if str(program.get("project_id") or "").strip():
             return ""
         memory.patch_program(
-            program_id, tenant_id=tenant_id or "default", project_id=project["key"], project_id_source="chat", actor=actor
+            program_id, tenant_id=tenant_id or "default", project_id=project["key"], project_id_source="user", actor=actor
         )
     except Exception as exc:  # noqa: BLE001
-        logger.info("setting the program's project from the chat failed: %s", exc)
+        logger.warning("setting the program's project from the chat failed: %s", exc)
         return ""
     return f"Project set to {project_label(session.metadata)}."
