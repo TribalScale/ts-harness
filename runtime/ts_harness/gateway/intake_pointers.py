@@ -7,7 +7,9 @@ Sources of pointers, by trust:
 - ``channel_attachments`` is passed by ``handle_channel_webhook`` from a signed channel
   event (Slack, Telegram, Discord). Clients cannot set it, so a console user cannot name
   a Slack or Discord file the bot would then download.
-- Drive links are parsed from the message text.
+- Drive and Figma links are parsed from the message text. Figma frames are read when the
+  workflow starts (``gather_sources`` in the workflow runner, which holds the Figma token), so
+  a Figma link in a reply to a started workflow is not read then; it stays in the reply text.
 
 Pointers accumulate in ``session.metadata["intake_pointers"]`` (small dicts, never bytes).
 ``set_pending_*`` copies them onto the proposal, the start handlers pass them to the first
@@ -18,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ts_harness.intake.sources import apply_arrival_caps, dedupe_pointers, parse_drive_urls
+from ts_harness.intake.sources import apply_arrival_caps, dedupe_pointers, parse_drive_urls, parse_figma_urls
 
 SESSION_KEY = "intake_pointers"
 FILES_ONLY_TEXT = "Shared files are attached."
@@ -53,7 +55,7 @@ def message_pointers(
 ) -> list[dict[str, Any]]:
     trusted = [dict(p) for p in channel_attachments or [] if isinstance(p, dict) and p.get("kind") in _CHANNEL_KINDS]
     client = client_attachment_pointers(body.get("attachments"), tenant_id=tenant_id)
-    return dedupe_pointers([*trusted, *client, *parse_drive_urls(text)])
+    return dedupe_pointers([*trusted, *client, *parse_drive_urls(text), *parse_figma_urls(text)])
 
 
 def session_pointers(metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -143,7 +145,11 @@ def resolve_reply_sources(
     from ts_harness.intake.sources import max_total_chars
 
     agent_id = drive_agent_for(workflow_type)
-    capped = apply_arrival_caps(pointers)
+    # Figma frames become design references only at workflow start (gather_sources); read here,
+    # a reply would get a "not connected" note and no frames.
+    capped = apply_arrival_caps([p for p in pointers if p.get("kind") != "figma"])
+    if not capped:
+        return ""
     needs_drive = any(p.get("kind") == "drive" and not p.get("error") for p in capped)
     resolve = resolver or resolve_intake_sources
     result = resolve(

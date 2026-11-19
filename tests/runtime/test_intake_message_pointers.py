@@ -270,6 +270,41 @@ class ProposalAndStartTests(_StoreCase):
         self.assertNotIn("intake_pointers", get_session_store().get("s1").metadata)
 
 
+class FigmaLinkTests(_StoreCase):
+    """Figma links typed in a chat message reach the workflow that starts from it."""
+
+    PAGE = "https://www.figma.com/design/PageFileKey0001/App?node-id=0-1&p=f&t=x"
+    SECTION = "https://www.figma.com/design/PageFileKey0001/App?node-id=1-2&p=f&t=x"
+
+    def test_a_prd_request_receives_the_figma_links_from_the_message(self):
+        session = self._session()
+        text = f"Create a PRD for v1. Rules: {DOC}\nDesigns:\n{self.PAGE}\n{self.SECTION}"
+        RuntimeState._collect_intake_pointers(mock.Mock(), session, {}, user_text=text, tenant_id="default", channel_attachments=None)
+        held = get_session_store().get("s1").metadata["intake_pointers"]
+        self.assertEqual([p["kind"] for p in held], ["drive", "figma", "figma"])
+        session = get_session_store().get("s1")
+        set_pending_workflow(session, workflow_type="prd_request", summary="Create a PRD for v1", input_data={})
+        with mock.patch("ts_harness.tools.workflow_tools.WorkflowPromotionService") as service_cls:
+            service_cls.return_value.start.return_value = SimpleNamespace(
+                workflow_id="w1", workflow_type="prd_request", first_step="gather_sources", binding_key="b", task_ids=[])
+            start_workflow_handler({}, ToolPolicyContext(tenant_id="default", agent_id="orchestrator", source="web",
+                                                         session_id="s1"))
+        sources = service_cls.return_value.start.call_args.kwargs["extra_input"]["intake_sources"]
+        figma = [(p["file_key"], p["node_id"]) for p in sources if p["kind"] == "figma"]
+        self.assertEqual(figma, [("PageFileKey0001", "0:1"), ("PageFileKey0001", "1:2")])
+
+    def test_a_figma_link_in_a_reply_is_not_read_then(self):
+        resolver = mock.Mock(return_value={"sources_text": "x"})
+        figma = intake_pointers.message_pointers({}, tenant_id="t", text=self.PAGE)
+        self.assertEqual(intake_pointers.resolve_reply_sources(figma, tenant_id="t", workflow_type="prd_request", resolver=resolver), "")
+        resolver.assert_not_called()
+        both = intake_pointers.message_pointers({}, tenant_id="t", text=f"{DOC} {self.PAGE}")
+        with mock.patch("ts_harness.intake.connectors.build_drive"), mock.patch("ts_harness.intake.connectors.build_download"), \
+                mock.patch("ts_harness.intake.connectors.build_image_describer"):
+            intake_pointers.resolve_reply_sources(both, tenant_id="t", workflow_type="prd_request", resolver=resolver)
+        self.assertEqual([p["kind"] for p in resolver.call_args.args[0]], ["drive"])
+
+
 class WebhookTests(unittest.TestCase):
     def test_channel_attachments_reach_the_session_handler(self):
         event = SimpleNamespace(
