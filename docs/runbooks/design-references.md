@@ -83,6 +83,21 @@ those. A PRD request with Figma frames now drafts **one spec per screen** before
 - The draft and every revision get the specs and the answers; each screen's requirements and
   Given/When/Then criteria come from them.
 
+**With a design inventory.** Attach the design team's screen and feature inventory (Markdown,
+for example a Claude export from Figma) with the request. A source with a screens table, a
+number column (`#`, `No`, `ID`) and a `Screen` column, is read as the inventory:
+
+- Its numbers group the frames: a frame whose name has a path segment starting with a screen
+  number ("Hub / Schedule / 02 Week · Base" → `02`) joins that screen (`02` and `2` match; `T1`
+  matches `T1`). Frames with no matching number group by name as before.
+- Each screen's row (what it is for, its states) goes to the vision model as the designer's
+  intent: it does not ask what the row answers, and asks where the row and the frames disagree.
+- Every row whose item is marked partial ("Publish the week (F-14, partial)", or a cell that
+  reads `Partial`) becomes a high-impact question under **Known gaps** (`SC0`), asked first. The
+  word "partial" in a description is not a gap.
+
+Attach the story maps the inventory refers to as well: intake drops the questions they answer.
+
 Without Figma frames (or with image reading off) the step is skipped and posts nothing.
 
 ## Set up Figma

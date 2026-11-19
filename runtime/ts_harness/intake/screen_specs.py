@@ -13,6 +13,12 @@ are the screen "Hub / Schedule / 02 Week"):
 The specs are posted in the thread (a Google Doc when long). Intake drops the screen
 questions the sources already answer and asks the rest next to its own; the answers and the
 specs go to the PRD draft and every revision.
+
+When the sources include a design **inventory** (a Markdown table of screens with a number
+column and a ``Screen`` column, as a designer or a Claude export writes it), its numbers group
+the frames ("02 Week" in a frame name belongs to screen 02), each screen's row (purpose, states)
+goes to the vision model as the designer's intent, and every row marked "partial" (designed
+with a known gap) becomes a high-impact question, asked first.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ _VARIANT = re.compile(r"\s+(?:·|—|–|\|)\s+.*$")
 
 PROMPT = """You are documenting one screen of a product design for the engineers who will build it.
 The images are frames of the screen "{screen}": {frames}. The text found in each frame follows the images.
-
+{intent}
 Return JSON only, no prose:
 {{"purpose": "one sentence", "users": "who uses it, as the screen shows (or empty)",
  "layout": ["regions, top to bottom"], "components": ["controls and elements"],
@@ -56,20 +62,138 @@ Rules:
   rules, permissions, what an action does; "low" for wording, icons and tooltips.
 - At most {list_limit} items per list. Use the screen's own words for labels."""
 
+INTENT = """
+The design team's inventory describes this screen. Treat it as their intent: use its purpose and
+states, do not ask what it already answers, and ask where it and the frames disagree. Still list
+only what the frames show as visible facts.
+{row}
+"""
+
 
 def screen_name(title: str) -> str:
     """The screen a frame belongs to: its title without the variant part."""
     return _VARIANT.sub("", str(title or "").strip()).strip() or str(title or "Screen").strip()
 
 
-def group_screens(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``[{screen, frames}]`` in the order screens first appear; only Figma frames."""
-    screens: dict[str, list[dict[str, Any]]] = {}
+def group_screens(refs: list[dict[str, Any]], inventory: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """``[{screen, frames, inventory?}]`` in the order screens first appear; only Figma frames.
+
+    With an inventory, a frame whose name has a path segment starting with an inventory number
+    ("Hub / Schedule / 02 Week · Base" → 02) joins that screen; other frames group by name.
+    """
+    rows = {_number_key(row["number"]): row for row in (inventory or {}).get("screens") or []}
+    screens: dict[str, dict[str, Any]] = {}
     for ref in refs or []:
         if not isinstance(ref, dict) or ref.get("source") != "figma" or not ref.get("id"):
             continue
-        screens.setdefault(screen_name(str(ref.get("title") or "")), []).append(ref)
-    return [{"screen": name, "frames": frames} for name, frames in screens.items()]
+        row = _inventory_row(str(ref.get("title") or ""), rows)
+        if row is not None:
+            key = f"inventory:{_number_key(row['number'])}"
+            label = f"{row['number']} {row['name']}" + (f" ({row['app']})" if row.get("app") else "")
+            entry = screens.setdefault(key, {"screen": label, "frames": [], "inventory": row})
+        else:
+            name = screen_name(str(ref.get("title") or ""))
+            entry = screens.setdefault(name, {"screen": name, "frames": []})
+        entry["frames"].append(ref)
+    return list(screens.values())
+
+
+_SEGMENT_NUMBER = re.compile(r"^([A-Za-z]?\d{1,3})\b")
+
+
+def _number_key(number: str) -> str:
+    """"02" and "2" are one screen; "T1" stays "T1"."""
+    text = str(number or "").strip().upper()
+    if text.isdigit():
+        return text.lstrip("0") or "0"
+    return text
+
+
+def _inventory_row(title: str, rows: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    for segment in str(title or "").split("/"):
+        match = _SEGMENT_NUMBER.match(segment.strip())
+        if match and _number_key(match.group(1)) in rows:
+            return rows[_number_key(match.group(1))]
+    return None
+
+
+# Inventory: Markdown tables. A screens table has a number column ("#", "No", "ID") and a
+# "Screen" column; a row whose item is marked "partial" is a known gap.
+_PARTIAL = re.compile(r"\bpartial\b", re.IGNORECASE)
+
+
+def _table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def parse_inventory(text: str) -> dict[str, Any] | None:
+    """``{screens: [{number, name, purpose, states, app}], gaps: [{item, detail, section}]}``, or None."""
+    screens: list[dict[str, Any]] = []
+    gaps: list[dict[str, str]] = []
+    heading = ""
+    header: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+            header = []
+            continue
+        if not line.startswith("|"):
+            header = []
+            continue
+        cells = _table_cells(line)
+        if not header:
+            header = [c.lower() for c in cells]
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue
+        row = dict(zip(header, cells))
+        number_col = next((h for h in header if h in {"#", "no", "no.", "number", "id"}), None)
+        if number_col and "screen" in header and row.get(number_col) and row.get("screen"):
+            screens.append(
+                {
+                    "number": row[number_col],
+                    "name": row["screen"],
+                    "purpose": next((row[h] for h in header if h.startswith("what") or h in {"purpose", "description"}), ""),
+                    "states": row.get("states", ""),
+                    "app": heading,
+                }
+            )
+        # A gap is marked on the item ("Publish the week (F-14, partial)") or in its own cell
+        # ("Partial"); "partial" inside a description ("posts as partial") is not one.
+        if cells and (_PARTIAL.search(cells[0]) or any(c.strip(" .").lower() == "partial" for c in cells[1:])):
+            first = cells[0]
+            gaps.append({"item": first, "detail": " ".join(c for c in cells[1:] if c), "section": heading})
+    return {"screens": screens, "gaps": gaps} if screens else None
+
+
+def find_inventory(sources: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """The first gathered source that reads as a screen inventory."""
+    for source in sources or []:
+        if isinstance(source, dict) and not source.get("error"):
+            found = parse_inventory(str(source.get("text") or ""))
+            if found:
+                return {**found, "source": str(source.get("name") or "inventory")}
+    return None
+
+
+def gap_questions(inventory: dict[str, Any] | None) -> list[dict[str, str]]:
+    """A high-impact question per "partial" inventory row: designed with a known gap."""
+    out = []
+    for gap in (inventory or {}).get("gaps") or []:
+        item = re.sub(r"\s+", " ", gap["item"]).strip(" .")
+        detail = re.sub(r"\s+", " ", gap["detail"]).strip()
+        out.append(
+            {
+                "question": f"{item} is marked partial in the design inventory ({detail[:300]}). Should v1 build what is "
+                "designed and leave the gap open until it is decided?",
+                "recommended": "Yes; the PRD lists the gap as an open question with its owner, and no ticket builds it",
+                "impact": "high",
+            }
+        )
+    return out
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -159,11 +283,17 @@ def describe_screen(screen: dict[str, Any], *, describe: Describe, store: Any) -
     shown = frames[:FRAMES_PER_SCREEN]
     frame_list = ", ".join(f"{f['id']} \"{f.get('title')}\"" for f in shown)
     texts = "\n\n".join(f"{f['id']} {f.get('title')}:\n{str(f.get('summary') or '')[:3000]}" for f in shown)
-    prompt = PROMPT.format(screen=screen["screen"], frames=frame_list, max_questions=QUESTIONS_PER_SCREEN, list_limit=_LIST_LIMIT)
+    row = screen.get("inventory")
+    intent = INTENT.format(row=f"- Purpose: {row.get('purpose') or '—'}\n- States: {row.get('states') or '—'}") if row else ""
+    prompt = PROMPT.format(
+        screen=screen["screen"], frames=frame_list, intent=intent, max_questions=QUESTIONS_PER_SCREEN, list_limit=_LIST_LIMIT
+    )
     spec: dict[str, Any] = {
         "screen": screen["screen"],
         "frames": [{"id": f["id"], "title": f.get("title"), "url": f.get("url")} for f in frames],
     }
+    if row:
+        spec["inventory"] = {k: row.get(k, "") for k in ("number", "name", "purpose", "states", "app")}
     try:
         data = _parse_json(describe(f"{prompt}\n\nFrame text:\n{texts}", _frame_images(shown, store)))
     except Exception as exc:  # noqa: BLE001 - one screen's failure leaves the others
@@ -202,9 +332,11 @@ def max_screens() -> int:
         return 40
 
 
-def draft_screen_specs(refs: list[dict[str, Any]], *, describe: Describe | None, store: Any) -> dict[str, Any]:
+def draft_screen_specs(
+    refs: list[dict[str, Any]], *, describe: Describe | None, store: Any, inventory: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """``{screen_specs, screen_questions, screen_specs_text, summary, skipped}`` for the design refs."""
-    screens = group_screens(refs)
+    screens = group_screens(refs, inventory)
     if not screens or describe is None:
         reason = "no Figma frames" if not screens else "image reading is off (TS_HARNESS_INTAKE_VISION_MODEL)"
         return {"skipped": True, "reason": reason, "screen_specs": [], "screen_questions": [], "screen_specs_text": ""}
@@ -213,7 +345,17 @@ def draft_screen_specs(refs: list[dict[str, Any]], *, describe: Describe | None,
         specs = list(pool.map(lambda s: describe_screen(s, describe=describe, store=store), capped))
     number = 0
     ranked: list[tuple[int, int, str]] = []
-    for index, spec in enumerate(specs, start=1):
+    # Known gaps from the inventory come first: S1… and high impact.
+    gaps = gap_questions(inventory)
+    if gaps:
+        gap_spec = {"id": "SC0", "screen": "Known gaps (from the design inventory)", "frames": [], "questions": gaps, "gaps": True}
+        for question in gaps:
+            number += 1
+            question["id"] = f"S{number}"
+            line = f"S{number}. {question['question']} Recommended: {question['recommended']}."
+            ranked.append((-1, number, line))
+        specs = [gap_spec, *specs]
+    for index, spec in enumerate([s for s in specs if not s.get("gaps")], start=1):
         spec["id"] = f"SC{index}"
         for question in spec.get("questions") or []:
             number += 1
@@ -226,6 +368,12 @@ def draft_screen_specs(refs: list[dict[str, Any]], *, describe: Describe | None,
     # their recommended answers.
     questions = [line for _impact, _number, line in sorted(ranked)]
     notes = []
+    if inventory:
+        matched = sum(1 for s in capped if s.get("inventory"))
+        notes.append(
+            f"Screens grouped by the design inventory ({inventory.get('source') or 'attached'}): "
+            f"{matched} of {len(capped)} screens matched its numbers."
+        )
     if len(screens) > len(capped):
         notes.append(f"{len(screens) - len(capped)} more screens were not specified (TS_HARNESS_SCREEN_SPECS_MAX).")
     failed = [s["screen"] for s in specs if s.get("error")]
@@ -247,10 +395,11 @@ def _frames_line(spec: dict[str, Any]) -> str:
 def render_document(specs: list[dict[str, Any]], notes: list[str] | None = None) -> str:
     """The screen specs for people: one section per screen, its frames linked."""
     count = sum(len(s.get("questions") or []) for s in specs)
+    screen_count = sum(1 for s in specs if not s.get("gaps"))
     lines = [
         "# Screen specs",
         "",
-        f"Drafted from the Figma frames: {len(specs)} screens. Each lists what its frames show, then questions "
+        f"Drafted from the Figma frames: {screen_count} screens. Each lists what its frames show, then questions "
         f"for what they don't ({count} in all, S1–S{count}, rated by impact). The intake asks the highest-impact "
         "ones the sources don't answer; every other question keeps its recommended answer unless you answer it "
         "by S-number. Correct a spec with its SC-number (\"SC3: …\").",
@@ -258,7 +407,12 @@ def render_document(specs: list[dict[str, Any]], notes: list[str] | None = None)
     ]
     lines += [f"_{note}_" for note in notes or []]
     for spec in specs:
-        lines += ["", f"## {spec['id']} · {spec['screen']}", "", f"**Frames:** {_frames_line(spec)}", ""]
+        lines += ["", f"## {spec['id']} · {spec['screen']}", ""]
+        if spec.get("frames"):
+            lines += [f"**Frames:** {_frames_line(spec)}", ""]
+        if spec.get("inventory"):
+            row = spec["inventory"]
+            lines += [f"**Inventory:** {row.get('purpose') or '—'} States: {row.get('states') or '—'}", ""]
         if spec.get("error"):
             lines.append(f"_This screen {spec['error']}._")
             continue
@@ -290,7 +444,9 @@ def render_for_agents(specs: list[dict[str, Any]]) -> str:
     lines = ["## Screen specs (drafted from the Figma frames; the requester corrects them at intake)", ""]
     for spec in specs:
         frames = ", ".join(f["id"] for f in spec["frames"])
-        lines.append(f"### {spec['id']} {spec['screen']} (frames {frames})")
+        lines.append(f"### {spec['id']} {spec['screen']}" + (f" (frames {frames})" if frames else ""))
+        if spec.get("inventory"):
+            lines.append(f"- Inventory (designer's intent): {spec['inventory'].get('purpose')} States: {spec['inventory'].get('states')}")
         if spec.get("error"):
             lines += [f"- not drafted ({spec['error']})", ""]
             continue

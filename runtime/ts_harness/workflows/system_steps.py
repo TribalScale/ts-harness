@@ -51,7 +51,7 @@ def _gather_intake_sources(task: dict[str, Any], config: dict[str, Any], *, memo
 
 def _draft_screen_specs(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
     """One spec per Figma screen, for the requester to correct at intake (intake/screen_specs.py)."""
-    from ts_harness.intake.screen_specs import build_describer, draft_screen_specs
+    from ts_harness.intake.screen_specs import build_describer, draft_screen_specs, find_inventory
     from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
     workflow, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
@@ -60,6 +60,8 @@ def _draft_screen_specs(task: dict[str, Any], config: dict[str, Any], *, memory:
         if item.get("step_name") == "gather_sources" and item.get("status") == "succeeded" and isinstance(item.get("output"), dict)
     ]
     refs = list((gathered[-1]["output"].get("design_refs") if gathered else None) or [])
+    # A design inventory among the sources groups the frames and gives each screen its intent.
+    inventory = find_inventory(gathered[-1]["output"].get("sources") if gathered else None)
     try:
         from ts_harness.intake.blobs import intake_store
 
@@ -68,7 +70,9 @@ def _draft_screen_specs(task: dict[str, Any], config: dict[str, Any], *, memory:
         store = None
     agent_id = str(config.get("agent_id") or "pm-agent")
     scope = {k: v for k, v in {"tenant": workflow.get("tenant_id"), "workflow": task.get("workflow_id"), "agent": agent_id}.items() if v}
-    return draft_screen_specs(refs, describe=build_describer(agent_id=agent_id, scope=scope) if refs else None, store=store)
+    return draft_screen_specs(
+        refs, describe=build_describer(agent_id=agent_id, scope=scope) if refs else None, store=store, inventory=inventory
+    )
 
 
 def _prepare_ticket_queue(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
