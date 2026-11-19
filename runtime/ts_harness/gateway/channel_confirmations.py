@@ -457,6 +457,7 @@ def format_program_proposal_message(result: dict[str, Any]) -> str:
         lines.append(f"Entry phase: `{entry_phase}`.")
     if summary:
         lines.append(f"Summary: {summary}")
+    lines.append(_project_line(result))
     lines.append(_sources_line(result))
     lines.append("Reply **yes** to start, or **no** to cancel.")
     return "\n".join(line for line in lines if line)
@@ -466,6 +467,12 @@ def _sources_line(result: dict[str, Any]) -> str:
     """What the start will read, so nothing rides along unnoticed (and nothing is missing)."""
     labels = [str(x) for x in result.get("sources") or [] if str(x).strip()]
     return f"Sources: {', '.join(labels)}." if labels else ""
+
+
+def _project_line(result: dict[str, Any]) -> str:
+    """The project picked in the chat box, which the started program gets."""
+    label = str(result.get("project") or "").strip()
+    return f"Project: {label}." if label else ""
 
 
 _PROPOSAL_SUMMARY_LIMIT = 280
@@ -501,8 +508,8 @@ def format_workflow_proposal_message(result: dict[str, Any]) -> str:
         lead = f"I've prepared a {workflow_type} workflow for: {summary}"
     else:
         lead = f"I've prepared a {workflow_type} workflow."
-    sources = _sources_line(result)
-    return f"{lead}\n{sources + chr(10) if sources else ''}Reply yes to start, or no to cancel."
+    extra = "".join(line + "\n" for line in (_project_line(result), _sources_line(result)) if line)
+    return f"{lead}\n{extra}Reply yes to start, or no to cancel."
 
 
 _CONFIRMATION_PROMPT_RE = re.compile(r"\breply\s+\W*yes\b", re.IGNORECASE)
