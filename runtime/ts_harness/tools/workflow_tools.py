@@ -319,6 +319,13 @@ def _resolve_gate_task(workflow_id: str, task_id: str | None = None) -> dict[str
     return pending[0] if pending else None
 
 
+def _held_sources(session: Any) -> list[str]:
+    """Labels for the attachments and links a start would read (shown on the proposal)."""
+    from ts_harness.gateway.intake_pointers import session_pointers, source_labels
+
+    return source_labels(session_pointers(getattr(session, "metadata", None) or {}))
+
+
 def propose_start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
     session, err = _session_or_error(ctx)
     if err:
@@ -337,6 +344,7 @@ def propose_start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext)
             "workflow_type": workflow_type,
             "program_type": str(pending.get("program_type") or program_type),
             "summary": str(pending.get("summary") or summary),
+            "sources": _held_sources(session),
             "message": "Ask the user to confirm before start_workflow runs.",
         }
     input_data = args.get("input") if isinstance(args.get("input"), dict) else {}
@@ -352,6 +360,7 @@ def propose_start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext)
         "workflow_type": workflow_type,
         "program_type": program_type,
         "summary": summary,
+        "sources": _held_sources(session),
         "message": "Ask the user to confirm before start_workflow runs.",
     }
 
@@ -939,6 +948,7 @@ def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
             in {"inferred_jira", "inferred_repo"},
             "link_program_ids": pending.get("link_program_ids") or [],
             "resolved_config": _resolved_config_for_snapshot(snapshot),
+            "sources": _held_sources(session),
             "message": "Ask the user to confirm before start_program runs.",
         }
     from ts_harness.gateway.delegate_confirmation import set_pending_program
@@ -984,6 +994,7 @@ def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
             session_metadata=session.metadata or {},
         ),
         "resolved_config": _resolved_config_for_snapshot(snapshot),
+        "sources": _held_sources(session),
         "message": "Ask the user to confirm before start_program runs." + project_note,
     }
 

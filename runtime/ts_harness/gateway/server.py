@@ -1234,14 +1234,24 @@ class RuntimeState:
                 auto_action_error = "no pending delivery program found for this session"
                 effective_program_confirmed = False
         elif should_auto_handle_intake_response(session.metadata or {}, user_text):
+            from ts_harness.gateway.channel_confirmations import (
+                intake_answers_for_draft,
+                intake_reply_goes_ahead,
+                keep_intake_answer,
+            )
+
             try:
-                intake_result = execute_intake_response(
-                    session,
-                    tenant_id=req.tenant_id,
-                    agent_id=agent_id,
-                    source=channel,
-                    user_text=answer_text,
-                )
+                if intake_reply_goes_ahead(user_text):
+                    intake_result = execute_intake_response(
+                        session,
+                        tenant_id=req.tenant_id,
+                        agent_id=agent_id,
+                        source=channel,
+                        user_text=intake_answers_for_draft(session, answer_text),
+                    )
+                else:
+                    # Answers (and files) wait for "ready" or "yes", as the intake questions ask.
+                    intake_result = keep_intake_answer(session, answer_text)
             except Exception as exc:  # noqa: BLE001
                 intake_result = {"error": str(exc)}
             summary = format_intake_response_ack(intake_result)

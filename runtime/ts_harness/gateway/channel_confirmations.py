@@ -457,8 +457,15 @@ def format_program_proposal_message(result: dict[str, Any]) -> str:
         lines.append(f"Entry phase: `{entry_phase}`.")
     if summary:
         lines.append(f"Summary: {summary}")
+    lines.append(_sources_line(result))
     lines.append("Reply **yes** to start, or **no** to cancel.")
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)
+
+
+def _sources_line(result: dict[str, Any]) -> str:
+    """What the start will read, so nothing rides along unnoticed (and nothing is missing)."""
+    labels = [str(x) for x in result.get("sources") or [] if str(x).strip()]
+    return f"Sources: {', '.join(labels)}." if labels else ""
 
 
 _PROPOSAL_SUMMARY_LIMIT = 280
@@ -494,7 +501,8 @@ def format_workflow_proposal_message(result: dict[str, Any]) -> str:
         lead = f"I've prepared a {workflow_type} workflow for: {summary}"
     else:
         lead = f"I've prepared a {workflow_type} workflow."
-    return f"{lead}\nReply yes to start, or no to cancel."
+    sources = _sources_line(result)
+    return f"{lead}\n{sources + chr(10) if sources else ''}Reply yes to start, or no to cancel."
 
 
 _CONFIRMATION_PROMPT_RE = re.compile(r"\breply\s+\W*yes\b", re.IGNORECASE)
@@ -681,10 +689,59 @@ def execute_intake_response(
 def format_intake_response_ack(result: dict[str, Any]) -> str:
     if result.get("error"):
         return f"I couldn't record your intake answers: {result['error']}"
+    if result.get("status") == "answer_recorded":
+        return (
+            "Got it, I recorded that. Answer any other questions by number, or say **ready** when you "
+            "want the draft. Questions you don't answer use the recommended answers."
+        )
     return (
         "Thanks — I recorded your answers and queued the PRD draft step. "
         "I'll post the draft here when it's ready."
     )
+
+
+# Intake answers arrive over several messages: the questions say "answer them by number, then say
+# ready" or "reply yes to accept the recommended answers". Until one of those, replies (answers,
+# files) are kept on the waiting task's input and the draft waits, as on intake gates.
+UNANSWERED_NOTE = "For every question not answered above, use the recommended answer."
+
+
+def intake_reply_goes_ahead(user_text: str) -> bool:
+    """A reply that starts the draft: "ready" (answers may come with it) or a plain yes."""
+    return looks_like_ready_to_draft(user_text) or looks_like_plain_approval(user_text)
+
+
+def keep_intake_answer(session: SessionRecord, text: str) -> dict[str, Any]:
+    """Record a reply that is not a go-ahead on the task waiting for intake answers."""
+    from ts_harness.memory.client import get_memory_client
+    from ts_harness.workflows.engine import get_workflow_engine
+    from ts_harness.workflows.intake import task_awaiting_intake_response
+
+    workflow_id = str((session.metadata or {}).get("workflow_id") or "")
+    waiting = task_awaiting_intake_response(list(get_workflow_engine().get_status(workflow_id).get("tasks") or []))
+    if waiting is None:
+        return {"error": "workflow is not awaiting intake answers"}
+    task_input = waiting.get("input") if isinstance(waiting.get("input"), dict) else {}
+    answers = [*(task_input.get("answers") or []), (text or "").strip()]
+    get_memory_client().patch_task_input(str(waiting["id"]), {**task_input, "answers": answers})
+    return {"status": "answer_recorded", "workflow_id": workflow_id, "task_id": str(waiting.get("id")), "answers": len(answers)}
+
+
+def intake_answers_for_draft(session: SessionRecord, user_text: str) -> str:
+    """The kept answers, this reply, and what to do with unanswered questions."""
+    from ts_harness.workflows.engine import get_workflow_engine
+    from ts_harness.workflows.intake import task_awaiting_intake_response
+
+    workflow_id = str((session.metadata or {}).get("workflow_id") or "")
+    waiting = task_awaiting_intake_response(list(get_workflow_engine().get_status(workflow_id).get("tasks") or []))
+    task_input = (waiting or {}).get("input") if isinstance((waiting or {}).get("input"), dict) else {}
+    parts = [str(a) for a in task_input.get("answers") or [] if str(a).strip()]
+    if looks_like_plain_approval(user_text) and not parts:
+        parts.append("Accept the recommended answers.")
+    elif not re.fullmatch(r"\s*(?:ready|draft it|draft the (?:plan|bug|prd))[\s.!]*", user_text or "", re.IGNORECASE) and not looks_like_plain_approval(user_text):
+        parts.append(str(user_text))
+    parts.append(UNANSWERED_NOTE)
+    return "\n\n".join(p for p in parts if p.strip())
 
 
 def has_actionable_approval_gate(

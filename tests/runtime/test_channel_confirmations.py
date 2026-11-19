@@ -1172,6 +1172,45 @@ class IntakeResponseTests(unittest.TestCase):
         self.assertEqual(result["status"], "resumed")
         self.assertEqual(result["task_id"], "wait-1")
 
+    def test_intake_answers_wait_for_ready_or_yes(self):
+        from ts_harness.gateway.channel_confirmations import (
+            UNANSWERED_NOTE,
+            intake_answers_for_draft,
+            intake_reply_goes_ahead,
+            keep_intake_answer,
+        )
+
+        # The reply that sent the Project Fact Sheet alone must not start the draft.
+        for text in ("attached is the Project Fact Sheet", "1. Yes, follow Nov 18.\n2. Employee number.", "Shared files are attached."):
+            self.assertFalse(intake_reply_goes_ahead(text), msg=text)
+        for text in ("ready", "yes", "Ready", "3. Weekly is fine.\nready", "ok"):
+            self.assertTrue(intake_reply_goes_ahead(text), msg=text)
+        self.assertFalse(intake_reply_goes_ahead("not ready yet"))
+
+        waiting = {"id": "t-wait", "step_name": "await_intake_answers", "status": "blocked",
+                   "error": "awaiting_external:channel.intake_response", "input": {}}
+        engine = MagicMock()
+        engine.get_status.side_effect = lambda _wid: {"tasks": [waiting]}
+        memory = MagicMock()
+        memory.patch_task_input.side_effect = lambda _tid, data: waiting.update(input=data)
+        session = SessionRecord(session_id="s-int", routing_key="rk", tenant_id="t", agent_id="orchestrator",
+                                source="web", metadata={"workflow_id": "wf-1"})
+        with patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine), \
+                patch("ts_harness.memory.client.get_memory_client", return_value=memory), \
+                patch("ts_harness.workflows.intake.task_awaiting_intake_response", side_effect=lambda tasks: tasks[0] if tasks else None):
+            kept = keep_intake_answer(session, "attached is the Project Fact Sheet\n\n<intake_sources>...fact sheet...</intake_sources>")
+            self.assertEqual((kept["status"], kept["answers"]), ("answer_recorded", 1))
+            self.assertIn("say **ready**", format_intake_response_ack(kept))
+            keep_intake_answer(session, "1. Yes.")
+            draft = intake_answers_for_draft(session, "2. Employee number.\nready")
+            self.assertTrue(draft.startswith("attached is the Project Fact Sheet"))
+            self.assertIn("1. Yes.", draft)
+            self.assertIn("2. Employee number.\nready", draft)
+            self.assertTrue(draft.endswith(UNANSWERED_NOTE))
+            self.assertEqual(intake_answers_for_draft(session, "ready").count("1. Yes."), 1)
+            waiting["input"] = {}
+            self.assertTrue(intake_answers_for_draft(session, "yes").startswith("Accept the recommended answers."))
+
     def test_format_intake_response_ack(self):
         self.assertIn("queued the PRD draft", format_intake_response_ack({}))
         self.assertIn(

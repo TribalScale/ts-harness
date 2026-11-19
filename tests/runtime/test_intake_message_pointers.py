@@ -217,12 +217,30 @@ class ProposalAndStartTests(_StoreCase):
         self.assertEqual(metadata["pending_program"]["intake_sources"], [pointer])
         self.assertEqual(metadata["pending_workflow"]["input"], {"client": "acme", "intake_sources": [pointer]})
 
-    def test_declining_releases_the_attachments(self):
+    def test_declining_a_proposal_keeps_the_attachments_for_the_next_one(self):
+        # A wrong route is declined and the request asked again: the files must still be there.
         session = self._session(intake_pointers=[self._stored()])
         set_pending_program(session, entry_phase="plan", summary="s")
         apply_program_confirmation_to_session(get_session_store().get("s1"),
                                               ProgramConfirmation(cancelled=True, clear_pending=True))
-        self.assertNotIn("intake_pointers", get_session_store().get("s1").metadata)
+        saved = get_session_store().get("s1").metadata
+        self.assertNotIn("pending_program", saved)
+        self.assertEqual([p["name"] for p in saved["intake_pointers"]], ["brief.txt"])
+
+    def test_proposals_list_the_sources_they_will_read(self):
+        from ts_harness.gateway.channel_confirmations import format_program_proposal_message, format_workflow_proposal_message
+        from ts_harness.tools.workflow_tools import propose_start_workflow_handler
+
+        text = f"Create a PRD. {DOC} https://www.figma.com/design/PageFileKey0001/App?node-id=0-1"
+        session = self._session(intake_pointers=[self._stored(name="fact-sheet.md"), *intake_pointers.message_pointers({}, tenant_id="default", text=text)])
+        result = propose_start_workflow_handler(
+            {"workflow_type": "prd_request", "summary": "Create a PRD"},
+            ToolPolicyContext(tenant_id="default", agent_id="orchestrator", source="web", session_id=session.session_id),
+        )
+        self.assertEqual(result["sources"], ["fact-sheet.md", "1 Google Drive link", "1 Figma link"])
+        self.assertIn("Sources: fact-sheet.md, 1 Google Drive link, 1 Figma link.\nReply yes", format_workflow_proposal_message(result))
+        self.assertIn("Sources: a.md.\nReply **yes**", format_program_proposal_message({"program_type": "x", "sources": ["a.md"]}))
+        self.assertNotIn("Sources", format_workflow_proposal_message({"workflow_type": "prd_request", "summary": "s"}))
 
     @mock.patch("ts_harness.workflows.delivery_program.get_delivery_program_service")
     def test_start_program_passes_sources_as_first_task_input_not_artifacts(self, service_factory):

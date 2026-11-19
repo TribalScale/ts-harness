@@ -151,7 +151,7 @@ def set_pending_workflow(
 
 
 def _drop_intake_pointers(session: SessionRecord) -> None:
-    """A declined proposal releases its attachments so they don't ride along on the next one."""
+    """Release the session's held attachments (no longer called on a declined proposal)."""
     from ts_harness.gateway.intake_pointers import SESSION_KEY, clear_pointers
 
     if SESSION_KEY in (session.metadata or {}):
@@ -164,8 +164,8 @@ def apply_workflow_confirmation_to_session(
 ) -> None:
     if confirmation.clear_pending:
         clear_pending_workflow(session)
-    if confirmation.cancelled:
-        _drop_intake_pointers(session)
+    # A declined proposal keeps the attachments: the person usually declines a wrong route and
+    # asks again in the same chat. Every proposal lists the sources it will read.
 
 
 def apply_confirmation_to_session(session: SessionRecord, confirmation: DelegateConfirmation) -> None:
@@ -376,8 +376,7 @@ def apply_program_confirmation_to_session(
 ) -> None:
     if confirmation.clear_pending:
         clear_pending_program(session)
-    if confirmation.cancelled:
-        _drop_intake_pointers(session)
+    # Attachments stay held after a decline (see apply_workflow_confirmation_to_session).
 
 
 @dataclass

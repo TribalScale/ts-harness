@@ -146,6 +146,34 @@ class ChannelIntentTests(unittest.TestCase):
             self.assertEqual(defect.kind, "bug_to_jira", msg=text)
             self.assertEqual(defect.program_type, "bug_to_jira_work_orders")
 
+    def test_a_detailed_prd_request_is_not_a_bug(self):
+        prd = (
+            "{verb} for v1 of the production scheduler. The PRD will be broken into work orders and filed as "
+            "Jira tickets. Every requirement needs edge cases, and empty, loading and failure states, with "
+            "error messages; define what happens when an integration fails."
+        )
+        for verb in ("Create a PRD", "Draft a PRD", "Write a PRD", "reate a PRD", "Please draft a PRD"):
+            intent = classify_channel_intent(prd.format(verb=verb), {}, config=self.config)
+            self.assertEqual((intent.kind, intent.workflow_type), ("governed_prd", "prd_request"), msg=verb)
+        quick = classify_channel_intent("write a quick prd for the login screen", {}, config=self.config)
+        self.assertEqual(quick.kind, "informal_prd")
+        quickly = classify_channel_intent("Create a PRD for the quickly changing schedule view", {}, config=self.config)
+        self.assertEqual(quickly.kind, "governed_prd")
+
+    def test_bug_reports_still_route_to_bugs(self):
+        for text in (
+            "checkout is broken",
+            "I'm getting an error when I save a note",
+            "the export throws an error",
+            "500 error on the orders page",
+            "search stopped working this morning",
+            "the login button doesn't work",
+        ):
+            intent = classify_channel_intent(text, {}, config=self.config)
+            self.assertEqual(intent.kind, "bug_to_jira", msg=text)
+        for text in ("show an error message when the title is empty", "the plan is broken into weeks"):
+            self.assertNotEqual(classify_channel_intent(text, {}, config=self.config).kind, "bug_to_jira", msg=text)
+
     def test_vague_code_asks_before_a_program(self):
         for text in ("open pr", "refactor checkout", "change the checkout"):
             intent = classify_channel_intent(text, {}, config=self.config)
