@@ -107,6 +107,82 @@ def _section(sections: dict[str, str], name: str) -> str | None:
     return None
 
 
+_PROFILE_LINE = re.compile(r"^\*\*Profile:\*\*\s*(\w+)", re.MULTILINE | re.IGNORECASE)
+
+
+def _is_full_profile(markdown: str) -> bool:
+    match = _PROFILE_LINE.search(markdown or "")
+    return bool(match and match.group(1).lower() == "full")
+
+
+def _table(body: str) -> tuple[list[str], list[dict[str, str]]]:
+    """The first Markdown table in ``body``: lower-cased header and its rows as dicts."""
+    header: list[str] = []
+    rows: list[dict[str, str]] = []
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if header:
+                break
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not header:
+            header = [cell.lower() for cell in cells]
+        elif not all(set(cell) <= set("-: ") for cell in cells):
+            rows.append(dict(zip(header, cells)))
+    return header, rows
+
+
+def _column(header: list[str], *names: str) -> str | None:
+    return next((h for h in header if any(h.startswith(name) for name in names)), None)
+
+
+def _full_framing_findings(sections: dict[str, str]) -> list[str]:
+    """A Full PRD frames the project: problems per persona with evidence, goals with a measure,
+    baseline and target, non-goals with a reason (prd-drafter, "Framing a Full PRD")."""
+    findings: list[str] = []
+    problem = _section(sections, "Problem Statement") or ""
+    if problem and not _is_na(problem):
+        header, rows = _table(problem)
+        if not _column(header, "persona") or len(rows) < 2:
+            findings.append(
+                "Problem Statement (Full): add a table of the problem per persona (Persona | Problem | Evidence), "
+                "at least two personas."
+            )
+        elif _column(header, "evidence") and any(not row.get(_column(header, "evidence") or "", "") for row in rows):
+            findings.append("Problem Statement (Full): every persona's problem needs its evidence and source.")
+        missing = [label for label in ("Current state", "Why now", "Cost of doing nothing") if f"**{label}:**" not in problem]
+        if missing:
+            findings.append(f"Problem Statement (Full): add {', '.join(f'**{m}:**' for m in missing)}.")
+    goals = _section(sections, "Goals") or ""
+    if goals and not _is_na(goals):
+        header, rows = _table(goals)
+        wanted = {"measure": _column(header, "measure"), "baseline": _column(header, "baseline"), "target": _column(header, "target")}
+        if not rows or not all(wanted.values()):
+            findings.append(
+                "Goals (Full): write them as a table: Goal | Who benefits | Measure | Baseline | Target | By when | Serves."
+            )
+        else:
+            incomplete = [
+                (row.get(header[0]) or "?")[:40]
+                for row in rows
+                if any(not row.get(column or "", "").strip(" -—") for column in wanted.values())
+            ]
+            if incomplete:
+                findings.append(f"Goals (Full): a measure, baseline and target for every goal: {_sample(incomplete)}.")
+    if non_goals_body := (_section(sections, "Non-Goals") or ""):
+        if not _is_na(non_goals_body):
+            header, rows = _table(non_goals_body)
+            reason = _column(header, "reason", "why")
+            if not rows or not reason:
+                findings.append("Non-Goals (Full): write them as a table: Item | Category | Reason | Revisit.")
+            else:
+                unexplained = [(row.get(header[0]) or "?")[:40] for row in rows if not row.get(reason, "").strip(" -—")]
+                if unexplained:
+                    findings.append(f"Non-Goals (Full): give the reason for {_sample(unexplained)}.")
+    return findings
+
+
 def _is_na(body: str) -> bool:
     return body.strip().lower().startswith("n/a")
 
@@ -157,6 +233,8 @@ def check_prd(markdown: str, *, stated: str = "") -> list[str]:
     non_goals = _section(sections, "Non-Goals")
     if non_goals and _is_na(non_goals):
         findings.append("Non-Goals says N/A; name at least one thing this release does not do.")
+    if _is_full_profile(text):
+        findings.extend(_full_framing_findings(sections))
 
     placeholders = sorted(
         {f"<{match.group(1).strip()}>" for match in _PLACEHOLDER.finditer(header_free)

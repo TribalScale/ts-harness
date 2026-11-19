@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n with a priority, records intake decisions and assumptions, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.5.0
+version: 1.6.0
 ---
 
 # PRD drafter
@@ -114,6 +114,42 @@ Sections marked (Full) are omitted in a Lite PRD.
 <or `N/A: <reason>` when nothing is open>
 ```
 
+## Framing a Full PRD
+
+A Full PRD covers a project several teams will build for months; its reviewers decide from the
+first three sections whether the rest is right. In a Full PRD, write them in this form instead
+of the short one above. Every row cites its source (a document and section, a rule id, an
+intake answer or a decision); never fill a cell with an invented number. When a source has no
+number, write what is known and mark it ("not tracked today", "to measure in the first two
+weeks").
+
+```markdown
+## Problem Statement
+<Two to four sentences: the operation, what goes wrong, who feels it.>
+
+| Persona | Problem today | Evidence (source) |
+|---|---|---|
+| <each persona the project serves> | <what is hard, slow or wrong for them> | <a number or fact, and where it comes from> |
+
+**Current state:** <how the work is done today, step by step: tools, hand-offs, delays>
+**Cost of doing nothing:** <hours, late orders, errors, risk, quantified where the sources allow>
+**Why now:** <the triggers, with dates>
+
+## Goals
+| Goal | Who benefits | Measure | Baseline | Target | By when | Serves |
+|---|---|---|---|---|---|---|
+| <a business outcome, not a feature> | <persona> | <how it is measured> | <today, or "not tracked today"> | <number> | <date or window> | <the release test or objective it serves> |
+
+## Non-Goals
+| Item | Category | Reason | Revisit |
+|---|---|---|---|
+| <what this release does not do> | <later release / removed by decision / out of scope> | <why, citing the decision or source> | <when, or "never"> |
+```
+
+Cover every persona in Personas & Permissions and every objective the requester named. Goals
+are outcomes the release must move (planning time, lateness, data lag), each traceable to a
+release test, not a restatement of the features. Keep Lite PRDs in the short form.
+
 ## Rules
 
 - **Requirements carry the request forward.** Refinery, work orders and the coding agent copy Requirements and Technical Constraints verbatim. Every named item, number, interval, limit and technology the requester stated appears there exactly, including times of day and fallbacks ("Friday 15:00 in the contractor's time zone", "email when there is no Slack account"). Mentioning them only in a flow is not enough; the runtime checks that each stated time and limit appears in Requirements, Technical Constraints or the Definition of Done.
@@ -143,6 +179,8 @@ Sections marked (Full) are omitted in a Lite PRD.
 - No `<placeholder>`, TBD or TODO is left, and no vague word ("fast", "easy", "intuitive",
   "user-friendly", "seamless") stands without a number or a concrete behaviour.
 - Non-Goals is not empty; every open question has an owner.
+- In a Full PRD, the Problem Statement has its persona table, Current state, Cost of doing
+  nothing and Why now; every goal has a measure, baseline and target; every non-goal a reason.
 
 ## Output
 
