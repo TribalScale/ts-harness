@@ -282,7 +282,9 @@ class AnthropicProvider(ModelProvider):
         system, anthropic_messages = anthropic_messages_from_chat(messages)
         payload: dict[str, Any] = {
             "model": self.endpoint.model,
-            "max_tokens": int(os.environ.get("ANTHROPIC_MAX_TOKENS", "16000")),
+            # Output budget, thinking included. A full PRD revision ran past 16k and was cut off
+            # mid-JSON; responses are streamed, so a long one does not hit a request timeout.
+            "max_tokens": int(os.environ.get("ANTHROPIC_MAX_TOKENS", "64000")),
             "messages": anthropic_messages,
             # Caches the longest stable prefix (tools, system, earlier turns) on every request.
             "cache_control": {"type": "ephemeral"},
@@ -306,9 +308,16 @@ class AnthropicProvider(ModelProvider):
         except _ThinkingReplayRejected:
             payload["messages"] = _without_thinking(anthropic_messages)
             data = self._post(payload)
+        if data.get("stop_reason") == "max_tokens":
+            logger.warning(
+                "model output hit max_tokens (%s, ANTHROPIC_MAX_TOKENS); the reply is cut off", payload["max_tokens"]
+            )
         return anthropic_response_to_chat(data)
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        stream = os.environ.get("ANTHROPIC_STREAM", "1").strip().lower() not in {"0", "false", "no"}
+        if stream:
+            payload = {**payload, "stream": True}
         request = urllib.request.Request(
             f"{self.endpoint.base_url.rstrip('/')}/messages",
             data=json.dumps(payload).encode(),
@@ -322,6 +331,11 @@ class AnthropicProvider(ModelProvider):
         timeout = float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "600"))
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
+                headers = getattr(response, "headers", None)
+                content_type = str(headers.get("Content-Type", "") if headers is not None else "")
+                if stream and "text/event-stream" in content_type:
+                    # The timeout applies to each read: a long reply keeps arriving.
+                    return message_from_stream(response)
                 return json.loads(response.read())
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode() or str(exc)
@@ -333,6 +347,70 @@ class AnthropicProvider(ModelProvider):
 
 class _ThinkingReplayRejected(RuntimeError):
     pass
+
+
+def message_from_stream(lines: Any) -> dict[str, Any]:
+    """The Messages API response a server-sent event stream adds up to (as without streaming)."""
+    message: dict[str, Any] = {}
+    blocks: dict[int, dict[str, Any]] = {}
+    partial_json: dict[int, list[str]] = {}
+    event_data: list[str] = []
+
+    def handle(data: str) -> None:
+        if not data:
+            return
+        event = json.loads(data)
+        kind = event.get("type")
+        if kind == "message_start":
+            message.update(event.get("message") or {})
+        elif kind == "content_block_start":
+            index = int(event.get("index", len(blocks)))
+            block = dict(event.get("content_block") or {})
+            if block.get("type") == "tool_use":
+                block["input"] = {}
+                partial_json[index] = []
+            blocks[index] = block
+        elif kind == "content_block_delta":
+            index = int(event.get("index", 0))
+            block = blocks.setdefault(index, {"type": "text", "text": ""})
+            delta = event.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "text_delta":
+                block["text"] = block.get("text", "") + delta.get("text", "")
+            elif dtype == "thinking_delta":
+                block["thinking"] = block.get("thinking", "") + delta.get("thinking", "")
+            elif dtype == "signature_delta":
+                block["signature"] = block.get("signature", "") + delta.get("signature", "")
+            elif dtype == "input_json_delta":
+                partial_json.setdefault(index, []).append(delta.get("partial_json", ""))
+        elif kind == "content_block_stop":
+            index = int(event.get("index", 0))
+            if index in partial_json:
+                raw = "".join(partial_json.pop(index))
+                blocks[index]["input"] = json.loads(raw) if raw.strip() else {}
+        elif kind == "message_delta":
+            delta = event.get("delta") or {}
+            for key in ("stop_reason", "stop_sequence", "stop_details"):
+                if key in delta:
+                    message[key] = delta[key]
+            usage = dict(message.get("usage") or {})
+            usage.update(event.get("usage") or {})
+            message["usage"] = usage
+        elif kind == "error":
+            error = event.get("error") or {}
+            raise RuntimeError(f"model provider error: {error.get('type', 'error')}: {error.get('message', data)}")
+
+    for raw_line in lines:
+        line = raw_line.decode("utf-8", "replace") if isinstance(raw_line, bytes) else str(raw_line)
+        line = line.rstrip("\r\n")
+        if not line:
+            handle("\n".join(event_data))
+            event_data = []
+        elif line.startswith("data:"):
+            event_data.append(line[5:].lstrip())
+    handle("\n".join(event_data))
+    message["content"] = [blocks[index] for index in sorted(blocks)]
+    return message
 
 
 def _without_thinking(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -120,6 +120,20 @@ class PrdChecksTests(unittest.TestCase):
         self.assertNotIn("<br>", text)
         self.assertNotIn("TODO", text)  # inside a code block
 
+    def test_links_on_a_detail_line_of_a_long_requirement_count(self):
+        # A long requirement lists details as bullets with its links on one of them.
+        long_fr = GOOD_PRD.replace(
+            "- [ ] **FR-3** (Should) Show \"Export failed, try again\" when the export fails (Specified in: Key User Flows; Verified by: DoD-3)",
+            "- [ ] **FR-3** (Should) Failures:\n  - Show \"Export failed, try again\".\n  - Keep the month selected.\n"
+            "  - (Specified in: Key User Flows; Verified by: DoD-3)\n  - AC-3.1 Given an outage, When I export, Then I see the message.",
+        )
+        self.assertEqual(check_prd(long_fr), [])
+        # Links missing from the whole requirement are still reported, and a bad DoD id too.
+        missing = long_fr.replace("  - (Specified in: Key User Flows; Verified by: DoD-3)\n", "")
+        self.assertTrue(any("No 'Specified in' on FR-3" in f for f in check_prd(missing)))
+        bad_ref = long_fr.replace("Verified by: DoD-3)", "Verified by: DoD-9)")
+        self.assertTrue(any("DoD-9" in f for f in check_prd(bad_ref)))
+
     def test_vague_words_with_a_number_are_allowed(self):
         self.assertEqual(check_prd(GOOD_PRD.replace("finishes within 10 seconds", "is fast: within 10 seconds")), [])
 

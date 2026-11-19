@@ -560,3 +560,96 @@ class CodingCapacityTests(unittest.TestCase):
         self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(7.7 * gib)), 2)   # t3.large
         self.assertEqual(local_worker_limit(3, "2g", environ={}, total_bytes=int(15.6 * gib)), 3)  # t3.xlarge, capped
         self.assertEqual(local_worker_limit(3, "2g", environ={"CODING_HOST_RESERVED_MEMORY": "6g"}, total_bytes=int(7.7 * gib)), 1)
+
+
+class _StreamResponse:
+    """An SSE response as urllib returns it: iterable bytes lines, a Content-Type header."""
+
+    def __init__(self, events):
+        lines = []
+        for event in events:
+            lines.append(f"event: {event['type']}\n".encode())
+            lines.append(f"data: {json.dumps(event)}\n".encode())
+            lines.append(b"\n")
+        self._lines = lines
+        self.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+STREAMED_TOOL_TURN = [
+    {"type": "message_start", "message": {"id": "msg_1", "model": "claude-opus-5-5", "content": [], "stop_reason": None,
+                                          "usage": {"input_tokens": 1200, "output_tokens": 1, "cache_read_input_tokens": 0,
+                                                    "cache_creation_input_tokens": 900}}},
+    {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
+    {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig-1"}},
+    {"type": "content_block_stop", "index": 0},
+    {"type": "ping"},
+    {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+    {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Reading "}},
+    {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "it."}},
+    {"type": "content_block_stop", "index": 1},
+    {"type": "content_block_start", "index": 2, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {}}},
+    {"type": "content_block_delta", "index": 2, "delta": {"type": "input_json_delta", "partial_json": "{\"path\": "}},
+    {"type": "content_block_delta", "index": 2, "delta": {"type": "input_json_delta", "partial_json": "\"a.py\"}"}},
+    {"type": "content_block_stop", "index": 2},
+    {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 80}},
+    {"type": "message_stop"},
+]
+
+
+class ClaudeStreamingTests(unittest.TestCase):
+    def _stream_opener(self, events):
+        sent = []
+
+        def _open(request, timeout=0):
+            sent.append(json.loads(request.data.decode()))
+            return _StreamResponse(events)
+
+        return sent, _open
+
+    def test_a_streamed_reply_matches_the_plain_one(self):
+        sent, opener = self._stream_opener(STREAMED_TOOL_TURN)
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            streamed = _claude().chat([{"role": "user", "content": "hi"}], tools=TOOLS)
+        self.assertIs(sent[0]["stream"], True)
+        self.assertEqual(sent[0]["max_tokens"], 64000)
+        _plain_sent, plain_opener = _capture(CLAUDE_TOOL_TURN)
+        with patch.dict("os.environ", {"ANTHROPIC_STREAM": "0"}), patch("ts_harness.agent.provider.urllib.request.urlopen", plain_opener):
+            plain = _claude().chat([{"role": "user", "content": "hi"}], tools=TOOLS)
+        self.assertNotIn("stream", _plain_sent[0]["body"])
+        self.assertEqual(streamed["choices"][0]["message"]["content"], plain["choices"][0]["message"]["content"])
+        self.assertEqual(streamed["choices"][0]["message"]["tool_calls"], plain["choices"][0]["message"]["tool_calls"])
+        self.assertEqual(streamed["choices"][0]["finish_reason"], "tool_use")
+        self.assertEqual(streamed["usage"]["output_tokens"], 80)
+        self.assertEqual(streamed["usage"]["input_tokens"], 1200)
+        blocks = streamed["choices"][0]["message"][ANTHROPIC_CONTENT_KEY]
+        self.assertEqual(blocks[0], {"type": "thinking", "thinking": "", "signature": "sig-1"})
+
+    def test_a_stream_error_is_reported(self):
+        events = [STREAMED_TOOL_TURN[0], {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}]
+        _sent, opener = self._stream_opener(events)
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener):
+            with self.assertRaisesRegex(RuntimeError, "overloaded_error: Overloaded"):
+                _claude().chat([{"role": "user", "content": "hi"}])
+
+    def test_a_reply_cut_off_at_the_limit_is_logged(self):
+        events = [
+            STREAMED_TOOL_TURN[0],
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "{\"result\": \"half"}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 64000}},
+        ]
+        _sent, opener = self._stream_opener(events)
+        with patch("ts_harness.agent.provider.urllib.request.urlopen", opener), self.assertLogs("ts_harness.agent.provider", level="WARNING") as logs:
+            result = _claude().chat([{"role": "user", "content": "hi"}])
+        self.assertEqual(result["choices"][0]["finish_reason"], "max_tokens")
+        self.assertIn("hit max_tokens", logs.output[0])

@@ -50,6 +50,17 @@ _PLACEHOLDER = re.compile(r"<\s*/?\s*([A-Za-z][^<>\n]{0,80})>")
 _UNRESOLVED = re.compile(r"\b(TBD|TBC|TODO|FIXME)\b")
 _VAGUE = re.compile(r"\b(" + "|".join(re.escape(word) for word in VAGUE_WORDS) + r")\b", re.IGNORECASE)
 _FR_LINE = re.compile(r"\*\*(FR-\d+)\*\*")
+
+
+def _requirement_blocks(requirements: str) -> list[tuple[str, str]]:
+    """``(first line, whole requirement)`` per FR item: its line up to the next FR line."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in requirements.splitlines():
+        if _FR_LINE.search(line):
+            blocks.append((line, [line]))
+        elif blocks:
+            blocks[-1][1].append(line)
+    return [(first, "\n".join(lines)) for first, lines in blocks]
 _FR_DEFINED = re.compile(r"^\s*[-*]\s*(?:\[[ xX]\]\s*)?(?:\*\*)?(FR-\d+)\b", re.MULTILINE)
 _DOD_DEFINED = re.compile(r"^\s*[-*]\s*(?:\*\*)?(DoD-\d+)\b", re.MULTILINE)
 _DOD_REF = re.compile(r"\bDoD-\d+\b")
@@ -182,17 +193,19 @@ def check_prd(markdown: str, *, stated: str = "") -> list[str]:
     no_verify: list[str] = []
     no_priority: list[str] = []
     bad_refs: set[str] = set()
-    for line in requirements.splitlines():
+    for line, block in _requirement_blocks(requirements):
         match = _FR_LINE.search(line)
         if not match or "~~" in line:
             continue
         fr = match.group(1)
-        if "specified in" not in line.lower():
+        # A long requirement lists its details as bullets; its links may sit on any line of it.
+        if "specified in" not in block.lower():
             no_spec.append(fr)
-        if "verified by" not in line.lower():
+        if "verified by" not in block.lower():
             no_verify.append(fr)
         else:
-            bad_refs.update(ref for ref in _DOD_REF.findall(line) if dod_ids and ref not in dod_ids)
+            links = " ".join(row for row in block.splitlines() if "verified by" in row.lower())
+            bad_refs.update(ref for ref in _DOD_REF.findall(links) if dod_ids and ref not in dod_ids)
         if not _PRIORITY.search(line):
             no_priority.append(fr)
     if requirements and not _is_na(requirements) and not fr_ids:
