@@ -665,7 +665,9 @@ class WorkflowEngine:
                 if phase is not None:
                     set_workflow_phase_for_workflow(workflow_id, phase, skeleton, tenant_id=tenant_id)
 
-            if should_present_specialist_output(ctx.stage, skeleton, step_name=step_name):
+            # A step with nothing to show this time (``"skipped": true``, e.g. no designs) stays quiet.
+            skipped_output = isinstance(task.get("output"), dict) and task["output"].get("skipped") is True
+            if not skipped_output and should_present_specialist_output(ctx.stage, skeleton, step_name=step_name):
                 try:
                     workflow, tasks = load_workflow_payload(self.client, workflow_id)
                     ctx.workflow = workflow

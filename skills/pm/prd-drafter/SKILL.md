@@ -3,7 +3,7 @@ name: prd-drafter
 description: Draft or revise a PRD on prd_request (draft_prd, revise_prd). Chooses a Lite or Full profile by trigger, numbers requirements FR-n and DoD-n with a priority, records intake decisions and assumptions, and keeps acceptance criteria out of the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.4.0
+version: 1.5.0
 ---
 
 # PRD drafter
@@ -170,5 +170,13 @@ to Google Drive. Outside a workflow, follow `skills/pm/google-workspace.md` to s
 continue with Markdown only if that fails.
 
 ## Design references
+
+When `input.screen_specs` is present, it describes each Figma screen (`SC1`…: purpose, layout,
+data shown, actions, states drawn) and its questions (`S1`…). The requester's answers are in
+`input.clarified_requirements`, by S-number; a question they did not answer takes its
+recommended answer, and a correction they wrote ("SC3: …") wins over the spec. Build each
+screen's requirements and Given/When/Then criteria from the spec plus those answers, citing the
+screen and its frames ("SC3, per D12"), and include how each screen behaves on tablet and phone
+when the answers say so.
 
 When `input.design_refs` is present, the request came with Figma frames or images (`D1`, `D2`…); the images follow the task message and `input.design_refs_text` names them. Read them as the source for the user interface: describe the screens, content, states and flows they show in the requirements, cite them by id ("per D2"), and list questions where a design and the text disagree. Never invent UI the designs and text don't support.

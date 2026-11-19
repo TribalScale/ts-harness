@@ -10,12 +10,18 @@ from ts_harness.workflows.materialize import load_skeleton, materialize_skeleton
 class PrdRequestWorkflowTests(unittest.TestCase):
     def test_prd_request_skeleton_v1_1(self):
         skeleton = load_skeleton("prd_request")
-        self.assertEqual(skeleton.definition_version, "1.6.0")
+        self.assertEqual(skeleton.definition_version, "1.7.0")
         stage_names = [stage.name for stage in skeleton.stages]
         self.assertEqual(
             stage_names,
-            ["gather_sources", "intake", "await_intake_answers", "draft_prd", "approve_prd"],
+            ["gather_sources", "draft_screen_specs", "intake", "await_intake_answers", "draft_prd", "approve_prd"],
         )
+        # Screen specs are drafted from the gathered Figma frames before intake asks about them.
+        specs = skeleton.stage("draft_screen_specs")
+        self.assertEqual(specs.depends_on, ["gather_sources"])
+        self.assertEqual(skeleton.stage("intake").depends_on, ["draft_screen_specs"])
+        self.assertIn("screen_questions", skeleton.stage("intake").input_map)
+        self.assertIn("screen_specs", skeleton.stage("draft_prd").input_map)
         # The barrier runs first but the human-facing intake stage is unchanged.
         self.assertEqual(skeleton.intake_stage_name(), "intake")
         self.assertNotIn("delivery_planning", stage_names)
@@ -41,7 +47,7 @@ class PrdRequestWorkflowTests(unittest.TestCase):
     def test_materialize_prd_request_tasks(self):
         skeleton = load_skeleton("prd_request")
         tasks = materialize_skeleton_tasks(skeleton, workflow_id="wf-prd")
-        self.assertEqual(len(tasks), 5)
+        self.assertEqual(len(tasks), 6)
         approve = next(task for task in tasks if task["step_name"] == "approve_prd")
         self.assertEqual(approve["depends_on"], ["draft_prd"])
         self.assertTrue(approve.get("approval_required"))

@@ -3,7 +3,7 @@ name: prd-intake
 description: Ask the clarifying questions for a PRD request (prd_request intake), each with a recommended answer the requester can accept with "yes". Never drafts the PRD.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.3.0
+version: 1.4.0
 ---
 
 # PRD intake
@@ -64,7 +64,8 @@ Each question is one string with the recommended answer after it:
 
 ## Output
 
-Return JSON with `summary`, `questions`, `confidence`, `warnings` and `follow_up_needed`. The
+Return JSON with `summary`, `questions`, `confidence`, `warnings` and `follow_up_needed`, plus
+`screen_questions` when screen specs came with the request. The
 runtime numbers the questions, shows `summary` above them and adds the reply instructions below
 them, so the summary is one sentence about what you read and what is left to decide. Do not tell
 the requester how to reply.
@@ -83,6 +84,15 @@ the requester how to reply.
 ```
 
 Tool, memory or recall problems go in `warnings`, never in a question.
+
+## Screen specs
+
+When `input.screen_specs` is present, the runtime drafted one spec per Figma screen (`SC1`,
+`SC2`…: what its frames show) and `input.screen_questions` lists what the frames cannot show
+(`S1. <screen>: <question>? Recommended: …`). Return the ones still open as
+`screen_questions`, unchanged and with their `S` ids, after deleting each one the request or the
+sources already answer. Do not renumber them, merge them into `questions`, or count them in the
+3 to 7 limit. Return an empty list when none are left.
 
 ## Design references
 
