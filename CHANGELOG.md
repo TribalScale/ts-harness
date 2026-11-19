@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Projects are picked, not typed: the console chat box has a project picker (sent as `project_key`; proposals show "Project: Name (KEY).", the program a start creates gets it, and a linked program without a project gets it), and the program page's Project field is a dropdown of System → Projects.
 - PRD checks read a whole requirement for its 'Specified in' and 'Verified by' links, not only its first line: a long requirement written as bullets was reported as unlinked and untested.
 - Claude replies are streamed and may run to 64k output tokens (`ANTHROPIC_MAX_TOKENS`, was 16k including thinking; `ANTHROPIC_STREAM=0` turns streaming off). A full PRD revision ran past 16k and was cut off mid-JSON, which blocked the stage; streaming keeps a long reply from hitting the request timeout. A reply that still hits the limit is logged as cut off.
 - Routing: bug requests need bug-report phrases ("is broken", "getting an error", "throws an error", "stopped working"...); bare "broken" and "error" matched specifications ("the PRD will be broken into work orders", "error states") and sent PRD requests to the bug program. PRD requests also match "a prd" and "prd for", and only "quick prd" / "quick draft" (not any "quick") makes one informal.

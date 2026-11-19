@@ -284,6 +284,14 @@ it("saves project, exclude, link, and unlink through admin APIs", async () => {
       return jsonResponse(programStatus());
     }
     if (url === activityUrl("implement")) return jsonResponse(phaseActivity());
+    if (url === "/admin/projects") {
+      return jsonResponse({
+        projects: [
+          { key: "RFP", name: "RFP desk" },
+          { key: "OPS", name: "OPS" },
+        ],
+      });
+    }
     if (
       url === `/admin/programs/${encodeURIComponent(programId)}` &&
       init?.method === "PATCH"
@@ -309,9 +317,13 @@ it("saves project, exclude, link, and unlink through admin APIs", async () => {
   renderPage(<ProgramsPage programId={programId} onSelect={() => undefined} />);
   expect(await screen.findByLabelText("Project memory")).toBeInTheDocument();
 
+  // A dropdown of the projects in System → Projects (a typo can no longer go unnoticed).
   const projectInput = screen.getByLabelText("Program project");
-  await userEvent.clear(projectInput);
-  await userEvent.type(projectInput, "RFP");
+  expect(
+    await screen.findByRole("option", { name: "RFP desk (RFP)" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "OPS" })).toBeInTheDocument();
+  await userEvent.selectOptions(projectInput, "RFP");
   await userEvent.click(screen.getByRole("button", { name: /save project/i }));
   await waitFor(() => {
     expect(

@@ -1532,6 +1532,19 @@ a {
   gap: 8px;
 }
 
+.composer-project {
+  max-width: 220px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  align-self: flex-end;
+}
+
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;

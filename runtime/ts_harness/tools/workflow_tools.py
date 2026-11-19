@@ -319,6 +319,12 @@ def _resolve_gate_task(workflow_id: str, task_id: str | None = None) -> dict[str
     return pending[0] if pending else None
 
 
+def _chat_project_label(session: Any) -> str:
+    from ts_harness.gateway.chat_project import project_label
+
+    return project_label(getattr(session, "metadata", None) or {})
+
+
 def _held_sources(session: Any) -> list[str]:
     """Labels for the attachments and links a start would read (shown on the proposal)."""
     from ts_harness.gateway.intake_pointers import session_pointers, source_labels
@@ -345,6 +351,7 @@ def propose_start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext)
             "program_type": str(pending.get("program_type") or program_type),
             "summary": str(pending.get("summary") or summary),
             "sources": _held_sources(session),
+            "project": _chat_project_label(session),
             "message": "Ask the user to confirm before start_workflow runs.",
         }
     input_data = args.get("input") if isinstance(args.get("input"), dict) else {}
@@ -361,6 +368,7 @@ def propose_start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext)
         "program_type": program_type,
         "summary": summary,
         "sources": _held_sources(session),
+        "project": _chat_project_label(session),
         "message": "Ask the user to confirm before start_workflow runs.",
     }
 
@@ -407,6 +415,11 @@ def start_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict
         session.metadata = clear_pointers(dict(session.metadata or {}))
         get_session_store().save(session)
     clear_pending_workflow(session)
+    # The program the workflow registered gets the project picked in the chat.
+    from ts_harness.gateway.chat_project import set_program_project_if_missing
+
+    started = get_session_store().get(session.session_id) or session
+    set_program_project_if_missing(started, memory=get_memory_client(), tenant_id=ctx.tenant_id, actor=ctx.agent_id)
     return {
         "status": "started",
         "workflow_id": result.workflow_id,
@@ -949,6 +962,7 @@ def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
             "link_program_ids": pending.get("link_program_ids") or [],
             "resolved_config": _resolved_config_for_snapshot(snapshot),
             "sources": _held_sources(session),
+            "project": _chat_project_label(session),
             "message": "Ask the user to confirm before start_program runs.",
         }
     from ts_harness.gateway.delegate_confirmation import set_pending_program
@@ -995,6 +1009,7 @@ def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
         ),
         "resolved_config": _resolved_config_for_snapshot(snapshot),
         "sources": _held_sources(session),
+        "project": _chat_project_label(session),
         "message": "Ask the user to confirm before start_program runs." + project_note,
     }
 
@@ -1050,7 +1065,10 @@ def start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[
     service = get_delivery_program_service()
     from ts_harness.workflows.project_identity import resolve_program_project
 
-    user_project = args.get("project_id") or pending.get("project_id")
+    from ts_harness.gateway.chat_project import held_project
+
+    chat_project = held_project(session.metadata)
+    user_project = args.get("project_id") or pending.get("project_id") or (chat_project or {}).get("key")
     project_id, project_id_source = resolve_program_project(
         artifacts,
         project_id=str(user_project).strip() if user_project else None,

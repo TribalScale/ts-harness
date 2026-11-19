@@ -974,6 +974,14 @@ class RuntimeState:
         session, user_text, attachment_note, reply_sources = self._collect_intake_pointers(
             session, body, user_text=user_text, tenant_id=req.tenant_id, channel_attachments=channel_attachments
         )
+        # The project picked in the chat box: kept on the session, shown on proposals, used at start.
+        try:
+            from ts_harness.gateway.chat_project import apply_chat_project
+            from ts_harness.memory.client import get_memory_client
+
+            apply_chat_project(session, body, tenant_id=req.tenant_id, memory=get_memory_client(), actor=str(auth.actor_id or "chat"))
+        except Exception as exc:  # noqa: BLE001 - the message still goes through
+            log_event("chat_project_failed", session_id=session.session_id, error=str(exc))
         # What a workflow records as the answer: the user's words plus any files read from them.
         answer_text = with_reply_sources(user_text, reply_sources)
 

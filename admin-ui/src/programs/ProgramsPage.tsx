@@ -190,6 +190,26 @@ export function ProgramsPage({
   const [busy, setBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [projectDraft, setProjectDraft] = useState("");
+  const [projectOptions, setProjectOptions] = useState<
+    { key: string; name: string }[]
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ projects?: { key: string; name: string }[] }>("/admin/projects")
+      .then((data) => {
+        if (!cancelled)
+          setProjectOptions(
+            (data.projects || []).map((p) => ({ key: p.key, name: p.name })),
+          );
+      })
+      .catch(() => {
+        if (!cancelled) setProjectOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [linkDraft, setLinkDraft] = useState("");
   const [filters, setFilters] = useState<PortfolioFilters>(EMPTY_FILTERS);
   const [evidence, setEvidence] = useState<ProgramEvidenceExport | null>(null);
@@ -765,13 +785,31 @@ export function ProgramsPage({
                   <div className="program-actions" style={{ marginTop: 8 }}>
                     <label>
                       Project
-                      <input
+                      <select
                         aria-label="Program project"
                         value={projectDraft}
                         onChange={(event) =>
                           setProjectDraft(event.target.value)
                         }
-                      />
+                      >
+                        <option value="">No project</option>
+                        {projectOptions.map((project) => (
+                          <option key={project.key} value={project.key}>
+                            {project.name && project.name !== project.key
+                              ? `${project.name} (${project.key})`
+                              : project.key}
+                          </option>
+                        ))}
+                        {projectDraft &&
+                          !projectOptions.some(
+                            (p) => p.key === projectDraft,
+                          ) && (
+                            <option value={projectDraft}>
+                              {projectDraft} (not a project in System →
+                              Projects)
+                            </option>
+                          )}
+                      </select>
                     </label>
                     <Button
                       variant="ghost"

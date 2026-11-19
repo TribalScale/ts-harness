@@ -20,7 +20,12 @@ import {
   type IntakePointer,
 } from "../api/client";
 import { chatReplyText, messageDisplayText } from "../api/normalizers";
-import type { ChatMessage, ProgramStatus, SessionMessageResponse, SessionSummary } from "../api/types";
+import type {
+  ChatMessage,
+  ProgramStatus,
+  SessionMessageResponse,
+  SessionSummary,
+} from "../api/types";
 import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { isWorkingActivity } from "./working";
@@ -50,9 +55,15 @@ interface ComposerAttachment {
 
 const EMPTY_SEND = "Enter a message before sending.";
 const EMPTY_SEND_WITH_FILES = "Enter a message or attach a file.";
-const SIZE_LIMIT_MESSAGE = "Files are limited to 20 MB each and 80 MB per message.";
+const SIZE_LIMIT_MESSAGE =
+  "Files are limited to 20 MB each and 80 MB per message.";
 const COUNT_LIMIT_MESSAGE = `Attach up to ${INTAKE_MAX_FILES} files per message.`;
 
+/** A project the chat can work on (System → Projects). */
+interface ChatProject {
+  key: string;
+  name: string;
+}
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -67,10 +78,17 @@ function sentText(text: string, names: string[]): string {
 }
 
 /** Same stems `resolve_for_channel_chat` drops; listing them would pin-then-block. */
-const CHANNEL_CHAT_EXCLUDED_IDS = new Set(["workflow-state", "governed-delivery", "fan-out"]);
+const CHANNEL_CHAT_EXCLUDED_IDS = new Set([
+  "workflow-state",
+  "governed-delivery",
+  "fan-out",
+]);
 
 /** Resending a failed message replaces its bubble instead of stacking a duplicate. */
-function dropTrailingFailure(messages: DisplayMessage[], text: string): DisplayMessage[] {
+function dropTrailingFailure(
+  messages: DisplayMessage[],
+  text: string,
+): DisplayMessage[] {
   const last = messages[messages.length - 1];
   if (last?.failed && last.role === "user" && last.content === text) {
     return messages.slice(0, -1);
@@ -79,12 +97,16 @@ function dropTrailingFailure(messages: DisplayMessage[], text: string): DisplayM
 }
 
 function nextMessageId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+  return typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-function currentAgentId(sessionId: string | undefined, sessions: SessionSummary[]): string {
+function currentAgentId(
+  sessionId: string | undefined,
+  sessions: SessionSummary[],
+): string {
   const match = sessions.find((session) => session.session_id === sessionId);
   return match?.agent_id || "orchestrator";
 }
@@ -106,7 +128,8 @@ function applySkillPin(draft: string, skillId: string): string {
 
 function appendText(message: AppendMessage): string {
   for (const part of message.content) {
-    if (part.type === "text" && "text" in part && typeof part.text === "string") return part.text;
+    if (part.type === "text" && "text" in part && typeof part.text === "string")
+      return part.text;
   }
   return "";
 }
@@ -117,7 +140,8 @@ function convertMessage(message: DisplayMessage): ThreadMessageLike {
     id: message.id,
     role,
     content: messageDisplayText(message),
-    status: role === "assistant" ? { type: "complete", reason: "stop" } : undefined,
+    status:
+      role === "assistant" ? { type: "complete", reason: "stop" } : undefined,
     metadata: message.failed ? { custom: { failed: true } } : undefined,
   };
 }
@@ -154,6 +178,9 @@ function ConsoleComposer({
   onPickFiles,
   onRemoveAttachment,
   onSendFilesOnly,
+  projects,
+  projectKey,
+  onProject,
 }: {
   agentId: string;
   busy: boolean;
@@ -168,10 +195,18 @@ function ConsoleComposer({
   onPickFiles?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
   onSendFilesOnly?: () => void;
+  /** Projects to pick from; the pick goes with each message as `project_key`. */
+  projects?: ChatProject[];
+  projectKey?: string;
+  onProject?: (key: string) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
-  const uploading = (attachments || []).some((item) => item.status === "uploading");
-  const readyFiles = (attachments || []).filter((item) => item.status === "ready").length;
+  const uploading = (attachments || []).some(
+    (item) => item.status === "uploading",
+  );
+  const readyFiles = (attachments || []).filter(
+    (item) => item.status === "ready",
+  ).length;
   const { value, setText, send } = unstable_useComposerInput();
   const [caret, setCaret] = useState(0);
   const [skillHints, setSkillHints] = useState<SkillHint[]>([]);
@@ -235,7 +270,13 @@ function ConsoleComposer({
     <div className="chat-composer-dock">
       <div className="sample-prompts" aria-label="Sample prompts">
         {samplePrompts.map((prompt) => (
-          <Button key={prompt} type="button" variant="secondary" size="sm" onClick={() => setText(prompt)}>
+          <Button
+            key={prompt}
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setText(prompt)}
+          >
             {prompt}
           </Button>
         ))}
@@ -258,7 +299,11 @@ function ConsoleComposer({
             }}
           />
           {slashQuery !== null && pinOptions.length > 0 && (
-            <ul className="skill-pin-list" role="listbox" aria-label="Skill pins">
+            <ul
+              className="skill-pin-list"
+              role="listbox"
+              aria-label="Skill pins"
+            >
               {pinOptions.map((skill) => (
                 <li key={skill.id}>
                   <button
@@ -278,6 +323,25 @@ function ConsoleComposer({
             </ul>
           )}
         </div>
+        {projects && projects.length > 0 && onProject && (
+          <select
+            className="composer-project"
+            aria-label="Project"
+            title="The project this request is for: the program it starts gets it"
+            value={projectKey || ""}
+            disabled={busy}
+            onChange={(event) => onProject(event.target.value)}
+          >
+            <option value="">No project</option>
+            {projects.map((project) => (
+              <option key={project.key} value={project.key}>
+                {project.name && project.name !== project.key
+                  ? `${project.name} (${project.key})`
+                  : project.key}
+              </option>
+            ))}
+          </select>
+        )}
         {onPickFiles && (
           <>
             <input
@@ -315,7 +379,10 @@ function ConsoleComposer({
       {attachments && attachments.length > 0 && (
         <ul className="composer-attachments" aria-label="Attachments">
           {attachments.map((item) => (
-            <li key={item.id} className={`composer-attachment is-${item.status}`}>
+            <li
+              key={item.id}
+              className={`composer-attachment is-${item.status}`}
+            >
               <span className="composer-attachment-name">{item.name}</span>
               <span className="composer-attachment-meta">
                 {item.status === "uploading"
@@ -392,6 +459,26 @@ export function ChatThread({
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   attachmentsRef.current = attachments;
   const allowAttachments = !endpoint;
+  const [projects, setProjects] = useState<ChatProject[]>([]);
+  const [projectKey, setProjectKey] = useState("");
+
+  useEffect(() => {
+    if (!allowAttachments) return;
+    let cancelled = false;
+    apiFetch<{ projects?: ChatProject[] }>("/admin/projects")
+      .then((data) => {
+        if (!cancelled)
+          setProjects(
+            (data.projects || []).map((p) => ({ key: p.key, name: p.name })),
+          );
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [allowAttachments]);
   const activeSession = useRef(sessionId || "");
   const pendingSendSession = useRef<string | null>(null);
   const restoreDraft = useRef<(text: string) => void>(() => undefined);
@@ -403,9 +490,10 @@ export function ChatThread({
 
   async function loadMessages(id: string, { preserveLocal = false } = {}) {
     try {
-      const data = await apiFetch<{ messages?: ChatMessage[]; program_id?: string }>(
-        `/admin/sessions/${encodeURIComponent(id)}/messages`
-      );
+      const data = await apiFetch<{
+        messages?: ChatMessage[];
+        program_id?: string;
+      }>(`/admin/sessions/${encodeURIComponent(id)}/messages`);
       if (activeSession.current !== id) return;
       setProgramId(String(data.program_id || ""));
       if (!Array.isArray(data.messages)) return;
@@ -460,12 +548,13 @@ export function ChatThread({
     async function loadActivity() {
       try {
         const status = await apiFetch<ProgramStatus>(
-          `/admin/programs/${encodeURIComponent(programId)}/status`
+          `/admin/programs/${encodeURIComponent(programId)}/status`,
         );
         if (cancelled || activeSession.current !== watchedSession) return;
         setActivity(String(status.status || ""));
       } catch {
-        if (!cancelled && activeSession.current === watchedSession) setActivity("");
+        if (!cancelled && activeSession.current === watchedSession)
+          setActivity("");
       }
     }
     void loadActivity();
@@ -479,7 +568,9 @@ export function ChatThread({
   }, [programId]);
 
   function pickFiles(files: File[]) {
-    const current = attachmentsRef.current.filter((item) => item.status !== "error");
+    const current = attachmentsRef.current.filter(
+      (item) => item.status !== "error",
+    );
     if (current.length + files.length > INTAKE_MAX_FILES) {
       onError(COUNT_LIMIT_MESSAGE);
       return;
@@ -489,8 +580,17 @@ export function ChatThread({
     const toUpload: Array<[string, File]> = [];
     for (const file of files) {
       const id = nextMessageId();
-      if (file.size > INTAKE_MAX_FILE_BYTES || total + file.size > INTAKE_MAX_TOTAL_BYTES) {
-        added.push({ id, name: file.name, size: file.size, status: "error", error: "Too large" });
+      if (
+        file.size > INTAKE_MAX_FILE_BYTES ||
+        total + file.size > INTAKE_MAX_TOTAL_BYTES
+      ) {
+        added.push({
+          id,
+          name: file.name,
+          size: file.size,
+          status: "error",
+          error: "Too large",
+        });
         onError(SIZE_LIMIT_MESSAGE);
         continue;
       }
@@ -503,17 +603,23 @@ export function ChatThread({
       uploadIntakeFile(file)
         .then((pointer) =>
           setAttachments((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, status: "ready", pointer } : item))
-          )
+            prev.map((item) =>
+              item.id === id ? { ...item, status: "ready", pointer } : item,
+            ),
+          ),
         )
         .catch((e: any) =>
           setAttachments((prev) =>
             prev.map((item) =>
               item.id === id
-                ? { ...item, status: "error", error: String(e?.message || "Upload failed") }
-                : item
-            )
-          )
+                ? {
+                    ...item,
+                    status: "error",
+                    error: String(e?.message || "Upload failed"),
+                  }
+                : item,
+            ),
+          ),
         );
     }
   }
@@ -528,7 +634,9 @@ export function ChatThread({
 
   async function sendMessage(text: string) {
     const ready = allowAttachments
-      ? attachmentsRef.current.filter((item) => item.status === "ready" && item.pointer)
+      ? attachmentsRef.current.filter(
+          (item) => item.status === "ready" && item.pointer,
+        )
       : [];
     if (!text && ready.length === 0) {
       onError(allowAttachments ? EMPTY_SEND_WITH_FILES : EMPTY_SEND);
@@ -536,8 +644,15 @@ export function ChatThread({
     }
     setBusy(true);
     onError(null);
-    const display = sentText(text, ready.map((item) => item.name));
-    const userMessage: DisplayMessage = { id: nextMessageId(), role: "user", content: display };
+    const display = sentText(
+      text,
+      ready.map((item) => item.name),
+    );
+    const userMessage: DisplayMessage = {
+      id: nextMessageId(),
+      role: "user",
+      content: display,
+    };
     setMessages((prev) => [...dropTrailingFailure(prev, display), userMessage]);
     try {
       const body = endpoint
@@ -549,12 +664,18 @@ export function ChatThread({
             thread_id: bindingKey,
             binding_key: bindingKey,
             session_id: sessionId || undefined,
-            ...(ready.length > 0 ? { attachments: ready.map((item) => item.pointer) } : {}),
+            ...(ready.length > 0
+              ? { attachments: ready.map((item) => item.pointer) }
+              : {}),
+            ...(projectKey ? { project_key: projectKey } : {}),
           };
-      const result = await apiFetch<SessionMessageResponse>(endpoint || "/session/message", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const result = await apiFetch<SessionMessageResponse>(
+        endpoint || "/session/message",
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
       const newSession = String(result.session_id || sessionId || "");
       if (newSession && newSession !== sessionId) {
         pendingSendSession.current = newSession;
@@ -563,12 +684,16 @@ export function ChatThread({
       }
       if (result.status === "blocked") {
         const summary =
-          typeof result.output === "object" && result.output && "summary" in result.output
+          typeof result.output === "object" &&
+          result.output &&
+          "summary" in result.output
             ? String(result.output.summary || "")
             : "";
         onError(summary || result.error || "Request blocked");
         setMessages((prev) =>
-          prev.map((item) => (item.id === userMessage.id ? { ...item, failed: true } : item))
+          prev.map((item) =>
+            item.id === userMessage.id ? { ...item, failed: true } : item,
+          ),
         );
         return;
       }
@@ -587,7 +712,9 @@ export function ChatThread({
       if (newSession) await loadMessages(newSession, { preserveLocal: true });
     } catch (e: any) {
       setMessages((prev) =>
-        prev.map((item) => (item.id === userMessage.id ? { ...item, failed: true } : item))
+        prev.map((item) =>
+          item.id === userMessage.id ? { ...item, failed: true } : item,
+        ),
       );
       if (text) restoreDraft.current(text);
       onError(String(e.message || e));
@@ -607,7 +734,9 @@ export function ChatThread({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className={`chat-detail${sessionId || messages.length > 0 ? "" : " is-empty"}`}>
+      <div
+        className={`chat-detail${sessionId || messages.length > 0 ? "" : " is-empty"}`}
+      >
         {error && (
           <div className="error" role="alert">
             {error}
@@ -650,11 +779,18 @@ export function ChatThread({
           placeholder={placeholder}
           restoreDraft={restoreDraft}
           onText={setComposerText}
-          onRejectEmpty={() => onError(allowAttachments ? EMPTY_SEND_WITH_FILES : EMPTY_SEND)}
+          onRejectEmpty={() =>
+            onError(allowAttachments ? EMPTY_SEND_WITH_FILES : EMPTY_SEND)
+          }
           attachments={allowAttachments ? attachments : undefined}
           onPickFiles={allowAttachments ? pickFiles : undefined}
           onRemoveAttachment={allowAttachments ? removeAttachment : undefined}
-          onSendFilesOnly={allowAttachments ? () => void sendMessage("") : undefined}
+          onSendFilesOnly={
+            allowAttachments ? () => void sendMessage("") : undefined
+          }
+          projects={allowAttachments ? projects : undefined}
+          projectKey={projectKey}
+          onProject={setProjectKey}
         />
       </div>
     </AssistantRuntimeProvider>
