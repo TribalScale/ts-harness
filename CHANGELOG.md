@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Claude replies are streamed and may run to 64k output tokens (`ANTHROPIC_MAX_TOKENS`, was 16k including thinking; `ANTHROPIC_STREAM=0` turns streaming off). A full PRD revision ran past 16k and was cut off mid-JSON, which blocked the stage; streaming keeps a long reply from hitting the request timeout. A reply that still hits the limit is logged as cut off.
 - Routing: bug requests need bug-report phrases ("is broken", "getting an error", "throws an error", "stopped working"...); bare "broken" and "error" matched specifications ("the PRD will be broken into work orders", "error states") and sent PRD requests to the bug program. PRD requests also match "a prd" and "prd for", and only "quick prd" / "quick draft" (not any "quick") makes one informal.
 - Declining a proposal keeps the chat's attachments for the next request (people decline a wrong route and ask again), and every proposal lists the sources it will read ("Sources: fact-sheet.md, 2 Google Drive links, 2 Figma links").
 - Intake answers wait for "ready" or "yes", as the intake questions say: a reply with answers or files is recorded on the waiting task ("Got it… say ready when you want the draft"), and the draft gets every recorded reply plus "use the recommended answer" for the rest. A reply that only attached a file used to start the draft at once.
