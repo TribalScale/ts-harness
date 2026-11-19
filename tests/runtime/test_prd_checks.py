@@ -134,6 +134,44 @@ class PrdChecksTests(unittest.TestCase):
         bad_ref = long_fr.replace("Verified by: DoD-3)", "Verified by: DoD-9)")
         self.assertTrue(any("DoD-9" in f for f in check_prd(bad_ref)))
 
+    def test_a_full_prd_frames_the_project_in_detail(self):
+        full = GOOD_PRD.replace("**Profile:** Lite (no Full trigger)", "**Profile:** Full (two repositories)")
+        findings = check_prd(full)
+        # The short form is not enough for a Full PRD.
+        self.assertTrue(any("Problem Statement (Full): add a table of the problem per persona" in f for f in findings))
+        self.assertTrue(any("**Cost of doing nothing:**" in f for f in findings))
+        self.assertTrue(any(f.startswith("Goals (Full): write them as a table") for f in findings))
+        self.assertTrue(any(f.startswith("Non-Goals (Full): write them as a table") for f in findings))
+
+        framed = (
+            full.replace(
+                "Finance re-keys expenses into the ledger each month.\n**Current state:** a manual copy from the expenses page.\n**Why now:** the Q1 audit needs a repeatable export.",
+                "Finance re-keys expenses by hand.\n\n| Persona | Problem today | Evidence (source) |\n|---|---|---|\n"
+                "| Finance admin | Re-keys 400 expenses a month | 6 h per close (brief, section 2) |\n"
+                "| Auditor | No repeatable record | Q1 audit finding (brief, section 3) |\n\n"
+                "**Current state:** a manual copy from the expenses page into the ledger.\n"
+                "**Cost of doing nothing:** 6 h per month-end and audit findings.\n**Why now:** the Q1 audit.",
+            )
+            .replace(
+                "## Goals\n- Month-end close takes under 2 hours instead of 6.",
+                "## Goals\n| Goal | Who benefits | Measure | Baseline | Target | By when | Serves |\n|---|---|---|---|---|---|---|\n"
+                "| Faster close | Finance admin | Hours per close | 6 h | 2 h | Q1 | Close test |",
+            )
+            .replace(
+                "## Non-Goals\n- Scheduled delivery of the export.",
+                "## Non-Goals\n| Item | Category | Reason | Revisit |\n|---|---|---|---|\n"
+                "| Scheduled delivery | Later release | Admins export on demand (intake Q2) | Next quarter |",
+            )
+        )
+        self.assertEqual([f for f in check_prd(framed) if "(Full)" in f], [])
+        incomplete = framed.replace("| Hours per close | 6 h | 2 h |", "| Hours per close | | 2 h |").replace(
+            "| Admins export on demand (intake Q2) |", "|  |")
+        names = " ".join(check_prd(incomplete))
+        self.assertIn("a measure, baseline and target for every goal: Faster close", names)
+        self.assertIn("give the reason for Scheduled delivery", names)
+        # A Lite PRD keeps the short form.
+        self.assertEqual([f for f in check_prd(GOOD_PRD) if "(Full)" in f], [])
+
     def test_vague_words_with_a_number_are_allowed(self):
         self.assertEqual(check_prd(GOOD_PRD.replace("finishes within 10 seconds", "is fast: within 10 seconds")), [])
 
