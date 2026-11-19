@@ -88,14 +88,19 @@ Given ... When ... Then ...
   `acme/api`, no `acme/api` WO may depend on `acme/web`; move the shared piece
   so the dependency points one way.
 
-- A repository in `input.project_repositories` with a `template` is empty today. TS Harness
-  starts it from that template (a bootstrap PR merged before any work order runs), so plan
-  on top of it: follow its `template_conventions` (folders, layers, how tests are named and
-  written), extend its reference module rather than inventing a structure, and plan no work
-  orders for scaffolding, CI, linting or test runners: the template has them. Its acceptance
-  tests are Gherkin features named after the ticket key. Its app roles are `Admin` and `User`;
-  when the PRD defines other roles, plan a work order that changes them as the conventions'
-  Roles section describes, before the work orders that rely on them.
+- A repository in `input.project_repositories` with `conventions` has rules every work order
+  for it must follow (its `AGENTS.md`): folders and layers, how tests are named and written,
+  roles, migrations. Name the real paths and patterns they describe in each work order's
+  Requirements and Files, rather than inventing a structure.
+
+- A repository with a `template` starts from that TS Harness template: `template_status:
+  pending` means it is empty today and TS Harness opens a bootstrap PR, merged before any
+  work order runs; `applied` means it already has it. Either way plan on top of it: extend
+  its reference module, and plan no work orders for scaffolding, CI, linting or test
+  runners, which the template has. Its acceptance tests are Gherkin features named after the
+  ticket key. Its app roles start as `Admin` and `User`; when the PRD defines other roles,
+  plan a work order that changes them as the conventions' Roles section describes, before
+  the work orders that rely on them.
 
 - A repository in `input.project_repositories` with `ci_on_pull_requests: false` has code
   but no CI on pull requests. Plan one work order for it first, "Add CI to <repo>": a GitHub
