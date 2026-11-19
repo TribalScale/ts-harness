@@ -1,7 +1,7 @@
 """The project a console chat works on, picked in the chat box (``project_key`` on a message).
 
-The pick is kept on the session (``chat_project``). A proposal shows it ("Project: Jamieson Test
-(JMT)"), the program it starts gets it as its project, and a program the chat is already linked
+The pick is kept on the session (``chat_project``). A proposal shows it ("Project: Acme Scheduler
+(ACME)"), the program it starts gets it as its project, and a program the chat is already linked
 to gets it when it has none. Planning reads the project's repositories, templates, conventions
 and testing setting through it, and filing uses its Jira key.
 """
