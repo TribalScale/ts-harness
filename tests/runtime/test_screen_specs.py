@@ -130,6 +130,85 @@ class SystemStepTests(unittest.TestCase):
             result = run_system_step("draft_screen_specs", {"workflow_id": "w1"}, {"agent_id": "pm-agent"}, memory=mock.Mock())
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(len(result["output"]["screen_specs"]), 2)
+        # An inventory among the gathered sources is used.
+        with_inventory = [{**tasks[0], "output": {"design_refs": REFS, "sources": [{"name": "inventory.md", "text": INVENTORY}]}}]
+        with mock.patch("ts_harness.workflows.hooks._helpers.load_workflow_payload", return_value=({}, with_inventory)), \
+                mock.patch("ts_harness.intake.screen_specs.build_describer", return_value=lambda p, i: json.dumps(REPLY)), \
+                mock.patch("ts_harness.intake.blobs.intake_store", return_value=Store()):
+            used = run_system_step("draft_screen_specs", {"workflow_id": "w1"}, {}, memory=mock.Mock())
+        self.assertIn("Screens grouped by the design inventory (inventory.md)", used["output"]["summary"])
+        self.assertEqual(used["output"]["screen_specs"][0]["id"], "SC0")
         with mock.patch("ts_harness.workflows.hooks._helpers.load_workflow_payload", return_value=({}, [])):
             skipped = run_system_step("draft_screen_specs", {"workflow_id": "w1"}, {}, memory=mock.Mock())
         self.assertIs(skipped["output"]["skipped"], True)
+
+
+INVENTORY = """# Product inventory
+
+## Features
+
+### Planning
+| Feature | What it does | Who |
+| --- | --- | --- |
+| Week view (F-10) | Timeline for every machine. | Planner |
+| Publish the week (F-14, partial) | Review, then publish. SAP message pending. | Planner |
+| Finish an order (O-09) | Less than planned posts as partial. | Operator |
+
+## Screens
+
+### Hub
+| # | Screen | What it's for | States |
+| --- | --- | --- | --- |
+| 02 | Week | Main planning timeline for a week. | Base, pilot |
+| 03 | Holds | Held orders. | List |
+
+### Station app
+| # | Screen | What it's for | States |
+| --- | --- | --- | --- |
+| T1 | Sign in | Operator sign-in. | Keypad |
+"""
+
+
+class InventoryTests(unittest.TestCase):
+    def test_an_inventory_is_read_and_partial_items_become_gaps(self):
+        inv = ss.parse_inventory(INVENTORY)
+        self.assertEqual([(s["number"], s["name"], s["app"]) for s in inv["screens"]],
+                         [("02", "Week", "Hub"), ("03", "Holds", "Hub"), ("T1", "Sign in", "Station app")])
+        self.assertEqual(inv["screens"][0]["purpose"], "Main planning timeline for a week.")
+        # "posts as partial" in a description is not a gap.
+        self.assertEqual([g["item"] for g in inv["gaps"]], ["Publish the week (F-14, partial)"])
+        self.assertIsNone(ss.parse_inventory("# Notes\n\n| a | b |\n|---|---|\n| 1 | 2 |"))
+        found = ss.find_inventory([{"name": "brief.md", "text": "no tables"}, {"name": "inventory.md", "text": INVENTORY}])
+        self.assertEqual(found["source"], "inventory.md")
+
+    def test_inventory_numbers_group_frames_and_give_the_model_intent(self):
+        refs = [
+            _ref(1, "Hub / Schedule / 02 Week · Base"),
+            _ref(2, "Hub / Schedule / 2 Week · Pilot"),  # "2" and "02" are one screen
+            _ref(3, "Hub / Holds / 03 Holds · List"),
+            _ref(5, "Hub / Holds / 00 Cover"),
+        ]
+        inv = ss.parse_inventory(INVENTORY)
+        groups = ss.group_screens(refs, inv)
+        self.assertEqual([(g["screen"], [f["id"] for f in g["frames"]]) for g in groups],
+                         [("02 Week (Hub)", ["D1", "D2"]), ("03 Holds (Hub)", ["D3"]), ("Hub / Holds / 00 Cover", ["D5"])])
+        prompts = []
+
+        def describe(prompt, images):
+            prompts.append(prompt)
+            return json.dumps(REPLY)
+
+        out = ss.draft_screen_specs(refs, describe=describe, store=Store(), inventory=inv)
+        week_prompt = next(p for p in prompts if "02 Week (Hub)" in p)
+        self.assertIn("The design team's inventory describes this screen", week_prompt)
+        self.assertIn("- Purpose: Main planning timeline for a week.", week_prompt)
+        self.assertNotIn("inventory describes", next(p for p in prompts if "00 Cover" in p))
+        # The known gap is S1, high impact, asked first.
+        self.assertTrue(out["screen_questions"][0].startswith("S1. Publish the week (F-14, partial) is marked partial"))
+        self.assertEqual(out["screen_specs"][0]["id"], "SC0")
+        self.assertEqual(out["screen_specs"][1]["id"], "SC1")
+        self.assertIn("## SC0 · Known gaps (from the design inventory)", out["summary"])
+        self.assertIn("**Inventory:** Main planning timeline for a week.", out["summary"])
+        self.assertIn("Screens grouped by the design inventory (attached): 2 of 3 screens matched", out["summary"])
+        self.assertIn("Drafted from the Figma frames: 3 screens.", out["summary"])
+        self.assertIn("- Inventory (designer's intent): Main planning timeline", out["screen_specs_text"])

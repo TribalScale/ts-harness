@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Screen specs use an attached design inventory: a Markdown source with a screens table (number and `Screen` columns) groups the Figma frames by its screen numbers, gives each screen's row to the vision model as the designer's intent, and turns every item marked partial into a high-impact question under Known gaps, asked first.
 - Screen specs from Figma (`prd_request` 1.7.0, `draft_screen_specs`): a PRD request with Figma frames drafts one spec per screen (frames grouped by name) with the vision model: what the frames show, and questions with recommended answers for what they can't (behaviour, data sources, rules, phone and tablet). The specs are posted before intake; intake asks the open screen questions as `S1`… next to its own (`prd-intake` 1.4.0), and the draft and revisions build each screen's requirements from the specs and the answers (`prd-drafter` 1.5.0). A step whose output says `skipped` (no frames) posts nothing.
 - Projects are picked, not typed: the console chat box has a project picker (sent as `project_key`; proposals show "Project: Name (KEY).", the program a start creates gets it, and a linked program without a project gets it, as a user-set project), and the program page's Project field is a dropdown of System → Projects.
 - PRD checks read a whole requirement for its 'Specified in' and 'Verified by' links, not only its first line: a long requirement written as bullets was reported as unlinked and untested.
