@@ -184,6 +184,25 @@ When a human rejects `approve_prd` on a **`prd_request`** workflow, the v1.1
 Use `workflow_reject_with_feedback` with comments; no bespoke revision code path
 is required. After approval, the orchestrator asks how to continue — **Jira tickets or work orders** — then call `propose_advance_program` (or `propose_bridge_workflow`) with the chosen target.
 
+## Work-order planning: answering and revising at each approval
+
+`work_orders_from_prd` (1.3.0) treats the Refinery, Foundry and work-order approvals the
+same way as the PRD approval:
+
+- **Approve with notes.** An approval that says more than "approve" (for example
+  "Approve. ASM-001 confirmed; ASM-012 is 500 characters; split by phase") is kept as the
+  gate's `reviewer_notes`. Foundry reads the Refinery notes, and the Planner reads both
+  the Refinery and Foundry notes. The notes outrank the earlier stage's assumptions, and
+  the agent names each assumption it changed in its warnings. The earlier stage's
+  documents are not rewritten. The console approve route takes the same text as `comments`.
+- **Reject with comments.** The stage is redrafted from its earlier output with the
+  comments applied, its approval is asked again, and every later stage runs again from
+  the new output. Use this when the earlier stage's documents themselves must change.
+
+Notes given when approving the work orders have no later agent stage to read them: to
+change the work orders, reject them with comments instead. Programs started before 1.3.0
+keep the version they started with.
+
 ---
 
 ## Shared: Start With Requirements

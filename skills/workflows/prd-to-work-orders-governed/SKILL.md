@@ -7,7 +7,7 @@ allowed_agents: [pm-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.2.0
+version: 1.3.0
 ---
 
 # PRD to Work Orders (Governed Runtime)
@@ -30,7 +30,8 @@ Then run these checks in order:
 
 1. Read `input.stage` — this is the **only** stage selector (`refinery`, `foundry`, or `planner`).
 2. Read `input.approved_prd` as the source PRD.
-3. Read optional `input.prior_refinery` and `input.prior_foundry` when present.
+3. Read optional `input.prior_refinery` and `input.prior_foundry` when present, and the
+   reviewer's words (see Reviewer Answers and Revisions).
 4. Load the matching stage module from `stages/<stage>-runtime.md`.
 5. Load the matching quality gate from `quality-gates/<stage>-runtime.md`.
 6. Execute exactly one stage and return JSON per `output-envelope.md`.
@@ -39,6 +40,25 @@ Never infer stage from user wording, manifest, or workspace files.
 Never require or inspect `docs/prd-to-work-orders/manifest.json`, `state-machine.md`,
 or files under `docs/refinery`, `docs/foundry`, or `docs/planner`.
 Do not stop because filesystem modules are missing.
+
+## Reviewer Answers and Revisions
+
+The reviewer answers your warnings and assumptions at each approval. Their words reach you
+in two ways; both outrank your own assumptions and the prior stages' ASM items.
+
+- **`input.refinery_reviewer_notes` / `input.foundry_reviewer_notes`** — what the reviewer
+  said when approving that stage. Apply every answer, confirmation and condition in them.
+  Where a note changes a refinery assumption or a foundry decision, follow the note, and
+  name the item you changed and why in `warnings` (for example "ASM-012 changed to 500
+  characters per refinery review"). That is the only allowed edit of upstream content;
+  the prior JSON otherwise stays the source of truth.
+- **`input.prior_artifact` with `input.comments`** — the reviewer rejected your earlier
+  output for this stage and asked for changes. Start from `prior_artifact.artifacts`, make
+  every change the comments ask for, keep everything else unchanged, and start `summary`
+  with a short list of what changed. Keep the earlier IDs; add new ones after the last.
+
+When a note or comment is unclear, apply the reading closest to the PRD and say so in
+`warnings` instead of ignoring it.
 
 ## Mandatory Reads (inlined)
 
