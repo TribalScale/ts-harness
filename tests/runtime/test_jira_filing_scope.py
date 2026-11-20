@@ -69,8 +69,10 @@ class ProjectTargetTests(unittest.TestCase):
 
         client = mock.MagicMock()
         client.create_task.side_effect = lambda payload: {"id": payload["step_name"]}
-        client.get_program.return_value = {"program": {"id": "prog-1", "project_id": "PAY"}}
-        client.get_project.return_value = {"id": "PAY", "jira_project_key": "PAY"}
+        # Programs name their project by key; get_project only takes a UUID.
+        client.get_program.return_value = {"program": {"id": "prog-1", "project_id": "PAY", "tenant_id": "default"}}
+        client.get_project.side_effect = RuntimeError("project_id must be a UUID")
+        client.list_projects.return_value = {"projects": [{"id": "0b6c", "key": "PAY", "jira_project_key": "PAY"}]}
         skeleton = load_skeleton("file_work_orders_as_jira")
         with mock.patch("ts_harness.workflows.delivery_program._live_program_defaults",
                         return_value={"jira_filing": {"allowed_projects": ["OPS", "PAY"]}}):

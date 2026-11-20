@@ -688,14 +688,26 @@ def extract_outputs_for_node(
 
 
 def _program_jira_key(client: Any, program_id: str) -> str:
-    """The Jira key set on the program's project, or "" (no project, no key, or a lookup failure)."""
+    """The Jira key set on the program's project, or "" (no project, no key, or a lookup failure).
+
+    A program names its project by id or by key (``JMT``-style keys are stored as they are).
+    """
+    import uuid
+
     try:
         payload = client.get_program(program_id)
         program = payload.get("program") if isinstance(payload, dict) else None
-        project_id = program.get("project_id") if isinstance(program, dict) else None
-        if not isinstance(project_id, str) or not project_id:
+        ref = program.get("project_id") if isinstance(program, dict) else None
+        if not isinstance(ref, str) or not ref:
             return ""
-        project = client.get_project(project_id)
+        try:
+            uuid.UUID(ref)
+            project = client.get_project(ref)
+        except ValueError:
+            tenant = str(program.get("tenant_id") or "default")
+            listed = client.list_projects(tenant_id=tenant, key=ref)
+            rows = listed.get("projects") if isinstance(listed, dict) else None
+            project = next((row for row in rows or [] if isinstance(row, dict) and row.get("key") == ref), None)
     except Exception:
         return ""
     if isinstance(project, dict) and isinstance(project.get("project"), dict):
