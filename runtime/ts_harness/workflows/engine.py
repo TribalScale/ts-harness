@@ -473,6 +473,7 @@ class WorkflowEngine:
     ) -> dict[str, Any]:
         workflow_type = str(gate_task.get("workflow_type") or "")
         payload = self._workflow_payload(workflow_id)
+        self._require_ready(gate_task, payload)
         skeleton = self._skeleton_for_state(
             workflow_type,
             task=gate_task,
@@ -562,6 +563,17 @@ class WorkflowEngine:
                 result["phase"] = phase
         return result
 
+    @staticmethod
+    def _require_ready(gate_task: dict[str, Any], payload: dict[str, Any]) -> None:
+        """Refuse a decision on a gate whose step has not run yet (a later gate is pending too)."""
+        from ts_harness.workflows.operability import require_gate_ready
+
+        tasks = payload.get("tasks") if isinstance(payload, dict) else None
+        if not isinstance(tasks, list):
+            return
+        current = next((task for task in tasks if str(task.get("id")) == str(gate_task.get("id"))), gate_task)
+        require_gate_ready(current, tasks)
+
     @_locked(_keyword_workflow)
     def handle_approve(
         self,
@@ -577,6 +589,7 @@ class WorkflowEngine:
         """Approve ``gate_task``. ``reply_in_chat``: the caller replies in the thread itself,
         so phase completion returns its message instead of posting it."""
         workflow_type = str(gate_task.get("workflow_type") or "")
+        self._require_ready(gate_task, self._workflow_payload(workflow_id))
         ctx = self._context(
             workflow_id=workflow_id,
             workflow_type=workflow_type,
