@@ -40,6 +40,17 @@ class FiledKeysTests(unittest.TestCase):
             self.assertTrue(touched and all(key.startswith("PROJ-") for key in touched), touched)
             self.assertIn("PROJ-39", out["assigned"])
 
+    def test_assigning_never_leaves_the_allowed_projects(self):
+        tasks = _tasks({"summary": "Filed.", "jira_story_keys": ["PROJ-39", "OTHER-1"]})
+        tasks[0]["input"]["jira_allowed_projects"] = ["PROJ"]
+        tasks[1]["input"] = {}
+        tasks[0]["input"].pop("jira_project_key")
+        memory = mock.Mock()
+        memory.get_workflow.return_value = {"workflow": {"id": "wf"}, "tasks": tasks}
+        jira = mock.Mock()
+        assign_filed_tickets({"workflow_id": "wf"}, {}, memory=memory, jira_factory=lambda: jira)
+        self.assertEqual([call.args[0] for call in jira.update_issue.call_args_list], ["PROJ-39"])
+
     def test_program_artifacts_record_only_the_filed_tickets(self):
         patch = _extract_file_jira_outputs(workflow_type="file_work_orders_as_jira", tasks=_tasks(STRUCTURED))
         self.assertEqual(patch, {"jira_epic_key": "PROJ-38", "jira_story_keys": ["PROJ-39", "PROJ-40", "PROJ-41"]})

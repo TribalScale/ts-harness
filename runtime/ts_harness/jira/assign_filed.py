@@ -20,6 +20,16 @@ def _filed_keys(tasks: list[dict[str, Any]]) -> tuple[list[str], str]:
     return keys, epic
 
 
+def _allowed_projects(tasks: list[dict[str, Any]]) -> set[str]:
+    """``jira_filing.allowed_projects`` as the filing input carries it; empty when not given."""
+    for task in tasks:
+        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+        values = task_input.get("jira_allowed_projects")
+        if isinstance(values, list) and values:
+            return {str(value).strip().upper() for value in values if str(value).strip()}
+    return set()
+
+
 def _assignee(tasks: list[dict[str, Any]]) -> str:
     for task in tasks:
         value = (task.get("input") or {}).get("assignee_account_id") if isinstance(task.get("input"), dict) else None
@@ -39,6 +49,10 @@ def assign_filed_tickets(
     if not account:
         return {}  # nothing asked; an empty output posts nothing
     keys, _epic = _filed_keys(tasks)
+    allowed = _allowed_projects(tasks)
+    if allowed:
+        # The same allowlist that limits filing limits every other Jira write of this workflow.
+        keys = [key for key in keys if key.split("-", 1)[0].upper() in allowed]
     if not keys:
         return {"assigned": [], "summary": "No filed ticket keys were found to assign."}
     from ts_harness.integrations.jira_client import JiraClient
