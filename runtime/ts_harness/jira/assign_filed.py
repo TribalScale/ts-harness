@@ -11,18 +11,12 @@ from typing import Any, Callable
 
 
 def _filed_keys(tasks: list[dict[str, Any]]) -> tuple[list[str], str]:
-    from ts_harness.workflows.program_adapters import _filed_issue_keys
+    from ts_harness.workflows.program_adapters import _filing_project, _latest_filing, filed_ticket_keys
 
-    filed = [t for t in tasks if t.get("step_name") == "file_tickets" and t.get("status") == "succeeded"]
-    if not filed:
+    filing = _latest_filing(tasks)
+    if not filing:
         return [], ""
-    latest = max(filed, key=lambda t: str(t.get("updated_at") or t.get("created_at") or ""))
-    output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
-    keys = [str(k) for k in output.get("jira_story_keys") or output.get("story_keys") or [] if k]
-    epic = str(output.get("jira_epic_key") or output.get("epic_key") or "")
-    if not keys:
-        epic_found, keys = _filed_issue_keys(str(output.get("summary") or ""))
-        epic = epic or (epic_found or "")
+    epic, keys = filed_ticket_keys(filing["output"], project=_filing_project(tasks, filing))
     return keys, epic
 
 

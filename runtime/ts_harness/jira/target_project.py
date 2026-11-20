@@ -30,8 +30,13 @@ def _mentioned(text: str, allowed: list[str]) -> list[str]:
     return found
 
 
-def resolve_jira_target(intake: dict[str, Any], allowed_projects: Iterable[Any]) -> str:
-    """Pick the target project: explicit key, then an epic or issue key, then a single mention, then a single allowed project."""
+def resolve_jira_target(intake: dict[str, Any], allowed_projects: Iterable[Any], *, project_key: str = "") -> str:
+    """Pick the target project: explicit key, then an epic or issue key, then a single mention in the
+    request, then the program's project's Jira key, then a single allowed project.
+
+    The project's key wins over the allowlist fallback even when it is not allowed: filing then
+    stops and says the key is not allowed, instead of filing into another team's project.
+    """
     allowed = _normalize(allowed_projects)
     explicit = str(intake.get("jira_project_key") or "").strip().upper()
     if explicit:
@@ -40,12 +45,15 @@ def resolve_jira_target(intake: dict[str, Any], allowed_projects: Iterable[Any])
         project = _project_from_issue_key(intake.get(field))
         if project:
             return project
-    if not allowed:
-        return ""
     texts = [str(intake.get(field) or "") for field in ("summary", "request", "user_request")]
-    mentioned = _mentioned(" ".join(texts), allowed)
+    mentioned = _mentioned(" ".join(texts), allowed) if allowed else []
     if len(mentioned) == 1:
         return mentioned[0]
+    project_key = str(project_key or "").strip().upper()
+    if project_key:
+        return project_key
+    if not allowed:
+        return ""
     if len(allowed) == 1:
         return allowed[0]
     return ""
@@ -83,12 +91,17 @@ def jira_choice_from_reply(reply: str, intake: dict[str, Any]) -> dict[str, str]
     return choice
 
 
-def with_jira_target(intake: dict[str, Any], program_defaults: dict[str, Any] | None) -> dict[str, Any]:
-    """Add ``jira_project_key`` and ``jira_allowed_projects`` to a phase intake when they can be resolved."""
+def with_jira_target(
+    intake: dict[str, Any], program_defaults: dict[str, Any] | None, *, project_key: str = ""
+) -> dict[str, Any]:
+    """Add ``jira_project_key`` and ``jira_allowed_projects`` to a phase intake when they can be resolved.
+
+    ``project_key`` is the Jira key of the program's project (Project settings).
+    """
     from ts_harness.config.bindings import tenant_bindings
 
     allowed = list(tenant_bindings(program_defaults).jira_allowed_projects)
-    target = resolve_jira_target(intake, allowed)
+    target = resolve_jira_target(intake, allowed, project_key=project_key)
     if not allowed and not target:
         return intake
     out = dict(intake)
