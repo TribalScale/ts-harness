@@ -687,6 +687,35 @@ def extract_outputs_for_node(
     )
 
 
+def _program_jira_key(client: Any, program_id: str) -> str:
+    """The Jira key set on the program's project, or "" (no project, no key, or a lookup failure).
+
+    A program names its project by id or by key (``JMT``-style keys are stored as they are).
+    """
+    import uuid
+
+    try:
+        payload = client.get_program(program_id)
+        program = payload.get("program") if isinstance(payload, dict) else None
+        ref = program.get("project_id") if isinstance(program, dict) else None
+        if not isinstance(ref, str) or not ref:
+            return ""
+        try:
+            uuid.UUID(ref)
+            project = client.get_project(ref)
+        except ValueError:
+            tenant = str(program.get("tenant_id") or "default")
+            listed = client.list_projects(tenant_id=tenant, key=ref)
+            rows = listed.get("projects") if isinstance(listed, dict) else None
+            project = next((row for row in rows or [] if isinstance(row, dict) and row.get("key") == ref), None)
+    except Exception:
+        return ""
+    if isinstance(project, dict) and isinstance(project.get("project"), dict):
+        project = project["project"]
+    key = project.get("jira_project_key") if isinstance(project, dict) else None
+    return key.strip().upper() if isinstance(key, str) else ""
+
+
 def materialize_program_workflow(
     *,
     client: Any,
@@ -729,7 +758,11 @@ def materialize_program_workflow(
     from ts_harness.workflows.delivery_program import _live_program_defaults
 
     intake = skeleton.intake_stage_name()
-    stage_inputs = {intake: with_jira_target(dict(intake_input), _live_program_defaults())}
+    stage_inputs = {
+        intake: with_jira_target(
+            dict(intake_input), _live_program_defaults(), project_key=_program_jira_key(client, program_id)
+        )
+    }
     task_bodies = materialize_skeleton_tasks(
         skeleton,
         workflow_id=workflow_id,

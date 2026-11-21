@@ -5,6 +5,41 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+_DONE = {"succeeded", "skipped"}
+
+
+class GateNotReady(ValueError):
+    """An approval was asked for before the step it approves had finished."""
+
+
+def unfinished_dependencies(task: dict[str, Any], tasks: list[dict[str, Any]]) -> list[str]:
+    """Step names ``task`` depends on that have not finished; empty when it can be decided."""
+    by_id = {str(item.get("id")): item for item in tasks if item.get("id")}
+    waiting: list[str] = []
+    for dep_id in task.get("depends_on") or []:
+        dep = by_id.get(str(dep_id)) or {}
+        if str(dep.get("status") or "").lower() not in _DONE:
+            waiting.append(str(dep.get("step_name") or dep_id))
+    return waiting
+
+
+def gate_is_ready(task: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
+    """A pending approval whose earlier steps have all finished, so a person can decide it now."""
+    return (
+        bool(task.get("approval_required"))
+        and str(task.get("approval_status") or "").lower() == "pending"
+        and str(task.get("status") or "").lower() in {"pending", "blocked", "running"}
+        and not unfinished_dependencies(task, tasks)
+    )
+
+
+def require_gate_ready(task: dict[str, Any], tasks: list[dict[str, Any]]) -> None:
+    """Raise ``GateNotReady`` when ``task`` approves a step that has not finished yet."""
+    waiting = unfinished_dependencies(task, tasks)
+    if waiting:
+        step = str(task.get("step_name") or "this approval").replace("_", " ")
+        raise GateNotReady(f"{step} is not ready yet: {', '.join(name.replace('_', ' ') for name in waiting)} has not finished.")
+
 
 def _parse_dt(value: Any) -> datetime | None:
     if value is None:
@@ -78,23 +113,24 @@ def build_operability_status(
 
     # Approval wait
     for task in tasks:
-        if task.get("approval_required") and task.get("approval_status") == "pending":
-            if task.get("status") in {"pending", "blocked", "running"}:
-                waiting_on = {
-                    "kind": "approval",
-                    "event_type": None,
-                    "since": task.get("updated_at") or task.get("created_at"),
-                    "age_seconds": _age_seconds(
-                        _parse_dt(task.get("updated_at") or task.get("created_at")),
-                        now=current,
-                    ),
-                    "match": {"task_id": task.get("id"), "step_name": task.get("step_name")},
-                    **_deadline_fields(task),
-                }
-                recommended_action = _expired_action(task) or "approve_or_reject_pending_gate"
-                active_step = str(task.get("step_name") or active_step)
-                active_status = "blocked"
-                break
+        # Only a gate whose earlier steps have finished: a later gate is also pending, and
+        # listing it would let a person approve work that has not been produced yet.
+        if gate_is_ready(task, tasks):
+            waiting_on = {
+                "kind": "approval",
+                "event_type": None,
+                "since": task.get("updated_at") or task.get("created_at"),
+                "age_seconds": _age_seconds(
+                    _parse_dt(task.get("updated_at") or task.get("created_at")),
+                    now=current,
+                ),
+                "match": {"task_id": task.get("id"), "step_name": task.get("step_name")},
+                **_deadline_fields(task),
+            }
+            recommended_action = _expired_action(task) or "approve_or_reject_pending_gate"
+            active_step = str(task.get("step_name") or active_step)
+            active_status = "blocked"
+            break
 
     # External wait
     if waiting_on is None:
