@@ -202,7 +202,7 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
     def test_builtin_file_loads(self):
         definition, payload = self.load_builtin()
         self.assertEqual(definition.program_type, "software_delivery")
-        self.assertEqual(definition.definition_version, "1.5.0")
+        self.assertEqual(definition.definition_version, "1.6.0")
         self.assertTrue(definition.display_name)
         self.assertEqual(payload["program_type"], "software_delivery")
 
@@ -231,8 +231,9 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
             self.assertFalse(by_id[phase].terminal)
         # A requester may stop after the PRD or the Jira tickets; planning work orders
         # flows straight into implement, so it may not.
+        # Filing the work orders in Jira ends the program too, and may run again on request.
         self.assertEqual(
-            {node.id for node in definition.nodes if node.may_end}, {"prd", "jira"}
+            {node.id for node in definition.nodes if node.may_end}, {"prd", "jira", "file_jira"}
         )
         self.assertTrue(by_id["release"].terminal)
         self.assertTrue(by_id["release"].await_children)
@@ -267,7 +268,9 @@ class SoftwareDeliveryBuiltinParityTests(unittest.TestCase):
 
         jira_route = [(edge.source, edge.target, edge.mode) for edge in definition.edges if edge.source == "work_orders_jira"]
         self.assertEqual(jira_route, [("work_orders_jira", "file_jira", "automatic")])
-        self.assertTrue(by_id_file_jira_terminal(definition))
+        self.assertFalse(by_id_file_jira_terminal(definition))
+        refile = [(edge.source, edge.target, edge.mode, edge.confirm_required) for edge in definition.edges if edge.source == "file_jira"]
+        self.assertEqual(refile, [("file_jira", "file_jira", "manual", True)])
 
         implement_edges = [edge for edge in definition.edges if edge.source == "implement"]
         self.assertEqual([(edge.target, edge.mode) for edge in implement_edges], [("release", "automatic")])

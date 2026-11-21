@@ -9,6 +9,7 @@ Use on `file_work_orders_as_jira`.
 
 ## choose_epic
 
+- **Refile:** when `input.previous_jira_keys` is set, the requester asked to file these work orders again. Confirm: “Refile: a new epic plus N issues in PROJECT, replacing <previous keys>?”
 - If `jira_epic_key` is set, fetch it. It must be an open Epic. Inherit its project. Do not create a second epic.
 - If it is not an epic or is closed, stop and ask.
 - If no epic key, use `input.jira_project_key` when the runtime set it. Otherwise choose from `input.jira_allowed_projects`, or, when that is unset, the projects the **mapped PM** can create issues in (`jira_get_all_projects` with `action: create`). Return the choice as `jira_project_key`. Confirm: “File a new epic plus N issues in PROJECT?”
@@ -18,6 +19,7 @@ Use on `file_work_orders_as_jira`.
 1. The human approved the file action at `choose_epic`. Do not ask again.
    - File into `input.jira_project_key` when it is set. The runtime resolved it from the allowlist and the human confirmed it. Do not drop it because it is missing from `jira_get_all_projects`.
    - If `input.jira_epic_key` is set, file under that epic instead of creating one.
+   - **Refile** (`input.previous_jira_keys` set): those tickets are being replaced. Create a new epic and new issues even when the earlier tickets still exist or look like duplicates. Do not reuse, edit, move or close them; the next step comments on them with the new keys.
    - Stop only if Jira rejects the write.
 2. Create an Epic when needed. Create one issue per work order.
 3. Issue type = `input.issue_type_by_project[project]`, else `input.default_issue_type`, else `Story`. If that type does not exist, stop.
