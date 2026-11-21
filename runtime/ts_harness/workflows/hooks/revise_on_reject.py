@@ -234,6 +234,65 @@ def _resolve_depends_on(
     return resolved_ids
 
 
+_OPEN = {"pending", "blocked"}
+
+
+def repoint_dangling_tasks(
+    memory_client: Any,
+    *,
+    workflow_id: str,
+    workflow_type: str,
+    tenant_id: str,
+    skeleton: Any,
+    actor: str,
+) -> list[str]:
+    """Replace open steps that wait on a cancelled step with copies that wait on its replacement.
+
+    A revision recreates the chain up to the merge wait, but steps after that chain (for example
+    ``close_ticket``) keep depending on the cancelled original and would never run. Each such step is
+    cancelled and recreated with that dependency pointing at the newest task of the same step.
+    Returns the ids of the recreated tasks.
+    """
+    _workflow, tasks = load_workflow_payload(memory_client, workflow_id)
+    by_id = {str(task.get("id") or ""): task for task in tasks}
+    newest: dict[str, dict[str, Any]] = {}
+    for task in sorted(tasks, key=lambda item: str(item.get("created_at") or "")):
+        if str(task.get("status") or "") != "cancelled":
+            newest[str(task.get("step_name") or "")] = task
+    created: list[str] = []
+    for task in tasks:
+        if str(task.get("status") or "") not in _OPEN:
+            continue
+        deps = [str(dep) for dep in task.get("depends_on") or []]
+        mapped = []
+        changed = False
+        for dep in deps:
+            old = by_id.get(dep) or {}
+            replacement = newest.get(str(old.get("step_name") or ""))
+            if str(old.get("status") or "") == "cancelled" and replacement and str(replacement.get("id")) != dep:
+                mapped.append(str(replacement["id"]))
+                changed = True
+            else:
+                mapped.append(dep)
+        if not changed:
+            continue
+        memory_client.cancel_task(str(task["id"]), actor=actor, reason="re-pointed after revision")
+        body = _task_body_from_stage(
+            HookContext(workflow_id=workflow_id, workflow_type=workflow_type, tenant_id=tenant_id, task=task,
+                        stage=None, skeleton=skeleton, actor=actor, memory_client=memory_client),
+            str(task.get("step_name") or ""),
+            agent_id=str(task.get("agent_id") or ""),
+            depends_on=mapped,
+            input_data=dict(task.get("input") or {}),
+            approval_required=bool(task.get("approval_required")),
+        )
+        created.extend(
+            create_tasks_bulk(memory_client, workflow_id=workflow_id, workflow_type=workflow_type,
+                              tenant_id=tenant_id, tasks=[body], actor=actor)
+        )
+    return created
+
+
 def handle(ctx: HookContext) -> dict[str, Any]:
     if ctx.task is None:
         raise ValueError("task required for revise_on_reject")
@@ -456,12 +515,23 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         if created:
             previous_id = created[0]
 
+    repointed = repoint_dangling_tasks(
+        ctx.memory_client,
+        workflow_id=ctx.workflow_id,
+        workflow_type=ctx.workflow_type,
+        tenant_id=ctx.tenant_id,
+        skeleton=ctx.skeleton,
+        actor=ctx.actor,
+    )
+
     result: dict[str, Any] = {
         "workflow_id": ctx.workflow_id,
         "revise_task_id": revise_task_id,
         "re_gate_task_ids": re_gate_ids,
         "revision_number": revision_number,
     }
+    if repointed:
+        result["repointed_task_ids"] = repointed
     if block_loop:
         result["status"] = "revising"
         if guided_plan is not None:

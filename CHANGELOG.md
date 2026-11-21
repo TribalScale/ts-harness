@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Revisions no longer strand the steps after the merge wait: a step such as `close_ticket` that still waits on a step a revision cancelled is recreated to wait on that step's replacement. Before, a revised ticket never closed and the ticket queue stopped after it.
 - Guided revisions: when code review or QA raises the same finding again after a revision, the harness asks a stronger model why the attempts failed, then sends one revision with that diagnosis (approach, what to avoid, the test that proves it) and the full finding history to a stronger coding model, even when the revision budget is used up. If the finding still comes back, the stop message carries the diagnosis and a ready-made `/revise` reply. Settings: `TS_HARNESS_REVISION_DIAGNOSIS_MODEL`, `TS_HARNESS_GUIDED_CODING_MODEL` (`off` disables).
 - The PR checks wait no longer waits for `harness/qa` (or other TS Harness statuses published by later stages) when branch protection requires it; it was waiting for a status the QA gate only posts after the wait, so the delivery never moved on.
 - Coding runs: a run whose output ends a moment before OpenCode exits is no longer killed and reported as "opencode exit -15"; the harness waits up to 60 s for it to exit and keeps the real exit code. The integration-test helper (`python -m ts_harness.implementation.test_services integration`) no longer crashes with `NameError: playwright_config` (its entry point ran before the helpers below it were defined).
