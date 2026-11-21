@@ -227,7 +227,12 @@ def _required_check_names(
         return []
     if not isinstance(contexts, list):
         return []
-    return [name for name in contexts if name not in merge_policy.CLAW_CONTEXTS]
+    # TS Harness's own statuses, and those its later stages publish (harness/qa comes from the
+    # QA gate after this wait), cannot gate the checks wait: waiting for them never ends.
+    from ts_harness.integrations.github_client import LATER_GATE_CONTEXTS
+
+    own = merge_policy.CLAW_CONTEXTS | LATER_GATE_CONTEXTS
+    return [name for name in contexts if name not in own]
 
 
 def security_status(security: dict[str, Any]) -> tuple[str, str]:

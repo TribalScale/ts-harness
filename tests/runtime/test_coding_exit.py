@@ -43,3 +43,18 @@ class TestServicesModuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChecksWaitTests(unittest.TestCase):
+    def test_branch_protection_harness_statuses_do_not_gate_the_checks_wait(self):
+        from unittest import mock
+
+        from ts_harness.workflows import merge_policy
+        from ts_harness.workflows.merge_readiness import _required_check_names
+
+        github = mock.Mock()
+        github.required_status_contexts.return_value = [
+            "harness/code-review", "harness/qa", "harness/security-scan", "harness/independent-review", "bdd", "checks", "docker"]
+        policy = merge_policy.RepoPolicy(required_names=[]) if "required_names" in merge_policy.RepoPolicy.__dataclass_fields__ else None
+        names = _required_check_names(policy, github=github, owner="org", repo="api", base_branch="dev")
+        self.assertEqual(names, ["bdd", "checks", "docker"])
