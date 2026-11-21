@@ -365,8 +365,33 @@ def build_opencode_command(
     cmd = [binary, *run_args, "--dir", str(repo_dir)]
     if model:
         cmd.extend(["-m", f"{provider}/{model}"])
-    cmd.append(prompt)
+    if len(prompt.encode("utf-8")) <= PROMPT_ARG_LIMIT:
+        cmd.append(prompt)
+        return cmd
+    # Linux caps one argument at 128 KB (MAX_ARG_STRLEN): a long work order plus review
+    # history fails with "Argument list too long". Attach the prompt as a file instead;
+    # .ts-harness/ is excluded from commits.
+    path = _write_prompt_file(Path(repo_dir), prompt)
+    # -f takes a list, so it goes last: anything after it would be read as another file.
+    cmd.extend([LONG_PROMPT_MESSAGE.format(name=path.name), "-f", str(path)])
     return cmd
+
+
+PROMPT_ARG_LIMIT = 64 * 1024
+LONG_PROMPT_MESSAGE = (
+    "Your complete instructions are in the attached file {name}. Read all of it first, then follow it exactly; "
+    "it replaces this message."
+)
+
+
+def _write_prompt_file(repo_dir: Path, prompt: str) -> Path:
+    import hashlib
+
+    directory = repo_dir / ".ts-harness" / "prompts"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"prompt-{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}.md"
+    path.write_text(prompt, encoding="utf-8")
+    return path
 
 
 def build_implement_prompt(
