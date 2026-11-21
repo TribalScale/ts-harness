@@ -37,6 +37,18 @@ Each ticket's coding job loads the program's planning documents and design refer
 through `Program:`. Link the Jira project to a project with its repositories first (System →
 Projects) so the planner splits work per repository.
 
+Filing targets the Jira key of the program's project (Project settings), unless the request
+names another allowed project; that key must be in `jira_filing.allowed_projects` (System
+Settings → Jira filing → Allowed projects), or filing stops and says so.
+
+**Refile.** Filing ends the program, but it may run again: in the program's thread say
+"refile the work orders in <PROJECT>" (also "refile the tickets", "refile in jira") and
+confirm. The filing step runs again from the same work orders. It files a new epic and new
+issues (it never reuses the earlier ones), replaces the program's recorded tickets, assigns
+them as before, and comments "Refiled as <EPIC>" on any earlier tickets that still exist. It
+deletes nothing. Programs created before `software_delivery` 1.6.0 keep the definition they
+were created with, so refile is not offered there.
+
 Each change is one **root** program; `content_to_jira_work_orders`, `bug_to_jira_work_orders`, and `jira_to_pr` runs for that change are **child** programs (`parent_program_id`). See [`prd-first-delivery-flow.md`](../architecture/prd-first-delivery-flow.md#one-program-per-change).
 
 ## Stopping after the PRD or Jira

@@ -81,7 +81,8 @@ def assign_filed_tickets(
         except Exception as exc:  # noqa: BLE001 - report it, keep going
             failed.append(f"{key} ({str(exc)[:120]})")
     pointed = []
-    note = f"Refiled as {epic or keys[0]}" + (f" with {len(keys)} stories" if keys else "") + ". This ticket is no longer tracked."
+    count = f"{len(keys)} {'story' if len(keys) == 1 else 'stories'}"
+    note = f"Refiled as {epic or keys[0]} with {count}. This ticket is no longer tracked."
     for key in previous:
         try:
             jira.comment(key, note)
