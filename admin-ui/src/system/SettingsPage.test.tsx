@@ -389,6 +389,40 @@ describe("Settings page", () => {
     );
   });
 
+  it("activates a draft that Validate already saved", async () => {
+    const user = userEvent.setup();
+    const changed = {
+      ...settingsPayload().definition,
+      program_defaults: { jira_filing: { allowed_projects: ["OPS", "PAY"] } },
+    };
+    const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
+    mockFetch((url, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, body });
+      if (url === "/admin/runtime-settings") return jsonResponse(settingsPayload());
+      if (url === "/admin/runtime-settings/drafts" && init?.method === "POST") {
+        return jsonResponse({ draft: draft() });
+      }
+      if (url.includes("/validate")) return jsonResponse({ valid: true, issues: [] });
+      if (url.includes("/drafts/") && init?.method === "PUT") {
+        return jsonResponse({ draft: { ...draft(changed), revision: "rev-2" } });
+      }
+      if (url === "/admin/routing-definitions") return jsonResponse({ status: "empty", definition: null });
+      if (url === "/admin/runtime-settings/activate") return jsonResponse({ reload_ok: true, issues: [] });
+      return jsonResponse({});
+    });
+    renderPage(<SettingsPage section="defaults" />);
+    await screen.findByRole("heading", { name: "Jira defaults" });
+    await user.click(screen.getByRole("button", { name: "Validate" }));
+    await screen.findByText("Validated");
+    await user.click(screen.getByRole("button", { name: "Activate" }));
+    const activate = calls.find((item) => item.url === "/admin/runtime-settings/activate");
+    expect(activate?.body).toEqual({
+      runtime_settings_draft_id: "draft-1",
+      runtime_settings_expected_revision: "rev-2",
+    });
+  });
+
   it("shows draft and active revisions and uses ErrorBanner for persist errors", async () => {
     const user = userEvent.setup();
     mockFetch((url, init) => {

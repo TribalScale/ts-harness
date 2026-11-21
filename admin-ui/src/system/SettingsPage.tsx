@@ -32,6 +32,26 @@ function emptyDefinition(): RuntimeSettingsDefinition {
   return { definition_type: "runtime_settings", definition_version: "1.0.0" };
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** A saved runtime-settings draft whose content is not the active settings yet. */
+export function draftDiffersFromActive(
+  draft: { definition?: unknown } | null,
+  payload: { definition?: unknown } | null
+): boolean {
+  if (!draft?.definition) return false;
+  return stableJson(draft.definition) !== stableJson(payload?.definition ?? null);
+}
+
 export function SettingsPage({
   section = "defaults",
   onDirtyChange,
@@ -224,7 +244,10 @@ export function SettingsPage({
     setBusy(true);
     setError(null);
     try {
-      const includeSettings = dirty || settingsTouchedRef.current;
+      // Validate saves the draft and clears `dirty`; a saved draft that differs from the active
+      // settings still has to be activated.
+      const includeSettings =
+        dirty || settingsTouchedRef.current || draftDiffersFromActive(draft, payload);
       const includeRouting = routingDirty || routingTouchedRef.current;
       let saved = draft;
       let routingSaved = routingDraft;
