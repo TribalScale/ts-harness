@@ -15,6 +15,24 @@ from ts_harness.workflows.repo_pick import is_repo_pick_stage, repo_pick_output
 # holds them; the approval reply only adds what the person just said.
 _CARRIED_INPUT_KEYS = ("repo_url", "base_branch", "work_order_body", "jira_issue_key")
 _NAMED_BRANCH = re.compile(r"\bbranch\s+([A-Za-z0-9][A-Za-z0-9._/-]*)", re.IGNORECASE)
+# Words that only say "approved". A reply made of nothing else carries no notes.
+_APPROVAL_WORDS = frozenset(
+    "approve approved approving yes yep yeah ok okay sure fine lgtm good great looks look "
+    "go ahead continue proceed ship it this that all please thanks thank you is are i we "
+    "to with on the a an and now".split()
+)
+
+
+def approval_notes(reply: str) -> str:
+    """What an approval reply says beyond approving: the reviewer's answers and conditions.
+
+    "Approved" alone gives ""; "Approve, and use 500 characters for notes" gives the whole reply.
+    """
+    text = (reply or "").strip()
+    words = re.findall(r"[a-z']+", text.lower())
+    if not words or all(word in _APPROVAL_WORDS for word in words):
+        return ""
+    return text
 
 
 def _carry_gate_inputs(
@@ -88,6 +106,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             else:
                 output.update(jira_choice_from_reply(reply, task_input))
         output = _carry_gate_inputs(output, task_input, reply)
+    elif notes := approval_notes(reply):
+        # Later stages read the reviewer's answers as $prior.<gate>.output.reviewer_notes.
+        output = {"summary": f"Approved {ctx.task.get('step_name') or 'gate'} with notes", "reviewer_notes": notes}
     on_complete = dict(ctx.stage.on_complete or {})
     if on_complete.get("hook") == "freeze_ticket_queue":
         from ts_harness.workflows.hooks import freeze_ticket_queue
