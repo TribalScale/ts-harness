@@ -275,3 +275,35 @@ class StaleDraftTests(unittest.TestCase):
             self.assertEqual(payload["definition"]["program_defaults"]["jira_filing"]["allowed_projects"], ["PROJ"])
             with self.assertRaisesRegex(ValueError, "saved before the current settings were activated"):
                 activate_runtime_settings_draft_admin(runtime, _auth(), stale["id"], {"expected_revision": stale["revision"]})
+
+
+class ActivateVersionTests(unittest.TestCase):
+    """A draft copied from the active settings keeps their version; activating it takes the next one."""
+
+    def tearDown(self):
+        settings_store_mod._STORE = None
+
+    def test_activating_a_copy_of_the_active_version_bumps_the_patch(self):
+        from ts_harness.gateway.runtime_settings_bff import activate_runtime_settings_page_admin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuntimeSettingsStore(Path(tmp) / "settings")
+            settings_store_mod._STORE = store
+            runtime = _runtime()
+            base = {"definition_type": "runtime_settings", "definition_version": "1.0.1",
+                    "program_defaults": {"jira_filing": {"allowed_projects": ["OPS"]}}}
+            first = create_runtime_settings_draft_admin(runtime, _auth(), {"definition": base})["draft"]
+            activate_runtime_settings_draft_admin(runtime, _auth(), first["id"], {"expected_revision": first["revision"]})
+            copy = create_runtime_settings_draft_admin(runtime, _auth(), {"definition": {
+                **base, "program_defaults": {"jira_filing": {"allowed_projects": ["OPS", "PAY"]}}}})["draft"]
+            result = activate_runtime_settings_page_admin(runtime, _auth(), {
+                "runtime_settings_draft_id": copy["id"], "runtime_settings_expected_revision": copy["revision"]})
+            self.assertTrue(result["reload_ok"])
+            active = store.get_active("runtime_settings")
+            self.assertEqual(active["definition_version"], "1.0.2")
+            self.assertEqual(active["program_defaults"]["jira_filing"]["allowed_projects"], ["OPS", "PAY"])
+            # The single-draft route does the same.
+            again = create_runtime_settings_draft_admin(runtime, _auth(), {"definition": {
+                **base, "definition_version": "1.0.2", "program_defaults": {"jira_filing": {"allowed_projects": ["PAY"]}}}})["draft"]
+            activate_runtime_settings_draft_admin(runtime, _auth(), again["id"], {"expected_revision": again["revision"]})
+            self.assertEqual(store.get_active("runtime_settings")["definition_version"], "1.0.3")

@@ -127,6 +127,35 @@ def current_draft(store: Any) -> dict[str, Any] | None:
     return max(drafts, key=lambda draft: str(draft.get("updated_at") or draft.get("created_at") or "")) if drafts else None
 
 
+def _claim_free_version(store: Any, draft: dict[str, Any], expected_revision: str, actor_id: str) -> dict[str, Any]:
+    """Give the draft an unused ``definition_version`` before it is activated.
+
+    Every activation needs a version that was never activated with other content. The page
+    copies the active version into a new draft, so activating it as it is fails ("cannot reuse
+    historical definition_version"). The patch number is raised until it is free; a draft whose
+    content is already that version's content keeps it.
+    """
+    definition = dict(draft.get("definition") or {})
+    identity = str(definition.get(getattr(store, "identity_field", "definition_type")) or DEFINITION_TYPE)
+    revision = store._content_revision(definition)
+    active = store.get_active(identity) or {}
+
+    def taken(version: str) -> bool:
+        history = store._history_version_revisions(identity, version)
+        if history and history != {revision}:
+            return True
+        return active.get("definition_version") == version and store._content_revision(active) != revision
+
+    version = str(definition.get("definition_version") or "1.0.0")
+    if not taken(version):
+        return draft
+    major, minor, patch = (list(map(int, version.split(".")[:3])) + [0, 0, 0])[:3]
+    while taken(f"{major}.{minor}.{patch}"):
+        patch += 1
+    definition["definition_version"] = f"{major}.{minor}.{patch}"
+    return store.update_draft(str(draft["id"]), definition, expected_revision=expected_revision, actor_id=actor_id)
+
+
 def _refuse_stale_draft(store: Any, draft: dict[str, Any]) -> None:
     since = _activated_at(store)
     if since and str(draft.get("updated_at") or draft.get("created_at") or "") < since:
@@ -296,6 +325,8 @@ def activate_runtime_settings_draft_admin(
     store = runtime_settings_store()
     draft = store.get_draft(draft_id)
     _refuse_stale_draft(store, draft)
+    draft = _claim_free_version(store, draft, expected_revision, auth.actor_id)
+    expected_revision = str(draft.get("revision") or expected_revision)
     canonical, issues = validate_runtime_settings_payload(
         draft.get("definition") or {},
         **_settings_validation_kwargs(runtime),
@@ -346,6 +377,8 @@ def activate_runtime_settings_page_admin(
             raise ValueError("runtime_settings_expected_revision is required")
         draft = runtime_settings_store().get_draft(settings_id)
         _refuse_stale_draft(runtime_settings_store(), draft)
+        draft = _claim_free_version(runtime_settings_store(), draft, settings_rev, auth.actor_id)
+        settings_rev = str(draft.get("revision") or settings_rev)
         settings_canonical, settings_issues = validate_runtime_settings_payload(
             draft.get("definition") or {},
             **_settings_validation_kwargs(runtime),
@@ -400,11 +433,7 @@ def activate_runtime_settings_page_admin(
     if settings_id:
         activated["runtime_settings"] = runtime_settings_store().activate(
             settings_id,
-            expected_revision=str(
-                body.get("runtime_settings_expected_revision")
-                or body.get("expected_revision")
-                or ""
-            ),
+            expected_revision=settings_rev,
             actor_id=auth.actor_id,
         )
     if routing_id:

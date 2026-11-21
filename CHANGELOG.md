@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- System Settings: activating a draft copied from the active settings no longer fails with "cannot reuse historical definition_version". Activation raises the draft's patch version until it is unused (for example 1.0.1 to 1.0.2).
 - System Settings: Activate now activates a draft that Validate already saved. Validate saves the draft and clears the unsaved-changes flag, so Activate used to send no draft and failed with "runtime_settings_draft_id or routing_draft_id is required".
 - System Settings shows and edits `jira_filing.allowed_projects` ("Allowed projects" in the Jira section), and editing any other Jira filing field keeps the list. The page no longer opens a draft saved before the current settings were activated: it starts a fresh draft from the active settings, and activating such an old draft is refused, because it would undo the newer activation.
 - Jira filing stays in the right project. Filing uses the Jira key set on the program's project (unless the request names another allowed project) instead of falling back to the only allowed project; when that key is not allowed, filing stops and says so. The filed keys are read from the filing step's structured output (top level or `artifacts`), and keys read from its summary are kept to the filed project, so text such as "invariants AD-1 to AD-6" is no longer assigned or recorded as tickets.
