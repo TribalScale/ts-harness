@@ -265,6 +265,7 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(github_webhook.parse_github_event(comment)["kind"], "github.pr_comment")
         self.assertIsNone(github_webhook.parse_github_event({**comment, "comment": {"body": "looks good"}}))
         with mock.patch.object(github_webhook, "_handle_pr_feedback", return_value={"status": "rejected"}) as feedback, \
+                mock.patch("ts_harness.gateway.pr_commands.handle_pr_command", return_value={"status": "no_stuck_step"}), \
                 mock.patch.object(github_webhook, "notify_subscribers", return_value=[]):
             self.assertEqual(github_webhook.handle_github_webhook(comment)["status"], "rejected")
             closed = {
