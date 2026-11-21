@@ -1,6 +1,6 @@
 {
   "program_type": "content_to_jira_work_orders",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "display_name": "Content to Jira work orders",
   "startable_nodes": ["intake", "file_jira"],
   "config": {
@@ -52,7 +52,7 @@
       "default_workflow_type": "file_work_orders_as_jira",
       "workflow_variants": [],
       "required_artifacts": ["work_order_ids", "work_orders_markdown"],
-      "produces_artifacts": ["jira_epic_key", "jira_story_keys"],
+      "produces_artifacts": ["jira_epic_key", "jira_story_keys", "jira_refile"],
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
         { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" },
@@ -63,7 +63,8 @@
         { "kind": "artifact", "name": "default_branch", "target": "default_branch" }
       ],
       "completion_adapter": "extract_file_jira_outputs",
-      "terminal": true,
+      "terminal": false,
+      "may_end": true,
       "complete_channel_text": "Filed unassigned Jira tickets from the approved work-order pack. Assign them in Jira; engineers pick them up with jira_to_pr."
     }
   ],
@@ -81,6 +82,7 @@
       "mode": "manual",
       "confirm_required": true,
       "signals": ["file these tickets", "file work orders as jira", "create jira from work orders"]
-    }
+    },
+    {"source": "file_jira", "target": "file_jira", "mode": "manual", "confirm_required": true, "signals": ["refile the work orders", "refile work orders", "refile the tickets", "refile tickets", "refile in jira"], "artifact_patch": {"jira_refile": true}}
   ]
 }

@@ -362,13 +362,16 @@ def _validate_graph(
                     f"edge target references unknown node: {edge.target}",
                 )
             )
-        if edge.source == edge.target:
+        # A node may run again only when a person asks for it and confirms ("refile the work
+        # orders"): a manual, confirmed self-edge with signals. Anything else would loop.
+        repeat_on_request = edge.mode == "manual" and bool(edge.confirm_required) and bool(edge.signals)
+        if edge.source == edge.target and not repeat_on_request:
             issues.append(
                 _issue(
                     "error",
                     "self_edge",
                     _edge_path(edge_index),
-                    f"self-edge is not allowed: {edge.source}",
+                    f"self-edge is not allowed: {edge.source} (only a manual, confirmed edge with signals may repeat a node)",
                 )
             )
         if edge.source in node_index:

@@ -117,22 +117,33 @@ def program_advance_candidates(text: str, metadata: dict) -> list[dict]:
     """Outgoing program edges from the session's phase whose signals match ``text``."""
     from ts_harness.workflows.session_compat import read_program_id, read_program_phase
 
-    program_type = str(metadata.get("program_type") or "").strip()
-    source_node = str(read_program_phase(metadata) or "").strip()
-    if not read_program_id(metadata) or not program_type or not source_node or not text:
+    program_id = read_program_id(metadata)
+    if not program_id or not text:
         return []
+    program = _program_record(program_id)
+    program_type = str(metadata.get("program_type") or program.get("program_type") or "").strip()
+    # The program row knows where it is; a session's copy can be older (or missing).
+    source_node = str(program.get("current_phase") or read_program_phase(metadata) or "").strip()
+    if not program_type or not source_node:
+        return []
+    from ts_harness.workflows.delivery_program import parse_program_snapshot
     from ts_harness.workflows.program_materialize import resolve_bridge_candidates_from_text
     from ts_harness.workflows.program_registry import get_program_definition_registry
 
-    try:
-        snapshot = get_program_definition_registry().load(program_type)
-    except (FileNotFoundError, ValueError):
-        return []
+    # The program follows the definition it was pinned to, not whatever is active now.
+    snapshot = parse_program_snapshot(program.get("program_definition_snapshot"))
+    if snapshot is None:
+        try:
+            snapshot = get_program_definition_registry().load(program_type)
+        except (FileNotFoundError, ValueError):
+            return []
+    meta = program.get("metadata") if isinstance(program.get("metadata"), dict) else {}
     candidates = resolve_bridge_candidates_from_text(
         text,
         source_workflow_type=str(metadata.get("workflow_type") or ""),
         snapshot=snapshot,
         source_node=source_node,
+        artifacts=meta.get("artifacts") if isinstance(meta.get("artifacts"), dict) else None,
     )
     if not any(
         item.get("source_node") == "implement" and item.get("target_node") == "pick"
@@ -148,6 +159,18 @@ def program_advance_candidates(text: str, metadata: dict) -> list[dict]:
             if not (item.get("source_node") == "implement" and item.get("target_node") == "pick")
         ]
     return candidates
+
+
+def _program_record(program_id: str) -> dict:
+    """The program row, or {} when the memory API cannot be reached."""
+    try:
+        from ts_harness.memory.client import get_memory_client
+
+        payload = get_memory_client().get_program(program_id) or {}
+    except Exception:
+        return {}
+    program = payload.get("program") if isinstance(payload, dict) else None
+    return program if isinstance(program, dict) else {}
 
 
 def _artifacts_for_queue(metadata: dict) -> dict:

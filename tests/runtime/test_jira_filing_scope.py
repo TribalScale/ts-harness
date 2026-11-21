@@ -53,7 +53,7 @@ class FiledKeysTests(unittest.TestCase):
 
     def test_program_artifacts_record_only_the_filed_tickets(self):
         patch = _extract_file_jira_outputs(workflow_type="file_work_orders_as_jira", tasks=_tasks(STRUCTURED))
-        self.assertEqual(patch, {"jira_epic_key": "PROJ-38", "jira_story_keys": ["PROJ-39", "PROJ-40", "PROJ-41"]})
+        self.assertEqual(patch, {"jira_epic_key": "PROJ-38", "jira_story_keys": ["PROJ-39", "PROJ-40", "PROJ-41"], "jira_refile": False})
 
 
 class ProjectTargetTests(unittest.TestCase):
