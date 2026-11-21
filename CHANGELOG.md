@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Coding runs: a run whose output ends a moment before OpenCode exits is no longer killed and reported as "opencode exit -15"; the harness waits up to 60 s for it to exit and keeps the real exit code. The integration-test helper (`python -m ts_harness.implementation.test_services integration`) no longer crashes with `NameError: playwright_config` (its entry point ran before the helpers below it were defined).
 - System Settings: activating a draft copied from the active settings no longer fails with "cannot reuse historical definition_version". Activation raises the draft's patch version until it is unused (for example 1.0.1 to 1.0.2).
 - Refile work orders in Jira: in a program that filed its work orders, "refile the work orders in <PROJECT>" (after a confirm) runs the filing step again from the same work orders. The filing ends the program but may now run again (`software_delivery` 1.6.0, `content_to_jira_work_orders` 1.1.0, `bug_to_jira_work_orders` 1.2.0: a manual, confirmed self-edge on `file_jira`). A refile files a new epic instead of reusing the recorded one, replaces the program's recorded tickets, and comments on any replaced tickets that still exist. Program validation allows a self-edge only when it is manual, confirmed and has signals.
 - System Settings: Activate now activates a draft that Validate already saved. Validate saves the draft and clears the unsaved-changes flag, so Activate used to send no draft and failed with "runtime_settings_draft_id or routing_draft_id is required".

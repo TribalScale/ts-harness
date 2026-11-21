@@ -1006,9 +1006,6 @@ def main(argv: list[str]) -> int:
     return result.returncode
 
 
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
-
 
 # --- processes the coding agent left behind ---------------------------------------------------------
 
@@ -1244,3 +1241,8 @@ def screenshot_name(path: Path) -> str:
     if path.stem.startswith("test-finished"):
         suffix = ""
     return f"{stem}{suffix}{path.suffix}"
+
+
+# Last, so every helper above (and below main) is defined when this runs as a module.
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
