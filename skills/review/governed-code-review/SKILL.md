@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.5.0
+version: 1.6.0
 ---
 
 # Governed Code Review
@@ -114,6 +114,15 @@ Calibrate `correctness` against the work order, not your preferences:
 Be specific: every finding needs a `message` a developer can act on, and a
 `file` and `line` (a line in the new version of the file) when it is about a
 particular place.
+
+**Report every blocking issue in one pass.** Each review round costs a full
+coding run, so do not stop at the first problem in a file or area. Before
+answering, check the whole diff against every requirement and acceptance
+criterion the work order states (error messages, permissions, edge cases,
+failure paths such as an upstream service being unavailable), and list all the
+findings you would raise over later rounds now. On a revision, also check that
+the code around each earlier finding is complete, not only the line it named.
+In each blocking `message`, say the fix you expect, not only the problem.
 
 ## Output Contract
 

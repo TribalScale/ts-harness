@@ -730,7 +730,17 @@ class WorkflowEngine:
                 )
                 revise_result = self.registry.invoke("revise_on_reject", ctx)
                 cause, failed = _revision_cause(error)
-                if revise_result.get("status") == "revising" and revise_result.get("guided"):
+                if revise_result.get("status") == "revising" and revise_result.get("auto_grant"):
+                    triage = revise_result.get("triage") or {}
+                    ctx.extras["error"] = (
+                        f"{cause}; the automatic revisions ran out, but {triage.get('reason') or 'the PR is improving'}, "
+                        f"so it was sent back with consolidated guidance on the stronger model "
+                        f"(revision {triage.get('total_revisions', 0) + 1} of at most 8)."
+                    )
+                elif revise_result.get("status") == "auto_accept":
+                    revise_result = self._auto_accept(ctx, task, revise_result)
+                    ctx.extras["error"] = str(revise_result.get("message") or "")
+                elif revise_result.get("status") == "revising" and revise_result.get("guided"):
                     approach = str((revise_result.get("diagnosis") or {}).get("approach") or "").strip()
                     ctx.extras["error"] = (
                         f"{cause}; the same finding came back after a revision, so it was diagnosed and sent "
@@ -773,6 +783,7 @@ class WorkflowEngine:
                             max_revisions=int(revise_result.get("max_revisions") or 0),
                             decisions=decisions,
                             diagnosis=revise_result.get("diagnosis") or None,
+                            triage=revise_result.get("triage") or None,
                         )
                 elif revise_result.get("status") == "stopped":
                     ctx.extras["error"] = f"{cause}; the work order is stopped."
@@ -974,6 +985,35 @@ class WorkflowEngine:
         result = self.registry.invoke("cancel_workflow", ctx)
         self._maybe_notify(ctx, "cancelled")
         return result
+
+    def _auto_accept(self, ctx: Any, task: dict[str, Any], revise_result: dict[str, Any]) -> dict[str, Any]:
+        """Accept the step on the triage's authority and file the findings left open as follow-ups."""
+        from ts_harness.workflows import human_decisions, revision_triage
+
+        workflow_id = str(ctx.workflow_id)
+        triage = dict(revise_result.get("triage") or {})
+        tasks = list(self._workflow_payload(workflow_id).get("tasks") or [])
+        human_decisions.mark_awaiting_human_decision(self.client, str(task.get("id") or ""), tasks, reason="auto_accept")
+        reason = str(triage.get("reason") or "only minor findings remain")
+        accepted = self.decide_blocked_step(
+            workflow_id, str(task.get("id") or ""), "accept", actor="harness-triage",
+            guidance=f"Accepted by the harness: {reason}.", tenant_id=str(ctx.tenant_id or "default"),
+        )
+        ticket = next((str((item.get("input") or {}).get("jira_issue_key") or "") for item in tasks
+                       if isinstance(item.get("input"), dict) and (item.get("input") or {}).get("jira_issue_key")), "")
+        follow_ups = list((triage.get("triage") or {}).get("follow_ups") or [])
+        filed: list[str] = []
+        if ticket and follow_ups:
+            try:
+                from ts_harness.integrations.jira_client import JiraClient
+
+                filed = revision_triage.file_follow_ups(JiraClient.from_env(), ticket_key=ticket, follow_ups=follow_ups)
+            except Exception:  # noqa: BLE001 - the accept stands; the findings stay in the review
+                logger.exception("follow-up tickets for %s not filed", ticket)
+        message = f"Accepted by the harness: {reason}."
+        if filed:
+            message += f" Follow-up tickets: {', '.join(filed)}."
+        return {**revise_result, "accepted": accepted, "follow_ups": filed, "message": message}
 
     @_locked(_first_workflow)
     def decide_blocked_step(

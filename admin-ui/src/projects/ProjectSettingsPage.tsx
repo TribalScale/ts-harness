@@ -36,6 +36,7 @@ type Fields = {
   jira: string;
   branch: string;
   bdd: string;
+  autonomy: string;
   cpu: string;
   memory: string;
 };
@@ -47,6 +48,7 @@ function fieldsOf(project: Project): Fields {
     jira: project.jira_project_key || "",
     branch: project.default_base_branch || "",
     bdd: project.bdd_mode || "auto",
+    autonomy: project.revision_autonomy || "autonomous",
     cpu: project.worker_cpu ? String(project.worker_cpu) : "",
     memory: project.worker_memory_mb ? String(project.worker_memory_mb) : "",
   };
@@ -97,6 +99,7 @@ function SettingsCard({
       jira_project_key: merged.jira.trim().toUpperCase() || null,
       default_base_branch: merged.branch.trim() || null,
       bdd_mode: merged.bdd || "auto",
+      revision_autonomy: merged.autonomy || "autonomous",
       worker_cpu: merged.cpu ? Number(merged.cpu) : null,
       worker_memory_mb: merged.memory ? Number(merged.memory) : null,
     };
@@ -476,6 +479,38 @@ function ProjectDetail({
               With Gherkin, every ticket adds a feature file named after its
               key. A repository without a Gherkin runner gets one with its first
               ticket. Unit tests are required either way.
+            </Hint>
+          </label>
+        )}
+      </SettingsCard>
+      <SettingsCard
+        key={`autonomy-${project.id}`}
+        title="Revisions"
+        label="Revisions"
+        description="What the harness decides on its own when a ticket has used its three automatic revisions. Revisions 4 to 8 run on the stronger model; after 8, or for a security-sensitive finding, it always asks."
+        project={project}
+        isAdmin={isAdmin}
+        dirtyKeys={["autonomy"]}
+        onSaved={onSaved}
+      >
+        {(fields, set) => (
+          <label className="form-field proj-span-2">
+            <span>When revisions run out</span>
+            <select
+              aria-label="When revisions run out"
+              value={fields.autonomy}
+              onChange={(e) => set({ autonomy: e.target.value })}
+            >
+              <option value="autonomous">
+                Autonomous: keep going while it makes progress; accept minor findings with follow-up tickets
+              </option>
+              <option value="standard">
+                Standard: keep going while it makes progress; otherwise ask
+              </option>
+              <option value="conservative">Conservative: always ask</option>
+            </select>
+            <Hint>
+              Every decision the harness makes here is recorded on the program.
             </Hint>
           </label>
         )}

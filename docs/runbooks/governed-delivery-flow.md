@@ -444,6 +444,27 @@ stop message then includes the diagnosis and a ready-made `/revise` reply, and s
 when the diagnosis thinks the finding is outside the work order. Set
 `TS_HARNESS_REVISION_DIAGNOSIS_MODEL=off` to turn guided revisions off.
 
+**Triage at the limit.** When the three automatic revisions are used up, the
+harness triages before it asks anyone. A strong model classifies each open finding
+(in scope, major or minor, security-sensitive, clear enough to fix) and whether the
+rounds are converging. The decision follows the project's **Revisions** setting
+(Project settings; `revision_autonomy`):
+
+| Setting | Progress, open findings specific and in scope | Only minor or out-of-scope findings left | Otherwise |
+| --- | --- | --- | --- |
+| Autonomous (default) | Continue | Accept; each finding becomes a follow-up ticket under the epic, linked to the ticket | Ask |
+| Standard | Continue | Ask | Ask |
+| Conservative | Ask | Ask | Ask |
+
+"Continue" sends one more revision with consolidated guidance covering every open
+finding, on the stronger coding model (`TS_HARNESS_GUIDED_CODING_MODEL`, default Opus
+via the PM agent). Revisions 1-3 use the usual model; revisions 4-8 the stronger one.
+Two rules always hand the decision to a person: a finding that touches security
+(authentication, authorization, permissions, secrets, tokens or data exposure), and
+the ceiling of **8 revisions** per work order. An automatic accept is recorded as a
+decision by `harness-triage`. When the harness asks, the message says why it did not
+continue and includes the triage's suggested `/revise` text.
+
 When the budget runs out, the blocked step waits for a human instead of failing
 the work order. The task gets `_awaiting_human_decision` in its input, the wave
 join keeps waiting, the program thread lists the options, and the admin Inbox
