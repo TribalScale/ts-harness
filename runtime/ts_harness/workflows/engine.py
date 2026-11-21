@@ -730,7 +730,14 @@ class WorkflowEngine:
                 )
                 revise_result = self.registry.invoke("revise_on_reject", ctx)
                 cause, failed = _revision_cause(error)
-                if revise_result.get("status") == "revising":
+                if revise_result.get("status") == "revising" and revise_result.get("guided"):
+                    approach = str((revise_result.get("diagnosis") or {}).get("approach") or "").strip()
+                    ctx.extras["error"] = (
+                        f"{cause}; the same finding came back after a revision, so it was diagnosed and sent "
+                        f"back to OpenCode with guidance (revision {revise_result.get('revision_number')})."
+                        + (f" Approach: {approach[:400]}" if approach else "")
+                    )
+                elif revise_result.get("status") == "revising":
                     ctx.extras["error"] = (
                         f"{cause}; sending it back to OpenCode "
                         f"(revision {revise_result.get('revision_number')}/"
@@ -765,6 +772,7 @@ class WorkflowEngine:
                             feedback=ctx.reject_comments,
                             max_revisions=int(revise_result.get("max_revisions") or 0),
                             decisions=decisions,
+                            diagnosis=revise_result.get("diagnosis") or None,
                         )
                 elif revise_result.get("status") == "stopped":
                     ctx.extras["error"] = f"{cause}; the work order is stopped."
