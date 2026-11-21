@@ -58,3 +58,17 @@ class ChecksWaitTests(unittest.TestCase):
         policy = merge_policy.RepoPolicy(required_names=[]) if "required_names" in merge_policy.RepoPolicy.__dataclass_fields__ else None
         names = _required_check_names(policy, github=github, owner="org", repo="api", base_branch="dev")
         self.assertEqual(names, ["bdd", "checks", "docker"])
+
+
+class PinnedWaitTests(unittest.TestCase):
+    def test_a_wait_pinned_with_harness_qa_still_finishes(self):
+        from unittest import mock
+
+        from ts_harness.workflows.merge_readiness import aggregate_checks
+
+        github = mock.Mock()
+        github.check_summary.return_value = {"state": "success", "checks": {}, "failed": [], "pending": [], "missing": []}
+        head = {"repo": "org/api", "pr_url": "https://github.com/org/api/pull/3", "head_sha": "abc",
+                "required_checks": ["bdd", "checks", "docker", "harness/qa"]}
+        self.assertEqual(aggregate_checks(github, [head])["state"], "success")
+        self.assertEqual(github.check_summary.call_args.kwargs["required"], ["bdd", "checks", "docker"])
