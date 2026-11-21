@@ -48,7 +48,7 @@ ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
         }
     ),
     "extract_deploy_outputs": frozenset({"merge_sha", "released_environments"}),
-    "extract_file_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys"}),
+    "extract_file_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "jira_refile"}),
     "extract_pick_ticket_outputs": frozenset(
         {"jira_issue_key", "jira_project_key", "owner_program_id", "jira_issue_keys"}
     ),
@@ -678,12 +678,18 @@ def _build_file_jira_inputs(
     from ts_harness.jira.program_config import resolved_program_config
 
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
+    refile = bool(artifacts.get("jira_refile"))
+    if refile:
+        # A refile files a new epic: the old one would name the old project and receive the
+        # new stories. The old keys are kept so the assign step can point them at the new ones.
+        previous = [str(artifacts.get("jira_epic_key") or "")] + [str(key) for key in artifacts.get("jira_story_keys") or []]
+        intake["previous_jira_keys"] = [key for key in previous if key]
     for key in (
         "approved_prd",
         "work_order_ids",
         "work_orders_markdown",
         "bug_report",
-        "jira_epic_key",
+        *(() if refile else ("jira_epic_key",)),
         "repo",
         "default_branch",
         "planner_complete",
@@ -727,6 +733,9 @@ def _extract_file_jira_outputs(
         patch["jira_epic_key"] = epic
     if keys:
         patch["jira_story_keys"] = keys
+    if epic or keys:
+        # A refile replaces the recorded tickets; the next filing is a normal one again.
+        patch["jira_refile"] = False
     return patch
 
 

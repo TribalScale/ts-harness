@@ -2311,8 +2311,8 @@ def _topology_phase_order(topology: dict[str, Any]) -> list[str]:
             continue
         source = str(edge.get("source") or "").strip()
         target = str(edge.get("target") or "").strip()
-        if source not in indegree or target not in indegree:
-            continue
+        if source not in indegree or target not in indegree or source == target:
+            continue  # a node that may repeat on request (refile) keeps its place
         children[source].append(target)
         indegree[target] += 1
     detached = _detached_startable_nodes(topology)

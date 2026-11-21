@@ -228,7 +228,7 @@ class ContentToJiraProgramTests(unittest.TestCase):
             workflow_type="file_work_orders_as_jira",
             tasks=[{"status": "succeeded", "output": {"summary": "Filed the bug as THD-22."}}],
         )
-        self.assertEqual(lone_bug, {"jira_story_keys": ["THD-22"]})
+        self.assertEqual(lone_bug, {"jira_story_keys": ["THD-22"], "jira_refile": False})
 
     def test_filing_runs_once_the_epic_choice_is_confirmed(self):
         filing = json.loads((WORKFLOWS / "file_work_orders_as_jira.json").read_text())

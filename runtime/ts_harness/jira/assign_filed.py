@@ -38,6 +38,16 @@ def _assignee(tasks: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _previous_keys(tasks: list[dict[str, Any]]) -> list[str]:
+    """Tickets a refile replaces (``previous_jira_keys`` on the filing input)."""
+    for task in tasks:
+        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+        values = task_input.get("previous_jira_keys")
+        if isinstance(values, list) and values:
+            return [str(value) for value in values if str(value).strip()]
+    return []
+
+
 def assign_filed_tickets(
     task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira_factory: Callable[[], Any] | None = None
 ) -> dict[str, Any]:
@@ -46,28 +56,46 @@ def assign_filed_tickets(
 
     _workflow, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
     account = _assignee(tasks)
-    if not account:
+    previous = _previous_keys(tasks)
+    if not account and not previous:
         return {}  # nothing asked; an empty output posts nothing
-    keys, _epic = _filed_keys(tasks)
+    keys, epic = _filed_keys(tasks)
     allowed = _allowed_projects(tasks)
-    if allowed:
+
+    def in_scope(key: str) -> bool:
         # The same allowlist that limits filing limits every other Jira write of this workflow.
-        keys = [key for key in keys if key.split("-", 1)[0].upper() in allowed]
+        return not allowed or key.split("-", 1)[0].upper() in allowed
+
+    keys = [key for key in keys if in_scope(key)]
+    previous = [key for key in previous if in_scope(key) and key not in keys and key != epic]
     if not keys:
         return {"assigned": [], "summary": "No filed ticket keys were found to assign."}
     from ts_harness.integrations.jira_client import JiraClient
 
     jira = (jira_factory or JiraClient.from_env)()
     assigned, failed = [], []
-    for key in keys:
+    for key in keys if account else []:
         try:
             jira.update_issue(key, fields={"assignee": {"accountId": account}})
             assigned.append(key)
         except Exception as exc:  # noqa: BLE001 - report it, keep going
             failed.append(f"{key} ({str(exc)[:120]})")
+    pointed = []
+    note = f"Refiled as {epic or keys[0]}" + (f" with {len(keys)} stories" if keys else "") + ". This ticket is no longer tracked."
+    for key in previous:
+        try:
+            jira.comment(key, note)
+            pointed.append(key)
+        except Exception:  # noqa: BLE001 - a deleted ticket has nothing to point
+            continue
     lines = []
     if assigned:
         lines.append(f"Assigned {', '.join(assigned)} to you.")
     if failed:
         lines.append("Could not assign: " + "; ".join(failed) + ". Assign them in Jira.")
-    return {"assigned": assigned, "failed": failed, "summary": " ".join(lines)}
+    if pointed:
+        lines.append(f"Commented on the replaced tickets {', '.join(pointed)} with the new epic.")
+    out: dict[str, Any] = {"assigned": assigned, "failed": failed, "summary": " ".join(lines)}
+    if previous:
+        out["replaced"] = pointed
+    return out
