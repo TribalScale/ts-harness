@@ -83,3 +83,24 @@ class RefileAssignTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefileChatTests(unittest.TestCase):
+    """A thread linked to the finished filing routes "refile the work orders" to the program."""
+
+    def test_an_older_session_without_a_program_type_still_routes_the_refile(self):
+        from ts_harness.routing.intents import classify_channel_intent
+
+        snapshot = _snapshot("software_delivery")
+        program = {"id": "prog-1", "program_type": "software_delivery", "current_phase": "file_jira",
+                   "status": "succeeded", "program_definition_snapshot": snapshot,
+                   "metadata": {"artifacts": {"ended_at_phase": "file_jira", "planning_track": "work_orders"}}}
+        metadata = {"mode": "bridge_linked", "workflow_id": "wf-1", "workflow_type": "work_orders_from_prd",
+                    "workflow_phase": "approved", "program_id": "prog-1", "program_type": None, "program_phase": "file_jira"}
+        client = mock.Mock()
+        client.get_program.return_value = {"program": program}
+        with mock.patch("ts_harness.memory.client.get_memory_client", return_value=client):
+            intent = classify_channel_intent("refile the work orders in PAY", metadata)
+            other = classify_channel_intent("what is the status?", metadata)
+        self.assertEqual((intent.kind, intent.entry_phase), ("program_advance", "file_jira"))
+        self.assertNotEqual(other.kind, "program_advance")
