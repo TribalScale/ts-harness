@@ -101,11 +101,45 @@ def _redact_view(runtime: Any, settings_sections: dict[str, Any]) -> str:
     )
 
 
+def _activated_at(store: Any) -> str:
+    """When the active runtime settings were activated ("" when never)."""
+    try:
+        manifest = store.read_manifest()
+    except Exception:
+        return ""
+    collection = manifest.get(getattr(store, "manifest_collection_key", ""), {}) or {}
+    entry = collection.get(DEFINITION_TYPE) if isinstance(collection, dict) else None
+    return str((entry or {}).get("activated_at") or "") if isinstance(entry, dict) else ""
+
+
+def current_draft(store: Any) -> dict[str, Any] | None:
+    """The newest draft saved after the active settings were activated.
+
+    A draft last saved before the latest activation was built on older settings: editing and
+    activating it would silently undo that activation, so it is not offered. The page then
+    starts a fresh draft from the active settings.
+    """
+    since = _activated_at(store)
+    drafts = [
+        draft for draft in store.list_drafts()
+        if not since or str(draft.get("updated_at") or draft.get("created_at") or "") >= since
+    ]
+    return max(drafts, key=lambda draft: str(draft.get("updated_at") or draft.get("created_at") or "")) if drafts else None
+
+
+def _refuse_stale_draft(store: Any, draft: dict[str, Any]) -> None:
+    since = _activated_at(store)
+    if since and str(draft.get("updated_at") or draft.get("created_at") or "") < since:
+        raise ValueError(
+            "This draft was saved before the current settings were activated; activating it would undo them. "
+            "Reload System Settings to start from the active settings."
+        )
+
+
 def get_runtime_settings_admin(runtime: Any) -> dict[str, Any]:
     store = runtime_settings_store()
     active = store.get_active(DEFINITION_TYPE)
-    drafts = store.list_drafts()
-    draft = drafts[0] if drafts else None
+    draft = current_draft(store)
     baseline = getattr(runtime, "_yaml_settings_baseline", None) or yaml_settings_baseline(
         runtime.config
     )
@@ -259,7 +293,9 @@ def activate_runtime_settings_draft_admin(
     expected_revision = str(body.get("expected_revision") or "")
     if not expected_revision:
         raise ValueError("expected_revision is required")
-    draft = runtime_settings_store().get_draft(draft_id)
+    store = runtime_settings_store()
+    draft = store.get_draft(draft_id)
+    _refuse_stale_draft(store, draft)
     canonical, issues = validate_runtime_settings_payload(
         draft.get("definition") or {},
         **_settings_validation_kwargs(runtime),
@@ -309,6 +345,7 @@ def activate_runtime_settings_page_admin(
         if not settings_rev:
             raise ValueError("runtime_settings_expected_revision is required")
         draft = runtime_settings_store().get_draft(settings_id)
+        _refuse_stale_draft(runtime_settings_store(), draft)
         settings_canonical, settings_issues = validate_runtime_settings_payload(
             draft.get("definition") or {},
             **_settings_validation_kwargs(runtime),

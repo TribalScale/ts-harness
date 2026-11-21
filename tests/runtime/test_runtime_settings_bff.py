@@ -248,3 +248,30 @@ class RuntimeSettingsBffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StaleDraftTests(unittest.TestCase):
+    """A draft saved before the latest activation is not offered and cannot be activated."""
+
+    def tearDown(self):
+        settings_store_mod._STORE = None
+
+    def test_a_draft_older_than_the_active_settings_is_set_aside(self):
+        from ts_harness.gateway.runtime_settings_bff import current_draft
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuntimeSettingsStore(Path(tmp) / "settings")
+            settings_store_mod._STORE = store
+            runtime = _runtime()
+            empty = {"definition_type": "runtime_settings", "definition_version": "1.0.0"}
+            stale = create_runtime_settings_draft_admin(runtime, _auth(), {"definition": empty})["draft"]
+            newer = create_runtime_settings_draft_admin(runtime, _auth(), {
+                "definition": {**empty, "definition_version": "1.0.1",
+                               "program_defaults": {"jira_filing": {"allowed_projects": ["PROJ"]}}}})["draft"]
+            activate_runtime_settings_draft_admin(runtime, _auth(), newer["id"], {"expected_revision": newer["revision"]})
+            self.assertIsNone(current_draft(store))
+            payload = get_runtime_settings_admin(runtime)
+            self.assertIsNone(payload["draft"])
+            self.assertEqual(payload["definition"]["program_defaults"]["jira_filing"]["allowed_projects"], ["PROJ"])
+            with self.assertRaisesRegex(ValueError, "saved before the current settings were activated"):
+                activate_runtime_settings_draft_admin(runtime, _auth(), stale["id"], {"expected_revision": stale["revision"]})
