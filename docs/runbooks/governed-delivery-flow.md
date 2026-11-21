@@ -41,6 +41,29 @@ Filing targets the Jira key of the program's project (Project settings), unless 
 names another allowed project; that key must be in `jira_filing.allowed_projects` (System
 Settings → Jira filing → Allowed projects), or filing stops and says so.
 
+**Parallel delivery.** `implement all <PROJECT>` builds tickets one at a time when the
+project's **Parallel delivery** setting (Project settings; `max_parallel_tickets`, 1-8,
+default 2) is 1. Above 1 the `implement` phase runs `implement_jira_pool`: every ticket
+whose Jira blockers are done starts as its own `implement_jira_ticket` child, up to the
+limit, preferring repositories with nothing running. Each time a child finishes (merged
+and closed, or stopped) the pool starts the tickets that became ready, so a slot never
+waits for a whole wave. Children post to the program's thread as usual. The pool finishes
+when nothing runs and nothing more can start; tickets left behind a stopped blocker are
+reported in a blocked step for a person.
+
+Three other limits decide how many coding jobs really run at once; raise them with the
+project limit:
+
+| Limit | Where | Default |
+| --- | --- | --- |
+| Host memory (local launcher) | (host memory − 2.5 GB) ÷ `CODING_WORKER_MEMORY` (2 GB) | 2 on an 8 GB host |
+| `coding_max_running` | deployment profile / `CODING_MAX_RUNNING` | 3 |
+| `coding_per_program` | System Settings, scheduling | 3 |
+
+For 6-7 tickets at once on one host, use about 16 GB of memory for the jobs plus the
+reserve (for example a 32 GB, 8 vCPU instance), set `coding_max_running` and
+`coding_per_program` to 7, or move coding jobs to ECS ([coding-workers-ecs.md](coding-workers-ecs.md)).
+
 **Refile.** Filing ends the program, but it may run again: in the program's thread say
 "refile the work orders in <PROJECT>" (also "refile the tickets", "refile in jira") and
 confirm. The filing step runs again from the same work orders. It files a new epic and new

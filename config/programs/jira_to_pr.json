@@ -1,6 +1,6 @@
 {
   "program_type": "jira_to_pr",
-  "definition_version": "1.2.0",
+  "definition_version": "1.3.0",
   "display_name": "Jira to PR",
   "startable_nodes": ["pick", "implement"],
   "config": {
@@ -15,7 +15,7 @@
       "default_workflow_type": "pick_assigned_jira",
       "workflow_variants": [],
       "required_artifacts": [],
-      "produces_artifacts": ["jira_issue_key", "jira_project_key", "jira_issue_keys"],
+      "produces_artifacts": ["jira_issue_key", "jira_project_key", "jira_issue_keys", "ticket_pool", "max_parallel_tickets"],
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
         { "kind": "artifact", "name": "jira_issue_key", "target": "jira_issue_key" }
@@ -26,7 +26,7 @@
     {
       "id": "implement",
       "default_workflow_type": "implement_jira_ticket",
-      "workflow_variants": [],
+      "workflow_variants": [{ "workflow_type": "implement_jira_pool", "when": { "ticket_pool": true } }],
       "required_artifacts": ["jira_issue_key"],
       "produces_artifacts": ["pr_url", "pr_urls", "qa_status", "qa_summary", "qa_evidence"],
       "input_bindings": [

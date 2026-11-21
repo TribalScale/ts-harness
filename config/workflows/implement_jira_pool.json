@@ -1,0 +1,50 @@
+{
+  "workflow_type": "implement_jira_pool",
+  "definition_version": "1.0.0",
+  "display_name": "Implement Jira tickets in parallel",
+  "program": {
+    "phase": "implement",
+    "next_phase": null,
+    "required_artifacts": ["jira_issue_keys"],
+    "auto_advance": false,
+    "terminal": true
+  },
+  "promotion": {
+    "confirm_required": false,
+    "intake_stage": "fill_pool",
+    "binding": { "format": "{channel}:{channel_id}:{thread_id}" }
+  },
+  "notifications": {
+    "bound_channel": true,
+    "events": ["completed", "blocked", "failed"]
+  },
+  "on_workflow_cancel": { "hook": "cancel_workflow" },
+  "on_workflow_complete": { "hook": "complete_program_phase" },
+  "stages": [
+    {
+      "name": "fill_pool",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "present_output": true,
+      "present_prompt": "inform",
+      "present_body": "summary",
+      "barrier": { "hook": "fill_ticket_pool", "workflow_type": "implement_jira_ticket" },
+      "retry": { "max_retries": 0, "timeout_seconds": 600 }
+    },
+    {
+      "name": "join_pool",
+      "kind": "task",
+      "agent_id": "orchestrator",
+      "depends_on": ["fill_pool"],
+      "approval_required": false,
+      "wait_external": {
+        "hook": "wait_external",
+        "event_type": "workflow.child_terminal",
+        "children": { "source": "$prior.fill_pool.output.children" },
+        "pool": true,
+        "timeout_seconds": 2592000
+      },
+      "retry": { "max_retries": 0, "timeout_seconds": 2592000 }
+    }
+  ]
+}

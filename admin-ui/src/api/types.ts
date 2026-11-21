@@ -409,6 +409,7 @@ export interface Project {
   /** Gherkin acceptance tests: auto (repos with no tests or already using Gherkin), always, never. */
   bdd_mode?: "auto" | "always" | "never";
   revision_autonomy?: "autonomous" | "standard" | "conservative";
+  max_parallel_tickets?: number;
   worker_cpu: number | null;
   worker_memory_mb: number | null;
   can_manage?: boolean;
