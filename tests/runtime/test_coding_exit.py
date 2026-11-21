@@ -72,3 +72,19 @@ class PinnedWaitTests(unittest.TestCase):
                 "required_checks": ["bdd", "checks", "docker", "harness/qa"]}
         self.assertEqual(aggregate_checks(github, [head])["state"], "success")
         self.assertEqual(github.check_summary.call_args.kwargs["required"], ["bdd", "checks", "docker"])
+
+
+class LongPromptTests(unittest.TestCase):
+    def test_a_prompt_over_the_argument_limit_is_attached_as_a_file(self):
+        from ts_harness.implementation.backends.opencode import PROMPT_ARG_LIMIT, build_opencode_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            short = build_opencode_command(binary="oc", repo_dir=Path(tmp), prompt="do it", run_args=["run"], provider="p", model="m")
+            self.assertEqual(short[-1], "do it")
+            long_prompt = "x" * (PROMPT_ARG_LIMIT + 10)
+            cmd = build_opencode_command(binary="oc", repo_dir=Path(tmp), prompt=long_prompt, run_args=["run"], provider="p", model="m")
+            attached = Path(cmd[cmd.index("-f") + 1])
+            self.assertEqual(attached.read_text(), long_prompt)
+            self.assertIn(".ts-harness/prompts", str(attached))
+            self.assertTrue(all(len(part.encode()) < 128 * 1024 for part in cmd))
+            self.assertIn(attached.name, cmd[-1])
