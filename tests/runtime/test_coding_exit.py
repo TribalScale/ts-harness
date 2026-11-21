@@ -87,4 +87,6 @@ class LongPromptTests(unittest.TestCase):
             self.assertEqual(attached.read_text(), long_prompt)
             self.assertIn(".ts-harness/prompts", str(attached))
             self.assertTrue(all(len(part.encode()) < 128 * 1024 for part in cmd))
-            self.assertIn(attached.name, cmd[-1])
+            # The file option is last: OpenCode reads every argument after -f as a file.
+            self.assertEqual(cmd[-2], "-f")
+            self.assertIn(attached.name, cmd[-3])

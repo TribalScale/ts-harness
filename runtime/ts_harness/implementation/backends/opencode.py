@@ -372,7 +372,8 @@ def build_opencode_command(
     # history fails with "Argument list too long". Attach the prompt as a file instead;
     # .ts-harness/ is excluded from commits.
     path = _write_prompt_file(Path(repo_dir), prompt)
-    cmd.extend(["-f", str(path), LONG_PROMPT_MESSAGE.format(name=path.name)])
+    # -f takes a list, so it goes last: anything after it would be read as another file.
+    cmd.extend([LONG_PROMPT_MESSAGE.format(name=path.name), "-f", str(path)])
     return cmd
 
 
