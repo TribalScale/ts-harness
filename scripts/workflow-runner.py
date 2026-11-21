@@ -762,6 +762,7 @@ class WorkflowRunner:
             with self._state_lock:
                 self.reload_if_changed()
                 self._sweep_stale()
+                self._recover_blocks()
             if not self._runtime_ready():
                 log_event("runtime_not_ready", runner_id=self.runner_id)
                 return
@@ -799,6 +800,7 @@ class WorkflowRunner:
             self.reload_if_changed()
             if leader:
                 self._sweep_stale()
+                self._recover_blocks()
         self._renew_leases()
         if not self._runtime_ready():
             log_event("runtime_not_ready", runner_id=self.runner_id)
@@ -1040,6 +1042,24 @@ class WorkflowRunner:
             # Record creation may fail if the workflow already exists; log and continue.
             log_event("workflow_record_create_error", workflow_id=workflow_id, error=str(exc))
         self._created_workflows.add(workflow_id)
+
+    def _recover_blocks(self) -> None:
+        """Once a minute, finish on_block handling a restart interrupted (see block_recovery)."""
+        now = time.monotonic()
+        if now - getattr(self, "_last_block_recovery", -60.0) < 60.0:
+            return
+        self._last_block_recovery = now
+        try:
+            from ts_harness.memory.client import get_memory_client
+            from ts_harness.workflows.block_recovery import recover_unhandled_blocks
+            from ts_harness.workflows.engine import get_workflow_engine
+
+            recovered = recover_unhandled_blocks(get_memory_client(), get_workflow_engine())
+        except Exception as exc:  # noqa: BLE001 - the next tick tries again
+            log_event("block_recovery_failed", error=str(exc)[:300])
+            return
+        if recovered:
+            log_event("blocks_recovered", task_ids=recovered)
 
     def _sweep_stale(self) -> None:
         for task in self.memory.list_stale_tasks():

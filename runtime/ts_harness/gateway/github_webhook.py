@@ -27,6 +27,7 @@ import hmac
 import importlib
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -211,7 +212,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
         issue = body.get("issue") or {}
         comment = body.get("comment") or {}
         text = str(comment.get("body") or "").strip()
-        if action != "created" or issue.get("pull_request") is None or not text.startswith("/revise"):
+        if action != "created" or issue.get("pull_request") is None or not re.match(r"^/(revise|accept|stop)\b", text, re.I):
             return None
         return {
             "kind": "github.pr_comment",
@@ -219,6 +220,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
             "pr_url": str(issue.get("html_url") or ""),
             "number": issue.get("number"),
             "author": _login(comment.get("user")),
+            "body": text,
         }
 
     if name == "installation":
@@ -555,6 +557,15 @@ def handle_github_webhook(
     if kind in {"github.installation", "github.installation_repositories"}:
         return _handle_installation(event, host=host, actor=actor)
     subscribers = notify_subscribers(event, tenant_id=tenant_id)
+    if kind == "github.pr_comment":
+        # A /revise, /accept or /stop comment decides the PR's stuck step when one is waiting.
+        from ts_harness.gateway.pr_commands import handle_pr_command, parse_command
+
+        decided = handle_pr_command(event, tenant_id=tenant_id)
+        if decided.get("status") != "no_stuck_step":
+            return {**decided, "kind": kind, "pr_url": event.get("pr_url")}
+        if (parse_command(str(event.get("body") or "")) or ("",))[0] != "revise":
+            return {"status": "no_stuck_step", "kind": kind, "pr_url": event.get("pr_url")}
     feedback = kind in {"github.pr_closed", "github.pr_comment"} or (
         kind == "github.pr_review" and event.get("review_state") == "changes_requested"
     )
