@@ -152,7 +152,7 @@ def create_project_admin(memory: Any, auth: AuthContext, config: Any, body: dict
     if not _is_admin(auth, config):
         raise ProjectAccessDenied("only admins can create projects")
     fields = {k: body.get(k) for k in ("key", "name", "team_slug", "jira_project_key", "default_base_branch",
-                                         "worker_cpu", "worker_memory_mb", "bdd_mode") if k in body}
+                                         "worker_cpu", "worker_memory_mb", "bdd_mode", "revision_autonomy") if k in body}
     project = memory.create_project(tenant_id=_tenant(auth), actor=_actor(auth), **fields)
     return {**project, "can_manage": True}
 
@@ -165,7 +165,7 @@ def update_project_admin(
     if "team_slug" in body and not _is_admin(auth, config):
         raise ProjectAccessDenied("only admins can move a project to another team")
     fields = {k: body[k] for k in ("name", "team_slug", "jira_project_key", "default_base_branch",
-                                   "worker_cpu", "worker_memory_mb", "bdd_mode") if k in body}
+                                   "worker_cpu", "worker_memory_mb", "bdd_mode", "revision_autonomy") if k in body}
     updated = memory.update_project(project["id"], actor=_actor(auth), **fields)
     return {**updated, "can_manage": can_manage(auth, updated, config)}
 

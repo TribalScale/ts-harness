@@ -30,7 +30,7 @@ def select_block_case(config: dict[str, Any], error: str) -> dict[str, Any]:
 
 _REVISION_ONLY_KEYS = frozenset(
     {"_revision_budget", "_revision_source", "refresh", "qa_feedback", "review_feedback", "revision_files",
-     "_guided", "_guidance", "coding_model"}
+     "_guided", "_guidance", "coding_model", "_auto_grant", "_triage"}
 )
 # Gates whose verdicts can contradict each other. When the revisions they ask for alternate
 # (review, QA, review), they are pulling the code in opposite directions, usually because the
@@ -77,6 +77,21 @@ def _with_gate_output(ctx: HookContext, tasks: list[dict[str, Any]]) -> list[dic
     if not any(str(task.get("id") or "") == gate_id for task in tasks):
         merged.append({**dict(ctx.task or {}), "output": output, "status": "blocked"})
     return merged
+
+
+def _triage_plan(ctx: HookContext, tasks: list[dict[str, Any]], gate_step: str, implement_step: str) -> dict[str, Any] | None:
+    from ts_harness.workflows import revision_triage
+
+    try:
+        return revision_triage.plan(
+            tasks, workflow=dict(ctx.workflow or {}), memory=ctx.memory_client,
+            gate_step=gate_step, implement_step=implement_step,
+        )
+    except Exception:  # noqa: BLE001 - a failed triage leaves the decision to a person
+        import logging
+
+        logging.getLogger(__name__).exception("revision triage failed")
+        return None
 
 
 def _guided_plan(tasks: list[dict[str, Any]], gate_step: str, implement_step: str) -> dict[str, Any] | None:
@@ -323,6 +338,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     grant = dict(ctx.extras.get("grant") or {}) if block_loop else {}
     position: int | None = None
     guided_plan: dict[str, Any] | None = None
+    auto_plan: dict[str, Any] | None = None
     if block_loop:
         if max_revisions <= 0:
             max_revisions = 2
@@ -362,16 +378,31 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             # attempt (even past the limit) before asking a person.
             guided_plan = _guided_plan(_with_gate_output(ctx, tasks), str(gate.get("step_name") or ""), revise_step)
         if len(existing) >= limit and guided_plan is None:
-            result = {
-                "status": "revision_limit",
-                "workflow_id": ctx.workflow_id,
-                "existing_revisions": len(existing),
-                "max_revisions": max_revisions,
-            }
-            if guided_before:
-                result["diagnosis"] = guided_before
-            return result
-        if grant or granted_at is not None or guided_plan is not None:
+            # Out of automatic revisions: triage decides whether to keep going, accept, or ask.
+            triage_plan = _triage_plan(ctx, _with_gate_output(ctx, tasks), str(gate.get("step_name") or ""), revise_step)
+            decision = str((triage_plan or {}).get("decision") or "escalate")
+            if decision == "accept":
+                return {
+                    "status": "auto_accept",
+                    "workflow_id": ctx.workflow_id,
+                    "existing_revisions": len(existing),
+                    "max_revisions": max_revisions,
+                    "triage": triage_plan,
+                }
+            if decision != "continue":
+                result = {
+                    "status": "revision_limit",
+                    "workflow_id": ctx.workflow_id,
+                    "existing_revisions": len(existing),
+                    "max_revisions": max_revisions,
+                }
+                if guided_before:
+                    result["diagnosis"] = guided_before
+                if triage_plan:
+                    result["triage"] = triage_plan
+                return result
+            auto_plan = triage_plan
+        if grant or granted_at is not None or guided_plan is not None or auto_plan is not None:
             position = len(existing) + 1
 
     source = _latest_succeeded(tasks, source_steps) if source_steps else None
@@ -401,6 +432,13 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         revise_input["_revision_grant"] = grant
     if position is not None:
         revise_input["revision_number"] = position
+    if block_loop and auto_plan is not None:
+        feedback_key = "qa_feedback" if "qa_feedback" in mapped and "review_feedback" not in mapped else "review_feedback"
+        revise_input[feedback_key] = auto_plan["feedback"]
+        revise_input["_auto_grant"] = True
+        revise_input["_triage"] = {"reason": auto_plan.get("reason"), "total_revisions": auto_plan.get("total_revisions")}
+        if auto_plan.get("coding_model"):
+            revise_input["coding_model"] = auto_plan["coding_model"]
     if block_loop and guided_plan is not None:
         feedback_key = "qa_feedback" if "qa_feedback" in mapped and "review_feedback" not in mapped else "review_feedback"
         revise_input[feedback_key] = guided_plan["feedback"]
@@ -537,6 +575,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         if guided_plan is not None:
             result["guided"] = True
             result["diagnosis"] = guided_plan["diagnosis"]
+        if auto_plan is not None:
+            result["auto_grant"] = True
+            result["triage"] = auto_plan
         result["max_revisions"] = max_revisions if budget or position is not None else 1 + max_revisions
         result["resume_after_task_ids"] = resume_ids
         result["cancelled_task_ids"] = cancelled

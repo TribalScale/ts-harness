@@ -64,6 +64,16 @@ def _bdd_mode(value: Any) -> str:
     return mode
 
 
+REVISION_AUTONOMY = ("autonomous", "standard", "conservative")
+
+
+def _revision_autonomy(value: Any) -> str:
+    mode = str(value or "autonomous").strip().lower()
+    if mode not in REVISION_AUTONOMY:
+        raise ValueError("revision_autonomy must be autonomous, standard or conservative")
+    return mode
+
+
 def _project_json(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -75,6 +85,7 @@ def _project_json(row: dict[str, Any]) -> dict[str, Any]:
         "jira_project_key": row.get("jira_project_key"),
         "default_base_branch": row.get("default_base_branch"),
         "bdd_mode": row.get("bdd_mode") or "auto",
+        "revision_autonomy": row.get("revision_autonomy") or "autonomous",
         "worker_cpu": row.get("worker_cpu"),
         "worker_memory_mb": row.get("worker_memory_mb"),
         "registry_count": int(row.get("registry_count") or 0),
@@ -174,13 +185,14 @@ def create_project(conn, body: dict[str, Any]) -> dict[str, Any]:
         team_id = _team_id(cur, tenant_id, body.get("team_slug"))
         cur.execute(
             """
-            INSERT INTO projects (tenant_id, team_id, key, name, jira_project_key, default_base_branch, worker_cpu, worker_memory_mb, bdd_mode)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO projects (tenant_id, team_id, key, name, jira_project_key, default_base_branch, worker_cpu, worker_memory_mb, bdd_mode, revision_autonomy)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tenant_id, key) DO NOTHING
             RETURNING id
             """,
             (tenant_id, team_id, key, name, _clean(body.get("jira_project_key")),
-             _clean(body.get("default_base_branch")), cpu, memory, _bdd_mode(body.get("bdd_mode"))),
+             _clean(body.get("default_base_branch")), cpu, memory, _bdd_mode(body.get("bdd_mode")),
+             _revision_autonomy(body.get("revision_autonomy"))),
         )
         row = cur.fetchone()
         if not row:
@@ -221,6 +233,9 @@ def update_project(conn, project_id: str, body: dict[str, Any]) -> dict[str, Any
     if "bdd_mode" in body:
         sets.append("bdd_mode = %s")
         params.append(_bdd_mode(body.get("bdd_mode")))
+    if "revision_autonomy" in body:
+        sets.append("revision_autonomy = %s")
+        params.append(_revision_autonomy(body.get("revision_autonomy")))
     actor = str(body.get("actor") or "admin")
     with conn.cursor() as cur:
         if "team_slug" in body:
@@ -232,7 +247,7 @@ def update_project(conn, project_id: str, body: dict[str, Any]) -> dict[str, Any
             f"UPDATE projects SET {', '.join(sets)}, updated_at = now() WHERE id = %s",
             (*params, current["id"]),
         )
-        changed = sorted(k for k in body if k in (*_PROJECT_FIELDS, "worker_cpu", "worker_memory_mb", "team_slug", "bdd_mode"))
+        changed = sorted(k for k in body if k in (*_PROJECT_FIELDS, "worker_cpu", "worker_memory_mb", "team_slug", "bdd_mode", "revision_autonomy"))
         _audit(cur, "project_updated", f"Project {current['key']} updated", {"project_id": current["id"], "fields": changed}, actor)
     conn.commit()
     return get_project(conn, current["id"])

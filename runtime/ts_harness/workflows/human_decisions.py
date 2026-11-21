@@ -97,10 +97,16 @@ def revision_limit_text(
     max_revisions: int,
     decisions: list[str],
     diagnosis: dict[str, Any] | None = None,
+    triage: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         f"{label}: {cause}. OpenCode used all {max_revisions} automatic revisions, so the work order is waiting for you."
     ]
+    if triage and triage.get("reason"):
+        lines.append(f"The harness did not continue on its own because {triage['reason']}.")
+        guidance = str((triage.get("triage") or {}).get("guidance") or "").strip()
+        if guidance and "revise" in decisions:
+            lines.append(f"Its suggested fix, to send as is:\n/revise {label} {guidance[:1500]}")
     if feedback.strip():
         lines.append(feedback.strip()[:1500])
     if diagnosis and str(diagnosis.get("approach") or "").strip():
