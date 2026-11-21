@@ -430,6 +430,20 @@ branch). QA and code review revisions share one budget of three
 QA rejected the PR; sending it back to OpenCode (revision 2/3).
 ```
 
+**Guided revision.** When code review or QA raises the same finding again after a
+revision (same file within 40 lines, or a closely matching message), another plain
+revision usually repeats the mistake. Instead, once per budget, the harness asks a
+stronger model (`TS_HARNESS_REVISION_DIAGNOSIS_MODEL`, default the PM agent's model)
+why the attempts failed. It reads the finding history, each attempt's summary, the
+work order and the current code of the files the findings name. The next revision gets
+that diagnosis (approach, what not to do, the test that proves it) plus every round's
+findings, and runs on the stronger coding model (`TS_HARNESS_GUIDED_CODING_MODEL`,
+default the diagnosis model; `off` keeps the usual model). This happens even when the
+budget is used up. If the finding still comes back, the step waits for a human. The
+stop message then includes the diagnosis and a ready-made `/revise` reply, and says
+when the diagnosis thinks the finding is outside the work order. Set
+`TS_HARNESS_REVISION_DIAGNOSIS_MODEL=off` to turn guided revisions off.
+
 When the budget runs out, the blocked step waits for a human instead of failing
 the work order. The task gets `_awaiting_human_decision` in its input, the wave
 join keeps waiting, the program thread lists the options, and the admin Inbox
