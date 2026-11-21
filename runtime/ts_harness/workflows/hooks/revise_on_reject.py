@@ -29,7 +29,8 @@ def select_block_case(config: dict[str, Any], error: str) -> dict[str, Any]:
 
 
 _REVISION_ONLY_KEYS = frozenset(
-    {"_revision_budget", "_revision_source", "refresh", "qa_feedback", "review_feedback", "revision_files"}
+    {"_revision_budget", "_revision_source", "refresh", "qa_feedback", "review_feedback", "revision_files",
+     "_guided", "_guidance", "coding_model"}
 )
 # Gates whose verdicts can contradict each other. When the revisions they ask for alternate
 # (review, QA, review), they are pulling the code in opposite directions, usually because the
@@ -64,6 +65,40 @@ def conflicting_gates(existing: list[dict[str, Any]], gate_step: str, comments: 
     steps = [_gate_kind(item["step"]) for item in run]
     alternating = all(steps[i] != steps[i + 1] for i in range(len(steps) - 1)) and len(set(steps)) == 2
     return run if alternating else None
+
+
+def _with_gate_output(ctx: HookContext, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``tasks`` with the blocking gate's verdict, which may not be stored yet when this runs."""
+    output = (getattr(ctx, "dispatch_result", None) or {}).get("output") if isinstance(getattr(ctx, "dispatch_result", None), dict) else None
+    gate_id = str((ctx.task or {}).get("id") or "")
+    if not isinstance(output, dict) or not gate_id:
+        return tasks
+    merged = [dict(task, output=output, status="blocked") if str(task.get("id") or "") == gate_id else task for task in tasks]
+    if not any(str(task.get("id") or "") == gate_id for task in tasks):
+        merged.append({**dict(ctx.task or {}), "output": output, "status": "blocked"})
+    return merged
+
+
+def _guided_plan(tasks: list[dict[str, Any]], gate_step: str, implement_step: str) -> dict[str, Any] | None:
+    from ts_harness.workflows import revision_guidance
+
+    if gate_step not in revision_guidance.GUIDED_GATES:
+        return None
+    pr_url = ""
+    for task in sorted(tasks, key=lambda item: str(item.get("created_at") or ""), reverse=True):
+        output = task.get("output") if isinstance(task.get("output"), dict) else {}
+        if task.get("step_name") == implement_step and output.get("pr_url"):
+            pr_url = str(output["pr_url"])
+            break
+    try:
+        return revision_guidance.plan_guided_revision(
+            tasks, gate_step=gate_step, implement_step=implement_step, pr_url=pr_url
+        )
+    except Exception:  # noqa: BLE001 - a failed diagnosis falls back to the ordinary loop
+        import logging
+
+        logging.getLogger(__name__).exception("guided revision planning failed")
+        return None
 
 
 def _gate_kind(step: str) -> str:
@@ -228,6 +263,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     max_revisions = int(config.get("max_revisions") or 0)
     grant = dict(ctx.extras.get("grant") or {}) if block_loop else {}
     position: int | None = None
+    guided_plan: dict[str, Any] | None = None
     if block_loop:
         if max_revisions <= 0:
             max_revisions = 2
@@ -256,14 +292,27 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 "max_revisions": max_revisions,
                 "conflict": conflict,
             }
-        if len(existing) >= limit:
-            return {
+        guided_plan = None
+        guided_before = next(
+            (dict((task.get("input") or {}).get("_guidance") or {}) for task in reversed(existing)
+             if isinstance(task.get("input"), dict) and task["input"].get("_guided")),
+            None,
+        )
+        if not grant and guided_before is None:
+            # The same finding came back after a revision: diagnose it and send one guided
+            # attempt (even past the limit) before asking a person.
+            guided_plan = _guided_plan(_with_gate_output(ctx, tasks), str(gate.get("step_name") or ""), revise_step)
+        if len(existing) >= limit and guided_plan is None:
+            result = {
                 "status": "revision_limit",
                 "workflow_id": ctx.workflow_id,
                 "existing_revisions": len(existing),
                 "max_revisions": max_revisions,
             }
-        if grant or granted_at is not None:
+            if guided_before:
+                result["diagnosis"] = guided_before
+            return result
+        if grant or granted_at is not None or guided_plan is not None:
             position = len(existing) + 1
 
     source = _latest_succeeded(tasks, source_steps) if source_steps else None
@@ -293,6 +342,13 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         revise_input["_revision_grant"] = grant
     if position is not None:
         revise_input["revision_number"] = position
+    if block_loop and guided_plan is not None:
+        feedback_key = "qa_feedback" if "qa_feedback" in mapped and "review_feedback" not in mapped else "review_feedback"
+        revise_input[feedback_key] = guided_plan["feedback"]
+        revise_input["_guided"] = True
+        revise_input["_guidance"] = guided_plan["diagnosis"]
+        if guided_plan.get("coding_model"):
+            revise_input["coding_model"] = guided_plan["coding_model"]
     revision_number = revise_input.get("revision_number")
 
     revise_depends_on = _resolve_depends_on(
@@ -408,6 +464,9 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     }
     if block_loop:
         result["status"] = "revising"
+        if guided_plan is not None:
+            result["guided"] = True
+            result["diagnosis"] = guided_plan["diagnosis"]
         result["max_revisions"] = max_revisions if budget or position is not None else 1 + max_revisions
         result["resume_after_task_ids"] = resume_ids
         result["cancelled_task_ids"] = cancelled

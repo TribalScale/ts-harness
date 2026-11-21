@@ -89,12 +89,31 @@ def mark_awaiting_human_decision(client: Any, task_id: str, tasks: list[dict[str
     client.patch_task_input(task_id, {**_input(stored), HUMAN_DECISION_KEY: {"reason": reason, "since": _now()}})
 
 
-def revision_limit_text(*, label: str, cause: str, feedback: str, max_revisions: int, decisions: list[str]) -> str:
+def revision_limit_text(
+    *,
+    label: str,
+    cause: str,
+    feedback: str,
+    max_revisions: int,
+    decisions: list[str],
+    diagnosis: dict[str, Any] | None = None,
+) -> str:
     lines = [
         f"{label}: {cause}. OpenCode used all {max_revisions} automatic revisions, so the work order is waiting for you."
     ]
     if feedback.strip():
         lines.append(feedback.strip()[:1500])
+    if diagnosis and str(diagnosis.get("approach") or "").strip():
+        from ts_harness.workflows.revision_guidance import suggested_revise
+
+        lines.append(
+            "A guided revision already tried this diagnosis and the finding came back: "
+            f"{str(diagnosis.get('why_attempts_failed') or '').strip()}"
+        )
+        if diagnosis.get("out_of_scope"):
+            lines.append("The diagnosis thinks the finding asks for more than the work order covers; accepting it may be right.")
+        if "revise" in decisions:
+            lines.append("To try once more with that guidance, send:\n" + suggested_revise(label, diagnosis)[:1500])
     options: list[str] = []
     if "revise" in decisions:
         options.append(f"`/revise {label} <guidance>` to send it back with {max_revisions} more automatic revisions")

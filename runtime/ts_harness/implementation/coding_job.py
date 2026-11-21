@@ -74,6 +74,15 @@ def _as_dict(value: Any) -> dict[str, Any] | None:
 _BOUND_TEXT_KEYS = ("work_order_body", "review_feedback", "qa_feedback")
 
 
+def _guided_model(value: Any, provider: str) -> str:
+    """A guided revision's model for this backend: ``provider/name`` becomes ``name``; another provider is ignored."""
+    text = str(value or "").strip()
+    if "/" not in text:
+        return text
+    prefix, name = text.split("/", 1)
+    return name if not provider or prefix == provider else ""
+
+
 def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
     """The repo, branch, PR, work order and feedback a deliver task was created with."""
     binding: dict[str, Any] = {}
@@ -87,6 +96,9 @@ def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
             binding[key] = items
     if task_input.get("refresh") is True:
         binding["refresh"] = True
+    # A guided revision (the same review finding came back) runs on a stronger model.
+    if str(task_input.get("coding_model") or "").strip():
+        binding["coding_model"] = str(task_input["coding_model"]).strip()
     notes = task_input.get("knowledge_notes")
     if isinstance(notes, list) and notes:
         binding["knowledge_notes"] = [item for item in notes if isinstance(item, dict)]
@@ -175,7 +187,7 @@ def build_coding_request(
     # Secrets/env (CODING_BACKEND_MODEL) win over baked runtime YAML so rotate-secrets
     # takes effect without re-rendering ts-harness-runtime.yaml.
     model = (
-        str(args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip()
+        str(_guided_model(bound.get("coding_model"), provider) or args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip()
         or None
     )
 
