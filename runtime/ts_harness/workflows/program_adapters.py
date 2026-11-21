@@ -720,18 +720,59 @@ def _extract_file_jira_outputs(
     del workflow_type, artifacts
     merged = dict(outputs or {})
     merged.update(_merge_task_outputs(tasks))
+    filing = _latest_filing(tasks)
+    epic, keys = filed_ticket_keys(filing.get("output") or merged, project=_filing_project(tasks, filing))
     patch: dict[str, Any] = {}
-    if merged.get("epic_key") or merged.get("jira_epic_key"):
-        patch["jira_epic_key"] = merged.get("epic_key") or merged.get("jira_epic_key")
-    if merged.get("jira_story_keys") or merged.get("story_keys"):
-        patch["jira_story_keys"] = merged.get("jira_story_keys") or merged.get("story_keys")
-    if not patch:
-        epic, keys = _filed_issue_keys(str(merged.get("summary") or ""))
-        if epic:
-            patch["jira_epic_key"] = epic
-        if keys:
-            patch["jira_story_keys"] = keys
+    if epic:
+        patch["jira_epic_key"] = epic
+    if keys:
+        patch["jira_story_keys"] = keys
     return patch
+
+
+_FILING_STEPS = ("file_tickets", "file_jira")
+
+
+def _latest_filing(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """The newest succeeded filing step, or {} when none ran."""
+    filed = [
+        task for task in tasks
+        if task.get("step_name") in _FILING_STEPS and task.get("status") == "succeeded" and isinstance(task.get("output"), dict)
+    ]
+    return max(filed, key=lambda task: str(task.get("updated_at") or task.get("created_at") or "")) if filed else {}
+
+
+def _filing_project(tasks: list[dict[str, Any]], filing: dict[str, Any]) -> str:
+    """The Jira project the filing was asked to file into."""
+    for task in [filing, *tasks]:
+        task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+        value = str(task_input.get("jira_project_key") or "").strip().upper()
+        if value:
+            return value
+    return ""
+
+
+def filed_ticket_keys(output: dict[str, Any], *, project: str = "") -> tuple[str, list[str]]:
+    """The epic and story keys a filing step reports, kept to the project it filed into.
+
+    The structured fields win (top level or under ``artifacts``). Only when there are none is the
+    summary read, and a key in the summary can be anything the text mentions ("invariants AD-1 to
+    AD-6"), so keys outside ``project`` (or outside the epic's project) are dropped.
+    """
+    output = output if isinstance(output, dict) else {}
+    nested = output.get("artifacts") if isinstance(output.get("artifacts"), dict) else {}
+    epic = ""
+    keys: list[str] = []
+    for source in (output, nested):
+        epic = epic or str(source.get("jira_epic_key") or source.get("epic_key") or "")
+        keys = keys or [str(key) for key in source.get("jira_story_keys") or source.get("story_keys") or [] if key]
+    if not keys and not epic:
+        epic, keys = _filed_issue_keys(str(output.get("summary") or ""))
+    scope = project or (epic.split("-", 1)[0] if epic else "")
+    if scope:
+        keys = [key for key in keys if key.split("-", 1)[0] == scope]
+        epic = epic if epic.split("-", 1)[0] == scope else ""
+    return epic, keys
 
 
 _FILED_KEY_RE = re.compile(r"(?<![A-Za-z0-9_-])([A-Z][A-Z0-9_]+-\d+)(?![A-Za-z0-9_])")
