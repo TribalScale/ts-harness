@@ -1827,7 +1827,8 @@ async def admin_workflows_approve(request: Request) -> Response:
             workflow_id, task = gate
             return _json(
                 get_workflow_engine().handle_approve(
-                    workflow_id=workflow_id, gate_task=task, actor=actor, tenant_id=tenant_id, decision=decision
+                    workflow_id=workflow_id, gate_task=task, actor=actor, tenant_id=tenant_id, decision=decision,
+                    reply_text=str((body or {}).get("comments") or ""),
                 )
             )
         return _json(get_memory_client().approve_task(task_id, actor=actor, tenant_id=tenant_id, **decision))
