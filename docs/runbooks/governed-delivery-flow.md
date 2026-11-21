@@ -499,6 +499,21 @@ shows a **Stuck step** item. Deciding needs the `approve_gate` permission.
 | Accept as is | `/accept WO-003` | Completes the step with its reviewed output and continues the delivery. For `finalize_code_review` it also sets `harness/code-review` to success, marked as a human override. Not offered for steps that wait on an external event. |
 | Stop | `/stop WO-003` | Blocks the step terminally (`stopped_by_human: ...`); the wave counts the work order as failed. |
 
+**From the PR.** The same three commands work as a comment on the work order's PR:
+`/revise <guidance>`, `/accept` or `/stop`. The commenter's GitHub login must be mapped
+to their email in System Settings (Identity, GitHub logins); they need the
+`approve_gate` permission and, with OIDC, approve access to the program. The harness
+replies on the PR with what it did, or why it did not (login not mapped, missing
+permission). When no step is waiting for a decision, `/revise` keeps its earlier
+meaning at the merge wait (send the PR back with the comment), and `/accept` or `/stop`
+does nothing.
+
+**After a restart.** If the runner restarts between a gate blocking and its revise loop
+running (a redeploy), the step would stay blocked with no revision and no decision
+request. Once a minute the runner's leader replays the block handling for such steps,
+after they have been blocked for 90 seconds, so the ticket continues as if nothing had
+happened (`workflows/block_recovery.py`).
+
 The work order can be left out of the reply when the thread has only one stuck
 step. The Inbox uses `POST /admin/workflows/decide` with
 `{workflow_id, task_id, action, guidance}`. With a shared gateway-token
