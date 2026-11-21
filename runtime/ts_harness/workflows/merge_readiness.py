@@ -79,6 +79,17 @@ def _apply_missing_grace(head: dict[str, Any], summary: dict[str, Any], now: flo
     return {**summary, "state": "failure", "failed": failed}
 
 
+def _wait_checks(names: Any) -> list[str]:
+    """Required checks the checks wait can see: never a status a later TS Harness stage publishes.
+
+    Also applied to lists pinned on waits that started before that rule existed.
+    """
+    from ts_harness.integrations.github_client import LATER_GATE_CONTEXTS
+
+    own = merge_policy.CLAW_CONTEXTS | LATER_GATE_CONTEXTS
+    return [str(name) for name in names or [] if str(name) not in own]
+
+
 def aggregate_checks(
     github: GitHubClient, heads: list[dict[str, Any]], *, now: float | None = None
 ) -> dict[str, Any]:
@@ -89,7 +100,7 @@ def aggregate_checks(
         slug = parse_repo_slug(str(head.get("repo") or ""))
         if slug is None:
             raise ValueError(f"invalid repo on pinned head: {head.get('repo')!r}")
-        summary = github.check_summary(slug[0], slug[1], str(head["head_sha"]), required=head.get("required_checks") or None)
+        summary = github.check_summary(slug[0], slug[1], str(head["head_sha"]), required=_wait_checks(head.get("required_checks")) or None)
         # One red check must not finish the wait while another required check has not reported.
         if summary.get("state") == "failure" and (summary.get("pending") or summary.get("missing")):
             summary = {**summary, "state": "pending"}
@@ -227,7 +238,9 @@ def _required_check_names(
         return []
     if not isinstance(contexts, list):
         return []
-    return [name for name in contexts if name not in merge_policy.CLAW_CONTEXTS]
+    # TS Harness's own statuses, and those its later stages publish (harness/qa comes from the
+    # QA gate after this wait), cannot gate the checks wait: waiting for them never ends.
+    return _wait_checks(contexts)
 
 
 def security_status(security: dict[str, Any]) -> tuple[str, str]:

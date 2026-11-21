@@ -72,6 +72,8 @@ from ts_harness.observability.logging import log_event
 _OPENCODE_PROGRESS_INTERVAL_SECONDS = 30.0
 _OPENCODE_LOG_TAIL_CHARS = 5000
 _OPENCODE_STALL_SECONDS_DEFAULT = 900
+# How long OpenCode may take to exit after its output ends before it is killed.
+_OPENCODE_EXIT_GRACE_SECONDS = 60.0
 # Same code as timeout(1) so a stall reads as "killed for taking too long".
 OPENCODE_STALLED_RC = 124
 
@@ -209,6 +211,13 @@ def stream_opencode_process(
                         log_path=str(log_path),
                     )
         finally:
+            if not stalled and proc.poll() is None:
+                # Output ends a moment before the process exits; killing it here would turn a
+                # finished run into "exit -15". Give it time to exit on its own first.
+                try:
+                    proc.wait(timeout=_OPENCODE_EXIT_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
             if stalled or proc.poll() is None:
                 _kill_process_group(proc)
             reader.join(timeout=5)
