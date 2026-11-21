@@ -22,6 +22,7 @@ export interface RuntimeSettingsDefinition {
     jira_filing?: {
       default_issue_type?: string;
       issue_type_by_project?: Record<string, string>;
+      allowed_projects?: string[];
     };
     ticket_picker?: {
       assignee?: string;

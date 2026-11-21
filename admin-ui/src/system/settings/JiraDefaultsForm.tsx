@@ -36,6 +36,11 @@ export function JiraDefaultsForm({
       definition.program_defaults?.jira_filing?.issue_type_by_project ||
       (asRecord(mergedDefaults.jira_filing).issue_type_by_project as Record<string, string>) ||
       {},
+    // Kept on every Jira filing edit: dropping it would remove the tenant's Jira binding.
+    allowed_projects:
+      definition.program_defaults?.jira_filing?.allowed_projects ||
+      (asRecord(mergedDefaults.jira_filing).allowed_projects as string[]) ||
+      [],
   };
   const statuses =
     definition.program_defaults?.ticket_picker?.statuses ||
@@ -46,6 +51,7 @@ export function JiraDefaultsForm({
   const [statusText, setStatusText] = useState("");
   const [projectKey, setProjectKey] = useState("");
   const [projectType, setProjectType] = useState("");
+  const [allowedKey, setAllowedKey] = useState("");
   const repoOverlay = overlayFlag(definition, "repo_picker");
   const filingOverlay = overlayFlag(definition, "jira_filing");
   const pickerOverlay = overlayFlag(definition, "ticket_picker");
@@ -159,6 +165,54 @@ export function JiraDefaultsForm({
           </Button>
         </div>
         <p className="muted">Source: {filingOverlay ? "overlay" : "inherited"}</p>
+        <h5>Allowed projects</h5>
+        <p className="muted">
+          Jira projects TS Harness may write to. Writes to any other project are refused. Empty
+          means no limit.
+        </p>
+        <ul className="status-chips">
+          {filing.allowed_projects.map((key) => (
+            <li key={key} className="status-chip">
+              <span>{key}</span>
+              <Button
+                variant="ghost"
+                aria-label={`Remove allowed project ${key}`}
+                onClick={() =>
+                  patchDefaults({
+                    jira_filing: {
+                      ...filing,
+                      allowed_projects: filing.allowed_projects.filter((item) => item !== key),
+                    },
+                  })
+                }
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <div className="form-pair-wide">
+          <div className="form-field">
+            <TextInput
+              label="Allowed project key"
+              value={allowedKey}
+              onChange={(value) => setAllowedKey(value)}
+            />
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              const next = allowedKey.trim().toUpperCase();
+              if (!next || filing.allowed_projects.includes(next)) return;
+              patchDefaults({
+                jira_filing: { ...filing, allowed_projects: [...filing.allowed_projects, next] },
+              });
+              setAllowedKey("");
+            }}
+          >
+            Add allowed project
+          </Button>
+        </div>
         <div className="form-field">
           <TextInput
             label="Default issue type"

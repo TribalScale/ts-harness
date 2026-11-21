@@ -107,7 +107,7 @@ unknown keys and bad values with the issue code shown.
 | Key | Default | Effect |
 |---|---|---|
 | `github.org`, `repo_picker.repos` | none | Tenant GitHub binding. Coding runs and PRs outside the bound org or repo list are refused. |
-| `jira_filing.allowed_projects` | none | Tenant Jira binding. Jira writes to other projects are refused. |
+| `jira_filing.allowed_projects` | none | Tenant Jira binding. Jira writes to other projects are refused. Edit it under **Jira filing > Allowed projects**. A project's own Jira key (Project settings) must be on this list before work orders can be filed there. |
 | `governance.independent_review.enabled` | `true` | Publishes the required status `harness/independent-review`: the PR needs an approving review from someone other than the PRD approver. Only a tenant admin can change it, the Activate call must carry `governance_reason`, and the change is audited as `governance_setting_changed`. Each program pins the value at creation, so turning it off never affects running programs. |
 | `merge_readiness.required_checks` | every reported check | Per-repo check names that must pass on the PR head SHA before the merge wait arms (`invalid_map` when not keyed by `owner/repo`). |
 | `release.environments` | `staging`, `production` via the Deployments API | Per repo, exactly two environments: pre-production, then production (`invalid_environments`). `workflow_dispatch` runs the named workflow on the base branch with the SHA as `ref_input`; `deployment` creates a GitHub deployment for the SHA. TS Harness never touches infrastructure. |

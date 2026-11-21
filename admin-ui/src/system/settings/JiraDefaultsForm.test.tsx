@@ -96,4 +96,33 @@ describe("JiraDefaultsForm", () => {
     const removedStatus = onChange.mock.calls.at(-1)?.[0] as RuntimeSettingsDefinition;
     expect(removedStatus.program_defaults?.ticket_picker?.statuses).not.toContain("Blocked");
   });
+
+  it("shows the allowed Jira projects and keeps them when other filing fields change", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const withAllowlist = {
+      program_defaults: {
+        ...merged.program_defaults,
+        jira_filing: { ...merged.program_defaults.jira_filing, allowed_projects: ["PAY"] },
+      },
+    };
+    renderPage(
+      <JiraDefaultsForm
+        merged={withAllowlist}
+        sources={{}}
+        definition={emptyDefinition}
+        onChange={onChange}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Remove allowed project PAY" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Allowed project key"), "ops");
+    await user.click(screen.getByRole("button", { name: "Add allowed project" }));
+    const added = onChange.mock.calls.at(-1)?.[0] as RuntimeSettingsDefinition;
+    expect(added.program_defaults?.jira_filing?.allowed_projects).toEqual(["PAY", "OPS"]);
+
+    await user.clear(screen.getByLabelText("Default issue type"));
+    await user.type(screen.getByLabelText("Default issue type"), "T");
+    const edited = onChange.mock.calls.at(-1)?.[0] as RuntimeSettingsDefinition;
+    expect(edited.program_defaults?.jira_filing?.allowed_projects).toEqual(["PAY"]);
+  });
 });
