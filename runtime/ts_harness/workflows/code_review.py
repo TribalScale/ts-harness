@@ -177,7 +177,10 @@ def undeclared_paths(changed: list[str], work_order_body: str) -> list[str]:
     )
 
 
-def scope_findings(pr_url: str, files: list[dict[str, Any]], work_order_body: str) -> list[dict[str, Any]]:
+def scope_findings(
+    pr_url: str, files: list[dict[str, Any]], work_order_body: str, generated: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Files outside the work order's ``## Files``; tests and files CI regenerates (``generated``) are fine."""
     declared = declared_paths(work_order_body)
     if not declared:
         return []
@@ -194,6 +197,7 @@ def scope_findings(pr_url: str, files: list[dict[str, Any]], work_order_body: st
         }
         for item in files
         if not _in_scope(item["filename"], declared) and not is_test_path(item["filename"])
+        and item["filename"] not in (generated or set())
     ]
 
 
@@ -445,7 +449,10 @@ def review_precheck(
         totals["additions"] += sum(entry["additions"] for entry in counted)
         totals["deletions"] += sum(entry["deletions"] for entry in counted)
         files.extend(counted)
-        findings.extend(scope_findings(pr_url, counted, work_order_body))
+        from ts_harness.implementation.generated_artifacts import generated_files_on_github
+
+        generated = generated_files_on_github(github, owner, repo, head_sha) if head_sha and declared_paths(work_order_body) else set()
+        findings.extend(scope_findings(pr_url, counted, work_order_body, generated))
         findings.extend(boundary_findings(pr_url, counted, work_order_body))
     fit_patch_budget(files)
     prs = review_context(task, tasks, prs, files, github=github)

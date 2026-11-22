@@ -431,6 +431,22 @@ def verify_implementation(
             )
         )
 
+    # Files CI regenerates and checks with `git diff --exit-code` (openapi.json, codegen): regenerate
+    # them here, so the change ships with them up to date instead of failing CI.
+    if changed_files is not None:
+        from ts_harness.implementation.generated_artifacts import regenerate
+
+        for item in regenerate(repo_dir, env=env, runner=runner):
+            result = subprocess.CompletedProcess(["sh", "-c", item["command"]], item["exit_code"],
+                                                 stdout=item["output_tail"], stderr="")
+            logs.append(_format_command_log("generate", ["sh", "-c", item["command"]], result))
+            checks.append({**_check_record("generate", ["sh", "-c", item["command"]], result), "changed": item["changed"]})
+            if item["exit_code"] != 0:
+                failed_logs.add(len(logs) - 1)
+                reasons.append("generated_files_failed")
+            elif item["changed"]:
+                warnings.append(f"regenerated {', '.join(item['changed'])} ({item['command']}), as CI checks")
+
     unit_ran = False
     if behavioral:
         unit_command = detect_unit_test_command(repo_dir, python=python)
