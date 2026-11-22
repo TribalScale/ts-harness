@@ -120,6 +120,17 @@ class PrePushReviewTests(unittest.TestCase):
         self.assertIn(["git", "reset", "--hard", "good-sha"], harness.git)
         self.assertEqual((security, harness.commits), ({"scan": "old"}, 0))
 
+    def test_the_review_stops_starting_rounds_when_its_time_runs_out(self):
+        harness = Harness([{"summary": "a", "findings": [BLOCKING]}] * 3)
+        request = _request(self.workspace, rounds=2)
+        request.review_budget_seconds = 60
+        clock = iter([0.0, 30.0, 120.0])  # start, before round 2 (in budget), before round 3 (over)
+        with patch("ts_harness.implementation.backends.opencode.time.monotonic", side_effect=lambda: next(clock, 999.0)):
+            rounds, *_ = _review(harness, request)
+        self.assertEqual([r["status"] for r in rounds], ["fixed", "fixed", "out_of_time"])
+        record = ppr.summary_record(rounds, model="m")
+        self.assertEqual((record["status"], record["fixed"], record["open_blocking"]), ("out_of_time", 2, []))
+
     def test_no_reviewer_or_no_usable_review_skips_it(self):
         harness = Harness([])
         self.assertEqual(_review(harness, _request(self.workspace, model=None))[0], [])

@@ -38,6 +38,7 @@ class CodingRequest:
     # Pre-push review: the reviewer's model (None skips it) and the local fix rounds it may ask for.
     review_model: str | None = None
     review_rounds: int = 0
+    review_budget_seconds: int = 0
 
 
 def attribution_markdown(request: CodingRequest) -> str:
