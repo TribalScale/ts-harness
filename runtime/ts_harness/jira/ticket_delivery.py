@@ -311,6 +311,24 @@ def _program_artifacts(memory: Any, program_id: str) -> dict[str, Any]:
     return status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
 
 
+def _rows(result: Any, key: str) -> list[dict[str, Any]]:
+    rows = result.get(key) if isinstance(result, dict) else None
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _other_run_building(memory: Any, key: str, tenant_id: str, workflow_id: str) -> str:
+    """The workflow id of another running delivery of ``key``, or ""."""
+    try:
+        rows = _rows(memory.running_ticket_work(tenant_id=tenant_id), "tickets")
+    except Exception:  # noqa: BLE001 - without the check the ticket starts as before
+        return ""
+    for row in rows:
+        other = str(row.get("workflow_id") or "")
+        if str(row.get("key") or "") == key and other and other != workflow_id:
+            return other
+    return ""
+
+
 def prepare_ticket_delivery(
     task: dict[str, Any],
     config: dict[str, Any],
@@ -338,6 +356,12 @@ def prepare_ticket_delivery(
         raise ValueError("no Jira issue key on this workflow")
     tenant_id = str(task.get("tenant_id") or "default")
     warnings: list[str] = []
+    other = _other_run_building(memory, key, tenant_id, str(task.get("workflow_id") or ""))
+    if other:
+        raise ValueError(
+            f"{key} is already being built by another run (workflow {other}); not starting a second one. "
+            "Stop that run first if you want to start over."
+        )
 
     from ts_harness.integrations.jira_client import JiraClient
 

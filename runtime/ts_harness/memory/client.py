@@ -434,6 +434,10 @@ class MemoryClient:
             {"id": task_id, "actor": actor, "input": dict(input_patch or {}), "reason": reason},
         )
 
+    def running_ticket_work(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        """``{"tickets": [{key, workflow_id, ...}], "pools": [{workflow_id, join_task_id, queue}]}``."""
+        return self._request("POST", "/workflow/running-tickets", {"tenant_id": tenant_id}) or {}
+
     def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
         result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
         return list(result.get("tasks") or [])

@@ -31,8 +31,30 @@ ensure_scripts_importable()
 from program_legacy_compat import frozen_legacy_compatibility_topology  # noqa: E402
 
 
+def _wake_pools_for_finished_ticket(ctx: HookContext, workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> None:
+    """A finished ticket may unblock tickets a parallel run is waiting on: wake those runs."""
+    if str(workflow.get("workflow_type") or "") not in {"implement_jira_ticket", "implement_ticket"}:
+        return
+    from ts_harness.workflows.work_order_waves import child_state
+
+    if child_state(workflow, tasks) != "succeeded":
+        return
+    key = next((str((t.get("input") or {}).get("jira_issue_key") or "") for t in tasks
+                if isinstance(t.get("input"), dict) and (t.get("input") or {}).get("jira_issue_key")), "")
+    if not key:
+        return
+    try:
+        from ts_harness.jira.ticket_pool import wake_pools
+
+        wake_pools(ctx.memory_client, key, tenant_id=str(workflow.get("tenant_id") or ctx.tenant_id or "default"),
+                   actor=ctx.actor or "workflow-runner", exclude=str(workflow.get("parent_workflow_id") or ""))
+    except Exception:  # noqa: BLE001 - waking is best effort; the pool re-checks on its next child event
+        pass
+
+
 def handle(ctx: HookContext) -> dict[str, Any]:
     workflow, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
+    _wake_pools_for_finished_ticket(ctx, workflow, tasks)
     program_id = workflow.get("program_id")
     if not program_id and workflow.get("parent_workflow_id"):
         from ts_harness.workflows.work_order_waves import child_state, notify_parent
