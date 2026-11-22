@@ -265,3 +265,78 @@ def work_order_repository_problems(markdown: str, repositories: list[dict[str, A
     if cycle:
         problems.append("work-order dependencies form a cycle between repositories: " + " -> ".join(cycle))
     return problems
+
+
+# Delivery plan: how the work orders will run in parallel, and which look too large.
+LARGE_WORK_ORDER_FILES = 15
+LARGE_WORK_ORDER_REQUIREMENTS = 12
+_HEADING = re.compile(r"^#{2,6}\s*(.+?)\s*$", re.MULTILINE)
+_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S", re.MULTILINE)
+
+
+def _section_bullets(section: str, names: set[str]) -> int:
+    headings = list(_HEADING.finditer(section))
+    for idx, match in enumerate(headings):
+        if match.group(1).strip().lower() in names:
+            end = headings[idx + 1].start() if idx + 1 < len(headings) else len(section)
+            return len(_BULLET.findall(section[match.end():end]))
+    return 0
+
+
+def delivery_waves(deps: dict[str, list[str]]) -> list[list[str]]:
+    """Work orders grouped by when they can start: a wave runs once every earlier wave it needs is done.
+
+    A dependency on an unknown work order is ignored; a cycle puts the rest in one last wave.
+    """
+    known = set(deps)
+    level: dict[str, int] = {}
+    remaining = {wo: [d for d in ds if d in known] for wo, ds in deps.items()}
+    while remaining:
+        ready = [wo for wo, ds in remaining.items() if all(d in level for d in ds)]
+        if not ready:
+            last = max(level.values(), default=-1) + 1
+            for wo in remaining:
+                level[wo] = last
+            break
+        for wo in ready:
+            level[wo] = 1 + max((level[d] for d in remaining[wo]), default=-1)
+            remaining.pop(wo)
+    waves: list[list[str]] = [[] for _ in range(max(level.values(), default=-1) + 1)]
+    for wo in deps:
+        waves[level[wo]].append(wo)
+    return waves
+
+
+def delivery_plan(markdown: str) -> dict[str, Any]:
+    """Waves, the critical path length and oversized work orders, with plain-language warnings.
+
+    Delivery time is set by the number of waves (the longest dependency chain), not the number
+    of work orders, so a long chain of single work orders is the slow shape. A very large work
+    order is the other failure: one coding run that is hard to finish and to review.
+    """
+    deps = parse_work_order_dependencies(markdown)
+    waves = delivery_waves(deps)
+    sections = _sections(markdown)
+    large = []
+    for wo, section in sections.items():
+        files = _section_bullets(section, {"files", "touches"})
+        requirements = _section_bullets(section, {"requirements"})
+        if files > LARGE_WORK_ORDER_FILES or requirements > LARGE_WORK_ORDER_REQUIREMENTS:
+            large.append({"id": wo, "files": files, "requirements": requirements})
+    warnings: list[str] = []
+    if waves:
+        shape = " → ".join(", ".join(wave) for wave in waves)
+        count = f"{len(deps)} work order{'s' if len(deps) != 1 else ''}"
+        warnings.append(f"Delivery plan: {count} in {len(waves)} wave{'s' if len(waves) != 1 else ''} ({shape}).")
+    single = [idx for idx, wave in enumerate(waves) if len(wave) == 1 and idx > 0]
+    if len(waves) > 3 and len(single) >= 2:
+        warnings.append(
+            f"{len(single)} of the {len(waves)} waves run a single work order, so they run one after another. "
+            "Check whether those dependencies are real, or merge tightly coupled work orders on the chain."
+        )
+    for item in large:
+        warnings.append(
+            f"{item['id']} looks large ({item['files']} files, {item['requirements']} requirements); "
+            "consider splitting it along a seam that lets both parts run in parallel."
+        )
+    return {"work_orders": len(deps), "waves": waves, "large": large, "warnings": warnings}

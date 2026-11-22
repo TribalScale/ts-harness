@@ -9,6 +9,7 @@ worker in another process.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -81,6 +82,46 @@ def _guided_model(value: Any, provider: str) -> str:
         return text
     prefix, name = text.split("/", 1)
     return name if not provider or prefix == provider else ""
+
+
+_COMPLEXITY_RE = re.compile(
+    r"^\s*(?:[-*|]\s*)?(?:\*\*|__)?complexity(?:\*\*|__)?\s*[:|]\s*(?:\*\*|__|`)?\s*(high|complex)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_COMPLEXITY_HEADING_RE = re.compile(r"^#{2,6}\s*complexity\s*\n+\s*(?:\*\*|`)?(high|complex)\b", re.IGNORECASE | re.MULTILINE)
+
+
+def is_complex_work_order(body: str | None) -> bool:
+    """The planner marked the work order ``Complexity: High`` (a line, or a ``## Complexity`` section)."""
+    text = str(body or "")
+    return bool(_COMPLEXITY_RE.search(text) or _COMPLEXITY_HEADING_RE.search(text))
+
+
+def complex_work_order_model() -> str | None:
+    """The first-run model for a complex work order (``TS_HARNESS_COMPLEX_CODING_MODEL``, else the guided model)."""
+    setting = (os.environ.get("TS_HARNESS_COMPLEX_CODING_MODEL") or "").strip()
+    if setting.lower() in {"off", "none", "false", "0"}:
+        return None
+    if setting:
+        return setting
+    try:
+        from ts_harness.workflows.revision_guidance import guided_coding_model
+
+        return guided_coding_model()
+    except Exception:  # noqa: BLE001 - the default coding model applies
+        return None
+
+
+def _review_settings(mode: str, provider: str) -> dict[str, Any]:
+    """The pre-push reviewer for an implement run, in the backend's model format."""
+    if mode != "implement":
+        return {}
+    from ts_harness.implementation import pre_push_review
+
+    model = _guided_model(pre_push_review.review_model(), provider)
+    if not model:
+        return {}
+    return {"review_model": model, "review_rounds": pre_push_review.review_rounds()}
 
 
 def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
@@ -186,8 +227,12 @@ def build_coding_request(
     provider = str(args.get("provider") or backend_cfg.provider or "").strip()
     # Secrets/env (CODING_BACKEND_MODEL) win over baked runtime YAML so rotate-secrets
     # takes effect without re-rendering ts-harness-runtime.yaml.
+    strong = bound.get("coding_model")
+    if not strong and mode == "implement" and is_complex_work_order(work_order_body):
+        # A work order the planner marked complex starts on the stronger model.
+        strong = complex_work_order_model()
     model = (
-        str(_guided_model(bound.get("coding_model"), provider) or args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip()
+        str(_guided_model(strong, provider) or args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip()
         or None
     )
 
@@ -248,6 +293,7 @@ def build_coding_request(
         or None,
         "knowledge_notes": _note_list(bound.get("knowledge_notes") if "knowledge_notes" in bound else args.get("knowledge_notes")),
         "design_refs": _note_list(args.get("design_refs")),
+        **_review_settings(mode, provider),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
         # Workers on Fargate have no runtime config file; carry what the run needs.
         "backend": {
@@ -413,6 +459,8 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "security": result.security,
         "verification": dict(getattr(result, "verification", None) or {}),
         "screenshots": dict(getattr(result, "screenshots", None) or {}),
+        "pre_push_review": dict(getattr(result, "pre_push_review", None) or {}),
+        "timings": dict(getattr(result, "timings", None) or {}),
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",
         "repo_url": spec["repo_url"],
@@ -444,6 +492,9 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
         output["verify_summary"] = verification_summary(verification)
     if isinstance(result.get("screenshots"), dict) and result["screenshots"].get("files"):
         output["screenshots"] = result["screenshots"]
+    for key in ("pre_push_review", "timings"):
+        if isinstance(result.get(key), dict) and result[key]:
+            output[key] = result[key]
     if result.get("mode") == "refresh":
         output["refresh_method"] = result.get("refresh_method")
         output["resolved_files"] = list(result.get("resolved_files") or [])

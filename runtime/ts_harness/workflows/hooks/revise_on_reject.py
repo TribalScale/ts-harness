@@ -94,6 +94,13 @@ def _triage_plan(ctx: HookContext, tasks: list[dict[str, Any]], gate_step: str, 
         return None
 
 
+def _safe_revision_model(revision_guidance: Any) -> str | None:
+    try:
+        return revision_guidance.revision_coding_model()
+    except Exception:  # noqa: BLE001 - no model setting keeps the default coding model
+        return None
+
+
 def _guided_plan(tasks: list[dict[str, Any]], gate_step: str, implement_step: str) -> dict[str, Any] | None:
     from ts_harness.workflows import revision_guidance
 
@@ -446,6 +453,13 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         revise_input["_guidance"] = guided_plan["diagnosis"]
         if guided_plan.get("coding_model"):
             revise_input["coding_model"] = guided_plan["coding_model"]
+    if block_loop and not revise_input.get("coding_model"):
+        # Every revision runs on the stronger coding model (see revision_coding_model).
+        from ts_harness.workflows import revision_guidance
+
+        model = _safe_revision_model(revision_guidance)
+        if model:
+            revise_input["coding_model"] = model
     revision_number = revise_input.get("revision_number")
 
     revise_depends_on = _resolve_depends_on(

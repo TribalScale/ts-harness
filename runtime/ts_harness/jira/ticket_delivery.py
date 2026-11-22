@@ -107,6 +107,23 @@ def _with_work_order_design(body: str, artifacts: dict[str, Any], work_order_id:
     return body.rstrip() + "\n\n" + frames + "\n"
 
 
+def _with_work_order_complexity(body: str, artifacts: dict[str, Any], work_order_id: str | None) -> str:
+    """A ticket filed without its work order's ``Complexity: High`` line gets it back.
+
+    The coding job starts a complex work order on the stronger model; a filing agent that
+    dropped the line would send it to the default model.
+    """
+    from ts_harness.implementation.coding_job import is_complex_work_order
+    from ts_harness.implementation.work_order_context import extract_work_order_section
+
+    if not work_order_id or is_complex_work_order(body):
+        return body
+    section = extract_work_order_section(str(artifacts.get("work_orders_markdown") or ""), work_order_id)
+    if not is_complex_work_order(section):
+        return body
+    return "Complexity: High\n\n" + body
+
+
 def _workflow_input(memory: Any, task: dict[str, Any]) -> dict[str, Any]:
     from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
@@ -377,6 +394,7 @@ def prepare_ticket_delivery(
             refs = [r for r in artifacts.get("design_refs") or [] if isinstance(r, dict) and r.get("id")]
             planning = {k: artifacts[k] for k in ("refinery_artifacts", "foundry_artifacts", "planner_artifacts") if artifacts.get(k)}
             body = _with_work_order_design(body, artifacts, pointer.work_order_id, refs)
+            body = _with_work_order_complexity(body, artifacts, pointer.work_order_id)
             owner_repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
         if not refs:
             refs = _program_design_refs(memory, str(task.get("id") or ""))

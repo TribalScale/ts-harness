@@ -114,6 +114,19 @@ class GuidedLoopTests(unittest.TestCase):
         self.assertEqual(result["status"], "revising")
         self.assertNotIn("guided", result)
         self.assertNotIn("_guided", bulk.call_args_list[0].kwargs["tasks"][0]["input"])
+        # Every revision runs on the stronger coding model, not only guided ones.
+        self.assertEqual(bulk.call_args_list[0].kwargs["tasks"][0]["input"]["coding_model"], "anthropic/claude-opus-5-5")
+
+    @patch.dict("os.environ", {"TS_HARNESS_REVISION_CODING_MODEL": "off"})
+    @patch("ts_harness.workflows.revision_guidance.diagnosis_model", return_value="anthropic/claude-opus-5-5")
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_revisions_can_keep_the_default_model(self, bulk, _model):
+        bulk.side_effect = [[f"t{i}"] for i in range(20)]
+        other = {**FINDING, "file": "src/server.ts", "line": 3, "message": "Log the port."}
+        tasks = [_deliver(1), _review(1, FINDING), _deliver(2, _revision_source="finalize_code_review", review_feedback="x"),
+                 _review(2, other, "blocked")]
+        revise_on_reject.handle(self._ctx(tasks))
+        self.assertNotIn("coding_model", bulk.call_args_list[0].kwargs["tasks"][0]["input"])
 
 
 class GuidedModelTests(unittest.TestCase):

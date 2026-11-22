@@ -89,6 +89,23 @@ class BuildCodingRequestTests(unittest.TestCase):
         self.assertEqual(request.workspace_dir, Path(spec["workspace_dir"]))
         self.assertEqual(request.program_id, "prog-1")
 
+    def test_a_complex_work_order_starts_on_the_stronger_model(self):
+        body = "# WO-3\n\n- **Complexity:** High (shared schema and two services)\n"
+        with ExitStack() as stack, patch.dict("os.environ", {"TS_HARNESS_COMPLEX_CODING_MODEL": "anthropic/claude-opus-5-5"}):
+            configured(stack)
+            strong = build_coding_request({"work_order_id": "WO-3", "work_order_body": body}, delivery_workflow_id=None)
+            plain = build_coding_request(
+                {"work_order_id": "WO-4", "work_order_body": "# WO-4\n\nComplexity: Low\n"}, delivery_workflow_id=None
+            )
+        self.assertEqual(strong["model"], "claude-opus-5-5")
+        self.assertNotEqual(plain["model"], "claude-opus-5-5")
+
+    def test_complexity_markers(self):
+        for text in ("Complexity: High", "- **Complexity:** high", "| Complexity | High |", "## Complexity\n\nHigh, two services"):
+            self.assertTrue(coding_job.is_complex_work_order(text), text)
+        for text in ("Complexity: Medium", "the complexity of the parser is high", ""):
+            self.assertFalse(coding_job.is_complex_work_order(text), text)
+
     def test_bound_task_input_wins_over_agent_args(self):
         with ExitStack() as stack:
             configured(stack)
@@ -231,3 +248,13 @@ class StageOutputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TicketComplexityTests(unittest.TestCase):
+    def test_a_ticket_that_lost_the_complexity_line_gets_it_from_its_work_order(self):
+        from ts_harness.jira.ticket_delivery import _with_work_order_complexity
+
+        artifacts = {"work_orders_markdown": "# WO-001 Sync\nComplexity: High\n\n## Summary\nx\n\n# WO-002 List\nComplexity: Low\n"}
+        self.assertTrue(_with_work_order_complexity("As a user...", artifacts, "WO-001").startswith("Complexity: High"))
+        self.assertEqual(_with_work_order_complexity("As a user...", artifacts, "WO-002"), "As a user...")
+        self.assertEqual(_with_work_order_complexity("Complexity: High\nbody", artifacts, "WO-001"), "Complexity: High\nbody")

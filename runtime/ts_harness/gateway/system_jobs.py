@@ -640,7 +640,8 @@ def sweep_coding_jobs() -> dict[str, Any]:
 
     try:
         result = get_memory_client().sweep_stale_coding_jobs(
-            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 300),
+            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 90),
+            starting_seconds=int(os.environ.get("CODING_JOB_START_TIMEOUT_SECONDS") or 300),
             max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 3600),
         )
     except Exception as exc:  # noqa: BLE001

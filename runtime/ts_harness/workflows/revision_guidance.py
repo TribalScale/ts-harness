@@ -244,6 +244,18 @@ def guided_coding_model() -> str | None:
     return setting or diagnosis_model()
 
 
+def revision_coding_model() -> str | None:
+    """The coding model for every revision (``TS_HARNESS_REVISION_CODING_MODEL``, else the guided model).
+
+    The first run has its own verification and a pre-push review; a revision means the gate
+    still found something, so it goes to the stronger model. ``off`` keeps the default model.
+    """
+    setting = (os.environ.get("TS_HARNESS_REVISION_CODING_MODEL") or "").strip()
+    if setting.lower() in {"off", "none", "false", "0"}:
+        return None
+    return setting or guided_coding_model()
+
+
 def build_model_call(model: str) -> Diagnose:
     from ts_harness.agent.provider import build_provider
 

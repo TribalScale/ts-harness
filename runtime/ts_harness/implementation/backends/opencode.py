@@ -957,6 +957,97 @@ class OpenCodeBackend:
             error="revision_scope: " + ", ".join(extra),
         )
 
+    def _pre_push_review(
+        self,
+        repo_dir: Path,
+        request: CodingRequest,
+        *,
+        binary: str,
+        provider: str,
+        env: dict[str, str],
+        review_env: dict[str, str],
+        branch: str,
+        log: str,
+        log_path: Path,
+        skills_materialized: bool,
+        test_env: TestEnvironment | None,
+        changed: list[str],
+        security: dict[str, Any],
+        verification: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], str, list[str], dict[str, Any], dict[str, Any]]:
+        """Review the verified, committed change with the stronger model and fix what blocks.
+
+        Each blocking review gets one fix pass on the run's own model, then host verification
+        again. A fix that breaks verification is dropped (the last verified commit is kept), so
+        this step never pushes worse code than it was given. Returns the rounds and the current
+        log, changed files, security scan and verification evidence.
+        """
+        from ts_harness.implementation import pre_push_review as ppr
+
+        rounds: list[dict[str, Any]] = []
+        if not request.review_model:
+            return rounds, log, changed, security, verification
+        base_ref = f"origin/{request.base_branch}" if request.base_branch else "HEAD~1"
+        out_dir = Path(request.workspace_dir) / ".ts-harness" / "review"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for number in range(int(request.review_rounds or 0) + 1):
+            output_path = out_dir / f"review-{number + 1}.json"
+            output_path.unlink(missing_ok=True)
+            prompt = ppr.build_review_prompt(
+                work_order_id=request.work_order_id,
+                work_order_body=request.work_order_body,
+                base_ref=base_ref,
+                output_path=output_path,
+                review_feedback=request.review_feedback,
+                human_change_requests=request.human_change_requests,
+            )
+            cmd = build_opencode_command(
+                binary=binary, repo_dir=repo_dir, prompt=prompt, run_args=self.run_args,
+                provider=provider, model=request.review_model,
+            )
+            reviewed = self._run_opencode(cmd, cwd=str(repo_dir), env=review_env, log_path=log_path, work_order_id=request.work_order_id)
+            # The reviewer must not change the work; drop anything it wrote in the repository.
+            self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+            self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+            review = ppr.parse_review(output_path) if reviewed.returncode == 0 else None
+            if review is None:
+                log_event("pre_push_review_unavailable", work_order_id=request.work_order_id, exit_code=reviewed.returncode)
+                rounds.append({"status": "no_review", "summary": "", "findings": []})
+                break
+            blocking = [item for item in review["findings"] if ppr.is_blocking(item)]
+            log_event("pre_push_review", work_order_id=request.work_order_id, round=number + 1,
+                      findings=len(review["findings"]), blocking=len(blocking))
+            if not blocking:
+                rounds.append({"status": "pass", **review})
+                break
+            if number >= int(request.review_rounds or 0):
+                rounds.append({"status": "open", **review})
+                break
+            good = self._head_sha(repo_dir)
+            fix_cmd = build_opencode_command(
+                binary=binary, repo_dir=repo_dir,
+                prompt=ppr.build_fix_prompt(request.work_order_id, blocking, skills_materialized=skills_materialized),
+                run_args=self.run_args, provider=provider, model=request.model,
+            )
+            fixed = self._run_opencode(fix_cmd, cwd=str(repo_dir), env=env, log_path=log_path, work_order_id=request.work_order_id)
+            failure = None
+            if fixed.returncode == 0:
+                failure, log, _passes, new_changed, new_security, new_verification = self._verify_with_fixes(
+                    repo_dir, request, binary=binary, provider=provider, env=env, branch=branch, log=log,
+                    log_path=log_path, skills_materialized=skills_materialized, test_env=test_env,
+                )
+            if fixed.returncode != 0 or failure is not None:
+                self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                log_event("pre_push_review_fix_dropped", work_order_id=request.work_order_id, round=number + 1)
+                rounds.append({"status": "fix_failed", **review})
+                break
+            commit_all_changes(repo_dir, message=commit_message(request), runner=self.runner)
+            changed = new_changed or list_changed_files(repo_dir, runner=self.runner)
+            security, verification = new_security, new_verification
+            rounds.append({"status": "fixed", **review})
+        return rounds, log, changed, security, verification
+
     def implement(self, request: CodingRequest) -> CodingResult:
         """Implement or refresh, then record the tokens of every OpenCode run it made."""
         started_ms = int(time.time() * 1000)
@@ -1016,6 +1107,14 @@ class OpenCodeBackend:
         log_path = opencode_progress_log_path(
             request.workspace_dir, request.work_order_id
         )
+        timings: dict[str, float] = {}
+        clock = [time.monotonic()]
+
+        def lap(name: str) -> None:
+            now = time.monotonic()
+            timings[name] = round(timings.get(name, 0.0) + now - clock[0], 1)
+            clock[0] = now
+
         try:
             gone, pr_head = self._revision_target(request)
             if gone:
@@ -1023,6 +1122,7 @@ class OpenCodeBackend:
             branch = pr_head or branch
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
             claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
+            reused = (Path(request.workspace_dir) / "repo" / ".git").is_dir()
             repo_dir = ensure_repo_clone(
                 repo_url=request.repo_url,
                 workspace_dir=request.workspace_dir,
@@ -1031,6 +1131,12 @@ class OpenCodeBackend:
                 runner=self.runner,
                 github_token=github_token,
             )
+            if reused:
+                # A reused workspace (a revision of the same ticket) keeps its commits, installed
+                # dependencies and toolchain; edits an interrupted run left uncommitted are dropped.
+                self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                log_event("coding_workspace_reused", work_order_id=request.work_order_id)
             create_work_branch(
                 repo_dir,
                 branch=branch,
@@ -1068,6 +1174,7 @@ class OpenCodeBackend:
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
             test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            lap("setup")
             design_files = _materialize_design(repo_dir, request.design_refs)
             prompt = build_implement_prompt(
                 request.work_order_id,
@@ -1096,6 +1203,8 @@ class OpenCodeBackend:
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            # The reviewer writes its findings outside the repository, so it runs without the edit scope.
+            review_env = dict(env)
             allowed = opencode_scope_paths(request.work_order_body, request.revision_files)
             if allowed:
                 env.update(opencode_scope_env(env, request.workspace_dir, allowed))
@@ -1107,6 +1216,7 @@ class OpenCodeBackend:
                 log_path=log_path,
                 work_order_id=request.work_order_id,
             )
+            lap("coding")
             log = "\n".join(
                 part
                 for part in [
@@ -1143,7 +1253,9 @@ class OpenCodeBackend:
                 skills_materialized=bool(skills_written),
                 test_env=test_env,
             )
+            lap("verification")
             if failure is not None:
+                failure.timings = timings
                 return failure
 
             committed = commit_all_changes(
@@ -1178,6 +1290,34 @@ class OpenCodeBackend:
             )
             if scope_failure is not None:
                 return scope_failure
+
+            review_rounds, log, changed, security, verification = self._pre_push_review(
+                repo_dir,
+                request,
+                binary=binary,
+                provider=provider,
+                env=env,
+                review_env=review_env,
+                branch=branch,
+                log=log,
+                log_path=log_path,
+                skills_materialized=bool(skills_written),
+                test_env=test_env,
+                changed=changed,
+                security=security,
+                verification=verification,
+            )
+            lap("review")
+            if any(item.get("status") == "fixed" for item in review_rounds):
+                scope_failure = self._reject_out_of_scope_revision(
+                    repo_dir, request, baseline=baseline, binary=binary, provider=provider,
+                    env=env, branch=branch, log=log, log_path=log_path,
+                )
+                if scope_failure is not None:
+                    return scope_failure
+            from ts_harness.implementation.pre_push_review import summary_record
+
+            review_record = summary_record(review_rounds, model=request.review_model) if review_rounds else {}
 
             security = self._with_scanned_sha(repo_dir, security)
             # The reviewer can close the PR while OpenCode is still working.
@@ -1219,6 +1359,7 @@ class OpenCodeBackend:
                 env=git_env,
             )
             screenshots = self._publish_screenshots(repo_dir, test_env, branch=branch, pr_url=pr_url, env=git_env)
+            lap("push")
             return CodingResult(
                 ok=True,
                 branch=branch,
@@ -1233,6 +1374,8 @@ class OpenCodeBackend:
                 security=security,
                 verification=verification,
                 screenshots=screenshots,
+                pre_push_review=review_record,
+                timings=timings,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(

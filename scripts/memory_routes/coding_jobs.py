@@ -593,9 +593,20 @@ def _mark_lost(cur, row: dict[str, Any], reason: str, actor: str) -> dict[str, A
     return _public(lost)
 
 
+def _span(seconds: int) -> str:
+    return f"{seconds} seconds" if seconds < 120 else f"{seconds // 60} minutes"
+
+
 def sweep_stale_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
-    """Mark jobs lost when their heartbeat stopped or they ran too long."""
+    """Mark jobs lost when their heartbeat stopped or they ran too long.
+
+    A running worker beats every 30 seconds, so ``heartbeat_seconds`` can be short. A job
+    still ``starting`` (the launcher is pulling the image or starting the container) has not
+    beaten yet and gets ``starting_seconds`` instead (default: the longer of 5 minutes and
+    ``heartbeat_seconds``).
+    """
     heartbeat_seconds = int(body.get("heartbeat_seconds") or 300)
+    starting_seconds = int(body.get("starting_seconds") or max(300, heartbeat_seconds))
     max_runtime_seconds = int(body.get("max_runtime_seconds") or 3600)
     actor = str(body.get("actor") or "coding-watchdog")
     lost: list[dict[str, Any]] = []
@@ -603,21 +614,23 @@ def sweep_stale_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
         cur.execute(
             """
             SELECT *,
-                   heartbeat_at < now() - make_interval(secs => %s) AS silent,
                    started_at < now() - make_interval(secs => %s) AS overtime
             FROM coding_jobs
             WHERE status = ANY(%s)
-              AND (heartbeat_at < now() - make_interval(secs => %s)
+              AND ((status = 'starting' AND heartbeat_at < now() - make_interval(secs => %s))
+                   OR (status <> 'starting' AND heartbeat_at < now() - make_interval(secs => %s))
                    OR started_at < now() - make_interval(secs => %s))
             FOR UPDATE SKIP LOCKED
             """,
-            (heartbeat_seconds, max_runtime_seconds, list(RUNNING), heartbeat_seconds, max_runtime_seconds),
+            (max_runtime_seconds, list(RUNNING), starting_seconds, heartbeat_seconds, max_runtime_seconds),
         )
         for row in cur.fetchall():
             if row.get("overtime"):
                 reason = f"ran longer than {max_runtime_seconds // 60} minutes"
+            elif row.get("status") == "starting":
+                reason = f"worker did not start within {_span(starting_seconds)}"
             else:
-                reason = f"no heartbeat for {heartbeat_seconds // 60} minutes"
+                reason = f"no heartbeat for {_span(heartbeat_seconds)}"
             lost.append(_mark_lost(cur, row, reason, actor))
         # A job can end before the runner has parked its task; pick those up here.
         cur.execute(

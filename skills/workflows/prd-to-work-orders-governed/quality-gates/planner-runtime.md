@@ -7,13 +7,15 @@
 | 3 | Scope clarity | Missing In Scope / Out of Scope | Add both sections |
 | 4 | E2E tests | No Given/When/Then acceptance tests | Add E2E test specs |
 | 5 | Context graph | WO missing dependency links | Update `context_graph_markdown` |
-| 6 | Executability | WO too large for one agent session | Split into smaller WOs |
+| 6 | Executability | WO too large for one agent session (about 15 files or 12 requirements is the limit) | Split along a seam that lets the parts run in parallel |
 | 7 | ID conventions | WO IDs not `WO-NNN` format | Rename to `WO-001`, etc. |
 | 8 | Artifact presence | No `work_orders_markdown` | Produce work order content |
 | 9 | work_order_ids | Top-level IDs missing or mismatched | Set `work_order_ids` array |
 | 10 | Technical constraints | A WO lacks `## Technical Constraints`, or it omits a framework, storage, or named entity the PRD states | Copy the full constraint list into every WO |
 | 11 | Repositories | With `input.project_repositories`, a WO lacks a `Repository:` line, names a repository not in the list, or WO dependencies form a cycle between repositories. In any project, a WO keeps the placeholder `owner/name` | Name one listed repository per WO, or leave the line out when there is no list; split or reorder WOs so dependencies between repositories point one way |
 | 12 | Consistency | Within one WO, two statements cannot both hold: a requirement, constraint, implementation note or acceptance test asks for X while another asks for not-X (for example "sort the list newest first" and "keep the existing sort order unchanged"); or a WO contradicts a WO it depends on | Settle it from the PRD and FRDs and rewrite both statements to agree. If the PRD does not settle it, pick the reading that keeps the PRD's Must requirements, say which in the WO, and record the choice in `warnings` |
+| 13 | Waves | A chain of work orders that could run in parallel: a dependency that is not needed to build or test, or tightly coupled pieces split into a chain of small WOs | Drop the dependency, or merge the coupled pieces (without breaking gate 6) |
+| 14 | Complexity | A WO lacks a `Complexity: Low/Medium/High` line, or routine work is marked `High` | Add the line; keep `High` for hard-to-get-right work |
 
 Record unresolved items in `warnings`. Set `planner_complete: true` only when gates pass.
 

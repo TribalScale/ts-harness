@@ -37,6 +37,15 @@ Each ticket's coding job loads the program's planning documents and design refer
 through `Program:`. Link the Jira project to a project with its repositories first (System →
 Projects) so the planner splits work per repository.
 
+The planner slices for parallel delivery at the right size (`prd-to-work-orders-governed`
+1.4.0): shared foundation first, features split along independent seams, coupled pieces kept
+in one work order, dependencies only where one work order needs another's code, and no work
+order over about 15 files or 12 requirements. Each work order carries a `Complexity:
+Low/Medium/High` line; `High` ones are coded on the stronger model, and a filed ticket that
+lost the line gets it back from its work order. The Planner approval shows the delivery plan
+first ("9 work orders in 3 waves (WO-001 → WO-002, WO-003 → ...)") and warns when several
+waves run a single work order or a work order looks too large.
+
 Filing targets the Jira key of the program's project (Project settings), unless the request
 names another allowed project; that key must be in `jira_filing.allowed_projects` (System
 Settings → Jira filing → Allowed projects), or filing stops and says so.
@@ -481,7 +490,7 @@ rounds are converging. The decision follows the project's **Revisions** setting
 
 "Continue" sends one more revision with consolidated guidance covering every open
 finding, on the stronger coding model (`TS_HARNESS_GUIDED_CODING_MODEL`, default Opus
-via the PM agent). Revisions 1-3 use the usual model; revisions 4-8 the stronger one.
+via the PM agent). Every revision runs on the stronger model (`TS_HARNESS_REVISION_CODING_MODEL`), since the coding job's own pre-push review already ran on the first attempt.
 Two rules always hand the decision to a person: a finding that touches security
 (authentication, authorization, permissions, secrets, tokens or data exposure), and
 the ceiling of **8 revisions** per work order. An automatic accept is recorded as a

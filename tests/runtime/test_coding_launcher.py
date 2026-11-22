@@ -75,6 +75,42 @@ class LocalDockerLauncherTests(unittest.TestCase):
         with self.assertRaisesRegex(LaunchError, "no such image"):
             LocalDockerLauncher(LocalDockerConfig(), run=FakeDocker(run_rc=1), environ={}).start(JOB, "t")
 
+    def test_a_tickets_jobs_share_a_named_workspace_volume(self):
+        job = {**JOB, "workflow_id": "wf-1", "work_order_id": "PROJ-6", "repo_url": "https://github.com/acme/api", "tenant_id": "default"}
+        docker = FakeDocker()
+        LocalDockerLauncher(LocalDockerConfig(), run=docker, environ={}).start(job, "t")
+        volume = launcher_mod.workspace_volume(job, {})
+        self.assertTrue(volume.startswith("ts-coding-ws-"))
+        self.assertEqual(volume, launcher_mod.workspace_volume({**job, "id": "another-job"}, {}))
+        self.assertNotEqual(volume, launcher_mod.workspace_volume({**job, "workflow_id": "wf-2"}, {}))
+        create = next(cmd for cmd, _ in docker.calls if cmd[:3] == ["docker", "volume", "create"])
+        self.assertEqual(create[-1], volume)
+        run = next(cmd for cmd, _ in docker.calls if cmd[:2] == ["docker", "run"])
+        self.assertIn(f"type=volume,src={volume},dst=/workspace", run)
+        # Off, or a job with no delivery workflow: a fresh anonymous volume as before.
+        self.assertEqual(launcher_mod.workspace_volume(job, {"CODING_WORKSPACE_REUSE": "off"}), "")
+        self.assertIn("type=volume,dst=/workspace", LocalDockerLauncher(LocalDockerConfig(), run=FakeDocker(), environ={}).command(JOB))
+
+    def test_old_workspaces_are_pruned_hourly(self):
+        class Volumes(FakeDocker):
+            def __call__(self, cmd, **kwargs):
+                self.calls.append((cmd, kwargs))
+                if cmd[:3] == ["docker", "volume", "ls"]:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="ts-coding-ws-old\nts-coding-ws-new\n", stderr="")
+                if cmd[:3] == ["docker", "volume", "inspect"]:
+                    return subprocess.CompletedProcess(
+                        cmd, 0, stdout="ts-coding-ws-old 2026-11-01T00:00:00Z\nts-coding-ws-new 2026-11-21T23:00:00Z\n", stderr="")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc).timestamp()
+        docker = Volumes()
+        launcher = LocalDockerLauncher(LocalDockerConfig(), run=docker, environ={})
+        self.assertEqual(launcher.prune_workspaces(now=now), ["ts-coding-ws-old"])
+        self.assertIn(["docker", "volume", "rm", "ts-coding-ws-old"], [cmd for cmd, _ in docker.calls])
+        self.assertEqual(launcher.prune_workspaces(now=now + 60), [])
+
     def test_describe_and_stop(self):
         docker = FakeDocker(status="missing")
         launcher = LocalDockerLauncher(LocalDockerConfig(), run=docker, environ={})
