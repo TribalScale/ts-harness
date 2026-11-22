@@ -62,6 +62,12 @@ waits for a whole wave. Children post to the program's thread as usual. The pool
 when nothing runs and nothing more can start; tickets left behind a stopped blocker are
 reported in a blocked step for a person.
 
+A ticket waiting for a person to merge its PR (its checks, code review and QA passed) no
+longer holds a slot: when it parks at the merge wait it wakes the pool, which starts the next
+ready ticket. At most `TS_HARNESS_POOL_MAX_WAITING_MERGE` (default 4) of a pool's PRs wait for a
+merge at once; beyond that nothing new starts until one merges. Tickets that depend on a
+waiting PR still start only after it merges.
+
 A ticket is never built twice. The pool skips a ticket another run is already building
 (another program, or a single `implement PROJ-7`) and says so ("Left to the run already
 building it: PROJ-7"); starting a single ticket that a run is building blocks with "already

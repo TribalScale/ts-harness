@@ -1311,6 +1311,12 @@ class WorkflowRunner:
                     task_id=task.get("id"),
                     event_type=event_type,
                 )
+                if event_type == "github.merge":
+                    # A ticket in a parallel run frees its slot once it waits for the merge.
+                    from ts_harness.jira.ticket_pool import merge_wait_started
+                    from ts_harness.memory.client import get_memory_client
+
+                    merge_wait_started(get_memory_client(), str(task.get("workflow_id") or ""))
                 if stage.wait_external.get("pr_checks"):
                     self._prepare_checks_wait(task, stage.wait_external)
                 elif stage.wait_external.get("sha_checks") or stage.wait_external.get("deployment"):

@@ -229,6 +229,55 @@ def _and(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
+MAX_WAITING_FOR_MERGE = 4
+
+
+def max_waiting_for_merge() -> int:
+    """How many of a pool's PRs may wait for a merge at once (``TS_HARNESS_POOL_MAX_WAITING_MERGE``, default 4)."""
+    import os
+
+    try:
+        return max(1, int(os.environ.get("TS_HARNESS_POOL_MAX_WAITING_MERGE") or MAX_WAITING_FOR_MERGE))
+    except ValueError:
+        return MAX_WAITING_FOR_MERGE
+
+
+def waiting_for_merge(tasks: list[dict[str, Any]]) -> bool:
+    """The ticket's PR passed its checks, review and QA and waits for a person to merge it."""
+    statuses = [str(t.get("status") or "") for t in tasks]
+    if any(status in {"running", "claimed"} for status in statuses):
+        return False
+    return any(
+        t.get("step_name") == "await_human_merge" and t.get("status") == "blocked"
+        and str(t.get("error") or "").startswith("awaiting_external:github.merge")
+        for t in tasks
+    )
+
+
+def merge_wait_started(memory: Any, workflow_id: str, *, actor: str = "workflow-runner") -> bool:
+    """A pool child started waiting for its merge: let the pool use the slot it frees."""
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT
+
+    try:
+        workflow, _tasks = load_workflow_payload(memory, workflow_id)
+        parent_id = str(workflow.get("parent_workflow_id") or "")
+        if not parent_id:
+            return False
+        parent, _ = load_workflow_payload(memory, parent_id)
+        if str(parent.get("workflow_type") or "") != "implement_jira_pool":
+            return False
+        from ts_harness.workflows.engine import get_workflow_engine
+
+        get_workflow_engine().resume_external(
+            parent_id, event_type=CHILD_EVENT, payload={"ready_to_merge": workflow_id}, actor=actor,
+            tenant_id=str(workflow.get("tenant_id") or "default"),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - the pool re-checks on its next child event
+        logger.info("ticket pool not told %s waits for its merge: %s", workflow_id, exc)
+        return False
+
+
 def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str, str]]:
     """Start the tickets that became ready since the last child finished; return every pinned child."""
     from ts_harness.workflows.work_order_waves import child_state, pinned_children
@@ -240,17 +289,22 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
     fill_output = fill_task.get("output") if isinstance(fill_task.get("output"), dict) else {}
     queue = [str(key) for key in fill_output.get("queue") or []]
     limit = pool_limit(fill_output.get("max_parallel_tickets"))
-    running, finished_bad = [], []
+    running, finished_bad, waiting_merge = [], [], []
     for child in children:
         workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
         state = child_state(workflow, child_tasks)
         if state is None:
             running.append(child)
+            if waiting_for_merge(child_tasks):
+                waiting_merge.append(child)
         elif state != "succeeded":
             finished_bad.append(child["label"])
     started = {child.get("label") for child in children}
     remaining = [key for key in queue if key not in started]
-    room = limit - len(running)
+    # A ticket waiting for a person to merge its PR no longer holds a slot, so independent
+    # tickets keep going; at most ``max_waiting_for_merge()`` such PRs wait at once.
+    active = len(running) - len(waiting_merge)
+    room = limit - active if len(waiting_merge) < max_waiting_for_merge() else 0
     if not remaining or room <= 0:
         return children
     if jira is None:

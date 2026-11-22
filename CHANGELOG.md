@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- In a parallel run, a ticket waiting for its PR to be merged frees its slot, so independent tickets keep going; at most 4 PRs (`TS_HARNESS_POOL_MAX_WAITING_MERGE`) wait for a merge at once.
 - Chat proposals can be cancelled: `/cancel` in the conversation, or **Cancel proposal** in the Inbox, which now lists every offer still waiting for a yes or no (with when it was made). Closes #109.
 - Approving a gate twice no longer starts the next phase twice: the second approval returns `already_decided` (it is re-checked under the workflow lock), the Inbox removes the item at once and ignores it on refresh, and the program page replaces the buttons with "Decided; the next step is starting…".
 - A queue or ticket waiting for repositories' bootstrap PRs continues on its own once they merge, instead of asking for a new run.
