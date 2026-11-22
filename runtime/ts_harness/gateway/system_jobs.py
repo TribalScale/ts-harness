@@ -642,7 +642,7 @@ def sweep_coding_jobs() -> dict[str, Any]:
         result = get_memory_client().sweep_stale_coding_jobs(
             heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 90),
             starting_seconds=int(os.environ.get("CODING_JOB_START_TIMEOUT_SECONDS") or 300),
-            max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 3600),
+            max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 7200),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("coding job sweep failed: %s", exc)
