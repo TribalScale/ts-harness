@@ -15,6 +15,8 @@ export default defineConfig(({ mode }) => {
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],
       clearMocks: true,
+      // Playwright browser tests live in e2e/ and run with `npm run test:e2e`.
+      include: ["src/**/*.test.{ts,tsx}"],
     },
     server: {
       port: Number(env.VITE_DEV_PORT || 5173),

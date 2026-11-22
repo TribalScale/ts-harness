@@ -2576,6 +2576,82 @@ th {
   font-size: 13px;
 }
 
+.proj-checklist {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.proj-check {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.proj-check:last-child {
+  border-bottom: 0;
+}
+
+.proj-check-status {
+  align-self: start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.proj-check-status-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.proj-check-status-warning {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.proj-check-status-failing {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.proj-check-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.proj-check-summary,
+.proj-check-fix {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.proj-check-details {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.proj-check-fix a {
+  color: var(--accent);
+}
+
+.proj-check-total {
+  color: var(--text);
+}
+
 .proj-card .registry-form {
   display: grid;
   gap: 12px;
@@ -3094,6 +3170,25 @@ form {
 .history-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .history-row-meta { font-size: 0.85em; margin: 0.2rem 0; }
 .history-row-facts { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.9em; }
+.metrics-running { display: flex !important; align-items: center; gap: 0.35rem; }
+.metrics-tiles { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.metrics-tile { border: 1px solid var(--border, #d0d7de); border-radius: 8px; padding: 0.6rem 0.9rem; display: grid; gap: 0.15rem; }
+.metrics-tile-label { font-size: 0.8em; opacity: 0.75; }
+.metrics-tile-value { font-size: 1.6em; font-variant-numeric: tabular-nums; }
+.metrics-tile-detail { font-size: 0.8em; }
+.metrics-trend h3 { margin: 0 0 0.4rem; font-size: 0.95em; }
+.metrics-trend { margin-bottom: 1rem; }
+.metrics-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+.metrics-table th, .metrics-table td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border, #d0d7de); vertical-align: top; }
+.metrics-table td { font-variant-numeric: tabular-nums; }
+.metrics-ticket-meta { font-size: 0.8em; }
+.metrics-bar { display: inline-block; height: 0.6rem; margin-right: 0.4rem; border-radius: 3px;
+  background: var(--accent, #1f6feb); vertical-align: middle; }
+.metrics-bar-revisions { background: #8250df; }
+@media (max-width: 640px) {
+  .metrics-table { display: block; overflow-x: auto; }
+}
 .board-attempts { margin-top: 0.75rem; }
 .board-attempts ol { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
 
