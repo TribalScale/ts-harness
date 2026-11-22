@@ -82,7 +82,13 @@ def step_timeline(tasks: list[dict[str, Any]], *, now: datetime | None = None) -
         # A step starts when it became ready: a parked step (coding job, CI, merge wait) is
         # claimed again when it resumes, so its started_at is the resume, not the start.
         claimed = _parse(task.get("started_at"))
-        start = ready or claimed or _parse(task.get("created_at"))
+        created = _parse(task.get("created_at"))
+        # A revision depends on a step that finished long before it was created (the earlier
+        # attempt); it cannot have started before it existed, so the wait for a decision is not
+        # counted as its run.
+        if ready and created and created > ready:
+            ready = created
+        start = ready or claimed or created
         if claimed and ready and claimed < ready:
             start = claimed
         end = _parse(task.get("completed_at"))
