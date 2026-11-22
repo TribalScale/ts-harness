@@ -88,7 +88,7 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
         "requested_by", "repo_url", "base_branch", "work_order_id", "status", "launcher",
         "runner_ref", "attempt", "heartbeat_at", "last_output", "result", "error",
         "created_at", "claimed_at", "started_at", "finished_at", "consumed_at",
-        "worker_cpu", "worker_memory_mb", "progress",
+        "worker_cpu", "worker_memory_mb", "progress", "held_reason", "budget_note",
     )
     job = {key: row.get(key) for key in keys}
     row_spec = row.get("spec") if isinstance(row.get("spec"), dict) else {}
@@ -160,8 +160,8 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO coding_jobs
               (tenant_id, workflow_id, task_id, program_id, team_slug, project_id, requested_by,
-               repo_url, base_branch, work_order_id, spec)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+               repo_url, base_branch, work_order_id, spec, budget_note)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
             RETURNING *
             """,
             (
@@ -176,6 +176,7 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
                 spec.get("base_branch"),
                 spec.get("work_order_id"),
                 json.dumps(spec),
+                str(spec.get("budget_note") or "").strip() or None,
             ),
         )
         row = cur.fetchone()
@@ -190,15 +191,19 @@ def create_coding_job(conn, body: dict[str, Any]) -> dict[str, Any]:
     return {**_public(row), "created": True}
 
 
-def _spec_sizing(row: dict[str, Any]) -> dict[str, int]:
-    """A job's own memory size (a retry after the worker ran out of memory) wins over the project's."""
+def _spec_of(row: dict[str, Any]) -> dict[str, Any]:
     spec = row.get("spec")
     if isinstance(spec, str):
         try:
             spec = json.loads(spec)
         except json.JSONDecodeError:
             spec = {}
-    memory = (spec or {}).get("worker_memory_mb") if isinstance(spec, dict) else None
+    return spec if isinstance(spec, dict) else {}
+
+
+def _spec_sizing(row: dict[str, Any]) -> dict[str, int]:
+    """A job's own memory size (a retry after the worker ran out of memory) wins over the project's."""
+    memory = _spec_of(row).get("worker_memory_mb")
     return {"worker_memory_mb": int(memory)} if isinstance(memory, int) and memory > 0 else {}
 
 
@@ -252,6 +257,70 @@ def _owner_keys(row: dict[str, Any]) -> dict[str, str]:
     }
 
 
+TEAM_HELD_REASON = "team budget reached"
+PROGRAM_HELD_REASON = "program budget reached"
+
+
+def _stopped_programs(cur, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Programs of queued jobs that reached their budget with ``budgets.program_action: stop``."""
+    programs = sorted({r["program"] for r in rows if r["status"] == "queued" and r.get("program")})
+    if not programs:
+        return {}
+    cur.execute(
+        """
+        SELECT p.id::text AS id, COALESCE(NULLIF(p.display_name, ''), p.summary) AS name,
+               program_spend(p.id) AS spent, program_budget(p.id) AS budget, COALESCE(s.currency, 'USD') AS currency
+          FROM delivery_programs p
+          LEFT JOIN budget_settings s ON s.tenant_id = p.tenant_id
+         WHERE p.id::text = ANY(%s)
+           AND COALESCE(s.program_action, 'downgrade') = 'stop'
+           AND program_budget_reached(p.id)
+        """,
+        (programs,),
+    )
+    return {r["id"]: r for r in cur.fetchall()}
+
+
+def held_note(program: dict[str, Any]) -> str:
+    return (
+        f"Coding for this ticket is on hold: program {program['name']} reached its LLM budget "
+        f"({float(program['spent']):,.2f} of {float(program['budget']):,.2f} {program['currency']}). "
+        "It starts once an admin or the team's manager raises the budget on the program page."
+    )
+
+
+def _mark_held(cur, rows: list[dict[str, Any]], over_budget: set[str], stopped: dict[str, dict[str, Any]]) -> None:
+    """Record why queued jobs wait (team budget first) and clear the reason of jobs no longer held.
+
+    A job newly held for its program also gets a ``budget_note`` for its ticket's thread.
+    """
+    queued = [r for r in rows if r["status"] == "queued"]
+    team_held = [str(r["id"]) for r in queued if r["team"] in over_budget]
+    program_held: dict[str, list[str]] = {}
+    for row in queued:
+        if row["team"] not in over_budget and row.get("program") in stopped:
+            program_held.setdefault(row["program"], []).append(str(row["id"]))
+    if team_held:
+        cur.execute(
+            "UPDATE coding_jobs SET held_reason = %s WHERE id = ANY(%s::uuid[]) AND held_reason IS DISTINCT FROM %s",
+            (TEAM_HELD_REASON, team_held, TEAM_HELD_REASON),
+        )
+    for program, ids in program_held.items():
+        cur.execute(
+            """
+            UPDATE coding_jobs SET held_reason = %s, budget_note = %s, budget_noted_at = NULL
+             WHERE id = ANY(%s::uuid[]) AND held_reason IS DISTINCT FROM %s
+            """,
+            (PROGRAM_HELD_REASON, held_note(stopped[program]), ids, PROGRAM_HELD_REASON),
+        )
+    held = team_held + [i for ids in program_held.values() for i in ids]
+    cur.execute(
+        "UPDATE coding_jobs SET held_reason = NULL "
+        "WHERE status = 'queued' AND held_reason IS NOT NULL AND NOT (id = ANY(%s::uuid[]))",
+        (held,),
+    )
+
+
 def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     """Claim queued jobs, oldest first, within the global limit and the per-user, program and team quotas."""
     launcher = str(body.get("launcher") or "local")
@@ -264,13 +333,14 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     ttl = int(body.get("token_ttl_seconds") or DEFAULT_TOKEN_TTL)
     deferred = 0
     held_by_budget = 0
+    held_by_program_budget = 0
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('coding_jobs_claim'))")
         cur.execute(
             """
             SELECT j.id, j.status,
                    COALESCE(t.requested_by, j.requested_by) AS requester,
-                   j.program_id::text AS program,
+                   COALESCE(j.program_id, workflow_program_id(j.workflow_id))::text AS program,
                    COALESCE(t.team_id::text, j.team_slug) AS team
               FROM coding_jobs j
               LEFT JOIN workflow_tasks t ON t.id = j.task_id
@@ -283,6 +353,8 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
         rows = list(cur.fetchall())
         cur.execute("SELECT id::text AS id FROM teams WHERE team_budget_reached(tenant_id, id::text)")
         over_budget = {r["id"] for r in cur.fetchall()}
+        stopped = _stopped_programs(cur, rows)
+        _mark_held(cur, rows, over_budget, stopped)
         active = [r for r in rows if r["status"] in RUNNING]
         running = len(active)
         room = min(limit, max_running - running)
@@ -300,6 +372,9 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             if row["team"] in over_budget:
                 held_by_budget += 1
                 continue
+            if row["program"] in stopped:
+                held_by_program_budget += 1
+                continue
             owners = {key: owner for key, owner in _owner_keys(row).items() if owner and key in quotas}
             if any(counts.get((key, owner), 0) >= quotas[key] for key, owner in owners.items()):
                 deferred += 1
@@ -313,7 +388,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
                 """
                 UPDATE coding_jobs
                 SET status = 'starting', claimed_at = now(), launcher = %s, attempt = attempt + 1,
-                    heartbeat_at = now()
+                    heartbeat_at = now(), held_reason = NULL
                 WHERE id = ANY(%s) AND status = 'queued'
                 RETURNING *
                 """,
@@ -327,6 +402,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
         "running": running,
         "deferred_by_quota": deferred,
         "held_by_budget": held_by_budget,
+        "held_by_program_budget": held_by_program_budget,
         "jobs": [{**_public(r), "token": issue_job_token(str(r["id"]), ttl_seconds=ttl)} for r in claimed],
     }
 
@@ -562,6 +638,8 @@ def _record_usage(cur, row: dict[str, Any], result: dict[str, Any]) -> int:
     its usage is counted. Through the proxy the worker reports none, so nothing is doubled.
     """
     written = 0
+    # The job's program, else the spec's (jobs created outside the runner), else the workflow's (SQL).
+    program_id = str(row.get("program_id") or _spec_of(row).get("program_id") or "") or None
     for item in result.get("usage") or []:
         if not isinstance(item, dict):
             continue
@@ -574,15 +652,17 @@ def _record_usage(cur, row: dict[str, Any], result: dict[str, Any]) -> int:
             continue
         provider, model = str(item.get("provider") or "unknown"), str(item.get("model") or "unknown")
         task_id = str(row.get("task_id") or "") or None
+        workflow_id = str(row.get("workflow_id") or "") or None
         cur.execute(
             """
             INSERT INTO llm_usage (tenant_id, team_id, program_id, workflow_id, task_id, actor, agent_id,
                                    provider, model, input_tokens, output_tokens, cost_usd, status)
-            VALUES (%s, (SELECT team_id::text FROM workflow_tasks WHERE id = %s::uuid), %s, %s, %s, %s,
+            VALUES (%s, (SELECT team_id::text FROM workflow_tasks WHERE id = %s::uuid),
+                    COALESCE(%s::text, workflow_program_id(%s::uuid)::text), %s, %s, %s,
                     'coding-backend', %s, %s, %s, %s, %s, 200)
             """,
-            (str(row.get("tenant_id") or "default"), task_id, str(row.get("program_id") or "") or None,
-             str(row.get("workflow_id") or "") or None, task_id, str(row.get("requested_by") or "") or "coding-backend",
+            (str(row.get("tenant_id") or "default"), task_id, program_id, workflow_id,
+             workflow_id, task_id, str(row.get("requested_by") or "") or "coding-backend",
              provider, model, fresh + cached, output, cost),
         )
         cur.execute(

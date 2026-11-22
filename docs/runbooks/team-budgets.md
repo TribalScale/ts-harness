@@ -52,6 +52,10 @@ kind wins. Every raise writes a `team_budget_raised` row to
 Program pages show a banner when the program's team is near or at its budget,
 with a link to the Budgets page.
 
+Programs can also have their own budget for their whole life, with a warning
+and an action at 100% (default model only, or hold coding jobs). See
+[program-budgets.md](program-budgets.md).
+
 ## Check it
 
 ```sql

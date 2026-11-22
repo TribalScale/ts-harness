@@ -20,6 +20,7 @@ import { SplitView } from "../layout/SplitView";
 import { PHASE_NAMES, PhaseStrip } from "./PhaseStrip";
 import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
 import { ProgramBoard } from "../live/ProgramBoard";
+import { ProgramBudgetCard } from "./ProgramBudgetCard";
 import { ShareDialog } from "./ShareDialog";
 
 type ProgramTab = "overview" | "documents" | "artifacts";
@@ -179,7 +180,8 @@ export function ProgramsPage({
 }) {
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [status, setStatus] = useState<ProgramStatus | null>(null);
-  const [budget, setBudget] = useState<ProgramBudget["team"]>(null);
+  const [budgetData, setBudgetData] = useState<ProgramBudget | null>(null);
+  const budget = budgetData?.team ?? null;
   const [selectedPhase, setSelectedPhase] = useState<string | undefined>();
   const [tab, setTab] = useState<ProgramTab>("overview");
   const [pendingAction, setPendingAction] = useState<ProgramAction | null>(
@@ -280,16 +282,16 @@ export function ProgramsPage({
     setTab("overview");
     setEvidence(null);
     void refreshStatus(programId);
-    setBudget(null);
+    setBudgetData(null);
     let active = true;
     apiFetch<ProgramBudget>(
       `/admin/budgets/programs/${encodeURIComponent(programId)}`,
     )
       .then((data) => {
-        if (active) setBudget(data.team);
+        if (active) setBudgetData(data);
       })
       .catch(() => {
-        if (active) setBudget(null);
+        if (active) setBudgetData(null);
       });
     return () => {
       active = false;
@@ -716,6 +718,13 @@ export function ProgramsPage({
               : "Work continues; at 100% agent and coding steps wait. "}
             <a href="#/system/budgets">Open budgets</a>
           </div>
+        )}
+        {budgetData?.program && programId && (
+          <ProgramBudgetCard
+            programId={programId}
+            budget={budgetData.program}
+            onSaved={setBudgetData}
+          />
         )}
         <Tabs
           idBase={TABS_ID}

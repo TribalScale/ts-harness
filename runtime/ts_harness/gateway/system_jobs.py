@@ -655,7 +655,7 @@ def sweep_coding_jobs() -> dict[str, Any]:
 
 
 def budget_alerts() -> dict[str, Any]:
-    """Warn at budgets.warn_at_percent and when a team reaches its monthly LLM budget."""
+    """Warn at budgets.warn_at_percent and when a team reaches its monthly LLM budget or a program its budget."""
     from ts_harness.budgets import budget_alerts as run_alerts
 
     return run_alerts()

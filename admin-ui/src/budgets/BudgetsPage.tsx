@@ -5,13 +5,13 @@ import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { StatusPill } from "../components/StatusPill";
 
-const STATUS: Record<BudgetStatus, { status: "success" | "warning" | "danger"; label: string }> = {
+export const STATUS: Record<BudgetStatus, { status: "success" | "warning" | "danger"; label: string }> = {
   ok: { status: "success", label: "On track" },
   warning: { status: "warning", label: "Near budget" },
   reached: { status: "danger", label: "Budget reached" },
 };
 
-function money(value: number, currency: string) {
+export function money(value: number, currency: string) {
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 }
 
