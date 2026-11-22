@@ -329,3 +329,20 @@ class ProgramTenantTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProjectLinkedRepoTests(unittest.TestCase):
+    def test_a_repo_linked_to_a_project_passes_the_allowlist_but_not_the_org(self):
+        from unittest.mock import MagicMock
+
+        from ts_harness.config.bindings import TenantBindings, check_repo_allowed_or_linked
+
+        memory = MagicMock()
+        memory.list_projects.return_value = {"projects": [{"id": "p1"}]}
+        memory.list_project_repositories.return_value = {"repositories": [{"full_name": "acme/web"}]}
+        bindings = TenantBindings(github_org="", allowed_repos=("acme/api",), jira_allowed_projects=())
+        self.assertIsNone(check_repo_allowed_or_linked("https://github.com/acme/web", bindings, memory=memory))
+        self.assertIn("allowlist", check_repo_allowed_or_linked("https://github.com/acme/other", bindings, memory=memory))
+        org = TenantBindings(github_org="acme", allowed_repos=("acme/api",), jira_allowed_projects=())
+        memory.list_project_repositories.return_value = {"repositories": [{"full_name": "evil/web"}]}
+        self.assertIn("outside the tenant GitHub org", check_repo_allowed_or_linked("https://github.com/evil/web", org, memory=memory))

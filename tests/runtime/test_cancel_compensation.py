@@ -548,7 +548,7 @@ class AdminEndpointsTests(unittest.TestCase):
         self.memory.reject_task.assert_not_called()
 
     def test_a_gate_that_is_not_pending_falls_back_to_memory(self):
-        self._pending_gate(status="approved")
+        self._pending_gate(status="rejected")
         self.memory.approve_task.return_value = {"id": "t1"}
         engine = mock.Mock()
         with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine), \
@@ -556,6 +556,30 @@ class AdminEndpointsTests(unittest.TestCase):
             self.client.post("/admin/workflows/approve", json={"id": "t1"})
         engine.handle_approve.assert_not_called()
         self.memory.approve_task.assert_called_once()
+
+    def test_the_inbox_cancels_a_conversations_pending_proposal(self):
+        from ts_harness.agent.sessions import SessionRecord
+
+        session = SessionRecord(session_id="s1", routing_key="k", tenant_id="default", agent_id="orchestrator", source="slack",
+                                metadata={"pending_program": {"summary": "implement all PROJ", "program_type": "jira_to_pr"}})
+        store = mock.MagicMock()
+        store.get.side_effect = lambda sid: session if sid == "s1" else None
+        with mock.patch("ts_harness.agent.sessions.get_session_store", return_value=store):
+            response = self.client.post("/admin/proposals/cancel", json={"session_id": "s1"})
+            missing = self.client.post("/admin/proposals/cancel", json={"session_id": "nope"})
+        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertNotIn("pending_program", session.metadata)
+        self.assertEqual(missing.status_code, 404)
+
+    def test_approving_an_approved_gate_again_does_nothing(self):
+        self._pending_gate(status="approved")
+        engine = mock.Mock()
+        with mock.patch.object(asgi_app, "get_workflow_engine", return_value=engine), \
+                mock.patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True):
+            response = self.client.post("/admin/workflows/approve", json={"id": "t1"})
+        self.assertEqual(response.json()["status"], "already_decided")
+        engine.handle_approve.assert_not_called()
+        self.memory.approve_task.assert_not_called()
 
     def test_portfolio_mode_lists_roots_with_filters(self):
         self.memory.list_programs.return_value = {"programs": [], "total": 0}

@@ -191,7 +191,7 @@ def _ensure_project_ready(memory: Any, workflow: dict[str, Any], project_key: st
     if pending:
         lines = ["Before building, these repositories need their starting code:"]
         lines += [f"- {r.message()}" for r in pending]
-        lines.append(f"Review and merge them, then say `implement all {project_key}` again.")
+        lines.append("Review and merge them; this run continues on its own a few minutes after the last one merges.")
         raise StepBlocked("\n".join(lines), output={"queue": False, "bootstrap_prs": [r.pr_url for r in pending]})
 
 

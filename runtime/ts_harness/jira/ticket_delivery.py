@@ -302,7 +302,12 @@ def _ensure_repository_ready(
     except Exception as exc:  # noqa: BLE001 - a failed check never blocks a repository that has code
         return [f"repository template check failed: {exc}"]
     if not result.ready:
-        raise ValueError(f"{result.message()}\nMerge it, then run this ticket again.")
+        from ts_harness.workflows.system_steps import StepBlocked
+
+        raise StepBlocked(
+            f"{result.message()}\nMerge it; this ticket continues on its own a few minutes later.",
+            output={"bootstrap_prs": [url for url in [getattr(result, "pr_url", "")] if url]},
+        )
     return list(result.notes)
 
 

@@ -15,7 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ts_harness.config.bindings import check_repo_allowed, github_repo_slug, tenant_bindings
+from ts_harness.config.bindings import check_repo_allowed_or_linked, github_repo_slug, tenant_bindings
 from ts_harness.implementation.backends.base import CodingRequest
 from ts_harness.implementation.backends.opencode import OpenCodeBackend
 from ts_harness.implementation.verification import verification_summary
@@ -255,7 +255,10 @@ def build_coding_request(
     )
 
     live = _live_runtime_config() or runtime
-    binding_error = check_repo_allowed(repo_url, tenant_bindings(getattr(live, "program_defaults", None)))
+    tenant = str(getattr(getattr(live, "gateway", None), "default_tenant_id", "") or "default")
+    binding_error = check_repo_allowed_or_linked(
+        repo_url, tenant_bindings(getattr(live, "program_defaults", None)), tenant_id=tenant
+    )
     if binding_error:
         raise CodingRequestError(binding_error, repo_url=repo_url)
     requester = str(requested_by or "").strip().lower() or None

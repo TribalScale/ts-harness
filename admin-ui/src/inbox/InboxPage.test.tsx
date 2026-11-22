@@ -533,3 +533,30 @@ it("shows what a gate approves: the release a promote gate deploys", async () =>
   expect(within(review).getByText(/e2e: success, check: success/)).toBeInTheDocument();
   expect(within(review).getByText("22ebbfb1560c")).toBeInTheDocument();
 });
+
+it("lists a pending chat proposal and cancels it", async () => {
+  const posted: string[] = [];
+  let cancelled = false;
+  const proposal = {
+    type: "pending_proposal",
+    id: "s1:pending_program",
+    title: "Start a program `jira_to_pr`: implement all PROJ",
+    subtitle: "Waiting for a yes or no in slack",
+    created_at: "2026-10-22T17:34:10Z",
+    meta: { session_id: "s1", key: "pending_program", source: "slack", status: "pending" },
+  };
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: cancelled ? [] : [proposal] });
+    if (url === "/admin/proposals/cancel") {
+      posted.push(String(init?.body));
+      cancelled = true;
+      return jsonResponse({ status: "cancelled", cancelled: [] });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  renderPage(<StatefulInbox initialType="pending_proposal" initialId="s1:pending_program" />);
+  expect(await screen.findByRole("button", { name: /Proposals 1/ })).toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel proposal" }));
+  await waitFor(() => expect(posted).toEqual(['{"session_id":"s1"}']));
+  expect(await screen.findByText("Proposal cancelled")).toBeInTheDocument();
+});

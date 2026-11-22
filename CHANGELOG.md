@@ -11,6 +11,10 @@ First public release.
 
 ### Added
 
+- Chat proposals can be cancelled: `/cancel` in the conversation, or **Cancel proposal** in the Inbox, which now lists every offer still waiting for a yes or no (with when it was made). Closes #109.
+- Approving a gate twice no longer starts the next phase twice: the second approval returns `already_decided` (it is re-checked under the workflow lock), the Inbox removes the item at once and ignores it on refresh, and the program page replaces the buttons with "Decided; the next step is starting…".
+- A queue or ticket waiting for repositories' bootstrap PRs continues on its own once they merge, instead of asking for a new run.
+- Repositories linked to a project are allowed for coding, releases and cleanup without also adding them to the repo allowlist (the GitHub org restriction still applies).
 - Clearer ticket queue messages: the confirmation is headed "Confirm the <PROJECT> ticket queue"; the parallel run's start says what started and why the rest wait ("Started PROJ-7. Up to 2 tickets run at once. PROJ-8 and PROJ-23 wait on PROJ-7; 19 more wait on later tickets.") instead of "in parallel" for a single ticket; a ticket that names no design frames says "Design: none" instead of listing every frame of its program (only named frames ever reached the coding job and QA).
 - The ticket queue orders ready tickets by issue number, not as text: PROJ-7 now comes before PROJ-22 (text order put PROJ-22 first).
 - Ticket story on Live and the program board: **Details** shows where a ticket's time went (coding, queue, CI, review, QA, waiting for you, coding cost) and everything that happened in order, in local time: each coding run with its trigger, model, duration, cost, phases and pre-push review result; CI results; code review and QA verdicts with their blocking findings; waits for you and who decided with their guidance. A running coding job shows a live phase breakdown (setup, coding, running tests, pre-push review, push) on its card, reported with each heartbeat (migration 050). Inbox decisions record the person's email.

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from ts_harness.config.bindings import check_repo_allowed, tenant_bindings
+from ts_harness.config.bindings import check_repo_allowed_or_linked, tenant_bindings
 from ts_harness.integrations.github_client import (
     GitHubClient,
     GitHubError,
@@ -175,7 +175,7 @@ def plan_release(
     task_input = {**_task_input(stored), **_task_input(task)}
     repo = resolve_repo(task_input)
     defaults = program_defaults if program_defaults is not None else _live_program_defaults()
-    binding_error = check_repo_allowed(repo, tenant_bindings(defaults))
+    binding_error = check_repo_allowed_or_linked(repo, tenant_bindings(defaults))
     if binding_error:
         raise ReleaseBlocked(binding_error)
     environments = environments_for(repo, defaults)
