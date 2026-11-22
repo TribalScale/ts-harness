@@ -67,6 +67,29 @@ class RevisionScopeTests(unittest.TestCase):
             ["src/App.jsx", "src/contest.js"],
         )
 
+    def test_module_glue_and_direct_imports_of_a_cited_file_are_allowed(self):
+        rules = self.repo_dir / "src" / "engine" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "changeover.ts").write_text(
+            "import { Capacity } from '../capacity';\nimport type { Rule } from './types';\nexport const x = 1;\n")
+        (rules / "types.ts").write_text("export type Rule = {};\n")
+        (rules / "index.ts").write_text("export * from './changeover';\n")
+        (rules / "mixing.ts").write_text("export const y = 2;\n")
+        (self.repo_dir / "src" / "engine" / "capacity.ts").write_text("export class Capacity {}\n")
+        allowed = allowed_revision_paths(["src/engine/rules/changeover.ts"], self.repo_dir)
+        changed = ["src/engine/rules/changeover.ts", "src/engine/rules/index.ts", "src/engine/rules/types.ts",
+                   "src/engine/capacity.ts", "src/engine/rules/mixing.ts"]
+        # Another rule module in the same folder is still outside the finding.
+        self.assertEqual(unexpected_revision_paths(changed, allowed), ["src/engine/rules/mixing.ts"])
+
+    def test_python_relative_imports_are_allowed(self):
+        app = self.repo_dir / "app"
+        app.mkdir()
+        (app / "pricing.py").write_text("from .rates import table\nfrom . import util\n")
+        (app / "rates.py").write_text("table = {}\n")
+        allowed = allowed_revision_paths(["app/pricing.py"], self.repo_dir)
+        self.assertIn("app/rates.py", allowed)
+
     def test_empty_citation_list_does_not_constrain(self):
         self.assertEqual(unexpected_revision_paths(["requirements-dev.txt"], set()), [])
 

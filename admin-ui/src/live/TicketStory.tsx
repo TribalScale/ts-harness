@@ -50,6 +50,8 @@ function reviewLine(event: StoryEvent): string {
   if (review.status === "pass")
     return fixed ? `Pre-push review: found and fixed ${fixed} blocking issue${fixed === 1 ? "" : "s"}` : "Pre-push review: passed";
   if (review.status === "fix_failed") return "Pre-push review: a fix broke the tests and was dropped";
+  if (review.status === "out_of_time")
+    return `Pre-push review: fixed ${fixed} blocking issue${fixed === 1 ? "" : "s"}, then stopped at its time limit; the code review gate checks the rest`;
   return `Pre-push review: ${open} blocking issue${open === 1 ? "" : "s"} left for the gate`;
 }
 
