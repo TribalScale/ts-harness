@@ -172,6 +172,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Trims and deletes client data past its retention window, in small batches (docs/data-handling.md).
+    {
+        "name": "apply-data-retention",
+        "kind": "system",
+        "handler": "apply_data_retention",
+        "interval_seconds": 86400,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
     # Reviews finished programs for org and project notes. The first run only stores a cursor.
     {
         "name": "review-finished-programs",

@@ -137,6 +137,17 @@ restart are not carried over.
 - After a database restore the shared trees can go back in generation. Mirrors
   notice and pull everything; nothing needs to be cleared by hand.
 
+## Data retention and deletion
+
+The `apply-data-retention` system job (daily) trims coding job logs after 30 days, deletes
+transcript messages after 180 days and audit events after 730 days, trims the large fields of
+tasks in workflows finished over a year ago, and deletes design images 180 days after their
+program finished. Running and blocked work is never touched. Windows are
+`TS_HARNESS_RETENTION_*` variables in the instance environment (0 keeps forever); deleting one
+program's data on request is `scripts/ops/purge-program-data.py <program_id> --dry-run`, then
+`--yes`. Deleted rows stay in database snapshots and bucket versions until those expire. Details:
+[data-handling.md](../data-handling.md).
+
 ## Troubleshooting
 
 | Symptom | Check |

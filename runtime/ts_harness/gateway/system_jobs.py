@@ -705,6 +705,13 @@ def sweep_channel_dedup() -> dict[str, Any]:
     return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
 
 
+def apply_data_retention() -> dict[str, Any]:
+    """Trim and delete client data past its retention window, one batch per category (docs/data-handling.md)."""
+    from ts_harness.data_retention import apply_data_retention as run_retention
+
+    return run_retention()
+
+
 def _retry_program_phases() -> dict[str, Any]:
     """Program phase completions that failed earlier (see ``workflows.phase_retries``)."""
     from ts_harness.workflows.phase_retries import retry_due
@@ -721,6 +728,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "check_alerts": check_alerts,
     "github_rate_limits": github_rate_limits,
     "sweep_channel_dedup": sweep_channel_dedup,
+    "apply_data_retention": apply_data_retention,
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
     "retry_program_phases": lambda: _retry_program_phases(),
