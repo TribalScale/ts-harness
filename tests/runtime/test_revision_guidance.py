@@ -129,6 +129,33 @@ class GuidedLoopTests(unittest.TestCase):
         self.assertNotIn("coding_model", bulk.call_args_list[0].kwargs["tasks"][0]["input"])
 
 
+class StrongModelFromRevisionTests(unittest.TestCase):
+    def test_the_stronger_model_starts_at_the_configured_revision(self):
+        with patch.dict("os.environ", {"TS_HARNESS_REVISION_CODING_MODEL": "anthropic/claude-opus-5-5"}):
+            self.assertEqual(rg.revision_coding_model(1), "anthropic/claude-opus-5-5")  # default: from revision 1
+            with patch.dict("os.environ", {"TS_HARNESS_STRONG_MODEL_FROM_REVISION": "3"}):
+                self.assertIsNone(rg.revision_coding_model(1))
+                self.assertIsNone(rg.revision_coding_model(2))
+                self.assertEqual(rg.revision_coding_model(3), "anthropic/claude-opus-5-5")
+            with patch.dict("os.environ", {"TS_HARNESS_STRONG_MODEL_FROM_REVISION": "nonsense"}):
+                self.assertEqual(rg.strong_model_from_revision(), 1)
+
+    @patch.dict("os.environ", {"TS_HARNESS_STRONG_MODEL_FROM_REVISION": "2"})
+    @patch("ts_harness.workflows.revision_guidance.diagnosis_model", return_value="anthropic/claude-opus-5-5")
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_the_hook_counts_revisions(self, bulk, _model):
+        bulk.side_effect = [[f"t{i}"] for i in range(20)]
+        other = {**FINDING, "file": "src/server.ts", "line": 3, "message": "Log the port."}
+        first = [_deliver(1), _review(1, other, "blocked")]
+        revise_on_reject.handle(GuidedLoopTests._ctx(self, first))
+        self.assertNotIn("coding_model", bulk.call_args_list[0].kwargs["tasks"][0]["input"])  # revision 1
+        second = [_deliver(1), _review(1, FINDING), _deliver(2, _revision_source="finalize_code_review", review_feedback="x"),
+                  _review(2, other, "blocked")]
+        bulk.reset_mock()
+        revise_on_reject.handle(GuidedLoopTests._ctx(self, second))
+        self.assertEqual(bulk.call_args_list[0].kwargs["tasks"][0]["input"]["coding_model"], "anthropic/claude-opus-5-5")
+
+
 class GuidedModelTests(unittest.TestCase):
     def test_the_guided_model_reaches_the_coding_job_in_the_backend_format(self):
         self.assertEqual(binding_from_task_input({"coding_model": "anthropic/claude-opus-5-5"})["coding_model"], "anthropic/claude-opus-5-5")

@@ -94,9 +94,15 @@ def _triage_plan(ctx: HookContext, tasks: list[dict[str, Any]], gate_step: str, 
         return None
 
 
-def _safe_revision_model(revision_guidance: Any) -> str | None:
+def _revision_ordinal(tasks: list[dict[str, Any]], implement_step: str) -> int:
+    """Which revision the new run is: 1 for the first after the first run (every grant counted)."""
+    runs = [t for t in tasks if t.get("step_name") == implement_step and t.get("status") != "cancelled"]
+    return max(1, len(runs))
+
+
+def _safe_revision_model(revision_guidance: Any, revision: int = 1) -> str | None:
     try:
-        return revision_guidance.revision_coding_model()
+        return revision_guidance.revision_coding_model(revision)
     except Exception:  # noqa: BLE001 - no model setting keeps the default coding model
         return None
 
@@ -457,7 +463,7 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         # Every revision runs on the stronger coding model (see revision_coding_model).
         from ts_harness.workflows import revision_guidance
 
-        model = _safe_revision_model(revision_guidance)
+        model = _safe_revision_model(revision_guidance, _revision_ordinal(tasks, revise_step))
         if model:
             revise_input["coding_model"] = model
     revision_number = revise_input.get("revision_number")

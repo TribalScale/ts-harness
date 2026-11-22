@@ -69,6 +69,20 @@ changed file:
 - tests: new logic has unit tests (normal case and each error or branch the change adds); assertions check outcomes
 - maintainability: naming, dead code, duplication, the repo's existing patterns
 
+Then apply these deep checks wherever the change touches them; they are what the gate most
+often finds after the tests pass:
+- input parsing and coercion: null, empty or whitespace turned into 0/false/"" (z.coerce.number(),
+  Number(x), parseInt), numeric strings, NaN, negatives, dates and time zones; malformed input
+  must fail loudly, not overwrite good data
+- storage precision: values compared or reported before rounding to what the database stores
+  (decimal scale, integer columns, string lengths), so an identical repeat read looks like a change
+- change detection and idempotency: an identical repeat input causes no change, log, event or hook
+  call; every kind of data that can change (related or reference data too) reaches the hooks or
+  events that depend on it
+- partial failure: transactions and rollback cover every write; retries do not duplicate
+- concurrency and ordering: concurrent runs, out-of-order events, reads outside the transaction
+- error paths, boundaries and permissions the work order states
+
 Severity: `blocker` (broken functionality, data loss, a security hole), `major` (a real defect
 that must be fixed before merge), `minor` (worth fixing, not a merge risk), `nit` (style).
 A wrong result for a case the work order states is at least `major` `correctness`. New business
