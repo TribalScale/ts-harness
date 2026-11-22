@@ -40,6 +40,28 @@ def fetch_job_identity(job_id: str, job_token: str, *, base_url: str | None = No
         raise
 
 
+# What a coding job needs: push its branch, open and update its PR, comment on it, and read
+# checks. Editing CI workflow files needs ``workflows``, granted only when the work order is
+# about them. ``CODING_JOB_TOKEN_PERMISSIONS=app`` keeps the GitHub App's full set.
+JOB_TOKEN_PERMISSIONS = {
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "metadata": "read",
+    "statuses": "read",
+    "checks": "read",
+}
+
+
+def job_token_permissions(job: dict[str, Any]) -> dict[str, str] | None:
+    if str(os.environ.get("CODING_JOB_TOKEN_PERMISSIONS") or "").strip().lower() == "app":
+        return None
+    permissions = dict(JOB_TOKEN_PERMISSIONS)
+    if job.get("edits_workflows"):
+        permissions["workflows"] = "write"
+    return permissions
+
+
 def mint_job_github_token(
     job_id: str,
     job_token: str,
@@ -62,7 +84,7 @@ def mint_job_github_token(
     if app is None:
         raise NoAppForRepository(f"no GitHub App registered for {host}")
     try:
-        token, expires = app.repo_token_with_expiry(*slug)
+        token, expires = app.repo_token_with_expiry(*slug, permissions=job_token_permissions(job))
     except NotInstalled as exc:
         raise NoAppForRepository(str(exc)) from exc
     return {
