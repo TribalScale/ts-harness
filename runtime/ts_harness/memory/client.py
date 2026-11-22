@@ -1460,6 +1460,31 @@ class MemoryClient:
     def sweep_channel_dedup(self, *, retention_days: int = 7) -> dict[str, Any]:
         return self._request("POST", "/channel-dedup/sweep", {"retention_days": retention_days})
 
+    def apply_data_retention(self, **settings: int) -> dict[str, Any]:
+        """One batch of trims and deletes per category (see ``ts_harness.data_retention``)."""
+        return self._request("POST", "/data-retention/apply", settings)
+
+    def expired_uploads(self, *, days: int, batch: int = 50) -> dict[str, Any]:
+        return self._request("POST", "/data-retention/uploads/expired", {"days": days, "batch": batch})
+
+    def mark_uploads_purged(self, programs: list[str]) -> dict[str, Any]:
+        return self._request("POST", "/data-retention/uploads/purged", {"programs": programs})
+
+    def purge_program_data(
+        self,
+        program_id: str,
+        *,
+        dry_run: bool = True,
+        include_decisions: bool = False,
+        session_ids: list[str] | None = None,
+        actor: str = "ops",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/data-retention/programs/{program_id}/purge",
+            {"dry_run": dry_run, "include_decisions": include_decisions, "session_ids": session_ids or [], "actor": actor},
+        )
+
     def directory_disable(
         self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None
     ) -> dict[str, Any]:
