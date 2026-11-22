@@ -56,6 +56,28 @@ def _linked_workflow_id(session) -> str | None:
     return (session.metadata or {}).get("workflow_id")
 
 
+def _workflow_id_in_tenant(args: dict[str, Any], session, ctx: ToolPolicyContext) -> tuple[str, dict[str, Any] | None]:
+    """The workflow a tool acts on: the session's own, or one the model named in this tenant.
+
+    A model-supplied ``workflow_id`` (prompt injection, or an id read from another tenant's
+    text) must not reach a workflow of another tenant; it looks the same as a missing one.
+    """
+    linked = str(_linked_workflow_id(session) or "")
+    workflow_id = str(args.get("workflow_id") or linked or "")
+    if not workflow_id:
+        return "", {"error": "workflow_id required"}
+    if workflow_id == linked:
+        return workflow_id, None
+    tenant = str(getattr(session, "tenant_id", None) or ctx.tenant_id or "default")
+    try:
+        workflow = (get_memory_client().get_workflow(workflow_id) or {}).get("workflow") or {}
+    except Exception:  # noqa: BLE001
+        workflow = {}
+    if not workflow or str(workflow.get("tenant_id") or "default") != tenant:
+        return "", {"error": "workflow not found"}
+    return workflow_id, None
+
+
 def _default_program_type(value: Any = None) -> str:
     text = str(value or "").strip()
     return text or DEFAULT_PROGRAM_TYPE
@@ -444,9 +466,9 @@ def workflow_status_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     session, err = _session_or_error(ctx)
     if err:
         return err
-    workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
-    if not workflow_id:
-        return {"error": "workflow_id required"}
+    workflow_id, err = _workflow_id_in_tenant(args, session, ctx)
+    if err:
+        return err
     status = get_workflow_engine().get_status(workflow_id)
     if isinstance(status, dict) and isinstance(status.get("tasks"), list) and not args.get("full"):
         status = {**status, "tasks": [_task_overview(task) for task in status["tasks"]]}
@@ -537,9 +559,9 @@ def cancel_workflow_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dic
     session, err = _session_or_error(ctx)
     if err:
         return err
-    workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
-    if not workflow_id:
-        return {"error": "workflow_id required"}
+    workflow_id, err = _workflow_id_in_tenant(args, session, ctx)
+    if err:
+        return err
     reason = str(args.get("reason") or "cancelled by user")
     return get_workflow_engine().cancel(workflow_id, actor=ctx.agent_id, tenant_id=ctx.tenant_id, reason=reason)
 
@@ -747,9 +769,9 @@ def resume_external_event_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
     session, err = _session_or_error(ctx)
     if err:
         return err
-    workflow_id = str(args.get("workflow_id") or _linked_workflow_id(session) or "")
-    if not workflow_id:
-        return {"error": "workflow_id required"}
+    workflow_id, err = _workflow_id_in_tenant(args, session, ctx)
+    if err:
+        return err
     event_type = str(args.get("event_type") or "").strip()
     if not event_type:
         return {"error": "event_type is required"}

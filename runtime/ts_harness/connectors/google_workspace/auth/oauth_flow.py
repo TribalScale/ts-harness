@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 from typing import Any
@@ -30,13 +32,32 @@ def oauth_client_config() -> tuple[str, str, str] | None:
     return None
 
 
+def _state_key() -> bytes:
+    """HMAC key for the OAuth state: the callback stores tokens under the state's tenant and email."""
+    key = os.environ.get("TS_HARNESS_OAUTH_STATE_SECRET", "").strip() or os.environ.get(
+        "GOOGLE_OAUTH_CLIENT_SECRET", ""
+    ).strip()
+    if not key:
+        raise RuntimeError("Google OAuth is not configured")
+    return key.encode()
+
+
+def _state_signature(body: str) -> str:
+    return hmac.new(_state_key(), body.encode(), hashlib.sha256).hexdigest()
+
+
 def build_state(*, tenant_id: str, email: str, return_url: str = "") -> str:
     payload = {"tenant_id": tenant_id, "email": email, "return_url": return_url}
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    return f"{body}.{_state_signature(body)}"
 
 
 def parse_state(state: str) -> dict[str, Any]:
-    return json.loads(base64.urlsafe_b64decode(state.encode()).decode())
+    """Decode a state built by ``build_state``; a forged or altered state raises ``ValueError``."""
+    body, _, signature = str(state or "").rpartition(".")
+    if not body or not hmac.compare_digest(signature, _state_signature(body)):
+        raise ValueError("invalid OAuth state")
+    return json.loads(base64.urlsafe_b64decode(body.encode()).decode())
 
 
 def build_consent_url(*, tenant_id: str, email: str, scopes: list[str] | None = None) -> str:

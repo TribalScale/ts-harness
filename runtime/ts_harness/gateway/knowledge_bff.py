@@ -109,6 +109,14 @@ def promote_project_note(
 ) -> dict[str, Any]:
     project = _project(memory, auth, project_id)
     _require_write(auth, config, scope="project", project=project, exception_to=None)
+    # The note must be this project's: the memory API promotes any note by id.
+    note = memory.get_knowledge_note(note_id) or {}
+    if (
+        note.get("scope") != "project"
+        or str(note.get("project_id") or "") != str(project.get("id") or "")
+        or str(note.get("tenant_id") or "default") != _tenant(auth)
+    ):
+        raise LookupError("note not found")
     return memory.promote_knowledge_note(note_id, actor=_actor(auth), source="manual")
 
 
@@ -134,6 +142,8 @@ def set_note_status_admin(
 
 def note_versions_admin(memory: Any, auth: AuthContext, _config: Any, note_id: str) -> dict[str, Any]:
     note = memory.get_knowledge_note(note_id)
+    if str(note.get("tenant_id") or "default") != _tenant(auth):
+        raise LookupError("note not found")
     if note.get("scope") == "project" and note.get("project_id"):
         _project(memory, auth, str(note["project_id"]))
     return memory.knowledge_note_versions(note_id)
