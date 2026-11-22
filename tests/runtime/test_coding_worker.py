@@ -32,8 +32,9 @@ class FakeApi:
     def github_token(self):
         return None
 
-    def heartbeat(self, last_output):
+    def heartbeat(self, last_output, progress=None):
         self.heartbeats.append(last_output)
+        self.progress = progress
         self.beat.set()
         return self.heartbeat_status
 

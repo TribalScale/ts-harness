@@ -34,9 +34,15 @@ describe("Live page", () => {
       if (url === "/admin/live") {
         return jsonResponse({
           generated_at: "", capacity: { running: 2, queued: 1, limit: 3 },
-          items: [item("PROJ-4", "you", { state: "Ready to merge", stuck_task_id: "t9" }), item("PROJ-3", "agent")],
+          items: [item("PROJ-4", "you", { state: "Ready to merge", stuck_task_id: "t9", program_id: "p1" }),
+                  item("PROJ-3", "agent", { program_id: "p1", coding_job: {
+                    id: "j1", status: "running", last_output: "npm test", started_at: new Date(Date.now() - 400000).toISOString(),
+                    created_at: "", model: "claude-opus-5-5",
+                    progress: { phase: "verification", phase_seconds: 75, detail: "fixing test failures (pass 1)", done: { setup: 5, coding: 320 } },
+                  } })],
         });
       }
+      if (url.startsWith("/admin/programs/p1/tickets/")) return jsonResponse(STORY);
       return jsonResponse({});
     });
     renderPage(<LivePage />);
@@ -47,11 +53,24 @@ describe("Live page", () => {
     expect(screen.getByText("Waiting for you")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Decide in Inbox" })).toHaveAttribute("href", "#/inbox/stuck_step/t9");
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    await user.click(screen.getAllByRole("button", { name: "Timeline" })[0]);
     expect(posted[0]).toContain('"action":"retry"');
     expect(posted[0]).toContain('"task_id":"t9"');
-    const timeline = screen.getByLabelText("PROJ-4 timeline");
-    expect(within(timeline).getAllByText("30m")).toHaveLength(2);
+    // The running ticket's card breaks its coding run into phases.
+    const run = screen.getByLabelText("Current coding run");
+    expect(run).toHaveTextContent("on Opus");
+    expect(run).toHaveTextContent("Coding5 m 20 s");
+    expect(run).toHaveTextContent("Running tests1 m 15 s · fixing test failures (pass 1)");
+    await user.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    const story = await screen.findByLabelText("What happened");
+    expect(story).toHaveTextContent("Revision 4");
+    expect(story).toHaveTextContent("Opus · 12 m 47 s · $2.19");
+    expect(story).toHaveTextContent("Setup 50 s · Coding 5 m 50 s · Running tests 4 m 52 s · Pre-push review 1 m 04 s · Push 3 s");
+    expect(story).toHaveTextContent("Pre-push review: found and fixed 1 blocking issue");
+    expect(story).toHaveTextContent("src/a.ts:4");
+    expect(within(story).queryByText("Third finding")).not.toBeInTheDocument();
+    await user.click(within(story).getByRole("button", { name: "Show 1 more" }));
+    expect(within(story).getByText("Third finding")).toBeInTheDocument();
+    expect(screen.getByLabelText("Where the time went")).toHaveTextContent("Waiting for you 42 m 17 s");
   });
 
   it("formats durations", () => {
@@ -60,10 +79,26 @@ describe("Live page", () => {
   });
 });
 
+const finding = (message: string, line: number) => ({ severity: "major", category: "correctness", file: "src/a.ts", line, message });
+const STORY = {
+  workflow_id: "wf", generated_at: "", started_at: "", cost_usd: 2.19, current_run: null,
+  totals: [{ category: "coding", label: "Coding", seconds: 767, share: 0.3 },
+           { category: "you", label: "Waiting for you", seconds: 2537, share: 0.7 }],
+  events: [
+    { at: "2026-01-02T10:00:00Z", kind: "gate", title: "Code review blocked the PR", subtitle: "3 blocking findings", status: "blocked",
+      findings: [finding("First finding", 4), finding("Second finding", 9), finding("Third finding", 12)] },
+    { at: "2026-01-02T10:45:00Z", kind: "coding", title: "Revision 4", subtitle: "after /revise by ada@example.com", status: "ok",
+      model: "Opus", seconds: 767, cost_usd: 2.19, outcome: "Pushed to the PR",
+      phases: { setup: 49.8, coding: 349.8, verification: 291.8, review: 63.7, push: 3.1 },
+      review: { status: "pass", fixed: 1, reviews: 2, open_blocking: [] } },
+  ],
+};
+
 describe("Program board", () => {
   it("puts tickets in columns with their blockers and shows where the time went", async () => {
     const user = userEvent.setup();
     mockFetch((url) => {
+      if (url.startsWith("/admin/programs/p1/tickets/")) return jsonResponse(STORY);
       if (url === "/admin/programs/p1/board") {
         return jsonResponse({
           generated_at: "", program_id: "p1", parallel_limit: 2,
@@ -87,7 +122,7 @@ describe("Program board", () => {
     expect(screen.getByLabelText("Where the time went")).toHaveTextContent("Waiting for merge: 1h 00m (60%)");
     expect(screen.queryByRole("list", { name: "Stopped" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /PROJ-3/ }));
-    expect(screen.getByLabelText("PROJ-3 timeline")).toBeInTheDocument();
+    expect(await screen.findByLabelText("What happened")).toHaveTextContent("Code review blocked the PR");
   });
 });
 

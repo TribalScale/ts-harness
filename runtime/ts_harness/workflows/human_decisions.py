@@ -292,6 +292,9 @@ def decide(
             feedback = f"{feedback}\n\nGuidance from {author}:\n{guidance.strip()}"
         ctx.reject_comments = feedback
         grant = {"actor": actor, "at": _now()}
+        waited = (_input(task).get(HUMAN_DECISION_KEY) or {}) if isinstance(_input(task).get(HUMAN_DECISION_KEY), dict) else {}
+        if waited.get("since"):
+            grant["waiting_since"] = waited["since"]  # the ticket story shows how long it waited
         if guidance.strip():
             grant["guidance"] = guidance.strip()
         ctx.extras["grant"] = grant

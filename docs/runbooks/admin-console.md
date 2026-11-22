@@ -107,7 +107,11 @@ Manual path: login → Inbox → Chat round-trip → Programs → System → Cro
     - **coding output:** the coding job's latest output line;
     - **links:** the PR, the Inbox decision and the program.
   - **Sorting:** waiting-for-you cards come first.
-  - **Timeline:** each card opens a timeline with one bar per step run, so revision loops show. A step starts when it is claimed and ends when it completes, stops, or now while it still runs.
+  - **Current coding run:** while a coding job runs, the card shows its model and its phases: Setup, Coding, Running tests, Pre-push review, Push. Finished phases have a tick and their time, and the current one shows its running time and what it is doing (for example "fixing test failures (pass 1)"). The worker reports the phase with each heartbeat (`coding_jobs.progress`, migration 050).
+  - **Details:** each card (and each ticket on a program board) opens the ticket's story (`GET /admin/programs/<id>/tickets/<workflow_id>/story`), refreshed every 10 seconds, in your local time:
+    - **where the time went:** coding, queued for a coding slot, CI, code review, QA and waiting for you, plus the coding cost;
+    - **what happened, in order:** each coding run with its trigger (first run, code review findings, CI failure, guided, after triage, after `/revise` by a person), model, duration, cost, phases, the pre-push review result and the outcome (PR opened or updated, lost, failed); CI results; each code review or QA verdict with its blocking findings (severity, file and line, message; the first two shown, the rest on "Show more"); each wait for you with its length, and who decided with their guidance; merge and Jira close.
+    - Revise decisions made in the Inbox record the person's email, so the story names them.
   - **History** tab (`#/live/history`, `GET /admin/history?days=&project=&repo=&outcome=&q=`): finished tickets and work orders across programs, newest first.
     - **Each run:** its outcome (merged, accepted, stopped, cancelled, failed, replaced by a later run), who decided (the merger, the person or the harness that accepted or stopped it), when it finished, total time, revisions, PR and program links, and its timeline.
     - **Filters:** by period (7 to 90 days), project, repository and outcome; search by ticket key, title, program or repository.

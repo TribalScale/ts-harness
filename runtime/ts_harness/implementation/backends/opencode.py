@@ -67,6 +67,7 @@ from ts_harness.integrations.github_client import (
     parse_github_pr_url,
     repo_token,
 )
+from ts_harness.implementation import progress
 from ts_harness.observability.logging import log_event
 
 _OPENCODE_PROGRESS_INTERVAL_SECONDS = 30.0
@@ -761,6 +762,7 @@ class OpenCodeBackend:
                     verify.security,
                     verification_evidence(verify),
                 )
+            progress.detail(f"fixing test failures (pass {fix_passes_used + 1})")
             fix_prompt = build_verification_fix_prompt(
                 request.work_order_id,
                 verify,
@@ -992,6 +994,7 @@ class OpenCodeBackend:
         out_dir.mkdir(parents=True, exist_ok=True)
         for number in range(int(request.review_rounds or 0) + 1):
             output_path = out_dir / f"review-{number + 1}.json"
+            progress.detail(f"review round {number + 1}")
             output_path.unlink(missing_ok=True)
             prompt = ppr.build_review_prompt(
                 work_order_id=request.work_order_id,
@@ -1024,6 +1027,7 @@ class OpenCodeBackend:
                 rounds.append({"status": "open", **review})
                 break
             good = self._head_sha(repo_dir)
+            progress.detail(f"fixing {len(blocking)} review finding{'s' if len(blocking) != 1 else ''}")
             fix_cmd = build_opencode_command(
                 binary=binary, repo_dir=repo_dir,
                 prompt=ppr.build_fix_prompt(request.work_order_id, blocking, skills_materialized=skills_materialized),
@@ -1109,11 +1113,15 @@ class OpenCodeBackend:
         )
         timings: dict[str, float] = {}
         clock = [time.monotonic()]
+        progress.reset()
+        progress.begin("setup")
 
-        def lap(name: str) -> None:
+        def lap(name: str, following: str = "") -> None:
             now = time.monotonic()
             timings[name] = round(timings.get(name, 0.0) + now - clock[0], 1)
             clock[0] = now
+            if following:
+                progress.begin(following, timings)
 
         try:
             gone, pr_head = self._revision_target(request)
@@ -1174,7 +1182,7 @@ class OpenCodeBackend:
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
             test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
-            lap("setup")
+            lap("setup", "coding")
             design_files = _materialize_design(repo_dir, request.design_refs)
             prompt = build_implement_prompt(
                 request.work_order_id,
@@ -1216,7 +1224,7 @@ class OpenCodeBackend:
                 log_path=log_path,
                 work_order_id=request.work_order_id,
             )
-            lap("coding")
+            lap("coding", "verification")
             log = "\n".join(
                 part
                 for part in [
@@ -1253,7 +1261,7 @@ class OpenCodeBackend:
                 skills_materialized=bool(skills_written),
                 test_env=test_env,
             )
-            lap("verification")
+            lap("verification", "review")
             if failure is not None:
                 failure.timings = timings
                 return failure
@@ -1307,7 +1315,7 @@ class OpenCodeBackend:
                 security=security,
                 verification=verification,
             )
-            lap("review")
+            lap("review", "push")
             if any(item.get("status") == "fixed" for item in review_rounds):
                 scope_failure = self._reject_out_of_scope_revision(
                     repo_dir, request, baseline=baseline, binary=binary, provider=provider,
@@ -1360,6 +1368,7 @@ class OpenCodeBackend:
             )
             screenshots = self._publish_screenshots(repo_dir, test_env, branch=branch, pr_url=pr_url, env=git_env)
             lap("push")
+            progress.begin("done", timings)
             return CodingResult(
                 ok=True,
                 branch=branch,

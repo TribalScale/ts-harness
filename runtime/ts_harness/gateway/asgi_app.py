@@ -1327,6 +1327,36 @@ async def admin_history(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
+async def admin_ticket_story(request: Request) -> Response:
+    """One ticket or work order's story: events in order, coding runs with phases, findings, time totals."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    program_id = request.path_params["id"]
+    workflow_id = request.path_params["workflow_id"]
+    memory = get_memory_client()
+    try:
+        _program_for_tenant(memory, program_id, auth)
+        _require_program_level(program_id, auth, "read", route="board", memory=memory)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception as exc:
+        return _json({"error": str(exc)}, 404)
+    from ts_harness.workflows import live_view, ticket_story
+
+    try:
+        # Only a ticket of this program: its own workflows and those its phases started.
+        if workflow_id not in {str(r.get("id") or "") for r in live_view._program_items(memory, program_id, running_only=False)}:
+            return _json({"error": "ticket not found in this program"}, 404)
+        return _json(ticket_story.ticket_story(memory, live_view._workflow(memory, workflow_id)))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_ticket_story_error", error=str(exc))
+        return _json({"error": "could not build the ticket story"}, 500)
+
+
 async def admin_programs_board(request: Request) -> Response:
     """One program's ticket queue as a board, with each ticket's timeline and time totals."""
     try:
@@ -1960,6 +1990,15 @@ async def admin_workflows_reject(request: Request) -> Response:
         return _json({"error": str(exc)}, 400)
 
 
+def _decision_actor(auth: Any) -> str:
+    """Who decided, by email when the sign-in has one (it names them in chat, on the PR and in
+    the ticket story), else their actor id."""
+    email = getattr(auth, "email", None)
+    if isinstance(email, str) and email.strip():
+        return email.strip().lower()
+    return str(auth.actor_id or "admin")
+
+
 async def admin_workflows_decide(request: Request) -> Response:
     """Revise again, accept, or stop a step parked for a human decision."""
     try:
@@ -1993,7 +2032,8 @@ async def admin_workflows_decide(request: Request) -> Response:
             workflow_id,
             task_id,
             action,
-            actor=str(auth.actor_id or "admin"),
+            # The person's email names them in chat, on the PR and in the ticket story.
+            actor=_decision_actor(auth),
             guidance=str(body.get("guidance") or ""),
             tenant_id=tenant_id,
         )
@@ -4306,6 +4346,7 @@ routes = [
     Route("/admin/programs/{id}/evidence", endpoint=admin_programs_evidence, methods=["GET"]),
     Route("/admin/programs/{id}/phases/{phase}/activity", endpoint=admin_programs_phase_activity, methods=["GET"]),
     Route("/admin/programs/{id}/board", endpoint=admin_programs_board, methods=["GET"]),
+    Route("/admin/programs/{id}/tickets/{workflow_id}/story", endpoint=admin_ticket_story, methods=["GET"]),
     Route("/admin/live", endpoint=admin_live, methods=["GET"]),
     Route("/admin/history", endpoint=admin_history, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
