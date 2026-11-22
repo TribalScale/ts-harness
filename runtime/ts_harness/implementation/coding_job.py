@@ -121,7 +121,11 @@ def _review_settings(mode: str, provider: str) -> dict[str, Any]:
     model = _guided_model(pre_push_review.review_model(), provider)
     if not model:
         return {}
-    return {"review_model": model, "review_rounds": pre_push_review.review_rounds()}
+    return {
+        "review_model": model,
+        "review_rounds": pre_push_review.review_rounds(),
+        "review_budget_seconds": pre_push_review.review_budget_seconds(),
+    }
 
 
 def binding_from_task_input(task_input: dict[str, Any]) -> dict[str, Any]:
