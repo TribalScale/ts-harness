@@ -82,3 +82,59 @@ describe("Program board", () => {
     expect(screen.getByLabelText("PROJ-3 timeline")).toBeInTheDocument();
   });
 });
+
+describe("History", () => {
+  it("lists finished runs and filters and searches them", async () => {
+    const user = userEvent.setup();
+    const urls: string[] = [];
+    mockFetch((url) => {
+      urls.push(url);
+      if (url.startsWith("/admin/history")) {
+        return jsonResponse({
+          generated_at: "", days: 14, total: 2,
+          facets: { projects: ["PAY"], repos: ["o/api"], outcomes: ["merged", "cancelled"] },
+          items: [
+            { ...item("PROJ-3", "done"), outcome: "merged", decided_by: "dana", finished_at: "2026-01-02T10:00:00Z", project: "PAY", repo: "o/api" },
+            { ...item("PROJ-4", "done"), outcome: "cancelled", decided_by: "", finished_at: "2026-01-01T10:00:00Z", project: "PAY", repo: "o/api" },
+          ],
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    const onTab = vi.fn();
+    const { rerender } = renderPage(<LivePage tab="now" onTab={onTab} />);
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    expect(onTab).toHaveBeenCalledWith("history");
+    rerender(<LivePage tab="history" onTab={onTab} />);
+    expect(await screen.findByText("PROJ-3")).toBeInTheDocument();
+    const runs = screen.getByRole("list", { name: "Finished runs" });
+    expect(within(runs).getByText("Merged")).toBeInTheDocument();
+    expect(within(runs).getByText("by dana")).toBeInTheDocument();
+    expect(within(runs).getByText("Cancelled")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Outcome"), "cancelled");
+    await user.type(screen.getByLabelText("Search history"), "proj-4");
+    await vi.waitFor(() => expect(urls.some((u) => u.includes("outcome=cancelled") && u.includes("q=proj-4"))).toBe(true));
+    expect(urls.some((u) => u.includes("days=14"))).toBe(true);
+  });
+
+  it("shows a ticket's earlier attempts on the board", async () => {
+    const user = userEvent.setup();
+    mockFetch((url) => {
+      if (url === "/admin/programs/p1/board") {
+        return jsonResponse({
+          generated_at: "", program_id: "p1", parallel_limit: 1, columns: ["coding", "done"],
+          items: [{ key: "PROJ-3", title: "Roles", column: "coding", blocked_by: [], item: item("PROJ-3", "agent"),
+                    attempts: [{ ...item("PROJ-3", "done"), workflow_id: "old", outcome: "cancelled", decided_by: "dana" }] }],
+          totals: [],
+        });
+      }
+      return jsonResponse({});
+    });
+    renderPage(<ProgramBoard programId="p1" />);
+    await user.click(await screen.findByRole("button", { name: /PROJ-3/ }));
+    await user.click(screen.getByText("All attempts (2)"));
+    const earlier = screen.getByLabelText("PROJ-3 earlier attempts");
+    expect(earlier).toHaveTextContent("Attempt 1: Cancelled by dana");
+    expect(within(earlier).getByLabelText("PROJ-3 attempt 1 timeline")).toBeInTheDocument();
+  });
+});

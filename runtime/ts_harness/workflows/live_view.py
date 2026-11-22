@@ -137,6 +137,10 @@ def item_view(memory: Any, workflow: dict[str, Any], *, now: datetime | None = N
     bars = step_timeline(tasks, now=now)
     since = _current_since(summary, bars)
     started = min((_parse(bar["start"]) for bar in bars if bar["start"]), default=None)
+    # A finished run's total ends where its last step ended, not now.
+    running = str(workflow.get("status") or "") == "running"
+    last_end = max((d for d in (_parse(bar["end"]) for bar in bars) if d), default=None)
+    end_of_run = now if running or last_end is None else last_end
     key = next((str((t.get("input") or {}).get("jira_issue_key") or "") for t in tasks
                 if isinstance(t.get("input"), dict) and (t.get("input") or {}).get("jira_issue_key")), "")
     automatic = sum(1 for t in tasks if isinstance(t.get("input"), dict) and (t["input"].get("_auto_grant") or t["input"].get("_guided")))
@@ -148,7 +152,7 @@ def item_view(memory: Any, workflow: dict[str, Any], *, now: datetime | None = N
         "in_step_since": since,
         "in_step_seconds": int((now - _parse(since)).total_seconds()) if _parse(since) else 0,
         "started_at": _iso(started),
-        "elapsed_seconds": int((now - started).total_seconds()) if started else 0,
+        "elapsed_seconds": max(0, int((end_of_run - started).total_seconds())) if started else 0,
         "stronger_model": automatic > 0,
         "timeline": bars,
     }
@@ -253,12 +257,17 @@ def program_board(memory: Any, program_id: str, *, jira: Any = None, now: dateti
     keys = [str(k) for k in artifacts.get("jira_issue_keys") or []]
     completed = {str(k) for k in artifacts.get("completed_jira_issue_keys") or []}
     views: dict[str, dict[str, Any]] = {}
+    attempts: dict[str, list[dict[str, Any]]] = {}
     for record in sorted(_program_items(memory, program_id, running_only=False), key=lambda r: str(r.get("created_at") or "")):
-        view = item_view(memory, _workflow(memory, str(record["id"])), now=now)
+        workflow = _workflow(memory, str(record["id"]))
+        view = item_view(memory, workflow, now=now)
+        if str(workflow.get("status") or "") != "running":
+            view.update(outcome(workflow, [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]))
         label = view["jira_issue_key"] or view["label"]
         if label not in keys:
             keys.append(label)
-        views[label] = view  # the latest attempt wins
+        attempts.setdefault(label, []).append(view)
+        views[label] = view  # the latest attempt is the item; earlier ones are its attempts
     blockers: dict[str, list[str]] = {}
     titles: dict[str, str] = {}
     jira_done: set[str] = set()
@@ -287,10 +296,12 @@ def program_board(memory: Any, program_id: str, *, jira: Any = None, now: dateti
     for key in keys:
         view = views.get(key)
         column = _column(view, done=key in completed or key in jira_done, blocked_by=blockers.get(key, []))
-        for bar in (view or {}).get("timeline") or []:
-            totals[bar["category"]] = totals.get(bar["category"], 0) + bar["seconds"]
+        for run in attempts.get(key, []) or ([view] if view else []):
+            for bar in run.get("timeline") or []:
+                totals[bar["category"]] = totals.get(bar["category"], 0) + bar["seconds"]
+        earlier = list(reversed(attempts.get(key, [])[:-1]))
         items.append({"key": key, "title": titles.get(key, (view or {}).get("label", "")), "column": column,
-                      "blocked_by": blockers.get(key, []), "item": view})
+                      "blocked_by": blockers.get(key, []), "item": view, "attempts": earlier})
     total = sum(totals.values()) or 1
     return {
         "generated_at": _iso(now),
@@ -301,3 +312,113 @@ def program_board(memory: Any, program_id: str, *, jira: Any = None, now: dateti
                    for c, s in sorted(totals.items(), key=lambda kv: -kv[1])],
         "parallel_limit": artifacts.get("max_parallel_tickets"),
     }
+
+
+# --- history -------------------------------------------------------------------------------------
+
+OUTCOMES = ("merged", "accepted", "stopped", "cancelled", "failed", "replaced", "done")
+
+
+def _who(actor: str) -> str:
+    actor = str(actor or "").strip()
+    if actor in {"harness-triage", "workflow-runner", "orchestrator"}:
+        return "harness"
+    return actor
+
+
+def outcome(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, str]:
+    """How a finished run ended (``OUTCOMES``), who decided, and when it finished."""
+    from ts_harness.workflows.human_decisions import ACCEPT_KEY, STOPPED_PREFIX
+
+    status = str(workflow.get("status") or "")
+    finished = _parse(workflow.get("completed_at")) or max(
+        (d for d in (_parse(t.get("completed_at") or t.get("updated_at")) for t in tasks) if d), default=None)
+    result = {"outcome": "done", "decided_by": "", "finished_at": _iso(finished)}
+    stopped = next((t for t in tasks if str(t.get("error") or "").startswith(STOPPED_PREFIX)), None)
+    if stopped is not None:
+        actor = str(stopped["error"])[len(STOPPED_PREFIX):].split(":", 1)[0].strip()
+        return {**result, "outcome": "stopped", "decided_by": _who(actor)}
+    merge = next((t for t in sorted(tasks, key=lambda t: str(t.get("created_at") or ""), reverse=True)
+                  if t.get("step_name") == "await_human_merge" and t.get("status") == "succeeded"), None)
+    if merge is not None:
+        output = merge.get("output") if isinstance(merge.get("output"), dict) else {}
+        event = output.get("external_event") if isinstance(output.get("external_event"), dict) else {}
+        return {**result, "outcome": "merged", "decided_by": str(output.get("merged_by") or event.get("merged_by") or "")}
+    accepted = next((t for t in tasks if isinstance(t.get("input"), dict) and (t.get("input") or {}).get(ACCEPT_KEY)), None)
+    if accepted is not None and status in {"succeeded", "superseded"}:
+        actor = str(((accepted.get("input") or {}).get(ACCEPT_KEY) or {}).get("actor") or "")
+        return {**result, "outcome": "accepted", "decided_by": _who(actor)}
+    if status == "cancelled":
+        import re
+
+        match = re.search(r"\bby ([^\s,;:]+)", str(workflow.get("cancellation_reason") or ""))
+        return {**result, "outcome": "cancelled", "decided_by": _who(match.group(1)) if match else ""}
+    if status == "failed":
+        return {**result, "outcome": "failed"}
+    if status == "superseded":
+        return {**result, "outcome": "replaced"}
+    return result
+
+
+def _repo(pr_url: str) -> str:
+    parts = str(pr_url or "").split("/")
+    return f"{parts[3]}/{parts[4]}".lower() if len(parts) > 4 and "github.com" in pr_url else ""
+
+
+def history(
+    memory: Any,
+    *,
+    tenant_id: str = "default",
+    allowed: Any = None,
+    days: int = 14,
+    project: str = "",
+    repo: str = "",
+    outcome_filter: str = "",
+    q: str = "",
+    limit: int = 200,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Finished tickets and work orders across programs, newest first, with filters and facets."""
+    from datetime import timedelta
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max(1, min(int(days or 14), 365)))
+    programs = (memory.list_programs(tenant_id=tenant_id, limit=200) or {}).get("programs") or []
+    rows: list[dict[str, Any]] = []
+    for program in programs:
+        program_id = str(program.get("id") or "")
+        updated = _parse(program.get("updated_at"))
+        if not program_id or (updated and updated < cutoff):
+            continue
+        if allowed is not None and not allowed(program_id):
+            continue
+        project_key = str(program.get("project_id") or program.get("project_key") or "")
+        label = str(program.get("display_name") or program.get("summary") or program_id)[:120]
+        for record in _program_items(memory, program_id, running_only=False):
+            if str(record.get("status") or "") == "running":
+                continue
+            workflow = _workflow(memory, str(record["id"]))
+            tasks = [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]
+            ended = outcome(workflow, tasks)
+            finished = _parse(ended["finished_at"])
+            if finished and finished < cutoff:
+                continue
+            view = item_view(memory, workflow, now=now)
+            view.update(ended)
+            view.update({"program_id": program_id, "program_label": label, "project": project_key, "repo": _repo(view["pr_url"])})
+            rows.append(view)
+    facets = {
+        "projects": sorted({r["project"] for r in rows if r["project"]}),
+        "repos": sorted({r["repo"] for r in rows if r["repo"]}),
+        "outcomes": [o for o in OUTCOMES if any(r["outcome"] == o for r in rows)],
+    }
+    needle = q.strip().lower()
+    filtered = [
+        r for r in rows
+        if (not project or r["project"] == project)
+        and (not repo or r["repo"] == repo.lower())
+        and (not outcome_filter or r["outcome"] == outcome_filter)
+        and (not needle or needle in " ".join([r["jira_issue_key"], r["label"], r["program_label"], r["repo"]]).lower())
+    ]
+    filtered.sort(key=lambda r: r["finished_at"], reverse=True)
+    return {"generated_at": _iso(now), "days": int(days or 14), "items": filtered[:limit], "total": len(filtered), "facets": facets}

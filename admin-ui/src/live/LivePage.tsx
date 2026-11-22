@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { LiveItem, LiveResponse } from "../api/types";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
+import { HistoryView } from "./HistoryView";
 import { Timeline, formatDuration } from "./Timeline";
 
 const POLL_MS = 10000;
@@ -71,7 +72,13 @@ function LiveCard({ item }: { item: LiveItem }) {
   );
 }
 
-export function LivePage() {
+export function LivePage({
+  tab = "now",
+  onTab,
+}: {
+  tab?: "now" | "history";
+  onTab?: (tab: "now" | "history") => void;
+}) {
   const [data, setData] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,10 +92,11 @@ export function LivePage() {
   }, []);
 
   useEffect(() => {
+    if (tab !== "now") return undefined;
     void load();
     const timer = window.setInterval(() => void load(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [load]);
+  }, [load, tab]);
 
   const items = data?.items || [];
   const forYou = items.filter((item) => item.waiting_on === "you").length;
@@ -96,10 +104,29 @@ export function LivePage() {
     <div className="page live-page">
       <header className="page-header">
         <h2>Live</h2>
-        <p className="muted">Every ticket being built right now, refreshed every 10 seconds.</p>
+        <p className="muted">
+          {tab === "now"
+            ? "Every ticket being built right now, refreshed every 10 seconds."
+            : "Finished tickets and work orders: merged, accepted, stopped, cancelled or failed."}
+        </p>
       </header>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      {data && (
+      <div className="live-tabs" role="tablist" aria-label="Live views">
+        {(["now", "history"] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={tab === key ? "live-tab live-tab-active" : "live-tab"}
+            onClick={() => onTab?.(key)}
+          >
+            {key === "now" ? "Now" : "History"}
+          </button>
+        ))}
+      </div>
+      {tab === "history" && <HistoryView />}
+      {tab === "now" && error && <div className="error-banner" role="alert">{error}</div>}
+      {tab === "now" && data && (
         <section className="live-capacity" aria-label="Coding capacity">
           <span>
             <strong>{data.capacity.running}</strong>
@@ -116,12 +143,14 @@ export function LivePage() {
           </span>
         </section>
       )}
-      {data && !items.length && <p className="muted">Nothing is being built right now.</p>}
-      <ul className="live-cards">
-        {items.map((item) => (
-          <LiveCard key={item.workflow_id} item={item} />
-        ))}
-      </ul>
+      {tab === "now" && data && !items.length && <p className="muted">Nothing is being built right now.</p>}
+      {tab === "now" && (
+        <ul className="live-cards">
+          {items.map((item) => (
+            <LiveCard key={item.workflow_id} item={item} />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

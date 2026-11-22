@@ -18,6 +18,7 @@ import type { FragmentRoute, WorkflowRoute } from "./workflows/types";
 
 interface RouteState {
   nav: NavKey | "login";
+  liveTab?: "now" | "history";
   inboxType?: InboxType;
   inboxId?: string;
   sessionId?: string;
@@ -83,7 +84,7 @@ export function parseHash(hash = window.location.hash): RouteState {
     return { nav: "chat", sessionId: parts[1], prefill };
   }
   if (parts[0] === "live") {
-    return { nav: "live" };
+    return { nav: "live", liveTab: parts[1] === "history" ? "history" : "now" };
   }
   if (parts[0] === "programs") {
     return { nav: "programs", programId: parts[1] };
@@ -479,7 +480,12 @@ export default function App() {
           }}
         />
       )}
-      {route.nav === "live" && <LivePage />}
+      {route.nav === "live" && (
+        <LivePage
+          tab={route.liveTab || "now"}
+          onTab={(tab) => setHash(tab === "history" ? "#/live/history" : "#/live")}
+        />
+      )}
       {route.nav === "programs" && (
         <ProgramsPage
           programId={route.programId}

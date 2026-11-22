@@ -586,12 +586,32 @@ export interface LiveResponse {
   capacity: { running: number; queued: number; limit: number | null };
 }
 
+export interface RunOutcome {
+  outcome?: "merged" | "accepted" | "stopped" | "cancelled" | "failed" | "replaced" | "done";
+  decided_by?: string;
+  finished_at?: string;
+}
+
+export interface HistoryItem extends LiveItem, RunOutcome {
+  project: string;
+  repo: string;
+}
+
+export interface HistoryResponse {
+  generated_at: string;
+  days: number;
+  items: HistoryItem[];
+  total: number;
+  facets: { projects: string[]; repos: string[]; outcomes: string[] };
+}
+
 export interface BoardItem {
   key: string;
   title: string;
   column: string;
   blocked_by: string[];
-  item: LiveItem | null;
+  item: (LiveItem & RunOutcome) | null;
+  attempts?: (LiveItem & RunOutcome)[];
 }
 
 export interface BoardResponse {

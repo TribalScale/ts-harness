@@ -3,6 +3,7 @@ import { apiFetch } from "../api/client";
 import type { BoardItem, BoardResponse } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
 import { WAITING_LABELS, WAITING_STATUS } from "./LivePage";
+import { OUTCOME_LABELS } from "./HistoryView";
 import { CATEGORY_LABELS, Timeline, formatDuration } from "./Timeline";
 
 const POLL_MS = 15000;
@@ -112,6 +113,24 @@ export function ProgramBoard({ programId }: { programId: string }) {
             />
           </div>
           <Timeline bars={opened.item.timeline} label={`${opened.key} timeline`} />
+          {(opened.attempts || []).length > 0 && (
+            <details className="board-attempts">
+              <summary>All attempts ({(opened.attempts || []).length + 1})</summary>
+              <ol aria-label={`${opened.key} earlier attempts`}>
+                {(opened.attempts || []).map((attempt, index) => (
+                  <li key={attempt.workflow_id}>
+                    <div className="muted">
+                      Attempt {(opened.attempts || []).length - index}:{" "}
+                      {OUTCOME_LABELS[attempt.outcome || ""] || attempt.state}
+                      {attempt.decided_by ? ` by ${attempt.decided_by}` : ""} · took{" "}
+                      {formatDuration(attempt.elapsed_seconds)}
+                    </div>
+                    <Timeline bars={attempt.timeline} label={`${opened.key} attempt ${(opened.attempts || []).length - index} timeline`} />
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
         </div>
       )}
       {data.totals.length > 0 && (

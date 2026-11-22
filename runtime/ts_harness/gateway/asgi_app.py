@@ -1292,6 +1292,41 @@ async def admin_live(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
+async def admin_history(request: Request) -> Response:
+    """Finished tickets and work orders across the programs the caller can read."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    params = request.query_params
+
+    def allowed(program_id: str) -> bool:
+        try:
+            _require_program_level(program_id, auth, "read", route="history", memory=memory)
+            return True
+        except Exception:  # noqa: BLE001 - not readable: left out
+            return False
+
+    from ts_harness.workflows import live_view
+
+    try:
+        days = int(params.get("days") or 14)
+    except ValueError:
+        days = 14
+    try:
+        return _json(live_view.history(
+            memory, tenant_id=str(auth.tenant_id or "default"), allowed=allowed, days=days,
+            project=str(params.get("project") or ""), repo=str(params.get("repo") or ""),
+            outcome_filter=str(params.get("outcome") or ""), q=str(params.get("q") or ""),
+        ))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_history_error", error=str(exc))
+        return _json({"error": str(exc)}, 500)
+
+
 async def admin_programs_board(request: Request) -> Response:
     """One program's ticket queue as a board, with each ticket's timeline and time totals."""
     try:
@@ -4272,6 +4307,7 @@ routes = [
     Route("/admin/programs/{id}/phases/{phase}/activity", endpoint=admin_programs_phase_activity, methods=["GET"]),
     Route("/admin/programs/{id}/board", endpoint=admin_programs_board, methods=["GET"]),
     Route("/admin/live", endpoint=admin_live, methods=["GET"]),
+    Route("/admin/history", endpoint=admin_history, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",

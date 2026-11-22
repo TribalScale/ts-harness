@@ -102,3 +102,67 @@ class LiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HistoryTests(unittest.TestCase):
+    def _record(self, key, *, status, tasks_extra=(), reason=""):
+        base = ticket(key, stage="merge")
+        tasks = [dict(t) for t in base["tasks"]]
+        for t in tasks:
+            if t["status"] in {"running", "blocked"}:
+                t["status"], t["completed_at"], t["error"] = "succeeded", at(10), ""
+        if status == "cancelled":
+            tasks[-1]["status"] = "cancelled"  # cancelled before the merge
+        tasks += list(tasks_extra)
+        return {"workflow": {"id": base["id"], "status": status, "workflow_type": "implement_jira_ticket",
+                             "completed_at": at(10), "cancellation_reason": reason}, "tasks": tasks}
+
+    def test_outcomes(self):
+        merged = self._record("PROJ-3", status="succeeded")
+        merged["tasks"][-1]["output"] = {"external_event": {"merged_by": "dana"}}
+        self.assertEqual(lv.outcome(merged["workflow"], merged["tasks"])["outcome"], "merged")
+        self.assertEqual(lv.outcome(merged["workflow"], merged["tasks"])["decided_by"], "dana")
+        stopped = {"id": "s", "status": "running"}
+        self.assertEqual(lv.outcome(stopped, [{"step_name": "qa_gate", "error": "stopped_by_human: ana@example.com: x"}]),
+                         {"outcome": "stopped", "decided_by": "ana@example.com", "finished_at": ""})
+        accepted = [{"step_name": "finalize_code_review", "status": "succeeded", "input": {"_human_accept": {"actor": "harness-triage"}}}]
+        self.assertEqual(lv.outcome({"status": "succeeded"}, accepted)["decided_by"], "harness")
+        self.assertEqual(lv.outcome({"status": "cancelled", "cancellation_reason": "cancelled by dana"}, [])["decided_by"], "dana")
+        self.assertEqual(lv.outcome({"status": "superseded"}, [])["outcome"], "replaced")
+
+    def test_history_lists_finished_runs_with_filters_and_search(self):
+        memory = MagicMock()
+        memory.list_coding_jobs.return_value = []
+        memory.list_programs.return_value = {"programs": [{"id": "p1", "display_name": "Alpha", "project_id": "PAY", "updated_at": at(5)}]}
+        memory.get_program.return_value = {"workflows": [
+            {"id": "wf-PROJ-3", "workflow_type": "implement_jira_ticket", "status": "succeeded"},
+            {"id": "wf-PROJ-4", "workflow_type": "implement_jira_ticket", "status": "cancelled"},
+            {"id": "wf-PROJ-5", "workflow_type": "implement_jira_ticket", "status": "running"}]}
+        memory.get_workflow_children.return_value = []
+        records = {"wf-PROJ-3": self._record("PROJ-3", status="succeeded"),
+                   "wf-PROJ-4": self._record("PROJ-4", status="cancelled", reason="cancelled by dana")}
+        memory.get_workflow.side_effect = lambda wid: records[wid]
+        out = lv.history(memory, now=NOW)
+        # A finished run's total stops at its last step (10 minutes ago), not now.
+        self.assertEqual(out["items"][0]["elapsed_seconds"], (120 - 10) * 60)
+        self.assertEqual(sorted((i["jira_issue_key"], i["outcome"]) for i in out["items"]), [("PROJ-3", "merged"), ("PROJ-4", "cancelled")])
+        self.assertEqual(out["facets"]["projects"], ["PAY"])
+        self.assertEqual(out["facets"]["repos"], ["o/r"])
+        self.assertEqual([i["jira_issue_key"] for i in lv.history(memory, outcome_filter="cancelled", now=NOW)["items"]], ["PROJ-4"])
+        self.assertEqual([i["jira_issue_key"] for i in lv.history(memory, q="proj-3", now=NOW)["items"]], ["PROJ-3"])
+        self.assertEqual(lv.history(memory, project="OTHER", now=NOW)["items"], [])
+
+    def test_the_board_keeps_earlier_attempts(self):
+        memory = MagicMock()
+        memory.list_coding_jobs.return_value = []
+        memory.get_program.return_value = {"program": {"metadata": {"artifacts": {"jira_issue_keys": ["PROJ-3"]}}},
+                                           "workflows": [{"id": "old", "workflow_type": "implement_jira_ticket", "status": "cancelled", "created_at": at(200)},
+                                                         {"id": "new", "workflow_type": "implement_jira_ticket", "status": "running", "created_at": at(100)}]}
+        memory.get_workflow_children.return_value = []
+        old = self._record("PROJ-3", status="cancelled")
+        new = ticket("PROJ-3")
+        memory.get_workflow.side_effect = lambda wid: old if wid == "old" else {"workflow": {"id": "new", "status": "running"}, "tasks": new["tasks"]}
+        board = lv.program_board(memory, "p1", jira=MagicMock(get_issue=lambda key: {}), now=NOW)
+        entry = board["items"][0]
+        self.assertEqual(entry["item"]["workflow_id"], "new")
+        self.assertEqual([a["outcome"] for a in entry["attempts"]], ["cancelled"])
