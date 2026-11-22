@@ -9,7 +9,6 @@ import {
   BindingsForm,
   ConnectorForm,
   DeliveryExtras,
-  IdentityExtras,
   PolicyForm,
   SandboxForm,
   ToolsetsForm,
@@ -402,14 +401,6 @@ export function SettingsPage({
             <IdentityForm
               merged={payload.merged}
               sources={payload.sources}
-              definition={definition}
-              onChange={(next) => {
-                setDefinition(next);
-                markDirty(true);
-              }}
-            />
-            <IdentityExtras
-              merged={payload.merged}
               definition={definition}
               onChange={(next) => {
                 setDefinition(next);

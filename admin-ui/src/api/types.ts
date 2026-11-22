@@ -18,12 +18,21 @@ export interface WorkflowStep {
   updated_at: string;
 }
 
+export interface CodingRunProgress {
+  phase: string;
+  phase_seconds?: number;
+  detail?: string;
+  done?: Record<string, number>;
+}
+
 export interface CodingJobProgress {
   id: string;
   status: "queued" | "starting" | "running";
   last_output: string;
   started_at: string;
   created_at: string;
+  model?: string;
+  progress?: CodingRunProgress | null;
 }
 
 export interface WorkflowProgress {
@@ -603,6 +612,62 @@ export interface HistoryResponse {
   items: HistoryItem[];
   total: number;
   facets: { projects: string[]; repos: string[]; outcomes: string[] };
+}
+
+export interface StoryFinding {
+  severity: string;
+  category: string;
+  file: string;
+  line: number;
+  message: string;
+}
+
+export interface PrePushReview {
+  model?: string;
+  reviews?: number;
+  fixed?: number;
+  open_blocking?: StoryFinding[];
+  summary?: string;
+  status?: string;
+}
+
+export interface StoryEvent {
+  at: string;
+  kind: "coding" | "ci" | "gate" | "wait" | "decision" | "done";
+  title: string;
+  subtitle?: string;
+  status: "ok" | "blocked" | "failed" | "running" | "done";
+  seconds?: number | null;
+  model?: string;
+  queued_seconds?: number;
+  cost_usd?: number | null;
+  phases?: Record<string, number> | null;
+  review?: PrePushReview | null;
+  outcome?: string;
+  findings?: StoryFinding[];
+  other_findings?: number;
+}
+
+export interface CurrentRun {
+  title: string;
+  model: string;
+  started_at: string;
+  seconds: number | null;
+  queued: boolean;
+  phase: string;
+  phase_seconds?: number | null;
+  detail: string;
+  done: Record<string, number>;
+}
+
+export interface TicketStoryResponse {
+  workflow_id: string;
+  generated_at: string;
+  started_at: string;
+  events: StoryEvent[];
+  current_run: CurrentRun | null;
+  totals: { category: string; label: string; seconds: number; share: number }[];
+  cost_usd: number;
 }
 
 export interface BoardItem {

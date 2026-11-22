@@ -230,6 +230,8 @@ def _with_coding_job(memory: Any, summary: dict[str, Any]) -> dict[str, Any]:
             "last_output": str(job.get("last_output") or "")[-300:],
             "started_at": str(job.get("started_at") or ""),
             "created_at": str(job.get("created_at") or ""),
+            "model": str(job.get("model") or ""),
+            "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
         }
         if job.get("status") == "queued":
             summary["state"] = "OpenCode queued"

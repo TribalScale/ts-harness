@@ -318,6 +318,17 @@ class CodingJobsPostgresTests(PgTestCase):
             self.assertFalse(lost[0]["result"]["ok"])
             self.assertEqual(self.task(conn, task_id)["status"], "pending")
 
+    def test_heartbeat_records_progress_and_the_job_shows_its_model(self):
+        with self.db.connect() as conn:
+            job = coding_jobs.create_coding_job(conn, {"spec": {"repo_url": "https://github.com/a/b", "model": "claude-opus-5-5"}})
+            coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+            coding_jobs.get_job_spec(conn, job["id"])
+            progress = {"phase": "verification", "phase_seconds": 12.5, "detail": "", "done": {"setup": 4.0}}
+            coding_jobs.heartbeat_coding_job(conn, job["id"], {"last_output": "npm test", "progress": progress})
+            coding_jobs.heartbeat_coding_job(conn, job["id"], {"last_output": "still"})  # no progress keeps the last
+            row = coding_jobs.list_coding_jobs(conn, {"status": "running"})["jobs"][0]
+            self.assertEqual((row["progress"]["phase"], row["model"]), ("verification", "claude-opus-5-5"))
+
     def test_a_starting_job_gets_the_longer_start_grace(self):
         with self.db.connect() as conn:
             job = self.create(conn)
