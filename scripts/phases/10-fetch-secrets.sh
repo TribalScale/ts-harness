@@ -84,6 +84,12 @@ CODING_JOB_SECRET="$(fetch_secret "coding-job-secret" true 2>/dev/null || true)"
 # Read-only Figma token for design references (docs/runbooks/design-references.md); optional.
 FIGMA_TOKEN="$(fetch_secret "figma-token" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$FIGMA_TOKEN"; then FIGMA_TOKEN=""; fi
+# Slack incoming webhook for the ops channel (docs/runbooks/ops-alerts.md); optional. redeploy.sh
+# posts deploy results through it, and the alert job uses it when no ops channel is set.
+# Optional and read quietly: an instance role that may not read it is the same as unset. (Not
+# fetch_secret: it exits the phase when a secret exists but cannot be read.)
+SLACK_OPS_WEBHOOK_URL="$(fetch_optional_secret "slack-ops-webhook-url" 2>/dev/null)"
+if is_blank_or_placeholder "$SLACK_OPS_WEBHOOK_URL"; then SLACK_OPS_WEBHOOK_URL=""; fi
 GITHUB_APP_WEBHOOK_SECRET="$(fetch_secret "github-app-webhook-secret" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$GITHUB_APP_WEBHOOK_SECRET"; then GITHUB_APP_WEBHOOK_SECRET=""; fi
 # The runtime turns literal \n back into newlines, so the PEM fits on one .env line.
@@ -192,6 +198,7 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"
     write_env_var GITHUB_APP_WEBHOOK_SECRET "$GITHUB_APP_WEBHOOK_SECRET"
     write_env_var FIGMA_TOKEN "$FIGMA_TOKEN"
+    write_env_var SLACK_OPS_WEBHOOK_URL "$SLACK_OPS_WEBHOOK_URL"
     write_env_var GITHUB_APP_PRIVATE_KEY "$GITHUB_APP_PRIVATE_KEY"
     write_env_var TS_HARNESS_DB_PASSWORD "$TS_HARNESS_DB_PASSWORD"
     write_env_var MANAGED_DB_PASSWORD "${MANAGED_DB_PASSWORD:-$TS_HARNESS_DB_PASSWORD}"

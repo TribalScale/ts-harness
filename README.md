@@ -132,7 +132,8 @@ docker compose -f docker/docker-compose.memory-api.yml -f docker/docker-compose.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
 [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities as described in
-[`SECURITY.md`](SECURITY.md), not in public issues. Changes are tracked in
+[`SECURITY.md`](SECURITY.md), not in public issues. What client data is stored, sent to model
+providers and kept for how long: [`docs/data-handling.md`](docs/data-handling.md). Changes are tracked in
 [`CHANGELOG.md`](CHANGELOG.md); the release process is in
 [`docs/releasing.md`](docs/releasing.md).
 

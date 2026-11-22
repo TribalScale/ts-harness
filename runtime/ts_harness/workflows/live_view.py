@@ -371,6 +371,49 @@ def _repo(pr_url: str) -> str:
     return f"{parts[3]}/{parts[4]}".lower() if len(parts) > 4 and "github.com" in pr_url else ""
 
 
+def period_runs(
+    memory: Any,
+    *,
+    tenant_id: str = "default",
+    allowed: Any = None,
+    days: int = 14,
+    include_running: bool = False,
+    now: datetime | None = None,
+) -> Any:
+    """Ticket and work-order runs finished in the last ``days`` (and running ones, when asked),
+    across the programs ``allowed`` lets the caller read: each with its program, the workflow
+    record with its tasks, and how it ended (``outcome`` is ``running`` while it still runs)."""
+    from datetime import timedelta
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max(1, min(int(days or 14), 365)))
+    programs = (memory.list_programs(tenant_id=tenant_id, limit=200) or {}).get("programs") or []
+    for program in programs:
+        program_id = str(program.get("id") or "")
+        updated = _parse(program.get("updated_at"))
+        if not program_id or (updated and updated < cutoff):
+            continue
+        if allowed is not None and not allowed(program_id):
+            continue
+        project_key = str(program.get("project_id") or program.get("project_key") or "")
+        label = str(program.get("display_name") or program.get("summary") or program_id)[:120]
+        for record in _program_items(memory, program_id, running_only=False):
+            running = str(record.get("status") or "") == "running"
+            if running and not include_running:
+                continue
+            workflow = _workflow(memory, str(record["id"]))
+            tasks = [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]
+            if running:
+                ended = {"outcome": "running", "decided_by": "", "finished_at": ""}
+            else:
+                ended = outcome(workflow, tasks)
+                finished = _parse(ended["finished_at"])
+                if finished and finished < cutoff:
+                    continue
+            yield {"program_id": program_id, "program_label": label, "project": project_key,
+                   "workflow": workflow, "tasks": tasks, "ended": ended}
+
+
 def history(
     memory: Any,
     *,
@@ -385,34 +428,14 @@ def history(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Finished tickets and work orders across programs, newest first, with filters and facets."""
-    from datetime import timedelta
-
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=max(1, min(int(days or 14), 365)))
-    programs = (memory.list_programs(tenant_id=tenant_id, limit=200) or {}).get("programs") or []
     rows: list[dict[str, Any]] = []
-    for program in programs:
-        program_id = str(program.get("id") or "")
-        updated = _parse(program.get("updated_at"))
-        if not program_id or (updated and updated < cutoff):
-            continue
-        if allowed is not None and not allowed(program_id):
-            continue
-        project_key = str(program.get("project_id") or program.get("project_key") or "")
-        label = str(program.get("display_name") or program.get("summary") or program_id)[:120]
-        for record in _program_items(memory, program_id, running_only=False):
-            if str(record.get("status") or "") == "running":
-                continue
-            workflow = _workflow(memory, str(record["id"]))
-            tasks = [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]
-            ended = outcome(workflow, tasks)
-            finished = _parse(ended["finished_at"])
-            if finished and finished < cutoff:
-                continue
-            view = item_view(memory, workflow, now=now)
-            view.update(ended)
-            view.update({"program_id": program_id, "program_label": label, "project": project_key, "repo": _repo(view["pr_url"])})
-            rows.append(view)
+    for run in period_runs(memory, tenant_id=tenant_id, allowed=allowed, days=days, now=now):
+        view = item_view(memory, run["workflow"], now=now)
+        view.update(run["ended"])
+        view.update({"program_id": run["program_id"], "program_label": run["program_label"], "project": run["project"],
+                     "repo": _repo(view["pr_url"])})
+        rows.append(view)
     facets = {
         "projects": sorted({r["project"] for r in rows if r["project"]}),
         "repos": sorted({r["repo"] for r in rows if r["repo"]}),

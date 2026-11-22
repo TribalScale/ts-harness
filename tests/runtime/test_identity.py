@@ -468,7 +468,20 @@ class OidcTenantBindingTests(unittest.TestCase):
                 single_tenant_mode=False,
                 identity_provider=self._provider(""),
             )
-        self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(caught.exception.status, 403)
+
+    def test_missing_claim_cannot_pick_a_tenant_from_the_body(self):
+        from ts_harness.gateway.auth import AuthError, authenticate_request
+
+        with self.assertRaises(AuthError) as caught:
+            authenticate_request(
+                {"Authorization": "Bearer jwt"},
+                expected_token="svc",
+                body={"tenant_id": "other"},
+                single_tenant_mode=False,
+                identity_provider=self._provider(""),
+            )
+        self.assertEqual(caught.exception.status, 403)
 
     def test_single_tenant_mode_ignores_claim_and_body(self):
         from ts_harness.gateway.auth import authenticate_request

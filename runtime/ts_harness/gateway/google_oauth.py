@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import html
+
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ts_harness.connectors.google_workspace.auth import oauth_flow, oauth_store
-from ts_harness.gateway.server import get_runtime
 
 
 def _success_html() -> str:
@@ -14,15 +15,27 @@ def _success_html() -> str:
 
 
 def _error_html(msg: str) -> str:
-    return f"""<!DOCTYPE html><html><body><h1>Connection Failed</h1><p>{msg}</p></body></html>"""
+    # ``msg`` can come from the query string (``error=``): escape it, or the page reflects script.
+    return f"""<!DOCTYPE html><html><body><h1>Connection Failed</h1><p>{html.escape(str(msg))}</p></body></html>"""
 
 
 async def oauth_google_start(request: Request) -> Response:
-    runtime = get_runtime()
-    email = request.query_params.get("email", "").strip()
-    tenant_id = request.query_params.get("tenant_id") or runtime.config.gateway.default_tenant_id
+    """Start consent for the signed-in person (a service caller may name any email)."""
+    from ts_harness.gateway.asgi_app import _auth
+    from ts_harness.gateway.auth import AuthError
+
+    try:
+        auth = _auth(request, {})
+    except AuthError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    email = request.query_params.get("email", "").strip() or str(getattr(auth, "email", "") or "").strip()
+    # The callback stores the Google token under this tenant and email, so neither may be
+    # someone else's: the tenant is the caller's, and a person may only connect their own email.
+    tenant_id = auth.tenant_id
     if not email:
         return JSONResponse({"error": "email query parameter required"}, status_code=400)
+    if not getattr(auth, "is_service", False) and email.lower() != str(auth.email or "").strip().lower():
+        return JSONResponse({"error": "you can only connect your own Google account"}, status_code=403)
     try:
         url = oauth_flow.build_consent_url(tenant_id=tenant_id, email=email)
     except RuntimeError as exc:

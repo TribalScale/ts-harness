@@ -116,6 +116,40 @@ docker logs -f <worker container>
 
 Worker secrets pass by name from the runtime `.env`: `GITHUB_TOKEN`, `GH_TOKEN`, provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `MODEL_*`), and every `CODING_BACKEND_*` and `OPENCODE_*` variable. Add others with `CODING_WORKER_ENV=NAME1,NAME2` on the launcher. Job tokens are signed with `CODING_JOB_SECRET` on memory-api, or a key derived from `MEMORY_API_TOKEN` when it is unset.
 
+**Egress allowlist (local workers).** By default a worker shares agent-runtime's network namespace and can reach any host. With `CODING_EGRESS_ALLOWLIST=on` a worker reaches only the hosts it needs. Off by default, and nothing changes while it is off. It applies to the local launcher; ECS workers already go through the Terraform egress proxy ([coding-workers-ecs.md](coding-workers-ecs.md)).
+
+- Phase 12 adds `docker/docker-compose.coding-egress.yml`. It creates the internal docker network `ts-harness-coding-egress` (`internal: true`, no route out; rename with `CODING_EGRESS_NETWORK`). It adds the `egress-proxy` service, a squid forward proxy (`public.ecr.aws/ubuntu/squid:6.6-24.04_edge`, override with `CODING_EGRESS_PROXY_IMAGE`) on both the default network and the worker network. It attaches `agent-runtime` to the worker network and sets `MEMORY_API_BIND=0.0.0.0` on memory-api, which still needs a token for every request.
+- The launcher starts each worker on that network, not in agent-runtime's namespace. Workers reach memory-api, the runtime and the LLM proxy at `http://agent-runtime:18792`, `:18789` and `:18795/llm`, and everything else only through the proxy. Workers get `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `npm_config_proxy` and `npm_config_https_proxy` set to `http://egress-proxy:3128`, plus `NODE_USE_ENV_PROXY=1`. `NO_PROXY` covers `localhost`, `127.0.0.1`, `::1`, `0.0.0.0` and `agent-runtime` (add more with `CODING_EGRESS_NO_PROXY`). git, curl, pip, npm, yarn, go and Node honour these. Postgres, Redis, MariaDB, MongoDB and app servers a job starts on 127.0.0.1 inside the worker keep working.
+- The proxy allows CONNECT (port 443) and plain HTTP (port 80) only to the allowlist, which coding-launcher writes to the `ts-harness-egress-allowlist` volume:
+  - Defaults: GitHub (`github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com`), npm and yarn (`registry.npmjs.org`, `registry.yarnpkg.com`), Node toolchains (`nodejs.org`), PyPI (`pypi.org`, `files.pythonhosted.org`), Go modules (`proxy.golang.org`, `sum.golang.org`), OpenCode (`models.dev`, `*.opencode.ai`) and Playwright browser builds.
+  - `CODING_EGRESS_ALLOW`: extra domains, comma separated. `*.example.com` or `.example.com` allows the domain and every subdomain.
+  - The host of every project package registry (Projects > Registries).
+  - Model providers (`api.openai.com`, `api.anthropic.com`, `openrouter.ai` and the `MODEL_BASE_URL`, `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` hosts), but only when the LLM proxy is off. With the LLM proxy on, model calls stay on the internal network.
+
+  The launcher rewrites the allowlist every 60 seconds (`CODING_EGRESS_SYNC_SECONDS`) when it changes, so a new registry is allowed within a minute. It then sends squid a SIGHUP, and squid reloads the list without dropping running workers. `python3 -m ts_harness.coding.egress render` prints the list for the current environment. While no proxy container is running, jobs wait (`waiting for the egress proxy`) instead of failing.
+
+Turn it on (one setting):
+
+1. Add `export CODING_EGRESS_ALLOWLIST=on` to the instance env (`$DATA_DIR/.setup/instance-env.sh`). Optionally add `export CODING_EGRESS_ALLOW=dl.example.com,*.example.org`.
+2. Wait until no coding job is queued, starting or running, then re-run phase 12. It recreates agent-runtime, memory-api and coding-launcher and starts `egress-proxy`.
+3. Verify from a throwaway worker on the egress network:
+
+```bash
+sudo -u "$ADMIN_USER" scripts/ops/coding-egress.sh check      # every line "ok": true; exits 1 otherwise
+sudo -u "$ADMIN_USER" scripts/ops/coding-egress.sh allowlist  # domains the proxy allows now
+```
+
+`check` passes when `https://api.github.com/` and `https://registry.npmjs.org/` answer through the proxy, memory-api (`/health`) and the runtime (`/healthz`) answer directly, `https://example.com/` is refused, and a direct connection to `1.1.1.1:443` fails.
+
+**When a job needs a host that is not allowed**, its install or fetch step fails with a proxy error (`403 Forbidden`, `Tunnel connection failed`, or npm `E403`). Squid logs every refused request as `TCP_DENIED/403`:
+
+```bash
+sudo -u "$ADMIN_USER" scripts/ops/coding-egress.sh denied 2h   # refused hosts, most frequent first
+docker logs <egress-proxy container> 2>&1 | grep TCP_DENIED
+```
+
+Add the host to `CODING_EGRESS_ALLOW` (or as a project registry, which needs no deploy) and re-run phase 12. Tools that ignore proxy variables, or open raw TCP connections (a database on another host, SSH git remotes), cannot get out. Use HTTPS remotes. Turn it off with `CODING_EGRESS_ALLOWLIST=off` and phase 12. After a change to `docker/egress-proxy/squid.conf`, restart the proxy (`docker restart <egress-proxy container>`): compose does not recreate it for a mounted file.
+
 **Workspace reuse.** The local launcher mounts one named volume per ticket at `/workspace` (`ts-coding-ws-<hash of tenant, delivery workflow, work order and repository>`, labelled `ts-harness.coding-workspace`). A revision of the same ticket finds the clone, installed dependencies and Node toolchain from the run before: the worker drops edits an interrupted run left uncommitted, fetches the PR head, and reinstalls only when a lockfile changed. The launcher removes ticket volumes older than `CODING_WORKSPACE_TTL_HOURS` (default 48) once an hour; a volume a worker still uses stays. A ticket revised after its volume was removed clones again. `CODING_WORKSPACE_REUSE=off` gives every job a fresh anonymous volume as before. Each coding result records seconds per phase (`timings`: setup, coding, verification, review, push).
 
 **Generated files CI checks.** When the repository's CI regenerates a file and fails on a difference (a step that runs a generator, then `git diff --exit-code <files>` or `git diff --quiet`; for example `npm run openapi` and `openapi.json`), every verification runs that generator first, so the regenerated files are committed with the change. Only package-script commands (`npm run`, `yarn`, `pnpm run`, `bun run`) and `npx prisma generate` are run, never a script named like deploy, publish, release, push, upload or migrate. A failing generator fails verification (`generated_files_failed`). The regenerated files are not reverted as undeclared, and code review does not count them as out of scope.

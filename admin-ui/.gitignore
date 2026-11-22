@@ -1,0 +1,4 @@
+# Playwright output (npm run test:e2e)
+playwright-report/
+test-results/
+blob-report/

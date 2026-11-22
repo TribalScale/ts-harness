@@ -117,12 +117,14 @@ def authenticate_request(
         body_tenant = str(body.get("tenant_id") or "")
         if single_tenant_mode:
             tenant_id = default_tenant_id
-        elif claim_tenant and body_tenant and body_tenant != claim_tenant:
+        elif not claim_tenant:
+            # A signed-in person's tenant comes from the token. Taking it from the body
+            # would let anyone whose IdP omits the claim pick any tenant.
+            raise AuthError("token carries no tenant claim", status=403)
+        elif body_tenant and body_tenant != claim_tenant:
             raise AuthError("tenant_id does not match token", status=403)
         else:
-            tenant_id = claim_tenant or body_tenant
-            if not tenant_id:
-                raise AuthError("tenant_id is required", status=400)
+            tenant_id = claim_tenant
 
         actor_id = str(identity.get("actor_id") or "oidc-user")
         if _directory_disabled(str(tenant_id), actor_id):

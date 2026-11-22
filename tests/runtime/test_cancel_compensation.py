@@ -388,6 +388,7 @@ class AdminEndpointsTests(unittest.TestCase):
         )
         self.memory = mock.MagicMock()
         self.memory.get_program.return_value = {"program": {"id": "prog-1", "tenant_id": "default"}}
+        self.memory.get_workflow.return_value = {"workflow": {"id": "wf-1", "tenant_id": "default"}, "tasks": []}
         self.patches = [
             mock.patch.object(asgi_app, "get_runtime", return_value=self.runtime),
             mock.patch.object(asgi_app, "_auth", return_value=self.auth),

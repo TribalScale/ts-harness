@@ -468,7 +468,12 @@ def job_identity(conn, job_id: str) -> dict[str, Any]:
         raise LookupError("coding job not found")
     if row["status"] not in ("starting", "running"):
         raise ValueError("coding job is not running")
-    return {key: _public(row)[key] for key in ("id", "tenant_id", "status", "repo_url", "requested_by", "project_id")}
+    identity = {key: _public(row)[key] for key in ("id", "tenant_id", "status", "repo_url", "requested_by", "project_id")}
+    # A job may change CI workflow files only when its work order is about them (the GitHub token
+    # gets the workflows permission only then).
+    spec = row.get("spec") if isinstance(row.get("spec"), dict) else {}
+    identity["edits_workflows"] = ".github/workflows" in str(spec.get("work_order_body") or "")
+    return identity
 
 
 def get_job_spec(conn, job_id: str) -> dict[str, Any]:

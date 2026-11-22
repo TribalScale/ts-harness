@@ -45,6 +45,7 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         requested_by=str(task_input.get("requested_by") or "") or None,
         bound=bound,
         agent_id=str(task.get("agent_id") or "dev-agent"),
+        tenant_id=str(task.get("tenant_id") or "").strip() or None,
     )
 
 

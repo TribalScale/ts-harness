@@ -661,6 +661,17 @@ def budget_alerts() -> dict[str, Any]:
     return run_alerts()
 
 
+def check_alerts() -> dict[str, Any]:
+    """Post production alerts (stuck decisions, lost jobs, spend, disk, health) to the ops channel."""
+    from ts_harness.ops_alerts import check_alerts as run_checks
+
+    try:
+        return run_checks()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ops alert check failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 def github_rate_limits() -> dict[str, Any]:
     """Record each GitHub App installation's remaining REST quota for the dashboard and alarm."""
     from ts_harness.observability.scale_metrics import refresh_github_rate_limits
@@ -694,6 +705,13 @@ def sweep_channel_dedup() -> dict[str, Any]:
     return {"status": "ok", "deleted": int(result.get("deleted") or 0)}
 
 
+def apply_data_retention() -> dict[str, Any]:
+    """Trim and delete client data past its retention window, one batch per category (docs/data-handling.md)."""
+    from ts_harness.data_retention import apply_data_retention as run_retention
+
+    return run_retention()
+
+
 def _retry_program_phases() -> dict[str, Any]:
     """Program phase completions that failed earlier (see ``workflows.phase_retries``)."""
     from ts_harness.workflows.phase_retries import retry_due
@@ -707,8 +725,10 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "sync_directory": sync_directory,
     "sweep_coding_jobs": sweep_coding_jobs,
     "budget_alerts": budget_alerts,
+    "check_alerts": check_alerts,
     "github_rate_limits": github_rate_limits,
     "sweep_channel_dedup": sweep_channel_dedup,
+    "apply_data_retention": apply_data_retention,
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
     "retry_program_phases": lambda: _retry_program_phases(),

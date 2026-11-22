@@ -338,7 +338,7 @@ async def metrics(request: Request) -> Response:
 async def skills_doctor(request: Request) -> Response:
     try:
         _check_origin(request)
-        _auth(request, {})
+        auth = _auth(request, {})
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
 
@@ -347,7 +347,8 @@ async def skills_doctor(request: Request) -> Response:
     runtime = get_runtime()
     query = parse_qs(request.url.query)
     agent_id = (query.get("agent_id") or ["orchestrator"])[0]
-    tenant_id = (query.get("tenant_id") or [runtime.config.gateway.default_tenant_id])[0]
+    # The caller's own tenant only; a query parameter must not read another tenant's skills.
+    tenant_id = auth.tenant_id
     lines = runtime.skill_catalog.doctor(
         runtime.config.get_agent(str(agent_id)),
         runtime.config,
@@ -928,8 +929,14 @@ async def admin_approvals_list(request: Request) -> Response:
         return _json({"error": str(exc)}, exc.status)
 
     queue = get_approval_queue()
-    items = [v.__dict__ for v in queue.all()]
+    tenant = str(auth.tenant_id or "default")
+    items = [v.__dict__ for v in queue.all() if _approval_in_tenant(v, tenant)]
     return _json({"approvals": items, "total": len(items)})
+
+
+def _approval_in_tenant(approval: Any, tenant_id: str) -> bool:
+    """Tool approvals of another tenant look the same as missing ones."""
+    return str(getattr(approval, "tenant_id", None) or "default") == str(tenant_id or "default")
 
 
 # ── GET /admin/approvals/{id} ─────────────────────────────────────────────────
@@ -946,9 +953,11 @@ async def admin_approvals_get(request: Request) -> Response:
     approval_id = request.path_params["id"]
     try:
         approval = get_approval_queue().get(approval_id)
-        return _json(approval.__dict__)
     except KeyError:
         return _json({"error": "not found"}, 404)
+    if not _approval_in_tenant(approval, str(auth.tenant_id or "default")):
+        return _json({"error": "not found"}, 404)
+    return _json(approval.__dict__)
 
 
 # ── GET /admin/auth/config ────────────────────────────────────────────────────
@@ -1357,6 +1366,42 @@ async def admin_history(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001
         log_event("admin_history_error", error=str(exc))
         return _json({"error": str(exc)}, 500)
+
+
+async def admin_metrics(request: Request) -> Response:
+    """Delivery quality metrics over the programs the caller can read (same access as history)."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    params = request.query_params
+
+    def allowed(program_id: str) -> bool:
+        try:
+            _require_program_level(program_id, auth, "read", route="history", memory=memory)
+            return True
+        except Exception:  # noqa: BLE001 - not readable: left out
+            return False
+
+    from ts_harness.workflows import delivery_metrics
+
+    try:
+        # Every ticket in the period is re-read on each request, so the period is capped.
+        days = max(1, min(90, int(params.get("days") or 14)))
+    except ValueError:
+        days = 14
+    try:
+        return _json(delivery_metrics.delivery_metrics(
+            memory, tenant_id=str(auth.tenant_id or "default"), allowed=allowed, days=days,
+            project=str(params.get("project") or ""), repo=str(params.get("repo") or ""),
+            include_running=str(params.get("running") or "").lower() in {"1", "true", "yes"},
+        ))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_metrics_error", error=str(exc))
+        return _json({"error": "could not compute the delivery metrics"}, 500)
 
 
 async def admin_ticket_story(request: Request) -> Response:
@@ -1846,9 +1891,33 @@ async def admin_workflows_get(request: Request) -> Response:
     except Exception as exc:
         return _json({"error": str(exc)}, 404)
     tenant = str(auth.tenant_id or "default")
-    if any(str(task.get("tenant_id") or "default") != tenant for task in (payload or {}).get("tasks") or []):
+    tasks = [task for task in (payload or {}).get("tasks") or [] if isinstance(task, dict)]
+    if any(str(task.get("tenant_id") or "default") != tenant for task in tasks):
         return _json({"error": "workflow not found"}, 404)
+    if tasks and tasks[0].get("id"):
+        # A workflow of a program needs read access to that program, like the program routes.
+        try:
+            _require_task_program_level(str(tasks[0]["id"]), auth, "read", route="workflow_get")
+        except ProgramAccessDenied as exc:
+            return _json({"error": str(exc)}, exc.status)
     return _json(payload)
+
+
+def _require_task_in_tenant(task_id: str, auth: Any) -> None:
+    """Raise ``_NotInTenant`` unless the task's workflow belongs to the caller's tenant.
+
+    The program check below skips service callers, ``TS_HARNESS_PROGRAM_ACCESS=off`` and
+    tasks outside a program, and the engine approval path does not pass a tenant to the
+    memory API, so this check is what keeps a gate decision inside the caller's tenant.
+    """
+    memory = get_memory_client()
+    try:
+        workflow_id = str((memory.task_program(task_id) or {}).get("workflow_id") or "")
+        workflow = (memory.get_workflow(workflow_id) or {}).get("workflow") or {} if workflow_id else {}
+    except Exception as exc:  # noqa: BLE001
+        raise _NotInTenant("task not found") from exc
+    if not workflow or str(workflow.get("tenant_id") or "default") != str(auth.tenant_id or "default"):
+        raise _NotInTenant("task not found")
 
 
 def _require_task_program_level(task_id: str, auth: Any, need: str, *, route: str) -> None:
@@ -1976,7 +2045,10 @@ async def admin_workflows_approve(request: Request) -> Response:
     if not task_id:
         return _json({"error": "id is required"}, 400)
     try:
+        _require_task_in_tenant(task_id, auth)
         _require_task_program_level(task_id, auth, "approve", route="approve")
+    except _NotInTenant as exc:
+        return _json({"error": str(exc)}, 404)
     except ProgramAccessDenied as exc:
         return _json({"error": str(exc)}, exc.status)
     try:
@@ -2017,7 +2089,10 @@ async def admin_workflows_reject(request: Request) -> Response:
     if not task_id:
         return _json({"error": "id is required"}, 400)
     try:
+        _require_task_in_tenant(task_id, auth)
         _require_task_program_level(task_id, auth, "approve", route="reject")
+    except _NotInTenant as exc:
+        return _json({"error": str(exc)}, 404)
     except ProgramAccessDenied as exc:
         return _json({"error": str(exc)}, exc.status)
     try:
@@ -2475,7 +2550,9 @@ async def _admin_fragment_call(
             body = await _json_object_body(request, allow_empty=body_mode == "optional")
         auth = _auth(request, body)
         runtime = get_runtime()
-        _require_admin(runtime, auth, "view" if body_mode == "none" else "edit_config")
+        # Reads need view; every write (including a body-less DELETE) needs edit_config.
+        read_only = body_mode == "none" and request.method.upper() == "GET"
+        _require_admin(runtime, auth, "view" if read_only else "edit_config")
     except AuthError as exc:
         return _json({"error": str(exc)}, exc.status)
     except _BadJsonBody as exc:
@@ -3030,6 +3107,13 @@ async def admin_project(request: Request) -> Response:
     if request.method == "PUT":
         return await _admin_projects_call(request, lambda m, a, c, b: bff.update_project_admin(m, a, c, pid, b))
     return await _admin_projects_call(request, lambda m, a, c, _b: bff.get_project_admin(m, a, c, pid))
+
+
+async def admin_project_checklist(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.project_checklist_admin(m, a, c, pid))
 
 
 async def admin_project_registries(request: Request) -> Response:
@@ -4110,6 +4194,12 @@ async def admin_approvals_decide(request: Request) -> Response:
     approval_id = request.path_params["id"]
     approved = bool(body.get("approved", False))
     try:
+        existing = get_approval_queue().get(approval_id)
+    except KeyError:
+        return _json({"error": "not found"}, 404)
+    if not _approval_in_tenant(existing, str(auth.tenant_id or "default")):
+        return _json({"error": "not found"}, 404)
+    try:
         approval, resume = decide_and_resume(
             get_approval_queue(),
             get_memory_client(),
@@ -4165,9 +4255,12 @@ async def github_webhook(request: Request) -> Response:
             return _json({"status": "duplicate", "delivery_id": delivery_id})
     else:
         # Fall back to gateway token auth when webhook secret is unset (dev/smoke).
+        # The host header is the caller's, so anyone can land here: only a service or
+        # admin credential may post an unsigned delivery, never any signed-in viewer.
         try:
             _check_origin(request)
-            _auth(request, body)
+            fallback_auth = _auth(request, body)
+            _require_admin(get_runtime(), fallback_auth, "edit_config")
         except AuthError as exc:
             return _json({"error": str(exc)}, exc.status)
 
@@ -4231,6 +4324,8 @@ async def channel_webhook(request: Request) -> Response:
         _check_origin(request)
         if url_path.endswith("/send-test"):
             auth = _auth(request, body)
+            # Posts as the bot to any channel: an operator action, not a chat message.
+            _require_admin(runtime, auth, "edit_config")
         else:
             auth = await _auth_channel(request, channel, body, raw)
     except AuthError as exc:
@@ -4402,6 +4497,7 @@ routes = [
     Route("/admin/live", endpoint=admin_live, methods=["GET"]),
     Route("/admin/proposals/cancel", endpoint=admin_proposals_cancel, methods=["POST"]),
     Route("/admin/history", endpoint=admin_history, methods=["GET"]),
+    Route("/admin/metrics", endpoint=admin_metrics, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",
@@ -4550,6 +4646,7 @@ routes = [
         methods=["POST"],
     ),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
+    Route("/admin/projects/{project_id}/checklist", endpoint=admin_project_checklist, methods=["GET"]),
     Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),
     Route(
         "/admin/projects/{project_id}/repositories/{repository_id}",

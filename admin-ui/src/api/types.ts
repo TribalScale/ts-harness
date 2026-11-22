@@ -509,6 +509,25 @@ export interface ProjectRepository {
   role: string | null;
 }
 
+export interface ProjectChecklistItem {
+  id: string;
+  title: string;
+  status: "ok" | "warning" | "failing";
+  summary: string;
+  details: string[];
+  fix: string;
+  /** A console route (#/...) where the item is fixed, when there is one. */
+  fix_link: string;
+}
+
+export interface ProjectChecklist {
+  project_id: string;
+  items: ProjectChecklistItem[];
+  ready: number;
+  total: number;
+  summary: string;
+}
+
 export type BudgetStatus = "ok" | "warning" | "reached";
 
 export interface TeamBudgetOverride {
@@ -634,6 +653,72 @@ export interface HistoryResponse {
   items: HistoryItem[];
   total: number;
   facets: { projects: string[]; repos: string[]; outcomes: string[] };
+}
+
+export interface MetricsTicket {
+  workflow_id: string;
+  program_id: string;
+  program_label: string;
+  jira_issue_key: string;
+  label: string;
+  pr_url: string;
+  project: string;
+  repo: string;
+  outcome: string;
+  finished_at: string;
+  revisions: number;
+  revisions_by_trigger: Record<string, number>;
+  first_try: boolean;
+  time_to_merge_seconds: number | null;
+  you_seconds: number;
+  agent_seconds: number;
+  coding_runs: number;
+  reviewed_runs: number;
+  review_fixed: number;
+  gate_compared: number;
+  gate_disagreed: number;
+  cost_usd: number;
+  strong_cost_usd: number;
+  lost_jobs: number;
+}
+
+export interface MetricsStats {
+  median: number | null;
+  mean: number | null;
+  max: number | null;
+}
+
+export interface MetricsSummary {
+  tickets: number;
+  finished: number;
+  merged: number;
+  first_try: number;
+  first_try_rate: number | null;
+  revisions: MetricsStats & { total: number; by_trigger: Record<string, number> };
+  time_to_merge_seconds: MetricsStats;
+  you_seconds: number;
+  agent_seconds: number;
+  you_share: number | null;
+  coding_runs: number;
+  reviewed_runs: number;
+  review_catch_rate: number | null;
+  review_fixed: number;
+  gate_compared: number;
+  gate_disagreed: number;
+  gate_disagreement_rate: number | null;
+  cost_usd: { median: number | null; total: number };
+  strong_cost_share: number | null;
+  lost_jobs: number;
+}
+
+export interface MetricsResponse {
+  generated_at: string;
+  days: number;
+  include_running: boolean;
+  summary: MetricsSummary;
+  weekly: { week: string; tickets: number; first_try_rate: number | null; revisions_mean: number }[];
+  tickets: MetricsTicket[];
+  facets: { projects: string[]; repos: string[] };
 }
 
 export interface StoryFinding {
