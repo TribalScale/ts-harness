@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Clearer ticket queue messages: the confirmation is headed "Confirm the <PROJECT> ticket queue"; the parallel run's start says what started and why the rest wait ("Started PROJ-7. Up to 2 tickets run at once. PROJ-8 and PROJ-23 wait on PROJ-7; 19 more wait on later tickets.") instead of "in parallel" for a single ticket; a ticket that names no design frames says "Design: none" instead of listing every frame of its program (only named frames ever reached the coding job and QA).
 - The ticket queue orders ready tickets by issue number, not as text: PROJ-7 now comes before PROJ-22 (text order put PROJ-22 first).
 - Ticket story on Live and the program board: **Details** shows where a ticket's time went (coding, queue, CI, review, QA, waiting for you, coding cost) and everything that happened in order, in local time: each coding run with its trigger, model, duration, cost, phases and pre-push review result; CI results; code review and QA verdicts with their blocking findings; waits for you and who decided with their guidance. A running coding job shows a live phase breakdown (setup, coding, running tests, pre-push review, push) on its card, reported with each heartbeat (migration 050). Inbox decisions record the person's email.
 - System Settings → Identity: GitHub logins, roles, departments, role permissions, identity provider group roles and service permissions are edited as rows with Add and Remove, like the Slack and Jira mappings, instead of JSON text boxes. Adding a mapping needs both fields; emails are lowercased.

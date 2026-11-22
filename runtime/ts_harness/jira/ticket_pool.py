@@ -62,8 +62,13 @@ def _repo_of(issue: dict[str, Any], default: str = "") -> str:
     return match.group(1).lower() if match else default
 
 
-def ready_tickets(jira: Any, keys: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
-    """(ready tickets as ``{"key", "repo"}`` in queue order, keys already done in Jira)."""
+def ready_tickets(
+    jira: Any, keys: list[str], waiting: dict[str, list[str]] | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """(ready tickets as ``{"key", "repo"}`` in queue order, keys already done in Jira).
+
+    ``waiting``, when given, collects each blocked ticket's open blockers.
+    """
     ready, done = [], []
     for key in keys:
         try:
@@ -74,7 +79,10 @@ def ready_tickets(jira: Any, keys: list[str]) -> tuple[list[dict[str, Any]], lis
         if _status_done(issue):
             done.append(key)
             continue
-        if open_blockers((issue.get("fields") or {}).get("issuelinks")):
+        blockers = open_blockers((issue.get("fields") or {}).get("issuelinks"))
+        if blockers:
+            if waiting is not None:
+                waiting[key] = list(blockers)
             continue
         ready.append({"key": key, "repo": _repo_of(issue)})
     return ready, done
@@ -149,7 +157,8 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
         from ts_harness.integrations.jira_client import JiraClient
 
         jira = JiraClient.from_env()
-    ready, done = ready_tickets(jira, queue)
+    waiting: dict[str, list[str]] = {}
+    ready, done = ready_tickets(jira, queue, waiting)
     chosen = _choose(ready, [], limit)
     if not chosen:
         raise ValueError("no ticket in the queue is ready: every remaining ticket waits on an open blocker")
@@ -160,8 +169,34 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
         "queue": queue,
         "max_parallel_tickets": limit,
         "already_done": done,
-        "summary": f"Started {', '.join(c['label'] for c in children)} in parallel (up to {limit} at a time).",
+        "summary": start_text([c["label"] for c in children], waiting, limit),
     }
+
+
+def start_text(started: list[str], waiting: dict[str, list[str]], limit: int) -> str:
+    """What the pool started and why the rest wait: no "in parallel" when only one could start."""
+    from ts_harness.jira.ticket_queue import issue_sort_key
+
+    text = f"Started {_and(started)}." if len(started) < 2 else f"Started {_and(started)} in parallel."
+    if limit > 1:
+        text += f" Up to {limit} tickets run at once."
+    if not waiting:
+        return text
+    on_started = sorted((k for k, b in waiting.items() if set(b) <= set(started)), key=issue_sort_key)
+    rest = sorted((k for k in waiting if k not in on_started), key=issue_sort_key)
+    parts = []
+    if on_started:
+        parts.append(f"{_and(on_started)} {'waits' if len(on_started) == 1 else 'wait'} on {_and(started)}")
+    if len(rest) == 1:
+        parts.append(f"{rest[0]} waits on {_and(sorted(waiting[rest[0]], key=issue_sort_key))}")
+    elif rest:
+        parts.append(f"{len(rest)} more wait on later tickets" if on_started else f"the other {len(rest)} wait on their blockers")
+    sentence = "; ".join(parts)
+    return f"{text} {sentence[0].upper()}{sentence[1:]}."
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str, str]]:

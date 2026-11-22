@@ -136,6 +136,12 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         self.assertIn("Design: D2, D3", out["work_order_body"])
         self.assertEqual(out["work_order_body"].count("Design:"), 1)
 
+    def test_a_ticket_that_names_no_frames_says_so_instead_of_listing_them_all(self):
+        description = DESCRIPTION + "\nProgram: prd-prog\n"
+        out = _run(jira=_Jira(description=description), memory=_memory(owner_refs=PROGRAM_REFS))
+        self.assertIn("Design: none (the ticket names no design frames)", out["summary"])
+        self.assertNotIn("D1 (", out["summary"])
+
     def test_a_ticket_filed_without_its_frames_gets_them_from_its_work_order(self):
         refs = [*PROGRAM_REFS[:1], {**PROGRAM_REFS[1], "url": "https://www.figma.com/design/F/?node-id=2-9"}]
         markdown = "# WO-001 List\n\n## Summary\nx\n\n# WO-002 Drawer\n\n## Context Graph\n- Design: D2\n"
