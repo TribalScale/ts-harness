@@ -71,6 +71,10 @@ reconstruct_enterprise_compose_files() {
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-jobs.yml")
     [[ "${LLM_PROXY_ENABLED:-false}" == "true" && -f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml" ]] && \
         COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.llm-proxy.yml")
+    # Without it a recreated agent-runtime would leave the coding workers' network.
+    if coding_egress_allowlist_wanted && [[ -f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-egress.yml" ]]; then
+        COMPOSE_FILES+=(-f "$ENTERPRISE_DOCKER_DIR/docker-compose.coding-egress.yml")
+    fi
     return 0
 }
 

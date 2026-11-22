@@ -138,6 +138,19 @@ if [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" ]]; then
     fi
 fi
 
+if coding_egress_allowlist_wanted; then
+    CODING_EGRESS_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.coding-egress.yml"
+    if [[ -f "$CODING_EGRESS_COMPOSE" ]]; then
+        COMPOSE_FILES+=(-f "$CODING_EGRESS_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Coding egress allowlist on: workers reach the internet only through egress-proxy"
+    else
+        echo "[phase:${PHASE_NAME}] ERROR: CODING_EGRESS_ALLOWLIST=on but $CODING_EGRESS_COMPOSE is missing" >&2
+        exit 1
+    fi
+elif [[ -n "${CODING_EGRESS_ALLOWLIST:-}" && "${CODING_EGRESS_ALLOWLIST}" != "off" ]]; then
+    echo "[phase:${PHASE_NAME}] Coding egress allowlist not applied: it needs coding jobs on the local launcher (ECS workers use the Terraform egress proxy)"
+fi
+
 if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
     SCALE_OUT_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.scale-out.yml"
     if [[ -f "$SCALE_OUT_COMPOSE" ]]; then
@@ -181,8 +194,10 @@ fi
 
 # A path that does not exist is hashed by name, so a storage flag change re-runs compose up.
 STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}:${TS_HARNESS_INTAKE_BUCKET:-}"
+# The extra allowed domains reach coding-launcher's environment; a change re-runs compose up.
+EGRESS_FINGERPRINT="egress:${CODING_EGRESS_ALLOWLIST:-off}:${CODING_EGRESS_ALLOW:-}:${CODING_EGRESS_NETWORK:-}:${CODING_EGRESS_PROXY_IMAGE:-}"
 # This script is an input too: a change to the compose env it writes must re-run compose up.
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$STORAGE_FINGERPRINT")"
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$EGRESS_FINGERPRINT" "$STORAGE_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -265,6 +280,8 @@ fi
     echo "export LLM_PROXY_REPLICA_URL=$(printf '%q' "${LLM_PROXY_REPLICA_URL:-}")"
     echo "export LLM_PROXY_HOST_PORT=$(printf '%q' "${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}")"
     echo "export CODING_WORKER_LLM_PROXY_URL=$(printf '%q' "${CODING_WORKER_LLM_PROXY_URL:-}")"
+    echo "export CODING_EGRESS_ALLOWLIST=$(printf '%q' "${CODING_EGRESS_ALLOWLIST:-off}")"
+    echo "export CODING_EGRESS_ALLOW=$(printf '%q' "${CODING_EGRESS_ALLOW:-}")"
     echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
     echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER:-}")"
     echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"
