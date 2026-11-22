@@ -189,3 +189,51 @@ class OtherRunsTests(unittest.TestCase):
         self.assertEqual(woken, ["pool-a"])
         self.assertEqual(engine.resume_external.call_args.args[0], "pool-a")
         self.assertEqual(engine.resume_external.call_args.kwargs["payload"], {"ticket_finished_elsewhere": "P-2"})
+
+
+class MergeWaitSlotTests(unittest.TestCase):
+    """A ticket waiting for its merge frees its slot, up to a cap of waiting PRs."""
+
+    MERGE_WAIT = [{"step_name": "await_human_merge", "status": "blocked", "error": "awaiting_external:github.merge"}]
+    CODING = [{"step_name": "deliver_work_order", "status": "blocked", "error": "awaiting_external:coding.finished"}]
+
+    def _refill(self, child_tasks, *, cap="4"):
+        fill = {"id": "fill", "step_name": "fill_pool", "input": {"summary": "s"},
+                "output": {"queue": ["P-3", "P-4", "P-5"], "max_parallel_tickets": 1}}
+        join = {"id": "join", "workflow_id": "pool", "tenant_id": "default", "step_name": "join_pool",
+                "input": {"_wait_options": {"children": [{"workflow_id": "c3", "label": "P-3", "repo": "org/api"}]}}}
+        memory = MagicMock()
+        memory.get_workflow.return_value = {"workflow": {"id": "pool"}, "tasks": [fill, join]}
+        memory.running_ticket_work.return_value = {"tickets": [], "pools": []}
+        ctx = MagicMock(memory_client=memory, actor="runner")
+        jira = Jira([_issue("P-3"), _issue("P-4", repo="org/web"), _issue("P-5")])
+        with patch("ts_harness.workflows.work_order_waves.child_state", return_value=None), \
+                patch("ts_harness.jira.ticket_pool.load_workflow_payload",
+                      side_effect=lambda m, wid: ({"id": wid}, child_tasks) if wid.startswith("c") else ({}, [fill, join])), \
+                patch("ts_harness.workflows.hooks.fork_subworkflow.fork_child", side_effect=lambda *a, **k: "child-" + k["intake_input"]["jira_issue_key"]), \
+                patch.dict("os.environ", {"TS_HARNESS_POOL_MAX_WAITING_MERGE": cap}):
+            return [c["label"] for c in tp.refill(ctx, join, jira=jira)]
+
+    def test_a_ticket_waiting_for_its_merge_lets_the_next_one_start(self):
+        self.assertEqual(self._refill(self.MERGE_WAIT), ["P-3", "P-4"])
+
+    def test_a_ticket_still_coding_holds_its_slot(self):
+        self.assertEqual(self._refill(self.CODING), ["P-3"])
+
+    def test_no_more_start_once_the_waiting_prs_reach_the_cap(self):
+        self.assertEqual(self._refill(self.MERGE_WAIT, cap="1"), ["P-3"])
+
+    def test_waiting_for_merge(self):
+        self.assertTrue(tp.waiting_for_merge(self.MERGE_WAIT))
+        self.assertFalse(tp.waiting_for_merge(self.MERGE_WAIT + [{"step_name": "x", "status": "running"}]))
+        self.assertFalse(tp.waiting_for_merge(self.CODING))
+
+    def test_waiting_for_a_merge_wakes_only_a_pool_parent(self):
+        engine = MagicMock()
+        records = {"child": {"id": "child", "parent_workflow_id": "pool"}, "pool": {"workflow_type": "implement_jira_pool"},
+                   "lone": {"id": "lone", "parent_workflow_id": "other"}, "other": {"workflow_type": "software_delivery"}}
+        with patch("ts_harness.jira.ticket_pool.load_workflow_payload", side_effect=lambda m, wid: (records[wid], [])), \
+                patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine):
+            self.assertTrue(tp.merge_wait_started(MagicMock(), "child"))
+            self.assertFalse(tp.merge_wait_started(MagicMock(), "lone"))
+        self.assertEqual(engine.resume_external.call_args.kwargs["payload"], {"ready_to_merge": "child"})
