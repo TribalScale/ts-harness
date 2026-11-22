@@ -163,7 +163,7 @@ def resume(ctx: HookContext) -> dict[str, Any]:
         match_all_cfg = dict(config.get("match_all") or {})
 
         if config.get("children"):
-            return _resume_children(ctx, task=task, event_type=event_type, payload=payload)
+            return _resume_children(ctx, task=task, event_type=event_type, payload=payload, pool=bool(config.get("pool")))
         if config.get("upstream"):
             result = _resume_upstream(ctx, task=task, config=config, workflow=workflow, tasks=tasks, event_type=event_type, payload=payload)
             if result is None:
@@ -237,17 +237,45 @@ def _resume_children(
     task: dict[str, Any],
     event_type: str,
     payload: dict[str, Any],
+    pool: bool = False,
 ) -> dict[str, Any]:
-    """Join a wave: resume once every pinned child finished; block if any failed."""
+    """Join a wave: resume once every pinned child finished; block if any failed.
+
+    A pool (``wait_external.pool``) first starts the tickets that became ready, so a finished
+    child frees its slot at once; it finishes when nothing runs and nothing more can start.
+    """
     from ts_harness.workflows.work_order_waves import pinned_children, wave_result
 
     children = pinned_children(task)
     if not children:
         raise ValueError("join has no pinned child workflows")
+    left: list[str] = []
+    if pool:
+        from ts_harness.jira import ticket_pool
+
+        children = ticket_pool.refill(ctx, task)
     aggregate = wave_result(ctx.memory_client, children)
     if aggregate["state"] == "pending":
         return {"status": "awaiting_more_children", "task_id": str(task["id"]), "pending": aggregate["pending"]}
+    if pool:
+        from ts_harness.jira import ticket_pool
+        from ts_harness.workflows.hooks._helpers import load_workflow_payload as _load
+
+        _, pool_tasks = _load(ctx.memory_client, str(task.get("workflow_id") or ""))
+        fill_task = next((item for item in pool_tasks if item.get("step_name") == "fill_pool"), {})
+        queue = [str(key) for key in ((fill_task.get("output") or {}).get("queue") or [])]
+        left = ticket_pool.left_behind(queue, children)
     output = {**aggregate["output"], "event_type": event_type, "external_event": payload}
+    if left:
+        output["not_started"] = left
+        reason = (
+            f"external_blocked:{event_type} tickets not started because a blocker was not delivered: {', '.join(left)}"
+        )
+        failed = [item for item in aggregate["output"].get("failed_labels") or [] if item]
+        if failed:
+            reason += f"; stopped or failed: {', '.join(failed)}"
+        ctx.memory_client.block_task_api(str(task["id"]), reason, output=output, actor=ctx.actor)
+        return {"status": "blocked", "task_id": str(task["id"]), "reason": reason}
     if aggregate["state"] == "failed":
         failed_ids = [item for item in aggregate["output"]["failed_work_order_ids"] if item]
         if failed_ids:

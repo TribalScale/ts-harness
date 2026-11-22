@@ -63,6 +63,7 @@ ORDER=(
   046_llm_usage_agent.sql
   047_project_bdd_mode.sql
   048_project_revision_autonomy.sql
+  049_project_max_parallel_tickets.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

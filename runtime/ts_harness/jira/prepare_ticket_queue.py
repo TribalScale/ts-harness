@@ -195,6 +195,22 @@ def _ensure_project_ready(memory: Any, workflow: dict[str, Any], project_key: st
         raise StepBlocked("\n".join(lines), output={"queue": False, "bootstrap_prs": [r.pr_url for r in pending]})
 
 
+def _ticket_limit(memory: Any, tenant_id: str, jira_key: str) -> int:
+    """The project's ``max_parallel_tickets`` (matched by key or Jira key); 1 when unknown."""
+    try:
+        rows = (memory.list_projects(tenant_id=tenant_id) or {}).get("projects") or []
+    except Exception:  # noqa: BLE001 - one at a time when the project cannot be read
+        return 1
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if jira_key.upper() in {str(row.get("key") or "").upper(), str(row.get("jira_project_key") or "").upper()}:
+            from ts_harness.jira.ticket_pool import pool_limit
+
+            return pool_limit(row.get("max_parallel_tickets") or 1)
+    return 1
+
+
 def _project_name(memory: Any, tenant_id: str, project_key: str) -> str | None:
     try:
         rows = (memory.list_projects(tenant_id=tenant_id, key=project_key) or {}).get("projects") or []
@@ -276,13 +292,19 @@ def prepare_ticket_queue(
                 output={"queue": True, "queue_exclusions": exclusions, "jira_issue_keys": []},
             )
         _ensure_project_ready(memory, workflow, project, ready)
+        limit = _ticket_limit(memory, str(workflow.get("tenant_id") or "default"), project)
+        summary_text = format_queue_summary(keys, exclusions)
+        if limit > 1 and len(keys) > 1:
+            summary_text += f"\nTickets whose blockers are done run in parallel, up to {limit} at a time."
         return {
             "queue": True,
             "jira_project_key": project,
             "jira_issue_key": keys[0],
             "jira_issue_keys": keys,
             "queue_exclusions": exclusions,
-            "summary": format_queue_summary(keys, exclusions),
+            "ticket_pool": limit > 1 and len(keys) > 1,
+            "max_parallel_tickets": limit,
+            "summary": summary_text,
         }
 
     if not issues:

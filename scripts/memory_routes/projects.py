@@ -74,6 +74,16 @@ def _revision_autonomy(value: Any) -> str:
     return mode
 
 
+def _max_parallel_tickets(value: Any) -> int:
+    try:
+        number = int(value if value not in (None, "") else 2)
+    except (TypeError, ValueError):
+        raise ValueError("max_parallel_tickets must be a whole number from 1 to 8") from None
+    if not 1 <= number <= 8:
+        raise ValueError("max_parallel_tickets must be a whole number from 1 to 8")
+    return number
+
+
 def _project_json(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -86,6 +96,7 @@ def _project_json(row: dict[str, Any]) -> dict[str, Any]:
         "default_base_branch": row.get("default_base_branch"),
         "bdd_mode": row.get("bdd_mode") or "auto",
         "revision_autonomy": row.get("revision_autonomy") or "autonomous",
+        "max_parallel_tickets": int(row.get("max_parallel_tickets") or 2),
         "worker_cpu": row.get("worker_cpu"),
         "worker_memory_mb": row.get("worker_memory_mb"),
         "registry_count": int(row.get("registry_count") or 0),
@@ -185,14 +196,14 @@ def create_project(conn, body: dict[str, Any]) -> dict[str, Any]:
         team_id = _team_id(cur, tenant_id, body.get("team_slug"))
         cur.execute(
             """
-            INSERT INTO projects (tenant_id, team_id, key, name, jira_project_key, default_base_branch, worker_cpu, worker_memory_mb, bdd_mode, revision_autonomy)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO projects (tenant_id, team_id, key, name, jira_project_key, default_base_branch, worker_cpu, worker_memory_mb, bdd_mode, revision_autonomy, max_parallel_tickets)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tenant_id, key) DO NOTHING
             RETURNING id
             """,
             (tenant_id, team_id, key, name, _clean(body.get("jira_project_key")),
              _clean(body.get("default_base_branch")), cpu, memory, _bdd_mode(body.get("bdd_mode")),
-             _revision_autonomy(body.get("revision_autonomy"))),
+             _revision_autonomy(body.get("revision_autonomy")), _max_parallel_tickets(body.get("max_parallel_tickets"))),
         )
         row = cur.fetchone()
         if not row:
@@ -236,6 +247,9 @@ def update_project(conn, project_id: str, body: dict[str, Any]) -> dict[str, Any
     if "revision_autonomy" in body:
         sets.append("revision_autonomy = %s")
         params.append(_revision_autonomy(body.get("revision_autonomy")))
+    if "max_parallel_tickets" in body:
+        sets.append("max_parallel_tickets = %s")
+        params.append(_max_parallel_tickets(body.get("max_parallel_tickets")))
     actor = str(body.get("actor") or "admin")
     with conn.cursor() as cur:
         if "team_slug" in body:
@@ -247,7 +261,7 @@ def update_project(conn, project_id: str, body: dict[str, Any]) -> dict[str, Any
             f"UPDATE projects SET {', '.join(sets)}, updated_at = now() WHERE id = %s",
             (*params, current["id"]),
         )
-        changed = sorted(k for k in body if k in (*_PROJECT_FIELDS, "worker_cpu", "worker_memory_mb", "team_slug", "bdd_mode", "revision_autonomy"))
+        changed = sorted(k for k in body if k in (*_PROJECT_FIELDS, "worker_cpu", "worker_memory_mb", "team_slug", "bdd_mode", "revision_autonomy", "max_parallel_tickets"))
         _audit(cur, "project_updated", f"Project {current['key']} updated", {"project_id": current["id"], "fields": changed}, actor)
     conn.commit()
     return get_project(conn, current["id"])

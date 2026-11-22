@@ -713,6 +713,14 @@ def _cap_reentry(
     }
 
 
+def _pool_delivered(ctx: HookContext) -> list[str]:
+    """Tickets the pool's children merged (``join_pool`` output)."""
+    _, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
+    join = next((task for task in tasks if task.get("step_name") == "join_pool"), {})
+    output = join.get("output") if isinstance(join.get("output"), dict) else {}
+    return [str(pr.get("work_order_id")) for pr in output.get("prs") or [] if isinstance(pr, dict) and pr.get("work_order_id")]
+
+
 def _advance_list_reentry(
     ctx: HookContext,
     service: Any,
@@ -733,6 +741,11 @@ def _advance_list_reentry(
         key = reentry_item_key(current)
         if key not in {reentry_item_key(item) for item in completed}:
             completed.append(key)
+    # The ticket pool delivered many items in one run: each merged child counts as done.
+    if str(workflow.get("workflow_type") or "") == "implement_jira_pool":
+        for key in _pool_delivered(ctx):
+            if key not in {reentry_item_key(item) for item in completed}:
+                completed.append(key)
     count, iterations = _bump_iterations(artifacts, program_phase)
     patch = {completed_key: completed, "reentry_iterations": iterations}
     ctx.memory_client.patch_program_artifacts(program_id, patch, merge=True, actor=actor)

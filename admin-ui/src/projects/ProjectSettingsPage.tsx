@@ -37,6 +37,7 @@ type Fields = {
   branch: string;
   bdd: string;
   autonomy: string;
+  parallel: string;
   cpu: string;
   memory: string;
 };
@@ -49,6 +50,7 @@ function fieldsOf(project: Project): Fields {
     branch: project.default_base_branch || "",
     bdd: project.bdd_mode || "auto",
     autonomy: project.revision_autonomy || "autonomous",
+    parallel: String(project.max_parallel_tickets || 2),
     cpu: project.worker_cpu ? String(project.worker_cpu) : "",
     memory: project.worker_memory_mb ? String(project.worker_memory_mb) : "",
   };
@@ -100,6 +102,7 @@ function SettingsCard({
       default_base_branch: merged.branch.trim() || null,
       bdd_mode: merged.bdd || "auto",
       revision_autonomy: merged.autonomy || "autonomous",
+      max_parallel_tickets: Math.min(8, Math.max(1, Number(merged.parallel) || 2)),
       worker_cpu: merged.cpu ? Number(merged.cpu) : null,
       worker_memory_mb: merged.memory ? Number(merged.memory) : null,
     };
@@ -479,6 +482,37 @@ function ProjectDetail({
               With Gherkin, every ticket adds a feature file named after its
               key. A repository without a Gherkin runner gets one with its first
               ticket. Unit tests are required either way.
+            </Hint>
+          </label>
+        )}
+      </SettingsCard>
+      <SettingsCard
+        key={`parallel-${project.id}`}
+        title="Parallel delivery"
+        label="Parallel delivery"
+        description="How many tickets `implement all` builds at once. Above 1, every ticket whose blockers are done starts as soon as a slot is free, preferring repositories with nothing running."
+        project={project}
+        isAdmin={isAdmin}
+        dirtyKeys={["parallel"]}
+        onSaved={onSaved}
+      >
+        {(fields, set) => (
+          <label className="form-field proj-span-2">
+            <span>Tickets at a time</span>
+            <select
+              aria-label="Tickets at a time"
+              value={fields.parallel}
+              onChange={(e) => set({ parallel: e.target.value })}
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                <option key={n} value={String(n)}>
+                  {n === 1 ? "1: one ticket at a time" : String(n)}
+                </option>
+              ))}
+            </select>
+            <Hint>
+              Each running ticket is a coding job and an open PR to review. The host's coding
+              job limit still applies; tickets above it wait in line.
             </Hint>
           </label>
         )}

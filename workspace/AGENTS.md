@@ -30,6 +30,7 @@ Stage sequences live in workflow skeletons (do not duplicate here):
 - `deploy_release` → `config/workflows/deploy_release.json`
 - `file_work_orders_as_jira` → `config/workflows/file_work_orders_as_jira.json`
 - `implement_delivery` → `config/workflows/implement_delivery.json`
+- `implement_jira_pool` → `config/workflows/implement_jira_pool.json`
 - `implement_jira_ticket` → `config/workflows/implement_jira_ticket.json`
 - `implement_ticket` → `config/workflows/implement_ticket.json`
 - `implement_work_orders` → `config/workflows/implement_work_orders.json`

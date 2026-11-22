@@ -20,6 +20,8 @@ def fork_child(
     intake_input: dict[str, Any],
     actor: str,
     definition_version: str | None = None,
+    source_channel: str | None = None,
+    requester_actor_id: str | None = None,
 ) -> str:
     """Create one child workflow with its skeleton tasks; the intake stage gets ``intake_input``.
 
@@ -39,6 +41,8 @@ def fork_child(
         tenant_id=tenant_id,
         definition_version=child_skeleton.definition_version,
         parent_workflow_id=parent_workflow_id,
+        source_channel=source_channel,
+        requester_actor_id=requester_actor_id,
         actor=actor,
     )
     task_bodies = materialize_skeleton_tasks(

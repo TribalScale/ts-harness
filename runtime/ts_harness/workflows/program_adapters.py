@@ -50,7 +50,7 @@ ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     "extract_deploy_outputs": frozenset({"merge_sha", "released_environments"}),
     "extract_file_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "jira_refile"}),
     "extract_pick_ticket_outputs": frozenset(
-        {"jira_issue_key", "jira_project_key", "owner_program_id", "jira_issue_keys"}
+        {"jira_issue_key", "jira_project_key", "owner_program_id", "jira_issue_keys", "ticket_pool", "max_parallel_tickets"}
     ),
     "extract_declared_outputs": None,
 }
@@ -337,6 +337,10 @@ def _build_implement_inputs(
 ) -> dict[str, Any]:
     del transcript_messages
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
+    if workflow_type == "implement_jira_pool":
+        done = {str(item) for item in artifacts.get("completed_jira_issue_keys") or []}
+        intake["jira_issue_keys"] = [str(key) for key in artifacts.get("jira_issue_keys") or [] if str(key) not in done]
+        intake["max_parallel_tickets"] = artifacts.get("max_parallel_tickets")
     for key in (
         "jira_epic_key",
         "jira_story_keys",
@@ -839,6 +843,11 @@ def _extract_pick_ticket_outputs(
     keys = merged.get("jira_issue_keys")
     if isinstance(keys, list) and keys and all(isinstance(item, str) and item.strip() for item in keys):
         patch["jira_issue_keys"] = [item.strip() for item in keys]
+    # A queue with a parallel limit above 1 is delivered by the ticket pool (implement_jira_pool).
+    if merged.get("ticket_pool") is not None:
+        patch["ticket_pool"] = bool(merged.get("ticket_pool"))
+    if merged.get("max_parallel_tickets") is not None:
+        patch["max_parallel_tickets"] = merged.get("max_parallel_tickets")
     return patch
 
 

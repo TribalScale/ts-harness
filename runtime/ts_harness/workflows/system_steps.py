@@ -99,6 +99,12 @@ def _close_ticket(task: dict[str, Any], config: dict[str, Any], *, memory: Any) 
     return close_ticket(task, config, memory=memory)
 
 
+def _fill_ticket_pool(task: dict[str, Any], config: dict[str, Any], *, memory: Any) -> dict[str, Any]:
+    from ts_harness.jira.ticket_pool import fill
+
+    return fill(task, config, memory=memory)
+
+
 SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     **release.SYSTEM_STEPS,
     "fork_work_order_wave": work_order_waves.fork_wave,
@@ -113,6 +119,7 @@ SYSTEM_STEPS: dict[str, Callable[..., dict[str, Any]]] = {
     "prepare_ticket_delivery": _prepare_ticket_delivery,
     "assign_filed_tickets": _assign_filed_tickets,
     "close_ticket": _close_ticket,
+    "fill_ticket_pool": _fill_ticket_pool,
 }
 
 
