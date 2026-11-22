@@ -251,7 +251,7 @@ class QueueTests(unittest.TestCase):
             _ensure_project_ready(memory, {"tenant_id": "t1"}, "ACME", ready)
         text = str(caught.exception)
         self.assertIn("acme/api is empty, so it starts from the `node-api` template. Opened the bootstrap PR", text)
-        self.assertIn("say `implement all ACME` again", text)
+        self.assertIn("this run continues on its own", text)
         self.assertNotIn("acme/web", text)
         self.assertEqual(ready.call_args.kwargs["title"], "Acme")
         ready.return_value = [done]

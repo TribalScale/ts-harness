@@ -46,6 +46,19 @@ class GateReadinessTests(unittest.TestCase):
         client.approve_task.assert_not_called()
         client.reject_task.assert_not_called()
 
+    def test_a_second_approval_of_a_decided_gate_does_nothing(self):
+        from ts_harness.workflows.engine import WorkflowEngine
+        from ts_harness.workflows.hooks import build_default_registry
+
+        client = mock.MagicMock()
+        client.get_workflow.return_value = {"workflow": {"id": "wf"}, "tasks": TASKS}
+        engine = WorkflowEngine(client=client, registry=build_default_registry())
+        stale = dict(TASKS[1], approval_status="pending")  # what the second click still saw
+        with mock.patch.object(engine.registry, "invoke") as invoke:
+            result = engine.handle_approve(workflow_id="wf", gate_task=stale, actor="a")
+        self.assertEqual(result, {"status": "already_decided", "task_id": "g1", "approval_status": "approved"})
+        invoke.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

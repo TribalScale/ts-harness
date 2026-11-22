@@ -46,6 +46,8 @@ lost the line gets it back from its work order. The Planner approval shows the d
 first ("9 work orders in 3 waves (WO-001 → WO-002, WO-003 → ...)") and warns when several
 waves run a single work order or a work order looks too large.
 
+Repositories linked to a project (System → Projects) count as allowed for coding, releases and cleanup without also adding them to the repo allowlist; the GitHub org restriction still applies. A queue or ticket that waits for a repository's bootstrap PR continues on its own a few minutes after the PR merges (the runner checks every 5 minutes); `/retry` runs it at once.
+
 Filing targets the Jira key of the program's project (Project settings), unless the request
 names another allowed project; that key must be in `jira_filing.allowed_projects` (System
 Settings → Jira filing → Allowed projects), or filing stops and says so.

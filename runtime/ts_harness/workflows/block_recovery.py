@@ -95,3 +95,56 @@ def recover_unhandled_blocks(
         recovered.append(task_id)
         logger.info("block recovery: replayed on_block for %s (%s)", task_id, task.get("step_name"))
     return recovered
+
+
+BOOTSTRAP_CHECK_SECONDS = 300
+_bootstrap_checked: dict[str, float] = {}
+
+
+def _merged(pr_url: str, github_for: Any) -> bool:
+    from ts_harness.integrations.github_client import parse_github_pr_url
+
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None:
+        return False
+    pull = github_for(pr_url).get_pull(*parsed) or {}
+    return bool(pull.get("merged"))
+
+
+def resume_after_bootstrap(
+    memory: Any,
+    *,
+    tenant_id: str = "default",
+    github_for: Any = None,
+    check_every: float = BOOTSTRAP_CHECK_SECONDS,
+) -> list[str]:
+    """Run again a step that waited for repositories' bootstrap PRs, once every one has merged.
+
+    A ticket queue or ticket blocks with ``bootstrap_prs`` in its output until the starting-code
+    PRs merge; it used to tell the person to start a new run. Checked every few minutes.
+    """
+    if github_for is None:
+        from ts_harness.integrations.github_client import github_for as default_github_for
+
+        github_for = default_github_for
+    clock = time.monotonic()
+    resumed: list[str] = []
+    for item in memory.list_stuck_tasks(tenant_id=tenant_id) or []:
+        task_id = str(item.get("id") or "")
+        output = item.get("output") if isinstance(item.get("output"), dict) else {}
+        prs = [str(url) for url in output.get("bootstrap_prs") or [] if url]
+        if not task_id or not prs:
+            continue
+        if clock - _bootstrap_checked.get(task_id, -check_every) < check_every:
+            continue
+        _bootstrap_checked[task_id] = clock
+        try:
+            if not all(_merged(url, github_for) for url in prs):
+                continue
+            memory.resume_blocked_task(task_id, actor="workflow-runner", reason="bootstrap PRs merged")
+        except Exception as exc:  # noqa: BLE001 - checked again on a later sweep
+            logger.warning("bootstrap resume: %s not resumed: %s", task_id, exc)
+            continue
+        resumed.append(task_id)
+        logger.info("bootstrap resume: %s runs again, its bootstrap PRs merged", task_id)
+    return resumed

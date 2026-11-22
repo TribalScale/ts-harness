@@ -23,7 +23,7 @@ from typing import Any, Callable
 from ts_harness.config.bindings import (
     TenantBindings,
     check_jira_projects_allowed,
-    check_repo_allowed,
+    check_repo_allowed_or_linked,
     tenant_bindings,
 )
 from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_url
@@ -76,7 +76,7 @@ def _action(ref: dict[str, Any], action: str, result: str, detail: str = "") -> 
 def _repo_not_bound(owner: str, repo: str, bindings: TenantBindings) -> str | None:
     if not bindings.github_org and not bindings.allowed_repos:
         return "repo_not_bound: no tenant GitHub binding is configured"
-    error = check_repo_allowed(f"{owner}/{repo}", bindings)
+    error = check_repo_allowed_or_linked(f"{owner}/{repo}", bindings)
     return f"repo_not_bound: {error}" if error else None
 
 

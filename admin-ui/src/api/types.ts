@@ -3,7 +3,8 @@ export type InboxType =
   | "tool_approval"
   | "workflow_gate"
   | "stuck_step"
-  | "knowledge_note";
+  | "knowledge_note"
+  | "pending_proposal";
 
 export type StuckDecision = "retry" | "revise" | "accept" | "stop";
 

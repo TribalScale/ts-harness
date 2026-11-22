@@ -12,7 +12,7 @@ import logging
 from typing import Any
 from urllib.parse import urlparse
 
-from ts_harness.config.bindings import check_repo_allowed, tenant_bindings
+from ts_harness.config.bindings import check_repo_allowed_or_linked, tenant_bindings
 from ts_harness.implementation.work_order_context import (
     parse_work_order_dependencies,
     parse_work_order_repositories,
@@ -177,7 +177,7 @@ def plan_release_tracks(
     defaults = program_defaults if program_defaults is not None else _live_program_defaults()
     bindings = tenant_bindings(defaults)
     for track in tracks:
-        error = check_repo_allowed(track["repo"], bindings)
+        error = check_repo_allowed_or_linked(track["repo"], bindings)
         if error:
             raise ReleaseBlocked(error)
 

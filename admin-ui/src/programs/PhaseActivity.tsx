@@ -215,6 +215,8 @@ export function PhaseActivityPanel({
   onChanged?: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  // Gates decided here: their buttons stay gone even if a refresh still shows them pending.
+  const [decided, setDecided] = useState<Record<string, boolean>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   // Gates whose review the user closed; a waiting gate shows what it approves by default.
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
@@ -228,6 +230,7 @@ export function PhaseActivityPanel({
       : "Started workflows";
 
   async function decide(taskId: string, approve: boolean) {
+    if (decided[taskId] || busy === taskId) return;
     setBusy(taskId);
     setActionError(null);
     try {
@@ -238,6 +241,7 @@ export function PhaseActivityPanel({
           body: JSON.stringify({ id: taskId }),
         },
       );
+      setDecided((prev) => ({ ...prev, [taskId]: true }));
       onChanged?.();
     } catch (e: any) {
       setActionError(String(e?.message || e));
@@ -248,6 +252,7 @@ export function PhaseActivityPanel({
 
   function approvalActions(step: WorkflowStep) {
     if (!step.approval_pending || !canApprove) return null;
+    if (decided[step.task_id]) return <span className="muted">Decided; the next step is starting…</span>;
     const reviewing = !hidden[step.task_id];
     return (
       <>

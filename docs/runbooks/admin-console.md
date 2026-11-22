@@ -98,7 +98,7 @@ Manual path: login → Inbox → Chat round-trip → Programs → System → Cro
 
 ## Tabs
 
-- **Inbox** — skill drafts (`admin`/`owner`), tool approvals, workflow gates. Each row keeps an explicit type badge; a coloured status pill only appears when the backend reports a lifecycle status (for example `pending`, `blocked`, `approved`). Item type alone never drives success/warning colour.
+- **Inbox** — skill drafts (`admin`/`owner`), tool approvals, workflow gates, stuck steps, knowledge notes and **chat proposals** (an offer such as "I can start the jira_to_pr program … reply yes" still waiting in a conversation; **Cancel proposal** drops it so a later yes there cannot start it, `POST /admin/proposals/cancel`; `/cancel` in the conversation does the same). Approving a gate is safe to repeat: the item leaves the list at once, and a second approval of the same gate returns `already_decided` instead of starting the next phase again. Each row keeps an explicit type badge; a coloured status pill only appears when the backend reports a lifecycle status (for example `pending`, `blocked`, `approved`). Item type alone never drives success/warning colour.
 - **Live** (`#/live`, `GET /admin/live`) — every ticket or work order being built across the running programs you can read, refreshed every 10 seconds.
   - **Capacity:** coding jobs running (of `CODING_MAX_RUNNING`), queued, tickets in progress, and how many wait for you.
   - **One card per ticket:**

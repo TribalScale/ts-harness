@@ -1261,7 +1261,7 @@ class CodingBackendToolTests(unittest.TestCase):
             ),
             patch("ts_harness.implementation.coding_job.repo_for_workflow", return_value=repo),
             patch("ts_harness.implementation.coding_job.opencode_backend_config", return_value=backend_cfg),
-            patch("ts_harness.implementation.coding_job.check_repo_allowed", return_value=None),
+            patch("ts_harness.implementation.coding_job.check_repo_allowed_or_linked", return_value=None),
             patch("ts_harness.implementation.coding_job.OpenCodeBackend", FakeBackend),
         ):
             result = handle_run_coding_backend({"work_order_id": "WO-003", "work_order_body": "# WO-003\n"}, ctx)
