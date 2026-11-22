@@ -95,34 +95,57 @@ def _cost(job: dict[str, Any]) -> float | None:
     return round(sum(costs), 2) if costs else None
 
 
-def _trigger(task: dict[str, Any], revision: int) -> str:
+TRIGGERS = ("code_review", "qa", "ci", "guided", "triage", "human", "rerun", "other")
+
+
+def trigger_kind(task: dict[str, Any], revision: int) -> str:
+    """Why a coding run happened: ``""`` for the first run, else one of ``TRIGGERS``."""
     data = _input(task)
     if revision == 0:
         return ""
-    grant = data.get("_revision_grant") if isinstance(data.get("_revision_grant"), dict) else None
     if data.get("_guided"):
-        return "guided: the same finding came back"
+        return "guided"
     if data.get("_auto_grant"):
-        return "automatic, after triage"
-    if grant:
-        return f"after /revise by {display_actor(str(grant.get('actor') or 'a person'))}"
+        return "triage"
+    if isinstance(data.get("_revision_grant"), dict):
+        return "human"
     if data.get("_revision_budget") == "checks":
-        return "CI failed"
+        return "ci"
     source = str(data.get("_revision_source") or "")
-    if source in GATE_STEPS:
-        return f"{GATE_STEPS[source].lower()} findings"
+    if source == "finalize_code_review":
+        return "code_review"
+    if source == "qa_gate":
+        return "qa"
     if data.get("qa_feedback") and not data.get("review_feedback"):
-        return "re-run after a failed run"
-    return "revision"
+        return "rerun"
+    return "other"
+
+
+def _trigger(task: dict[str, Any], revision: int) -> str:
+    kind = trigger_kind(task, revision)
+    if kind == "human":
+        grant = _input(task).get("_revision_grant") or {}
+        return f"after /revise by {display_actor(str(grant.get('actor') or 'a person'))}"
+    return {
+        "": "",
+        "guided": "guided: the same finding came back",
+        "triage": "automatic, after triage",
+        "ci": "CI failed",
+        "code_review": f"{GATE_STEPS['finalize_code_review'].lower()} findings",
+        "qa": f"{GATE_STEPS['qa_gate'].lower()} findings",
+        "rerun": "re-run after a failed run",
+    }.get(kind, "revision")
 
 
 def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any]], bar: dict[str, Any]) -> list[dict[str, Any]]:
     title = "Coding started" if revision == 0 else f"Revision {revision}"
     trigger = _trigger(task, revision)
+    # For delivery metrics: which coding step run (revision) and why it ran.
+    ids = {"task_id": str(task.get("id") or ""), "revision": revision, "trigger_kind": trigger_kind(task, revision)}
     events: list[dict[str, Any]] = []
     if not jobs:
         events.append({
-            "at": bar["start"], "kind": "coding", "title": title, "subtitle": trigger,
+            **ids, "at": bar["start"], "kind": "coding", "title": title, "subtitle": trigger,
             "seconds": bar["seconds"], "status": "running" if bar["open"] else _status(task),
         })
         return events
@@ -131,6 +154,8 @@ def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any
         result = job.get("result") if isinstance(job.get("result"), dict) else {}
         status = str(job.get("status") or "")
         event: dict[str, Any] = {
+            **ids,
+            "job_status": status,
             "at": _iso(started or created),
             "kind": "coding",
             "title": title if index == 0 else f"{title}, attempt {index + 1}",
@@ -202,6 +227,7 @@ def _gate_event(task: dict[str, Any], bar: dict[str, Any]) -> dict[str, Any] | N
         # A blocked gate stays open until a revision cancels it; its verdict came at the start.
         "at": (bar["end"] if passed else bar["start"]) or bar["start"],
         "kind": "gate",
+        "step": step,
         "title": f"{name} passed" if passed else f"{name} blocked the PR",
         "subtitle": "" if passed else f"{count} blocking finding{'s' if count != 1 else ''}" if step == "finalize_code_review"
         else f"{count} defect{'s' if count != 1 else ''}",
