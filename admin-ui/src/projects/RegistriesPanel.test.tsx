@@ -32,6 +32,8 @@ const PROJECT = {
   can_manage: true,
 };
 
+const NO_CHECKLIST = { project_id: "p1", items: [], ready: 0, total: 0, summary: "" };
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -141,6 +143,7 @@ describe("ProjectSettingsPage", () => {
   it("validates worker sizing before saving", async () => {
     mockFetch((url) => {
       if (url.endsWith("/registries")) return jsonResponse({ registries: [] });
+      if (url.endsWith("/checklist")) return jsonResponse(NO_CHECKLIST);
       return jsonResponse({ projects: [PROJECT], is_admin: false });
     });
     renderPage(<ProjectSettingsPage selectedId="p1" />);
@@ -171,6 +174,7 @@ describe("ProjectSettingsPage", () => {
     mockFetch((url, init) => {
       if ((init?.method || "GET").toUpperCase() !== "GET") writes.push(url);
       if (url.endsWith("/registries")) return jsonResponse({ registries: [] });
+      if (url.endsWith("/checklist")) return jsonResponse(NO_CHECKLIST);
       return jsonResponse({ projects: [PROJECT], is_admin: false });
     });
     renderPage(<ProjectSettingsPage selectedId="p1" />);

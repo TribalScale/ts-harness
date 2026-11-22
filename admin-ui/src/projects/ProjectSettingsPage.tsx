@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { RegistriesPanel } from "./RegistriesPanel";
 import { RepositoriesPanel } from "./RepositoriesPanel";
+import { ProjectChecklistPanel } from "./ProjectChecklistPanel";
 import { ProjectNotesPanel } from "./ProjectNotesPanel";
 
 // Fargate CPU units and the memory range (MiB) each allows.
@@ -382,6 +383,10 @@ function ProjectDetail({
           </p>
         </div>
       </header>
+      <ProjectChecklistPanel
+        key={`checklist-${project.id}`}
+        projectId={project.id}
+      />
       <SettingsCard
         key={`delivery-${project.id}`}
         title="Delivery"

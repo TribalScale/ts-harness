@@ -3066,6 +3066,13 @@ async def admin_project(request: Request) -> Response:
     return await _admin_projects_call(request, lambda m, a, c, _b: bff.get_project_admin(m, a, c, pid))
 
 
+async def admin_project_checklist(request: Request) -> Response:
+    from ts_harness.gateway import projects_bff as bff
+
+    pid = request.path_params["project_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.project_checklist_admin(m, a, c, pid))
+
+
 async def admin_project_registries(request: Request) -> Response:
     from ts_harness.gateway import projects_bff as bff
 
@@ -4585,6 +4592,7 @@ routes = [
         methods=["POST"],
     ),
     Route("/admin/projects/{project_id}", endpoint=admin_project, methods=["GET", "PUT"]),
+    Route("/admin/projects/{project_id}/checklist", endpoint=admin_project_checklist, methods=["GET"]),
     Route("/admin/projects/{project_id}/repositories", endpoint=admin_project_repositories, methods=["GET", "POST"]),
     Route(
         "/admin/projects/{project_id}/repositories/{repository_id}",
