@@ -1063,6 +1063,15 @@ class WorkflowRunner:
             return
         if recovered:
             log_event("blocks_recovered", task_ids=recovered)
+        try:
+            from ts_harness.workflows.block_recovery import resume_after_bootstrap
+
+            resumed = resume_after_bootstrap(get_memory_client())
+        except Exception as exc:  # noqa: BLE001 - the next tick tries again
+            log_event("bootstrap_resume_failed", error=str(exc)[:300])
+            return
+        if resumed:
+            log_event("bootstrap_waits_resumed", task_ids=resumed)
 
     def _sweep_stale(self) -> None:
         for task in self.memory.list_stale_tasks():

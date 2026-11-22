@@ -26,6 +26,7 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "workflow_gate", label: "Gates" },
   { key: "stuck_step", label: "Stuck" },
   { key: "knowledge_note", label: "Notes" },
+  { key: "pending_proposal", label: "Proposals" },
 ];
 
 const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "retry", "revise"];
@@ -56,6 +57,7 @@ function badgeClass(type: InboxType): string {
   if (type === "tool_approval") return "badge badge-tool";
   if (type === "stuck_step") return "badge badge-stuck";
   if (type === "knowledge_note") return "badge badge-skill";
+  if (type === "pending_proposal") return "badge badge-tool";
   return "badge badge-gate";
 }
 
@@ -64,6 +66,7 @@ function typeLabel(type: InboxType): string {
   if (type === "tool_approval") return "Tool approval";
   if (type === "stuck_step") return "Stuck step";
   if (type === "knowledge_note") return "Knowledge note";
+  if (type === "pending_proposal") return "Chat proposal";
   return "Workflow gate";
 }
 
@@ -231,13 +234,15 @@ export function InboxPage({
   const skillsOk = canManageSkills();
   const desktop = useMediaQuery("(min-width: 1024px)");
   const autoSelected = useRef(false);
+  // Gates decided in this tab: kept out of the list so a lagging refresh cannot offer them again.
+  const decided = useRef(new Set<string>());
 
   async function load() {
     setListError(null);
     setListLoading(true);
     try {
       const data = await apiFetch<{ items: InboxItem[] }>("/admin/inbox");
-      setItems(data.items || []);
+      setItems((data.items || []).filter((item) => !decided.current.has(item.id)));
     } catch (e: any) {
       setListError(String(e.message || e));
     } finally {
@@ -269,6 +274,9 @@ export function InboxPage({
         .length,
       knowledge_note: visibleItems.filter(
         (item) => item.type === "knowledge_note",
+      ).length,
+      pending_proposal: visibleItems.filter(
+        (item) => item.type === "pending_proposal",
       ).length,
     }),
     [visibleItems],
@@ -434,18 +442,46 @@ export function InboxPage({
     }
   }
 
+  async function actProposal() {
+    const sessionId = String(selectedItem?.meta?.session_id || "");
+    if (!sessionId) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiFetch("/admin/proposals/cancel", {
+        method: "POST",
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      setNotice({ title: "Proposal cancelled", detail: "A yes in that conversation will not start it now." });
+      await load();
+      setDetail(null);
+    } catch (e: any) {
+      setDetailError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function actGate(approve: boolean) {
     const taskId = String(detail?.task_id || selectedId || "");
-    if (!taskId) return;
+    if (!taskId || decided.current.has(taskId)) return;
     setBusy(true);
+    setNotice(null);
     try {
-      await apiFetch(
+      const result = await apiFetch<{ status?: string; approval_status?: string }>(
         approve ? "/admin/workflows/approve" : "/admin/workflows/reject",
         {
           method: "POST",
           body: JSON.stringify({ id: taskId }),
         },
       );
+      // Hide it at once: a refresh can still list it for a moment while the next step starts,
+      // and a second click must not approve it again.
+      decided.current.add(taskId);
+      setItems((current) => current.filter((item) => item.id !== taskId));
+      if (result?.status === "already_decided") {
+        setNotice({ title: "Already decided", detail: `This gate was already ${result.approval_status || "decided"}.` });
+      }
       await load();
       setDetail(null);
     } catch (e: any) {
@@ -658,6 +694,12 @@ export function InboxPage({
             meta={(detail || selectedItem?.meta) as Record<string, unknown>}
           />
         )}
+        {type === "pending_proposal" && (
+          <p>
+            This offer is waiting for a yes or no in {String(selectedItem?.meta?.source || "chat")}. Cancel it so a later
+            yes there cannot start it, or answer it in the conversation. In the chat, <code>/cancel</code> does the same.
+          </p>
+        )}
         <details className="detail-raw">
           <summary>Raw metadata</summary>
           <pre className="mono">{JSON.stringify(raw, null, 2)}</pre>
@@ -668,7 +710,7 @@ export function InboxPage({
 
   function renderActions(type: InboxType) {
     if (type === "skill_draft" && !skillsOk) return null;
-    if (!detail && type !== "workflow_gate" && type !== "stuck_step")
+    if (!detail && type !== "workflow_gate" && type !== "stuck_step" && type !== "pending_proposal")
       return null;
     return (
       <footer className="detail-actions" aria-label="Item actions">
@@ -736,6 +778,11 @@ export function InboxPage({
               Approve
             </Button>
           </>
+        )}
+        {type === "pending_proposal" && (
+          <Button variant="danger" busy={busy} onClick={() => void actProposal()}>
+            Cancel proposal
+          </Button>
         )}
         {type === "workflow_gate" && (
           <>

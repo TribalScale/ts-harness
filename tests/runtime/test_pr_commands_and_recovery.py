@@ -112,3 +112,24 @@ class RecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootstrapResumeTests(unittest.TestCase):
+    def test_a_step_waiting_on_bootstrap_prs_runs_again_once_they_merge(self):
+        from unittest import mock
+
+        from ts_harness.workflows import block_recovery as br
+
+        br._bootstrap_checked.clear()
+        memory = mock.MagicMock()
+        memory.list_stuck_tasks.return_value = [
+            {"id": "t1", "output": {"bootstrap_prs": ["https://github.com/acme/api/pull/1", "https://github.com/acme/web/pull/2"]}},
+            {"id": "t2", "output": {}},
+        ]
+        merged = {1: True, 2: False}
+        github = mock.MagicMock()
+        github.get_pull.side_effect = lambda owner, repo, number: {"merged": merged[number]}
+        self.assertEqual(br.resume_after_bootstrap(memory, github_for=lambda url: github, check_every=0), [])
+        merged[2] = True
+        self.assertEqual(br.resume_after_bootstrap(memory, github_for=lambda url: github, check_every=0), ["t1"])
+        memory.resume_blocked_task.assert_called_once_with("t1", actor="workflow-runner", reason="bootstrap PRs merged")

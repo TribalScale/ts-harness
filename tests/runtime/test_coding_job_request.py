@@ -29,7 +29,7 @@ def configured(stack: ExitStack, *, coding_backend: str = "opencode", backend: o
     live.program_defaults = None
     stack.enter_context(patch.object(coding_job, "load_active_runtime_config", return_value=MagicMock()))
     stack.enter_context(patch.object(coding_job, "_live_runtime_config", return_value=live))
-    stack.enter_context(patch.object(coding_job, "check_repo_allowed", return_value=None))
+    stack.enter_context(patch.object(coding_job, "check_repo_allowed_or_linked", return_value=None))
     stack.enter_context(
         patch.object(
             coding_job,
@@ -129,7 +129,7 @@ class BuildCodingRequestTests(unittest.TestCase):
                 build_coding_request({"mode": "refresh"}, delivery_workflow_id=None)
             with self.assertRaisesRegex(CodingRequestError, "asks for implementation"):
                 build_coding_request({"mode": "refresh", "pr_url": PR}, delivery_workflow_id=None, bound={"repo_url": "x"})
-            stack.enter_context(patch.object(coding_job, "check_repo_allowed", return_value="repo not bound"))
+            stack.enter_context(patch.object(coding_job, "check_repo_allowed_or_linked", return_value="repo not bound"))
             with self.assertRaises(CodingRequestError) as ctx:
                 build_coding_request({"repo_url": "https://github.com/x/y"}, delivery_workflow_id=None)
             self.assertEqual(ctx.exception.extra, {"repo_url": "https://github.com/x/y"})

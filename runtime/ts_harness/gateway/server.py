@@ -1108,6 +1108,26 @@ class RuntimeState:
                 "session_id": session.session_id,
                 "output": {**decision_result, "summary": summary},
             }
+        from ts_harness.gateway.proposals import cancel_ack, cancel_proposals, is_cancel_command
+
+        if is_cancel_command(user_text):
+            # "/cancel": drop whatever offer is waiting for a yes or no in this conversation.
+            cancelled = cancel_proposals(session)
+            summary = cancel_ack(cancelled)
+            get_transcript_store().append_turn(
+                session.session_id,
+                user_text=user_text,
+                assistant_messages=[{"role": "assistant", "content": summary}],
+            )
+            self.audit.append(
+                tenant_id=req.tenant_id,
+                action_type="chat_proposal_cancelled",
+                actor_id=auth.actor_id,
+                correlation_id=req.correlation_id,
+                payload={"session_id": session.session_id, "channel": channel,
+                         "cancelled": [item["description"] for item in cancelled], "actor_email": actor_email},
+            )
+            return {"status": "succeeded", "session_id": session.session_id, "output": {"summary": summary}}
         if parse_stuck_step_command(user_text) is not None:
             try:
                 stuck_result = execute_stuck_step_command(

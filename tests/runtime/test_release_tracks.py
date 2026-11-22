@@ -201,7 +201,7 @@ class ForkTracksTests(unittest.TestCase):
         memory = FakeMemory()
         memory.add("parent", [_task("parent", "plan_release_tracks", status="running", input={"merged_work_orders": MERGED})])
         with (
-            mock.patch.object(release_tracks, "check_repo_allowed", lambda repo, _b: "not allowed" if repo == "acme/jobs" else None),
+            mock.patch.object(release_tracks, "check_repo_allowed_or_linked", lambda repo, _b: "not allowed" if repo == "acme/jobs" else None),
             mock.patch.object(release_tracks, "fork_child") as fork,
         ):
             with self.assertRaisesRegex(release.ReleaseBlocked, "not allowed"):

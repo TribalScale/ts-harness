@@ -11,6 +11,10 @@ First public release.
 
 ### Added
 
+- Chat proposals can be cancelled: `/cancel` in the conversation, or **Cancel proposal** in the Inbox, which now lists every offer still waiting for a yes or no (with when it was made). Closes #109.
+- Approving a gate twice no longer starts the next phase twice: the second approval returns `already_decided` (it is re-checked under the workflow lock), the Inbox removes the item at once and ignores it on refresh, and the program page replaces the buttons with "Decided; the next step is starting…".
+- A queue or ticket waiting for repositories' bootstrap PRs continues on its own once they merge, instead of asking for a new run.
+- Repositories linked to a project are allowed for coding, releases and cleanup without also adding them to the repo allowlist (the GitHub org restriction still applies).
 - A pre-push review fix is re-checked quickly (related tests, static checks and the security scan on the changed files) instead of rerunning the whole verification, saving a full test-suite run (4-6 minutes on a mid-size repo) per review fix; CI still runs everything. Each verification check records its duration.
 - A ticket is never built twice: the ticket pool skips a ticket another run is already building and starting a single ticket that is in progress elsewhere blocks with a clear message. A pool whose remaining tickets wait on a ticket another run is building keeps waiting instead of finishing with tickets left behind, and that ticket merging wakes it (`POST /workflow/running-tickets`).
 - Clearer ticket queue messages: the confirmation is headed "Confirm the <PROJECT> ticket queue"; the parallel run's start says what started and why the rest wait ("Started PROJ-7. Up to 2 tickets run at once. PROJ-8 and PROJ-23 wait on PROJ-7; 19 more wait on later tickets.") instead of "in parallel" for a single ticket; a ticket that names no design frames says "Design: none" instead of listing every frame of its program (only named frames ever reached the coding job and QA).

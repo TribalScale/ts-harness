@@ -218,11 +218,13 @@ class ProjectRepositoryTests(unittest.TestCase):
         memory = self._memory([{"full_name": "acme/web", "role": "web"}])
         pending = Readiness(repo="acme/web", ready=False, template="react-web", pr_url="https://github.com/acme/web/pull/9")
         ready = mock.Mock(return_value=pending)
-        with self.assertRaisesRegex(ValueError, "starts from the `react-web` template. Waiting on the bootstrap PR: https://github.com/acme/web/pull/9\nMerge it, then run this ticket again."):
+        with self.assertRaisesRegex(ValueError, "starts from the `react-web` template. Waiting on the bootstrap PR: https://github.com/acme/web/pull/9\nMerge it; this ticket continues on its own") as caught:
             prepare_ticket_delivery(
                 TASK, {}, memory=memory, jira_factory=lambda: _Jira(description="x"), store_factory=_Store,
                 inspect=_not_needed, configured=("", ""), ready=ready,
             )
+        # The runner resumes the step once this PR merges (block_recovery.resume_after_bootstrap).
+        self.assertEqual(caught.exception.output["bootstrap_prs"], ["https://github.com/acme/web/pull/9"])
         self.assertEqual(ready.call_args.kwargs, {"role": "web", "title": "Discussions"})
         ready.return_value = Readiness(repo="acme/web", ready=True, notes=["acme/web: made checks required"])
         out = prepare_ticket_delivery(
