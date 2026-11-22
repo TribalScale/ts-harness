@@ -86,8 +86,9 @@ FIGMA_TOKEN="$(fetch_secret "figma-token" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$FIGMA_TOKEN"; then FIGMA_TOKEN=""; fi
 # Slack incoming webhook for the ops channel (docs/runbooks/ops-alerts.md); optional. redeploy.sh
 # posts deploy results through it, and the alert job uses it when no ops channel is set.
-# Read quietly, like the Figma token: an instance role that may not read it is the same as unset.
-SLACK_OPS_WEBHOOK_URL="$(fetch_secret "slack-ops-webhook-url" true 2>/dev/null || true)"
+# Optional and read quietly: an instance role that may not read it is the same as unset. (Not
+# fetch_secret: it exits the phase when a secret exists but cannot be read.)
+SLACK_OPS_WEBHOOK_URL="$(fetch_optional_secret "slack-ops-webhook-url" 2>/dev/null)"
 if is_blank_or_placeholder "$SLACK_OPS_WEBHOOK_URL"; then SLACK_OPS_WEBHOOK_URL=""; fi
 GITHUB_APP_WEBHOOK_SECRET="$(fetch_secret "github-app-webhook-secret" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$GITHUB_APP_WEBHOOK_SECRET"; then GITHUB_APP_WEBHOOK_SECRET=""; fi

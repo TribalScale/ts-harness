@@ -299,7 +299,7 @@ class DeployNotificationContractTests(unittest.TestCase):
             self.assertIn(f"        {name} \\\n", writer)
         self.assertIn("    TS_HARNESS_ALERT_STUCK_HOURS\n", keys)
         phase10 = (REPO_ROOT / "scripts" / "phases" / "10-fetch-secrets.sh").read_text()
-        self.assertIn('fetch_secret "slack-ops-webhook-url" true 2>/dev/null || true', phase10)
+        self.assertIn('fetch_optional_secret "slack-ops-webhook-url" 2>/dev/null', phase10)
         self.assertIn('write_env_var SLACK_OPS_WEBHOOK_URL "$SLACK_OPS_WEBHOOK_URL"', phase10)
 
 
