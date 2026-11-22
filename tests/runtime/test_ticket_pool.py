@@ -145,3 +145,47 @@ class StartTextTests(unittest.TestCase):
         self.assertEqual(text, "Started PROJ-7. Up to 2 tickets run at once. PROJ-8 and PROJ-23 wait on PROJ-7; "
                                "PROJ-9 waits on PROJ-8.")
         self.assertEqual(start_text(["PROJ-7", "PROJ-30"], {}, 2), "Started PROJ-7 and PROJ-30 in parallel. Up to 2 tickets run at once.")
+
+
+class OtherRunsTests(unittest.TestCase):
+    """A ticket another run is building is never built twice, and its finish wakes the pool."""
+
+    def _memory(self, tasks, tickets=(), pools=()):
+        memory = MagicMock()
+        memory.get_workflow.return_value = {"workflow": {"id": "pool", "source_channel": "web:c:1"}, "tasks": tasks}
+        memory.running_ticket_work.return_value = {"tickets": list(tickets), "pools": list(pools)}
+        return memory
+
+    @patch("ts_harness.workflows.hooks.fork_subworkflow.fork_child", side_effect=lambda *a, **k: "child-" + k["intake_input"]["jira_issue_key"])
+    def test_fill_leaves_a_ticket_another_run_is_building(self, _fork):
+        task = {"id": "fill", "workflow_id": "pool", "tenant_id": "default", "step_name": "fill_pool",
+                "input": {"summary": "implement all P", "jira_issue_keys": ["P-3", "P-4"], "max_parallel_tickets": 2}}
+        memory = self._memory([task], tickets=[{"key": "P-3", "workflow_id": "elsewhere"}])
+        out = tp.fill(task, {}, memory=memory, jira=Jira([_issue("P-3"), _issue("P-4", repo="org/web")]))
+        self.assertEqual([c["label"] for c in out["children"]], ["P-4"])
+        self.assertEqual(out["busy_elsewhere"], ["P-3"])
+        self.assertIn("Left to the run already building it: P-3.", out["summary"])
+
+    def test_the_pool_keeps_waiting_for_tickets_blocked_by_another_run(self):
+        fill = {"id": "fill", "step_name": "fill_pool", "output": {"queue": ["P-3", "P-4", "P-5"]}}
+        join = {"id": "join", "workflow_id": "pool", "tenant_id": "default", "step_name": "join_pool"}
+        memory = self._memory([fill, join], tickets=[{"key": "P-2", "workflow_id": "elsewhere"}])
+        ctx = MagicMock(memory_client=memory)
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", blocked_by=["P-2"]), _issue("P-5", blocked_by=["P-9"])])
+        children = [{"workflow_id": "c3", "label": "P-3"}]
+        self.assertEqual(tp.waiting_on_other_runs(ctx, join, children, jira=jira), ["P-4"])
+        memory.running_ticket_work.return_value = {"tickets": [], "pools": []}
+        self.assertEqual(tp.waiting_on_other_runs(ctx, join, children, jira=jira), [])
+
+    def test_a_finished_ticket_wakes_the_pools_waiting_on_it(self):
+        memory = self._memory([], pools=[
+            {"workflow_id": "pool-a", "join_status": "blocked", "queue": ["P-2", "P-4"]},
+            {"workflow_id": "pool-b", "join_status": "blocked", "queue": ["P-7"]},
+            {"workflow_id": "pool-c", "join_status": "blocked", "queue": ["P-2"]},
+        ])
+        engine = MagicMock()
+        with patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine):
+            woken = tp.wake_pools(memory, "P-2", exclude="pool-c")
+        self.assertEqual(woken, ["pool-a"])
+        self.assertEqual(engine.resume_external.call_args.args[0], "pool-a")
+        self.assertEqual(engine.resume_external.call_args.kwargs["payload"], {"ticket_finished_elsewhere": "P-2"})

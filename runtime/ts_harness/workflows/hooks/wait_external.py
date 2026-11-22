@@ -259,6 +259,14 @@ def _resume_children(
         return {"status": "awaiting_more_children", "task_id": str(task["id"]), "pending": aggregate["pending"]}
     if pool:
         from ts_harness.jira import ticket_pool
+
+        # Tickets another run is building (or that wait on one) are not left behind: the pool
+        # waits, and that run finishing wakes it (ticket_pool.wake_pools).
+        outside = ticket_pool.waiting_on_other_runs(ctx, task, children)
+        if outside:
+            return {"status": "awaiting_more_children", "task_id": str(task["id"]), "waiting_on_other_runs": outside}
+    if pool:
+        from ts_harness.jira import ticket_pool
         from ts_harness.workflows.hooks._helpers import load_workflow_payload as _load
 
         _, pool_tasks = _load(ctx.memory_client, str(task.get("workflow_id") or ""))
