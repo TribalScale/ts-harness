@@ -46,6 +46,15 @@
       "timezone": "UTC"
     },
     {
+      "name": "check-alerts",
+      "kind": "system",
+      "handler": "check_alerts",
+      "interval_seconds": 300,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
+    },
+    {
       "name": "github-rate-limits",
       "kind": "system",
       "handler": "github_rate_limits",

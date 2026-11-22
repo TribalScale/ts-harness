@@ -141,6 +141,17 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Production alerts to the ops channel: stuck decisions, lost coding jobs, non-converging
+    # work, LLM spend, disk and service health (docs/runbooks/ops-alerts.md).
+    {
+        "name": "check-alerts",
+        "kind": "system",
+        "handler": "check_alerts",
+        "interval_seconds": 300,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
     # Records each GitHub App installation's remaining REST quota for the dashboard and alarm.
     {
         "name": "github-rate-limits",

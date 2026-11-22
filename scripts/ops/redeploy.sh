@@ -46,7 +46,18 @@ resolve_cloud_neutral_env
 export AWS_REGION="${AWS_REGION:-${CLOUD_REGION:-}}"
 
 current_branch="$(git -C "$ENTERPRISE_ASSETS_DIR" branch --show-current 2>/dev/null || true)"
+deploy_sha="$(git -C "$ENTERPRISE_ASSETS_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "=== redeploy ${current_branch:-detached} $(git -C "$ENTERPRISE_ASSETS_DIR" log --oneline -1) ==="
+# Deploy results go to the ops channel through SLACK_OPS_WEBHOOK_URL (scripts/ops/notify-ops.sh;
+# a no-op without the webhook). REDEPLOY_STEP names the step a failure stopped in.
+REDEPLOY_STEP="start"
+notify_redeploy_failure() {
+    local status=$1
+    (( status != 0 )) || return 0
+    bash "$OPS_DIR/notify-ops.sh" \
+        "redeploy FAILED (exit $status) at ${REDEPLOY_STEP} on ${current_branch:-detached} ${deploy_sha}; see the redeploy log on the host" || true
+}
+trap 'notify_redeploy_failure $?' EXIT
 if [[ -n "${ENTERPRISE_REPO_REF:-}" && "$current_branch" != "$ENTERPRISE_REPO_REF" ]]; then
     echo "WARNING: this host is configured to run '${ENTERPRISE_REPO_REF}' (runtime.enterprise_repo_ref) but '${current_branch:-detached}' is checked out." >&2
     echo "WARNING: fine for a live test; check out '${ENTERPRISE_REPO_REF}' and redeploy afterwards." >&2
@@ -54,6 +65,7 @@ fi
 # Coding workers share agent-runtime's network: pause the launcher and let running jobs finish
 # before anything is recreated. Phase 12 keeps the launcher stopped (HOLD_CODING_LAUNCHER) and
 # the final `up -d` below starts it again.
+REDEPLOY_STEP="drain coding workers"
 drain_coding_workers redeploy
 export HOLD_CODING_LAUNCHER=1
 # A failed step must not leave the launcher stopped: queued coding jobs would never start.
@@ -65,11 +77,13 @@ resume_coding_launcher_on_failure() {
         [[ -n "$launcher" ]] && docker start "$launcher" >/dev/null 2>&1 \
             && echo "redeploy failed (exit $status); the coding launcher was started again" >&2
     fi
+    notify_redeploy_failure "$status"
     return "$status"
 }
 trap resume_coding_launcher_on_failure EXIT
 for phase in 10-fetch-secrets 10a-hydrate-runtime-config 10b-render-workspace 11-agent-runtime-setup 11a-agents-init 12-compose-up 12b-github-webhook; do
     echo "--- phase $phase"
+    REDEPLOY_STEP="phase $phase"
     bash "$PHASES_DIR/$phase.sh"
     load_instance_env
 done
@@ -84,17 +98,20 @@ TS_HARNESS_SESSION_DB_URL="$(session_db_url)"
 export TS_HARNESS_SESSION_DB_URL
 
 echo "--- migrations"
+REDEPLOY_STEP="migrations"
 bash "$OPS_DIR/migrate-db.sh"
 
 reconstruct_compose_files
 cd "$ENTERPRISE_ASSETS_DIR"
 echo "--- build"
+REDEPLOY_STEP="image build"
 # The coding worker image is built FROM ts-harness-agent-runtime:latest, and compose builds
 # services in parallel (depends_on does not order builds). Build agent-runtime first so the
 # worker never bakes in the previous runtime code.
 run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
 echo "--- up"
+REDEPLOY_STEP="container start"
 # Everything but the coding launcher (HOLD_CODING_LAUNCHER=1 is still exported): phase 15 below
 # may recreate agent-runtime again, and a worker launched in between would lose its network.
 start_stack_launcher_last redeploy
@@ -103,9 +120,11 @@ wait_for_agent_runtime_health redeploy
 # The system cron jobs (defined in phase 15) reach the live list only through phase 15; it skips
 # itself unless the phase script (so its job list), secrets or compose env changed.
 echo "--- phase 15-automation-cron"
+REDEPLOY_STEP="phase 15-automation-cron"
 bash "$PHASES_DIR/15-automation-cron.sh"
 
 echo "--- start the coding launcher"
+REDEPLOY_STEP="coding launcher start"
 # Last, once agent-runtime will not be recreated again (start_stack_launcher_last).
 wait_for_agent_runtime_health redeploy
 HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d
@@ -116,8 +135,10 @@ run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 # "no space left on device". Drop untagged images and keep the build cache under
 # BUILD_CACHE_MAX (default 6 GB): enough for the next build to reuse its base layers.
 echo "--- prune"
+REDEPLOY_STEP="prune"
 docker image prune -f >/dev/null || true
 docker builder prune -f --max-used-space "${BUILD_CACHE_MAX:-6gb}" >/dev/null 2>&1 \
     || docker builder prune -f --filter "until=72h" >/dev/null || true
 df -h / | tail -1
 echo "=== redeploy done $(date -u +%FT%TZ) ==="
+bash "$OPS_DIR/notify-ops.sh" "redeploy done ${deploy_sha} (${current_branch:-detached})" || true
