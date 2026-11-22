@@ -287,6 +287,62 @@ def list_repositories_admin(memory: Any, auth: AuthContext, config: Any, project
     return {"repositories": list(memory.list_project_repositories(project["id"]).get("repositories") or [])}
 
 
+def _default_installation(host: str, owner: str, repo: str) -> Any:
+    from ts_harness.integrations.github_app import app_for
+
+    app = app_for(host)
+    return "no_app" if app is None else app.installation_id(owner, repo)
+
+
+def _default_jira() -> Any:
+    from ts_harness.integrations.jira_client import JiraClient
+
+    return JiraClient.from_env()
+
+
+def _default_github(repo_url: str) -> Any:
+    from ts_harness.integrations.github_client import github_for
+
+    return github_for(repo_url)
+
+
+def project_checklist_admin(
+    memory: Any,
+    auth: AuthContext,
+    config: Any,
+    project_id: str,
+    *,
+    jira: Callable[[], Any] | None = None,
+    github: Callable[[str], Any] | None = None,
+    installation: Callable[[str, str, str], Any] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """The project's setup checklist, each item checked live (read access, like the project itself)."""
+    from ts_harness.workflows import project_checklist as checklist
+
+    project = _project(memory, auth, project_id)
+    try:
+        repositories = list(memory.list_project_repositories(project["id"]).get("repositories") or [])
+    except Exception as exc:  # noqa: BLE001 - the repository items say they could not check
+        log_event("project_checklist_repositories_failed", project_id=project["id"], error=str(exc)[:200])
+        repositories = []
+    identity = getattr(config, "identity", None)
+    ctx = checklist.ChecklistContext(
+        project=project,
+        repositories=repositories,
+        program_defaults=dict(getattr(config, "program_defaults", None) or {}),
+        github_logins=dict(getattr(identity, "github_logins", None) or {}),
+        jira_account_ids=dict(getattr(identity, "jira_account_ids", None) or {}),
+        tenant_id=_tenant(auth),
+        requester=str(getattr(auth, "email", "") or getattr(auth, "actor_id", "") or ""),
+        jira=jira or _default_jira,
+        github=github or _default_github,
+        installation=installation or _default_installation,
+        memory=memory,
+    )
+    return checklist.run_checklist(ctx, timeout=timeout or checklist.DEFAULT_TIMEOUT_SECONDS)
+
+
 def _installation_for(memory: Any, host: str, full_name: str) -> int | None:
     """The App installation that covers ``full_name``; ``ValueError`` when installations exist but none does."""
     try:

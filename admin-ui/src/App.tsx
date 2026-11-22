@@ -8,7 +8,7 @@ import { setUnauthorizedHandler } from "./api/client";
 import { ChatPage } from "./chat/ChatPage";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { InboxPage } from "./inbox/InboxPage";
-import { LivePage } from "./live/LivePage";
+import { LivePage, type LiveTab } from "./live/LivePage";
 import { AppShell, type NavKey } from "./layout/AppShell";
 import { ProgramDefinitionStudio } from "./program-definitions/ProgramDefinitionStudio";
 import type { ProgramRoute, StudioTab } from "./program-definitions/types";
@@ -18,7 +18,7 @@ import type { FragmentRoute, WorkflowRoute } from "./workflows/types";
 
 interface RouteState {
   nav: NavKey | "login";
-  liveTab?: "now" | "history";
+  liveTab?: LiveTab;
   inboxType?: InboxType;
   inboxId?: string;
   sessionId?: string;
@@ -84,7 +84,7 @@ export function parseHash(hash = window.location.hash): RouteState {
     return { nav: "chat", sessionId: parts[1], prefill };
   }
   if (parts[0] === "live") {
-    return { nav: "live", liveTab: parts[1] === "history" ? "history" : "now" };
+    return { nav: "live", liveTab: parts[1] === "history" || parts[1] === "metrics" ? parts[1] : "now" };
   }
   if (parts[0] === "programs") {
     return { nav: "programs", programId: parts[1] };
@@ -483,7 +483,7 @@ export default function App() {
       {route.nav === "live" && (
         <LivePage
           tab={route.liveTab || "now"}
-          onTab={(tab) => setHash(tab === "history" ? "#/live/history" : "#/live")}
+          onTab={(tab) => setHash(tab === "now" ? "#/live" : `#/live/${tab}`)}
         />
       )}
       {route.nav === "programs" && (
