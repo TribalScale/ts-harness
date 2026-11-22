@@ -1380,7 +1380,8 @@ async def admin_metrics(request: Request) -> Response:
     from ts_harness.workflows import delivery_metrics
 
     try:
-        days = int(params.get("days") or 14)
+        # Every ticket in the period is re-read on each request, so the period is capped.
+        days = max(1, min(90, int(params.get("days") or 14)))
     except ValueError:
         days = 14
     try:
