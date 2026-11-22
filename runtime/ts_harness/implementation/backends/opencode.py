@@ -677,6 +677,7 @@ class OpenCodeBackend:
         skills_materialized: bool,
         check_changeset: bool = True,
         test_env: TestEnvironment | None = None,
+        quick: bool = False,
     ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
@@ -706,6 +707,7 @@ class OpenCodeBackend:
                 security=self.security,
                 base_ref=base_ref,
                 test_env=test_env,
+                quick=quick,
             )
             verify_logs.append(
                 "\n".join(part for part in [deps_log, verify.summary, verify.log_tail] if part)
@@ -1036,9 +1038,11 @@ class OpenCodeBackend:
             fixed = self._run_opencode(fix_cmd, cwd=str(repo_dir), env=env, log_path=log_path, work_order_id=request.work_order_id)
             failure = None
             if fixed.returncode == 0:
+                # The full verification passed before the review; a review fix gets the quick re-check.
+                progress.detail("re-checking the fix")
                 failure, log, _passes, new_changed, new_security, new_verification = self._verify_with_fixes(
                     repo_dir, request, binary=binary, provider=provider, env=env, branch=branch, log=log,
-                    log_path=log_path, skills_materialized=skills_materialized, test_env=test_env,
+                    log_path=log_path, skills_materialized=skills_materialized, test_env=test_env, quick=True,
                 )
             if fixed.returncode != 0 or failure is not None:
                 self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
@@ -1048,7 +1052,8 @@ class OpenCodeBackend:
                 break
             commit_all_changes(repo_dir, message=commit_message(request), runner=self.runner)
             changed = new_changed or list_changed_files(repo_dir, runner=self.runner)
-            security, verification = new_security, new_verification
+            # Keep the full run's evidence for the gates, with the quick re-check of the fix beside it.
+            security, verification = new_security, {**(verification or {}), "recheck": new_verification}
             rounds.append({"status": "fixed", **review})
         return rounds, log, changed, security, verification
 

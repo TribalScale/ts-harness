@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,7 +93,11 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 def _check_record(label: str, command: list[str], result: subprocess.CompletedProcess) -> dict[str, Any]:
     output = _ANSI.sub("", "\n".join(part for part in (result.stdout, result.stderr) if part)).strip()
-    return {"check": label, "command": " ".join(command), "exit_code": result.returncode, "output_tail": output[-_EVIDENCE_TAIL:]}
+    record = {"check": label, "command": " ".join(command), "exit_code": result.returncode, "output_tail": output[-_EVIDENCE_TAIL:]}
+    seconds = getattr(result, "seconds", None)
+    if isinstance(seconds, (int, float)):
+        record["seconds"] = round(float(seconds), 1)
+    return record
 
 
 def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
@@ -291,7 +296,7 @@ def count_test_files(repo_dir: Path, limit: int) -> int:
     return count
 
 
-def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> list[str] | None:
+def related_tests_command(repo_dir: Path, changed_files: list[str] | None, *, force: bool = False) -> list[str] | None:
     """For a large Vitest/Jest repo, only the tests that import the changed files.
 
     The full suite of a repo with hundreds of test files takes most of a coding job on two
@@ -302,7 +307,9 @@ def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> li
     sources = [p for p in (changed_files or []) if p.endswith((".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs")) and (Path(repo_dir) / p).is_file()]
     raw = os.environ.get("TS_HARNESS_RELATED_TESTS_THRESHOLD", "")
     threshold = int(raw) if raw.isdigit() else RELATED_TESTS_THRESHOLD
-    if not sources or threshold <= 0 or count_test_files(Path(repo_dir), threshold) <= threshold:
+    if not sources:
+        return None
+    if not force and (threshold <= 0 or count_test_files(Path(repo_dir), threshold) <= threshold):
         return None
     package = _package(repo_dir)
     script = str((package.get("scripts") or {}).get("test") or "")
@@ -317,6 +324,15 @@ def related_tests_command(repo_dir: Path, changed_files: list[str] | None) -> li
         args = [a for a in _script_args(script, "jest") if not a.startswith("--coverage")]
         return [str(bin_dir / "jest"), *args, "--coverage=false", "--findRelatedTests", *sources, "--passWithNoTests"]
     return None
+
+
+def _touches_bdd(changed_files: list[str] | None) -> bool:
+    """A feature file or a step definition changed, so a quick re-check still runs BDD."""
+    for path in changed_files or []:
+        lowered = path.lower()
+        if lowered.endswith(".feature") or "/steps/" in lowered or "step_definitions" in lowered or lowered.startswith("features/"):
+            return True
+    return False
 
 
 def screenshots_dir(test_env: TestEnvironment) -> Path:
@@ -357,7 +373,15 @@ def verify_implementation(
     which=None,
     test_env: TestEnvironment | None = None,
     integration_runner=run_integration,
+    quick: bool = False,
 ) -> VerifyResult:
+    """Run the repository's checks on the change.
+
+    ``quick`` is the re-check after a small follow-up fix (the pre-push review's): the full
+    verification already passed, so it runs the tests related to the changed files, the static
+    checks and the security scan, and leaves BDD (unless a feature changed), the integration
+    suite and coverage to the full run and CI.
+    """
     reasons: list[str] = []
     warnings: list[str] = []
     logs: list[str] = []
@@ -410,10 +434,13 @@ def verify_implementation(
     unit_ran = False
     if behavioral:
         unit_command = detect_unit_test_command(repo_dir, python=python)
-        related = related_tests_command(repo_dir, changed_files) if unit_command is not None else None
+        related = related_tests_command(repo_dir, changed_files, force=quick) if unit_command is not None else None
         if related is not None:
             unit_command = related
-            warnings.append("large repo: host ran the tests related to the changed files; CI runs the full suite")
+            warnings.append(
+                "quick re-check: host ran the tests related to the changed files; CI runs the full suite" if quick
+                else "large repo: host ran the tests related to the changed files; CI runs the full suite"
+            )
         if unit_command is None:
             reasons.append("no_test_runner")
             skipped_unit = True
@@ -430,6 +457,9 @@ def verify_implementation(
     else:
         skipped_unit = True
 
+    if bdd_required and quick and not _touches_bdd(changed_files):
+        bdd_required = False
+        warnings.append("quick re-check: BDD not re-run (no feature or step file changed)")
     if bdd_required:
         has_features = repo_has_feature_files(repo_dir)
         if not has_features:
@@ -481,7 +511,7 @@ def verify_implementation(
     if test_env is not None and test_env.state_dir is not None:
         shutil.rmtree(screenshots_dir(test_env), ignore_errors=True)
     plan = None
-    if test_env is not None and changed_files is not None:
+    if test_env is not None and changed_files is not None and not quick:
         plan = integration_plan(repo_dir, services_running=test_env.services_running, changed_files=changed_files)
     if plan is not None:
         command = ["sh", "-c", plan.command]
@@ -507,7 +537,7 @@ def verify_implementation(
                     warnings.append(f"integration suite ({plan.source}) failed; advisory until declared in .ts-harness.yml")
 
     coverage: dict[str, Any] = {}
-    if not reasons and changed_files is not None and coverage_wanted(work_order_body):
+    if not reasons and changed_files is not None and not quick and coverage_wanted(work_order_body):
         out_dir = (test_env.state_dir if test_env is not None and test_env.state_dir else Path(repo_dir).parent) / "coverage"
         coverage = measure_coverage(repo_dir, changed_files, out_dir=out_dir, runner=runner, env=env, python=python)
 
@@ -716,10 +746,16 @@ def _run_command(
 ) -> subprocess.CompletedProcess:
     kwargs = {"env": env} if env is not None else {}
     timeout = _command_timeout(env)
+    started = time.monotonic()
     try:
-        return runner(
+        result = runner(
             command, cwd=repo_dir, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout, **kwargs
         )
+        try:
+            result.seconds = time.monotonic() - started  # how long each check takes, in the evidence
+        except AttributeError:
+            pass
+        return result
     except subprocess.TimeoutExpired as exc:
         output = "\n".join(str(part) for part in (exc.stdout, exc.stderr) if part)
         return subprocess.CompletedProcess(
