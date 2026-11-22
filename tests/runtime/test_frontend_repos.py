@@ -294,6 +294,37 @@ class RelatedTestsTests(unittest.TestCase):
             self.assertIsNone(related_tests_command(self._repo(Path(tmp), 10), ["src/stats.tsx"]))
 
 
+class QuickRecheckTests(unittest.TestCase):
+    def test_a_small_repo_gets_related_tests_when_forced(self):
+        from ts_harness.implementation.verification import related_tests_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = RelatedTestsTests._repo(self, Path(tmp), 10)
+            self.assertIsNone(related_tests_command(repo, ["src/stats.tsx"]))
+            self.assertEqual(related_tests_command(repo, ["src/stats.tsx"], force=True)[1:3], ["related", "--run"])
+
+    def test_quick_runs_related_tests_and_records_how_long_each_check_took(self):
+        from ts_harness.implementation.verification import _touches_bdd, verify_implementation
+
+        seen: list[list[str]] = []
+
+        def runner(command, **kwargs):
+            seen.append(list(command))
+            return _ok(command, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = RelatedTestsTests._repo(self, Path(tmp), 5)
+            result = verify_implementation(repo, work_order_body="feat: given a user when x then y", work_order_id="WO-1",
+                                           changed_files=["src/stats.tsx"], runner=runner, quick=True)
+        unit = next(check for check in result.checks if check["check"] == "unit")
+        self.assertIn("related", unit["command"])
+        self.assertIn("seconds", unit)
+        self.assertTrue(any("quick re-check" in w for w in result.warnings))
+        self.assertTrue(_touches_bdd(["features/x.feature"]))
+        self.assertTrue(_touches_bdd(["test/steps/orders.steps.ts"]))
+        self.assertFalse(_touches_bdd(["src/stats.tsx"]))
+
+
 class VerificationOutOfMemoryTests(unittest.TestCase):
     def test_a_kill_during_verification_is_out_of_memory(self):
         from unittest.mock import patch

@@ -31,6 +31,7 @@ class Harness:
         self.git: list[list[str]] = []
         self.models: list[str] = []
         self.commits = 0
+        self.verify_calls: list[dict] = []
 
     def run_opencode(self, cmd, *, cwd, env, log_path, work_order_id):
         prompt, model = cmd[1], cmd[2]
@@ -48,6 +49,7 @@ class Harness:
         return _done()
 
     def verify(self, *args, **kwargs):
+        self.verify_calls.append(kwargs)
         ok = self.verify_ok.pop(0) if self.verify_ok else True
         failure = None if ok else object()
         return failure, "log", 0, ["src/a.ts"], {"scan": "new"}, {"checks": "new"}
@@ -100,7 +102,9 @@ class PrePushReviewTests(unittest.TestCase):
         self.assertEqual([r["status"] for r in rounds], ["fixed", "pass"])
         # reviewer, fixer (the run's own model), reviewer
         self.assertEqual(harness.models, ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5-5"])
-        self.assertEqual((security, verification, harness.commits), ({"scan": "new"}, {"checks": "new"}, 1))
+        # The full run's evidence stays, with the quick re-check of the fix beside it.
+        self.assertEqual((security, verification, harness.commits), ({"scan": "new"}, {"checks": "old", "recheck": {"checks": "new"}}, 1))
+        self.assertTrue(all(call.get("quick") for call in harness.verify_calls))
         self.assertEqual(ppr.summary_record(rounds, model="m")["fixed"], 1)
 
     def test_findings_left_after_the_last_round_are_reported_and_pushed(self):
