@@ -438,6 +438,15 @@ class MemoryClient:
         """``{"tickets": [{key, workflow_id, ...}], "pools": [{workflow_id, join_task_id, queue}]}``."""
         return self._request("POST", "/workflow/running-tickets", {"tenant_id": tenant_id}) or {}
 
+    def list_repeated_step_runs(
+        self, *, tenant_id: str = "default", steps: list[str] | None = None, min_runs: int = 5
+    ) -> list[dict[str, Any]]:
+        """Running workflows whose coding step ran ``min_runs`` or more times (not converging)."""
+        body: dict[str, Any] = {"tenant_id": tenant_id, "min_runs": int(min_runs)}
+        if steps:
+            body["steps"] = list(steps)
+        return list((self._request("POST", "/workflow/repeated-step-runs", body) or {}).get("workflows") or [])
+
     def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
         result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
         return list(result.get("tasks") or [])
@@ -1459,6 +1468,31 @@ class MemoryClient:
 
     def sweep_channel_dedup(self, *, retention_days: int = 7) -> dict[str, Any]:
         return self._request("POST", "/channel-dedup/sweep", {"retention_days": retention_days})
+
+    def apply_data_retention(self, **settings: int) -> dict[str, Any]:
+        """One batch of trims and deletes per category (see ``ts_harness.data_retention``)."""
+        return self._request("POST", "/data-retention/apply", settings)
+
+    def expired_uploads(self, *, days: int, batch: int = 50) -> dict[str, Any]:
+        return self._request("POST", "/data-retention/uploads/expired", {"days": days, "batch": batch})
+
+    def mark_uploads_purged(self, programs: list[str]) -> dict[str, Any]:
+        return self._request("POST", "/data-retention/uploads/purged", {"programs": programs})
+
+    def purge_program_data(
+        self,
+        program_id: str,
+        *,
+        dry_run: bool = True,
+        include_decisions: bool = False,
+        session_ids: list[str] | None = None,
+        actor: str = "ops",
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/data-retention/programs/{program_id}/purge",
+            {"dry_run": dry_run, "include_decisions": include_decisions, "session_ids": session_ids or [], "actor": actor},
+        )
 
     def directory_disable(
         self, *, tenant_id: str, subjects: list[str] | None = None, emails: list[str] | None = None

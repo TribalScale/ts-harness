@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
@@ -867,6 +868,45 @@ def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
             (tenant_id,),
         )
         return {"tasks": list(cur.fetchall())}
+
+
+def list_repeated_step_runs(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Running workflows whose coding step has run at least ``min_runs`` times (the ops alert).
+
+    Every revision of a work order re-runs its coding step as a new task, so the count of
+    non-cancelled runs of ``steps`` is the number of attempts so far, the first included."""
+    tenant_id = str(body.get("tenant_id") or "default")
+    steps = [str(step) for step in (body.get("steps") or ["deliver_work_order", "implement"]) if str(step).strip()]
+    try:
+        min_runs = max(1, int(body.get("min_runs") or 5))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("min_runs must be a whole number") from exc
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT w.id AS workflow_id, w.workflow_type, count(*) AS runs,
+                   max(t.input ->> 'work_order_id') AS work_order_id,
+                   max(t.input ->> 'jira_issue_key') AS jira_issue_key,
+                   max(t.created_at) AS last_run_at
+            FROM workflows w
+            JOIN workflow_tasks t ON t.workflow_id = w.id
+            WHERE w.tenant_id = %s
+              AND w.status = 'running'
+              AND t.step_name = ANY(%s)
+              AND t.status <> 'cancelled'
+            GROUP BY w.id, w.workflow_type
+            HAVING count(*) >= %s
+            ORDER BY count(*) DESC
+            LIMIT 50
+            """,
+            (tenant_id, steps, min_runs),
+        )
+        rows = cur.fetchall()
+    return {
+        "workflows": [
+            {**row, "workflow_id": str(row["workflow_id"]), "runs": int(row["runs"])} for row in rows
+        ]
+    }
 
 
 def record_runtime_task(conn, body: dict[str, Any]) -> dict[str, str]:
@@ -4949,7 +4989,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
-    _SHARED_STATE_PREFIXES = ("shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup")
+    _SHARED_STATE_PREFIXES = (
+        "shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup", "data-retention",
+    )
 
     @classmethod
     def _is_shared_state_path(cls, path: str) -> bool:
@@ -4992,6 +5034,14 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     result = shared_state_routes.mark_channel_event(conn, body)
                 elif head == "channel-dedup" and rest == ["sweep"] and method == "POST":
                     result = shared_state_routes.sweep_channel_dedup(conn, body)
+                elif head == "data-retention" and rest == ["apply"] and method == "POST":
+                    result = data_retention_routes.apply_retention(conn, body)
+                elif head == "data-retention" and rest == ["uploads", "expired"] and method == "POST":
+                    result = data_retention_routes.expired_uploads(conn, body)
+                elif head == "data-retention" and rest == ["uploads", "purged"] and method == "POST":
+                    result = data_retention_routes.mark_uploads_purged(conn, body)
+                elif head == "data-retention" and len(rest) == 3 and rest[0] == "programs" and rest[2] == "purge" and method == "POST":
+                    result = data_retention_routes.purge_program(conn, rest[1], body)
                 elif head == "skill-index" and not rest and method == "GET":
                     result = skill_index_routes.list_skill_index(conn, query)
                 elif head == "skill-index" and rest == ["drafts"] and method in {"POST", "PUT"}:
@@ -5588,6 +5638,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, list_stuck_tasks(conn, body))
                 elif self.path == "/workflow/running-tickets":
                     self._send_json(200, running_ticket_work(conn, body))
+                elif self.path == "/workflow/repeated-step-runs":
+                    self._send_json(200, list_repeated_step_runs(conn, body))
                 elif self.path == "/workflow/runtime":
                     self._send_json(200, record_runtime_task(conn, body))
                 elif self.path == "/workflow/stale":

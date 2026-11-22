@@ -13,12 +13,15 @@ before they expire.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "github.com"
 TOKEN_REFRESH_MARGIN = 300
@@ -109,30 +112,46 @@ class GitHubApp:
         self._installations[key] = (installation, now + INSTALLATION_TTL)
         return installation
 
-    def repo_token(self, owner: str, repo: str) -> str:
-        key = (owner.lower(), repo.lower())
+    def repo_token(self, owner: str, repo: str, *, permissions: dict[str, str] | None = None) -> str:
+        """An installation token for one repository; ``permissions`` narrows it below the app's."""
+        key = self._token_key(owner, repo, permissions)
         with self._lock:
             cached = self._tokens.get(key)
             if cached and cached[1] - TOKEN_REFRESH_MARGIN > self.clock():
                 return cached[0]
-            token, expires = self._mint(owner, repo)
+            token, expires = self._mint(owner, repo, permissions=permissions)
             self._tokens[key] = (token, expires)
             return token
 
-    def repo_token_with_expiry(self, owner: str, repo: str) -> tuple[str, float]:
-        token = self.repo_token(owner, repo)
-        return token, self._tokens[(owner.lower(), repo.lower())][1]
+    @staticmethod
+    def _token_key(owner: str, repo: str, permissions: dict[str, str] | None) -> tuple[str, ...]:
+        scope = ",".join(f"{k}={v}" for k, v in sorted((permissions or {}).items()))
+        return (owner.lower(), repo.lower(), scope) if scope else (owner.lower(), repo.lower())
 
-    def _mint(self, owner: str, repo: str) -> tuple[str, float]:
+    def repo_token_with_expiry(
+        self, owner: str, repo: str, *, permissions: dict[str, str] | None = None
+    ) -> tuple[str, float]:
+        token = self.repo_token(owner, repo, permissions=permissions)
+        return token, self._tokens[self._token_key(owner, repo, permissions)][1]
+
+    def _mint(self, owner: str, repo: str, *, permissions: dict[str, str] | None = None) -> tuple[str, float]:
         installation = self.installation_id(owner, repo)
         if installation is None:
             raise NotInstalled(404, f"the GitHub App is not installed for {owner}/{repo} on {self.host}")
+        body: dict[str, Any] = {"repositories": [repo]}
+        if permissions:
+            body["permissions"] = dict(permissions)
         status, payload = self._call(
             "POST",
             f"/app/installations/{installation}/access_tokens",
             bearer=self.jwt(),
-            body={"repositories": [repo]},
+            body=body,
         )
+        if status == 422 and permissions:
+            # The app was not granted one of the narrowed permissions: fall back to its own set
+            # rather than failing the job, and say so.
+            logger.warning("GitHub App lacks part of %s for %s/%s; using the app's permissions", permissions, owner, repo)
+            return self._mint(owner, repo)
         if status == 422 or status == 404:
             self._installations.pop((owner.lower(), repo.lower()), None)
             raise NotInstalled(status, f"the GitHub App installation does not include {owner}/{repo}")
