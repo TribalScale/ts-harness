@@ -8,6 +8,7 @@ import { setUnauthorizedHandler } from "./api/client";
 import { ChatPage } from "./chat/ChatPage";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { InboxPage } from "./inbox/InboxPage";
+import { LivePage } from "./live/LivePage";
 import { AppShell, type NavKey } from "./layout/AppShell";
 import { ProgramDefinitionStudio } from "./program-definitions/ProgramDefinitionStudio";
 import type { ProgramRoute, StudioTab } from "./program-definitions/types";
@@ -80,6 +81,9 @@ export function parseHash(hash = window.location.hash): RouteState {
   if (parts[0] === "chat") {
     const prefill = query.get("prefill") || undefined;
     return { nav: "chat", sessionId: parts[1], prefill };
+  }
+  if (parts[0] === "live") {
+    return { nav: "live" };
   }
   if (parts[0] === "programs") {
     return { nav: "programs", programId: parts[1] };
@@ -475,6 +479,7 @@ export default function App() {
           }}
         />
       )}
+      {route.nav === "live" && <LivePage />}
       {route.nav === "programs" && (
         <ProgramsPage
           programId={route.programId}

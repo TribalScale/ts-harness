@@ -1266,6 +1266,58 @@ async def admin_programs_phase_activity(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
+async def admin_live(request: Request) -> Response:
+    """Every running ticket or work order across the programs the caller can read."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+
+    def allowed(program_id: str) -> bool:
+        try:
+            _require_program_level(program_id, auth, "read", route="live", memory=memory)
+            return True
+        except Exception:  # noqa: BLE001 - not readable: left out
+            return False
+
+    from ts_harness.workflows import live_view
+
+    try:
+        return _json(live_view.live(memory, tenant_id=str(auth.tenant_id or "default"), allowed=allowed))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_live_error", error=str(exc))
+        return _json({"error": str(exc)}, 500)
+
+
+async def admin_programs_board(request: Request) -> Response:
+    """One program's ticket queue as a board, with each ticket's timeline and time totals."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    program_id = request.path_params["id"]
+    memory = get_memory_client()
+    try:
+        _program_for_tenant(memory, program_id, auth)
+        _require_program_level(program_id, auth, "read", route="board", memory=memory)
+    except ProgramAccessDenied as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception as exc:
+        return _json({"error": str(exc)}, 404)
+    from ts_harness.workflows import live_view
+
+    try:
+        return _json(live_view.program_board(memory, program_id))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_program_board_error", program_id=program_id, error=str(exc))
+        return _json({"error": str(exc)}, 500)
+
+
 async def admin_programs_advance(request: Request) -> Response:
     try:
         _check_origin(request)
@@ -4218,6 +4270,8 @@ routes = [
     Route("/admin/programs/{id}/status", endpoint=admin_programs_status, methods=["GET"]),
     Route("/admin/programs/{id}/evidence", endpoint=admin_programs_evidence, methods=["GET"]),
     Route("/admin/programs/{id}/phases/{phase}/activity", endpoint=admin_programs_phase_activity, methods=["GET"]),
+    Route("/admin/programs/{id}/board", endpoint=admin_programs_board, methods=["GET"]),
+    Route("/admin/live", endpoint=admin_live, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",
