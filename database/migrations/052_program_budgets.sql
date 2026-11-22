@@ -1,4 +1,4 @@
--- 051_program_budgets.sql
+-- 052_program_budgets.sql
 -- LLM budgets per delivery program. The runtime copies budgets.program_default_usd
 -- and budgets.program_action into budget_settings; an admin or manager can set a
 -- program's own amount (delivery_programs.budget_usd). Spend is the program's
