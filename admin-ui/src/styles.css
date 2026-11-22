@@ -2576,6 +2576,82 @@ th {
   font-size: 13px;
 }
 
+.proj-checklist {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.proj-check {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.proj-check:last-child {
+  border-bottom: 0;
+}
+
+.proj-check-status {
+  align-self: start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.proj-check-status-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.proj-check-status-warning {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.proj-check-status-failing {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.proj-check-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.proj-check-summary,
+.proj-check-fix {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.proj-check-details {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.proj-check-fix a {
+  color: var(--accent);
+}
+
+.proj-check-total {
+  color: var(--text);
+}
+
 .proj-card .registry-form {
   display: grid;
   gap: 12px;
