@@ -1,0 +1,70 @@
+# Egress allowlist for local coding workers. Included by phase 12 when
+# CODING_EGRESS_ALLOWLIST=on and coding jobs run on this host (local launcher).
+#
+# Workers join the internal coding-egress network (no route out). On it they
+# reach only egress-proxy (squid, allowlisted domains) and agent-runtime, whose
+# network namespace also holds memory-api and the LLM proxy. coding-launcher
+# writes the allowlist into the egress-allowlist volume and sends squid a SIGHUP
+# when it changes. See docs/runbooks/implement-work-orders-opencode.md.
+networks:
+  coding-egress:
+    name: ${CODING_EGRESS_NETWORK:-ts-harness-coding-egress}
+    internal: true
+
+volumes:
+  ts-harness-egress-allowlist:
+
+services:
+  egress-proxy:
+    image: ${CODING_EGRESS_PROXY_IMAGE:-public.ecr.aws/ubuntu/squid:6.6-24.04_edge}
+    labels:
+      ts-harness.egress-proxy: "true"
+    networks:
+      default: {}
+      coding-egress: {}
+    entrypoint: ["/bin/sh", "-c"]
+    # Waits for coding-launcher's first allowlist, then runs squid in the foreground as PID 1
+    # so a SIGHUP from the launcher reloads the allowlist.
+    command:
+      - |
+        n=0
+        until [ -s /etc/squid/allowlist/domains.txt ]; do
+          [ $$((n % 30)) -eq 0 ] && echo "egress-proxy: waiting for coding-launcher to write the allowlist"
+          n=$$((n + 1)); sleep 1
+        done
+        exec squid -N -f /etc/squid/egress.conf
+    volumes:
+      - ${ENTERPRISE_ASSETS_DIR:?set ENTERPRISE_ASSETS_DIR}/docker/egress-proxy/squid.conf:/etc/squid/egress.conf:ro
+      - ts-harness-egress-allowlist:/etc/squid/allowlist:ro
+    restart: unless-stopped
+    healthcheck:
+      # pid_filename is off (foreground squid), so probe the port instead of `squid -k check`.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # Joins the worker network so workers reach the runtime (18789), memory-api (18792)
+  # and the LLM proxy (18795) at agent-runtime:<port>. Other containers keep the default network.
+  agent-runtime:
+    networks:
+      default: {}
+      coding-egress: {}
+
+  # Listens beyond loopback so workers on coding-egress reach it; requests still need a
+  # token (MEMORY_API_TOKEN, or a job token on that job's endpoints).
+  memory-api:
+    environment:
+      MEMORY_API_BIND: 0.0.0.0
+
+  coding-launcher:
+    environment:
+      CODING_EGRESS_ALLOWLIST: "on"
+      CODING_EGRESS_NETWORK: ${CODING_EGRESS_NETWORK:-ts-harness-coding-egress}
+      CODING_EGRESS_ALLOW: ${CODING_EGRESS_ALLOW:-}
+      CODING_EGRESS_ALLOWLIST_PATH: /egress/domains.txt
+    volumes:
+      - ts-harness-egress-allowlist:/egress
+    depends_on:
+      - egress-proxy
