@@ -32,6 +32,10 @@ There is one confirmation: the yes that starts the program (or the pick reply). 
   else `implementation.repos.implement_jira_ticket`. With several repositories on the project,
   the ticket names the one it changes (`acme/api`). A ticket with none of these blocks with
   what to add.
+  The project's **Setup checklist** (System → Projects → the project) checks this setup live:
+  the Jira key and allowlist, Jira access, the repositories and their App access and base
+  branch, branch protection, CI on pull requests, GitHub login mappings and the project's
+  settings, each with how to fix it (see [admin-console.md](admin-console.md)).
 - **Design references**: those of the program the ticket was filed from (`Program:` line), and
   the ticket's image attachments (see [Design references](design-references.md)).
 - **Repository onboarding**: the same check as planned work orders. When the repository's CI runs

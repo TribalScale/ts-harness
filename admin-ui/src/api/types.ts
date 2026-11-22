@@ -509,6 +509,25 @@ export interface ProjectRepository {
   role: string | null;
 }
 
+export interface ProjectChecklistItem {
+  id: string;
+  title: string;
+  status: "ok" | "warning" | "failing";
+  summary: string;
+  details: string[];
+  fix: string;
+  /** A console route (#/...) where the item is fixed, when there is one. */
+  fix_link: string;
+}
+
+export interface ProjectChecklist {
+  project_id: string;
+  items: ProjectChecklistItem[];
+  ready: number;
+  total: number;
+  summary: string;
+}
+
 export type BudgetStatus = "ok" | "warning" | "reached";
 
 export interface TeamBudgetOverride {
