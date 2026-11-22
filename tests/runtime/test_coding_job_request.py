@@ -292,6 +292,20 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class PrCiTests(unittest.TestCase):
+    def test_pr_ci_is_read_once_and_cached(self):
+        coding_job._PR_CI_CACHE.clear()
+        with patch("ts_harness.workflows.repo_bootstrap._has_pr_ci", return_value=True) as has, \
+                patch("ts_harness.integrations.github_client.github_for", return_value=MagicMock()):
+            self.assertTrue(coding_job.repo_has_pr_ci("https://github.com/acme/api.git", "dev"))
+            self.assertTrue(coding_job.repo_has_pr_ci("https://github.com/acme/api", "dev"))
+        self.assertEqual(has.call_count, 1)
+        coding_job._PR_CI_CACHE.clear()
+        with patch("ts_harness.integrations.github_client.github_for", side_effect=RuntimeError("no token")):
+            self.assertIsNone(coding_job.repo_has_pr_ci("https://github.com/acme/web", "dev"))
+        coding_job._PR_CI_CACHE.clear()
+
+
 class TicketComplexityTests(unittest.TestCase):
     def test_a_ticket_that_lost_the_complexity_line_gets_it_from_its_work_order(self):
         from ts_harness.jira.ticket_delivery import _with_work_order_complexity

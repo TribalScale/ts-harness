@@ -113,6 +113,36 @@ def complex_work_order_model() -> str | None:
         return None
 
 
+_PR_CI_CACHE: dict[tuple[str, str], tuple[float, bool | None]] = {}
+_PR_CI_TTL = 600.0
+
+
+def repo_has_pr_ci(repo_url: str, base_branch: str) -> bool | None:
+    """Whether the repository runs a GitHub Actions workflow on pull requests into ``base_branch``.
+
+    Cached for ten minutes per repository and branch; None when it cannot be read.
+    """
+    import time as _time
+
+    slug = github_repo_slug(repo_url)
+    if not slug or "/" not in slug:
+        return None
+    key = (slug.lower(), base_branch)
+    cached = _PR_CI_CACHE.get(key)
+    if cached and _time.monotonic() - cached[0] < _PR_CI_TTL:
+        return cached[1]
+    try:
+        from ts_harness.integrations.github_client import github_for
+        from ts_harness.workflows.repo_bootstrap import _has_pr_ci
+
+        owner, repo = slug.split("/", 1)
+        value = _has_pr_ci(github_for(repo_url), owner, repo, base_branch)
+    except Exception:  # noqa: BLE001 - unknown means the full re-check runs
+        value = None
+    _PR_CI_CACHE[key] = (_time.monotonic(), value)
+    return value
+
+
 def _review_settings(mode: str, provider: str) -> dict[str, Any]:
     """The pre-push reviewer for an implement run, in the backend's model format."""
     if mode != "implement":
