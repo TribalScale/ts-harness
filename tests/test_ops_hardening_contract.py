@@ -225,7 +225,8 @@ class OpsHardeningContractTests(unittest.TestCase):
         script = (REPO_ROOT / "scripts" / "ops" / "redeploy.sh").read_text()
         order = ["10-fetch-secrets", "10a-hydrate-runtime-config", "10b-render-workspace",
                  "11-agent-runtime-setup", "11a-agents-init", "12-compose-up",
-                 "migrate-db.sh", "run_docker_compose_as_admin build", "start_stack_launcher_last redeploy"]
+                 "migrate-db.sh", "run_docker_compose_as_admin build", "start_stack_launcher_last redeploy",
+                 "15-automation-cron.sh", "HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d"]
         positions = [script.index(step) for step in order]
         self.assertEqual(positions, sorted(positions))
         self.assertGreater(script.index("docker image prune -f"), script.index("wait_for_agent_runtime_health"))
