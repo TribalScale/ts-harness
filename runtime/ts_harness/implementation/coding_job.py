@@ -171,8 +171,12 @@ def build_coding_request(
     requested_by: str | None = None,
     bound: dict[str, Any] | None = None,
     agent_id: str = "dev-agent",
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Return the job spec for one coding run, or raise ``CodingRequestError``.
+
+    ``tenant_id`` is the workflow's tenant; the repo must be allowed for, or linked to a
+    project of, that tenant (the default tenant only when the caller has none).
 
     ``bound`` is the repo, branch, PR and feedback stored on the delivery task;
     it wins over ``task_input`` because agents can retype those wrongly.
@@ -259,7 +263,7 @@ def build_coding_request(
     )
 
     live = _live_runtime_config() or runtime
-    tenant = str(getattr(getattr(live, "gateway", None), "default_tenant_id", "") or "default")
+    tenant = str(tenant_id or getattr(getattr(live, "gateway", None), "default_tenant_id", "") or "default")
     binding_error = check_repo_allowed_or_linked(
         repo_url, tenant_bindings(getattr(live, "program_defaults", None)), tenant_id=tenant
     )
@@ -287,7 +291,7 @@ def build_coding_request(
         "pr_url": pr_url,
         "requested_by": requester,
         "requested_by_github_login": github_logins.get(requester or "")
-        or _directory_github_login(requester, getattr(getattr(live, "gateway", None), "default_tenant_id", "default")),
+        or _directory_github_login(requester, tenant),
         "program_id": str(program_id or "").strip() or None,
         "delivery_workflow_id": delivery_workflow_id,
         "decision_id": str(args.get("decision_id") or "").strip() or None,

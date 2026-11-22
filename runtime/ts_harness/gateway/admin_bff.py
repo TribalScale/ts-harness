@@ -123,7 +123,7 @@ def build_inbox(
                 }
             )
 
-    for approval in get_approval_queue().list_pending():
+    for approval in get_approval_queue().list_pending(tenant_id=str(auth.tenant_id or "default")):
         data = approval.__dict__ if hasattr(approval, "__dict__") else dict(approval)
         approval_id = str(data.get("approval_id") or data.get("id") or "")
         if data.get("status") not in {None, "pending"}:

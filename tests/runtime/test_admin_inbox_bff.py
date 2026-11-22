@@ -50,7 +50,7 @@ class AdminBffTests(unittest.TestCase):
             status="pending",
             requested_at="2026-08-01T00:00:00Z",
         )
-        queue = SimpleNamespace(list_pending=lambda: [approval])
+        queue = SimpleNamespace(list_pending=lambda **_kw: [approval])
         memory = mock.Mock()
         memory.list_programs.return_value = {
             "programs": [
@@ -123,7 +123,7 @@ class AdminBffTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_request", side_effect=request),
             mock.patch.object(client, "list_stuck_tasks", return_value=[], create=True),
-            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda **_kw: [])),
             mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
         ):
             result = build_inbox(runtime, auth, memory=client, skills_root="skills")
@@ -172,7 +172,7 @@ class AdminBffTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_request", side_effect=request),
             mock.patch.object(client, "list_stuck_tasks", return_value=[], create=True),
-            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda **_kw: [])),
             mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
         ):
             result = build_inbox(runtime, auth, memory=client, skills_root="skills")
@@ -200,7 +200,7 @@ class AdminBffTests(unittest.TestCase):
         auth = AuthContext(actor_id="admin", tenant_id="default", roles=["admin"])
         with (
             mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
-            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda **_kw: [])),
         ):
             result = build_inbox(runtime, auth, memory=memory, skills_root="skills")
         [gate] = [item for item in result["items"] if item["type"] == "workflow_gate"]
@@ -257,7 +257,7 @@ class AdminBffTests(unittest.TestCase):
         auth = AuthContext(actor_id="ops", tenant_id="acme", roles=None)
         runtime = SimpleNamespace(policy=SimpleNamespace())
         with (
-            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda: [])),
+            mock.patch("ts_harness.gateway.admin_bff.get_approval_queue", return_value=SimpleNamespace(list_pending=lambda **_kw: [])),
             mock.patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine),
             mock.patch("ts_harness.skills.authoring.list_drafts", return_value=[]),
         ):

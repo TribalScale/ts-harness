@@ -134,6 +134,21 @@ class BuildCodingRequestTests(unittest.TestCase):
                 build_coding_request({"repo_url": "https://github.com/x/y"}, delivery_workflow_id=None)
             self.assertEqual(ctx.exception.extra, {"repo_url": "https://github.com/x/y"})
 
+    def test_repo_check_uses_the_workflows_tenant(self):
+        from ts_harness.workflows import coding_job_stage
+
+        with ExitStack() as stack:
+            configured(stack)
+            check = stack.enter_context(patch.object(coding_job, "check_repo_allowed_or_linked", return_value=None))
+            build_coding_request({"repo_url": "https://github.com/example/app"}, delivery_workflow_id=None, tenant_id="acme")
+            self.assertEqual(check.call_args.kwargs["tenant_id"], "acme")
+            coding_job_stage.stage_spec(
+                {"workflow_id": "wf-1", "tenant_id": "globex"},
+                {"repo_url": "https://github.com/example/app"},
+                program_id=None,
+            )
+            self.assertEqual(check.call_args.kwargs["tenant_id"], "globex")
+
 
 class RunCodingRequestTests(unittest.TestCase):
     def test_tool_and_run_share_one_path(self):
