@@ -1037,7 +1037,15 @@ class OpenCodeBackend:
         base_ref = f"origin/{request.base_branch}" if request.base_branch else "HEAD~1"
         out_dir = Path(request.workspace_dir) / ".ts-harness" / "review"
         out_dir.mkdir(parents=True, exist_ok=True)
+        started = time.monotonic()
+        budget = int(request.review_budget_seconds or 0)
         for number in range(int(request.review_rounds or 0) + 1):
+            if number and budget and time.monotonic() - started >= budget:
+                # Out of time: push what passed verification and let the code review gate decide,
+                # rather than run the job into its runtime limit and lose all of it.
+                log_event("pre_push_review_out_of_time", work_order_id=request.work_order_id, rounds=number)
+                rounds.append({"status": "out_of_time", "summary": "", "findings": []})
+                break
             output_path = out_dir / f"review-{number + 1}.json"
             progress.detail(f"review round {number + 1}")
             output_path.unlink(missing_ok=True)
