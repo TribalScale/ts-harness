@@ -49,8 +49,11 @@ class MigrationContractTests(unittest.TestCase):
         files = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
         missing = [name for name in files if name not in script]
         self.assertEqual(missing, [])
-        positions = [script.index(name) for name in files if name.startswith("02")]
-        self.assertEqual(positions, sorted(positions))
+        # Migrations run in the listed order: a higher number must never come before a lower one
+        # (two files sharing a number may run in either order).
+        listed = sorted(files, key=script.index)
+        numbers = [int(name.split("_", 1)[0]) for name in listed]
+        self.assertEqual(numbers, sorted(numbers), f"migrate-db.sh lists migrations out of order: {listed}")
 
     def test_program_department_migration_keeps_existing_audit_actions(self):
         sql = (MIGRATIONS / "030_program_department.sql").read_text()

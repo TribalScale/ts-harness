@@ -98,7 +98,9 @@ class PrePushReviewTests(unittest.TestCase):
 
     def test_blocking_findings_are_fixed_on_the_run_model_and_reverified(self):
         harness = Harness([{"summary": "bug", "findings": [BLOCKING]}, {"summary": "fixed", "findings": []}])
-        rounds, _log, _changed, security, verification = _review(harness, _request(self.workspace))
+        request = _request(self.workspace)
+        request.repo_has_pr_ci = True  # CI runs the full suite, so the fix gets the quick re-check
+        rounds, _log, _changed, security, verification = _review(harness, request)
         self.assertEqual([r["status"] for r in rounds], ["fixed", "pass"])
         # reviewer, fixer (the run's own model), reviewer
         self.assertEqual(harness.models, ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5-5"])
@@ -106,6 +108,15 @@ class PrePushReviewTests(unittest.TestCase):
         self.assertEqual((security, verification, harness.commits), ({"scan": "new"}, {"checks": "old", "recheck": {"checks": "new"}}, 1))
         self.assertTrue(all(call.get("quick") for call in harness.verify_calls))
         self.assertEqual(ppr.summary_record(rounds, model="m")["fixed"], 1)
+
+    def test_without_ci_on_pull_requests_a_fix_gets_the_full_verification(self):
+        for has_ci in (False, None):
+            harness = Harness([{"summary": "bug", "findings": [BLOCKING]}, {"summary": "fixed", "findings": []}])
+            request = _request(self.workspace)
+            request.repo_has_pr_ci = has_ci
+            _rounds, _log, _changed, _security, verification = _review(harness, request)
+            self.assertFalse(any(call.get("quick") for call in harness.verify_calls), has_ci)
+            self.assertEqual(verification, {"checks": "new"})  # the full re-run is the evidence
 
     def test_findings_left_after_the_last_round_are_reported_and_pushed(self):
         harness = Harness([{"summary": "a", "findings": [BLOCKING]}] * 3)

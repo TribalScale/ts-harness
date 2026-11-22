@@ -1090,11 +1090,14 @@ class OpenCodeBackend:
             fixed = self._run_opencode(fix_cmd, cwd=str(repo_dir), env=env, log_path=log_path, work_order_id=request.work_order_id)
             failure = None
             if fixed.returncode == 0:
-                # The full verification passed before the review; a review fix gets the quick re-check.
-                progress.detail("re-checking the fix")
+                # The full verification passed before the review. A review fix gets the quick re-check
+                # only when CI runs the full suite on the PR; without CI the full verification runs again,
+                # so the pushed commit always has a full test run behind it.
+                quick = request.repo_has_pr_ci is True
+                progress.detail("re-checking the fix" if quick else "re-running the full verification (no CI on pull requests)")
                 failure, log, _passes, new_changed, new_security, new_verification = self._verify_with_fixes(
                     repo_dir, request, binary=binary, provider=provider, env=env, branch=branch, log=log,
-                    log_path=log_path, skills_materialized=skills_materialized, test_env=test_env, quick=True,
+                    log_path=log_path, skills_materialized=skills_materialized, test_env=test_env, quick=quick,
                 )
             if fixed.returncode != 0 or failure is not None:
                 self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
@@ -1104,8 +1107,10 @@ class OpenCodeBackend:
                 break
             commit_all_changes(repo_dir, message=commit_message(request), runner=self.runner)
             changed = new_changed or list_changed_files(repo_dir, runner=self.runner)
-            # Keep the full run's evidence for the gates, with the quick re-check of the fix beside it.
-            security, verification = new_security, {**(verification or {}), "recheck": new_verification}
+            # Keep the full run's evidence for the gates, with the re-check of the fix beside it; a full
+            # re-run (no CI) replaces it.
+            security = new_security
+            verification = {**(verification or {}), "recheck": new_verification} if quick else new_verification
             rounds.append({"status": "fixed", **review})
         return rounds, log, changed, security, verification
 
