@@ -286,6 +286,33 @@ class JobTokenTests(unittest.TestCase):
         self.assertEqual((out["token"], out["repository"]), ("ghs_1", "acme/web"))
         self.assertTrue(out["expires_at"].startswith("2030-01-01"))
 
+    def test_a_job_token_gets_only_what_a_coding_job_needs(self):
+        fake = FakeGitHub()
+        app = GitHubApp("42", PRIVATE_PEM, transport=fake)
+        mint_job_github_token("j1", "tok", identity=lambda j, t: {"repo_url": "https://github.com/acme/web"}, app_for=lambda h: app)
+        body = [c for c in fake.calls if c[1].endswith("/access_tokens")][-1][3]
+        self.assertEqual(body["repositories"], ["web"])
+        self.assertEqual(body["permissions"]["contents"], "write")
+        self.assertNotIn("workflows", body["permissions"])
+        self.assertNotIn("administration", body["permissions"])
+        mint_job_github_token("j2", "tok", identity=lambda j, t: {"repo_url": "https://github.com/acme/web", "edits_workflows": True},
+                              app_for=lambda h: app)
+        body = [c for c in fake.calls if c[1].endswith("/access_tokens")][-1][3]
+        self.assertEqual(body["permissions"]["workflows"], "write")
+
+    def test_an_app_without_a_narrowed_permission_falls_back_to_its_own_set(self):
+        class Refusing(FakeGitHub):
+            def __call__(self, method, url, headers, data):
+                body = json.loads(data) if data else None
+                if url.endswith("/access_tokens") and body and "permissions" in body:
+                    self.calls.append((method, url, headers, body))
+                    return 422, b'{"message": "The permissions requested are not granted to this installation."}', {}
+                return super().__call__(method, url, headers, data)
+
+        app = GitHubApp("42", PRIVATE_PEM, transport=Refusing())
+        out = mint_job_github_token("j1", "tok", identity=lambda j, t: {"repo_url": "https://github.com/acme/web"}, app_for=lambda h: app)
+        self.assertTrue(out["token"].startswith("ghs_"))
+
     def test_rejections(self):
         with self.assertRaises(JobTokenRejected):
             mint_job_github_token("j1", "", identity=lambda j, t: {}, app_for=lambda h: None)

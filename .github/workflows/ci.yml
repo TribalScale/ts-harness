@@ -106,6 +106,18 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run typecheck:e2e
+      # Browser tests: the built console against a mocked gateway (admin-ui/e2e).
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: admin-ui-playwright-report
+          path: |
+            admin-ui/playwright-report
+            admin-ui/test-results
+          retention-days: 7
 
   validate:
     runs-on: ubuntu-latest

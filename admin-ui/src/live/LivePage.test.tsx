@@ -181,3 +181,64 @@ describe("History", () => {
     expect(within(earlier).getByLabelText("PROJ-3 attempt 1 timeline")).toBeInTheDocument();
   });
 });
+
+describe("Metrics", () => {
+  const ticket = (key: string, extra: Record<string, unknown> = {}) => ({
+    workflow_id: `wf-${key}`, program_id: "p1", program_label: "Alpha", jira_issue_key: key, label: key,
+    pr_url: "", project: "PROJ", repo: "o/r", outcome: "merged", finished_at: "2026-01-12T10:00:00Z",
+    revisions: 0, revisions_by_trigger: {}, first_try: true, time_to_merge_seconds: 6600, you_seconds: 1800,
+    agent_seconds: 4000, coding_runs: 1, reviewed_runs: 1, review_fixed: 1, gate_compared: 1, gate_disagreed: 0,
+    cost_usd: 2, strong_cost_usd: 0, lost_jobs: 0, ...extra,
+  });
+
+  it("shows the headline numbers, the weekly trend and the tickets by cost", async () => {
+    const user = userEvent.setup();
+    const urls: string[] = [];
+    mockFetch((url) => {
+      urls.push(url);
+      if (url.startsWith("/admin/programs/p1/tickets/")) return jsonResponse(STORY);
+      if (url.startsWith("/admin/metrics")) {
+        return jsonResponse({
+          generated_at: "", days: 14, include_running: false,
+          summary: {
+            tickets: 2, finished: 2, merged: 2, first_try: 1, first_try_rate: 0.5,
+            revisions: { median: 1, mean: 1, max: 2, total: 2, by_trigger: { code_review: 1, ci: 1 } },
+            time_to_merge_seconds: { median: 9240, mean: 9240, max: 11940 },
+            you_seconds: 6300, agent_seconds: 9000, you_share: 0.41, coding_runs: 5, reviewed_runs: 3,
+            review_catch_rate: 0.333, review_fixed: 1, gate_compared: 2, gate_disagreed: 1, gate_disagreement_rate: 0.5,
+            cost_usd: { median: 4, total: 8 }, strong_cost_share: 0.625, lost_jobs: 1,
+          },
+          weekly: [{ week: "2026-01-05", tickets: 3, first_try_rate: 0.33, revisions_mean: 1.67 },
+                   { week: "2026-01-12", tickets: 2, first_try_rate: 0.5, revisions_mean: 1 }],
+          tickets: [ticket("PROJ-2", { revisions: 2, revisions_by_trigger: { code_review: 1, ci: 1 }, first_try: false, cost_usd: 6 }),
+                    ticket("PROJ-1")],
+          facets: { projects: ["PROJ"], repos: ["o/r"] },
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    const onTab = vi.fn();
+    const { rerender } = renderPage(<LivePage tab="now" onTab={onTab} />);
+    await user.click(screen.getByRole("tab", { name: "Metrics" }));
+    expect(onTab).toHaveBeenCalledWith("metrics");
+    rerender(<LivePage tab="metrics" onTab={onTab} />);
+    const tiles = await screen.findByLabelText("Headline numbers");
+    expect(tiles).toHaveTextContent("First-try pass50%1 of 2 finished merged with no revision");
+    expect(tiles).toHaveTextContent("1 code review, 1 CI");
+    expect(tiles).toHaveTextContent("Time to merge2h 34m");
+    expect(tiles).toHaveTextContent("Pre-push review catch rate33%");
+    expect(tiles).toHaveTextContent("code review blocked 1 of 2 runs the pre-push review passed");
+    expect(tiles).toHaveTextContent("Cost per ticket$4.00median · $8.00 total · 63% on the stronger model");
+    expect(tiles).toHaveTextContent("Lost coding jobs1of 5 coding runs");
+    expect(screen.getByLabelText("Weekly trend")).toHaveTextContent("2026-01-05333%1.67");
+    const table = screen.getByRole("table", { name: "Tickets by cost" });
+    const rows = within(table).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("PROJ-2");
+    expect(rows[1]).toHaveTextContent("$6.00");
+    expect(rows[2]).toHaveTextContent("PROJ-1");
+    await user.click(within(rows[1]).getByRole("button", { name: "Story" }));
+    expect(await screen.findByLabelText("What happened")).toHaveTextContent("Revision 4");
+    await user.click(screen.getByLabelText("Include running tickets"));
+    await vi.waitFor(() => expect(urls.some((u) => u.includes("running=1") && u.includes("days=14"))).toBe(true));
+  });
+});

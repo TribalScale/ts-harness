@@ -336,6 +336,17 @@ write_runtime_env_file() {
         TS_HARNESS_RETENTION_AUDIT_DECISION_DAYS \
         TS_HARNESS_RETENTION_UPLOAD_DAYS \
         TS_HARNESS_RETENTION_BATCH \
+        SLACK_OPS_CHANNEL \
+        SLACK_OPS_WEBHOOK_URL \
+        TS_HARNESS_ALERT_REPEAT_HOURS \
+        TS_HARNESS_ALERT_RESOLVED \
+        TS_HARNESS_ALERT_STUCK_HOURS \
+        TS_HARNESS_ALERT_LOST_JOBS \
+        TS_HARNESS_ALERT_REVISION_RUNS \
+        TS_HARNESS_ALERT_HOURLY_USD \
+        TS_HARNESS_ALERT_DAILY_USD \
+        TS_HARNESS_ALERT_DISK_PERCENT \
+        TS_HARNESS_ALERT_DISK_PATH \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -518,6 +529,8 @@ INSTANCE_ENV_KEYS=(
     CODING_EGRESS_PROXY_SERVICE
     CODING_EGRESS_DOMAINS_PARAMETER
     CODING_EGRESS_PROXY_URL
+    CODING_EGRESS_ALLOWLIST
+    CODING_EGRESS_ALLOW
     LLM_PROXY_ENABLED
     CODING_WORKER_LLM_PROXY_URL
     LLM_PROXY_HOST_PORT
@@ -525,6 +538,15 @@ INSTANCE_ENV_KEYS=(
     TS_HARNESS_OBJECT_BACKEND
     TS_HARNESS_SKILLS_BUCKET
     TS_HARNESS_WORKSPACE_BUCKET
+    TS_HARNESS_ALERT_REPEAT_HOURS
+    TS_HARNESS_ALERT_RESOLVED
+    TS_HARNESS_ALERT_STUCK_HOURS
+    TS_HARNESS_ALERT_LOST_JOBS
+    TS_HARNESS_ALERT_REVISION_RUNS
+    TS_HARNESS_ALERT_HOURLY_USD
+    TS_HARNESS_ALERT_DAILY_USD
+    TS_HARNESS_ALERT_DISK_PERCENT
+    TS_HARNESS_ALERT_DISK_PATH
     TS_HARNESS_INTAKE_BUCKET
     TS_HARNESS_INTAKE_VISION_MODEL
     TS_HARNESS_INTAKE_MAX_DOC_CHARS
@@ -538,6 +560,22 @@ INSTANCE_ENV_KEYS=(
     TS_HARNESS_RETENTION_UPLOAD_DAYS
     TS_HARNESS_RETENTION_BATCH
 )
+
+# Coding worker egress allowlist (docker/docker-compose.coding-egress.yml): wanted when
+# CODING_EGRESS_ALLOWLIST is on and coding jobs run on this host (local launcher). ECS
+# workers (scale_out) have their own egress proxy from Terraform (infra/aws/egress.tf).
+coding_egress_allowlist_wanted() {
+    local flag launcher
+    flag="$(printf '%s' "${CODING_EGRESS_ALLOWLIST:-off}" | tr '[:upper:]' '[:lower:]')"
+    case "$flag" in on|true|1|yes) ;; *) return 1 ;; esac
+    [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && "${CODING_JOBS_ENABLED:-false}" == "true" ]] || return 1
+    launcher="$(printf '%s' "${CODING_LAUNCHER:-}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -z "$launcher" ]]; then
+        launcher=local
+        [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]] && launcher=ecs
+    fi
+    [[ "$launcher" == "local" ]]
+}
 
 # Storage flags (docs/runbooks/shared-state.md). Unset flags follow the profile:
 # scale_out uses Postgres for state and the cloud's object store when both
@@ -846,6 +884,9 @@ run_docker_compose_as_admin() {
             LLM_PROXY_REPLICA_URL="${LLM_PROXY_REPLICA_URL:-}" \
             LLM_PROXY_HOST_PORT="${LLM_PROXY_HOST_PORT:-127.0.0.1:18795}" \
             CODING_WORKER_LLM_PROXY_URL="${CODING_WORKER_LLM_PROXY_URL:-}" \
+            CODING_EGRESS_ALLOW="${CODING_EGRESS_ALLOW:-}" \
+            CODING_EGRESS_NETWORK="${CODING_EGRESS_NETWORK:-ts-harness-coding-egress}" \
+            CODING_EGRESS_PROXY_IMAGE="${CODING_EGRESS_PROXY_IMAGE:-public.ecr.aws/ubuntu/squid:6.6-24.04_edge}" \
             TS_HARNESS_STATE_BACKEND="${TS_HARNESS_STATE_BACKEND:-local}" \
             TS_HARNESS_OBJECT_BACKEND="${TS_HARNESS_OBJECT_BACKEND:-local}" \
             TS_HARNESS_SKILLS_BUCKET="${TS_HARNESS_SKILLS_BUCKET:-}" \

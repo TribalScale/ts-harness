@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from ts_harness.coding import egress
+
 LEASE_NAME = "coding-launcher"
 WORKER_ENV_NAMES = (
     "GITHUB_TOKEN",
@@ -152,6 +154,11 @@ class LocalDockerConfig:
     pids_limit: int = 2048
     config_host_path: str = ""
     extra_env: dict[str, str] = field(default_factory=dict)
+    # CODING_EGRESS_ALLOWLIST=on: workers join an internal network and reach the internet
+    # only through the egress proxy (docker/docker-compose.coding-egress.yml).
+    egress_allowlist: bool = False
+    egress_network: str = egress.DEFAULT_NETWORK
+    egress_allowlist_path: str = egress.DEFAULT_ALLOWLIST_PATH
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "LocalDockerConfig":
@@ -169,6 +176,9 @@ class LocalDockerConfig:
             memory=str(env.get("CODING_WORKER_MEMORY") or cls.memory),
             pids_limit=int(env.get("CODING_WORKER_PIDS_LIMIT") or cls.pids_limit),
             config_host_path=str(env.get("CODING_WORKER_CONFIG_HOST_PATH") or ""),
+            egress_allowlist=egress.enabled(env),
+            egress_network=str(env.get("CODING_EGRESS_NETWORK") or egress.DEFAULT_NETWORK).strip(),
+            egress_allowlist_path=str(env.get("CODING_EGRESS_ALLOWLIST_PATH") or egress.DEFAULT_ALLOWLIST_PATH),
         )
 
 
@@ -210,11 +220,24 @@ class LocalDockerLauncher:
         self.config = config
         self._run = run
         self._environ = dict(environ if environ is not None else os.environ)
+        self._egress_synced_at = 0.0
+        self._registry_hosts: list[str] = []
+
+    def _endpoints(self) -> tuple[str, str, str, str]:
+        """Network, memory-api, runtime and LLM proxy URLs as the worker sees them."""
+        cfg = self.config
+        urls = (cfg.memory_api_url, cfg.runtime_url, worker_proxy_url(self._environ))
+        if not cfg.egress_allowlist:
+            return (cfg.network, *urls)
+        host = egress.internal_host(self._environ)
+        memory_url, runtime_url, llm_url = (egress.internal_url(url, host) for url in urls)
+        return cfg.egress_network, memory_url, runtime_url, llm_url
 
     def command(self, job: dict[str, Any]) -> list[str]:
         job_id = str(job["id"])
         cfg = self.config
         volume = workspace_volume(job, self._environ)
+        network, memory_url, runtime_url, llm_url = self._endpoints()
         cmd = [
             # --init reaps the processes a coding run leaves behind (PID 1 is the worker script).
             "docker", "run", "-d", "--rm", "--init",
@@ -225,18 +248,21 @@ class LocalDockerLauncher:
             "--pids-limit", str(cfg.pids_limit),
             "--mount", (f"type=volume,src={volume},dst=/workspace" if volume else "type=volume,dst=/workspace"),
             "-e", f"JOB_ID={job_id}",
-            "-e", f"MEMORY_API_URL={cfg.memory_api_url}",
-            "-e", f"HARNESS_RUNTIME_URL={cfg.runtime_url}",
+            "-e", f"MEMORY_API_URL={memory_url}",
+            "-e", f"HARNESS_RUNTIME_URL={runtime_url}",
             "-e", "JOB_TOKEN",
         ]
-        if worker_proxy_url(self._environ):
-            cmd += ["-e", f"LLM_PROXY_URL={worker_proxy_url(self._environ)}", "-e", "LLM_PROXY_TOKEN"]
+        if llm_url:
+            cmd += ["-e", f"LLM_PROXY_URL={llm_url}", "-e", "LLM_PROXY_TOKEN"]
         for name in worker_env_names(self._environ):
             cmd += ["-e", name]
+        if cfg.egress_allowlist:
+            for name, value in egress.proxy_env(self._environ).items():
+                cmd += ["-e", f"{name}={value}"]
         for name, value in sorted(cfg.extra_env.items()):
             cmd += ["-e", f"{name}={value}"]
-        if cfg.network:
-            cmd += ["--network", cfg.network]
+        if network:
+            cmd += ["--network", network]
         if cfg.config_host_path:
             cmd += [
                 "-v", f"{cfg.config_host_path}:/config/ts-harness-runtime.yaml:ro",
@@ -326,7 +352,45 @@ class LocalDockerLauncher:
             _log("coding_workspaces_pruned", volumes=removed)
         return removed
 
+    def _egress_proxy_ids(self) -> list[str]:
+        listed = self._run(
+            ["docker", "ps", "-q", "--filter", f"label={egress.PROXY_LABEL}"], capture_output=True, text=True, timeout=30
+        )
+        return (listed.stdout or "").split() if listed.returncode == 0 else []
+
+    def sync_egress(self, memory: Any, *, now: float | None = None) -> dict[str, Any] | None:
+        """Write the proxy's allowlist and reload squid when it changed (at most every
+        ``CODING_EGRESS_SYNC_SECONDS``, default 60). A no-op with the allowlist off."""
+        if not self.config.egress_allowlist:
+            return None
+        now = time.time() if now is None else now
+        try:
+            interval = float(self._environ.get("CODING_EGRESS_SYNC_SECONDS") or egress.SYNC_SECONDS)
+        except ValueError:
+            interval = egress.SYNC_SECONDS
+        if self._egress_synced_at and now - self._egress_synced_at < interval:
+            return None
+        self._egress_synced_at = now
+        try:
+            self._registry_hosts = list(memory.registry_hosts())
+        except Exception as exc:  # noqa: BLE001 - keep the last known registry hosts
+            _log("coding_egress_registry_hosts_failed", error=str(exc)[:300])
+        domains = egress.allowlist(self._environ, self._registry_hosts)
+        changed = egress.write_if_changed(Path(self.config.egress_allowlist_path), egress.render_domains_file(domains))
+        proxies = self._egress_proxy_ids()
+        reloaded = False
+        if changed and proxies:
+            # squid re-reads its configuration and ACL files on SIGHUP; open tunnels stay up.
+            sent = self._run(["docker", "kill", "-s", "HUP", *proxies], capture_output=True, text=True, timeout=30)
+            reloaded = sent.returncode == 0
+        summary = {"domains": len(domains), "changed": changed, "reloaded": reloaded, "proxy_running": bool(proxies)}
+        if changed or not proxies:
+            _log("coding_egress_allowlist_synced", **summary)
+        return summary
+
     def start(self, job: dict[str, Any], token: str) -> str:
+        if self.config.egress_allowlist and not self._egress_proxy_ids():
+            raise CapacityError("waiting for the egress proxy: no running container labelled " + egress.PROXY_LABEL)
         self._check_memory(job)
         self._ensure_volume(job)
         proc = self._run(
@@ -383,6 +447,12 @@ def launcher_tick(
     started: list[str] = []
     failed: list[str] = []
     waiting: list[str] = []
+    sync_egress = getattr(launcher, "sync_egress", None)
+    if callable(sync_egress):
+        try:
+            sync_egress(memory)
+        except Exception as exc:  # noqa: BLE001 - a failed sync keeps the last allowlist
+            _log("coding_egress_sync_failed", error=str(exc)[:300])
     claimed = memory.claim_coding_jobs(launcher=launcher.name, max_running=max_running, quotas=quotas)
     for job in claimed.get("jobs") or []:
         token = str(job.pop("token", ""))
