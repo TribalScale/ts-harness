@@ -46,7 +46,7 @@ export interface RuntimeSettingsDefinition {
     roles?: Record<string, string[]>;
     role_bundles?: Record<string, string[]>;
     departments?: Record<string, string>;
-    service_permissions?: Record<string, string[]>;
+    service_permissions?: string[];
     group_roles?: Record<string, string[]>;
   };
   policy?: Record<string, unknown>;
