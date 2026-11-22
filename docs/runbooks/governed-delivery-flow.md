@@ -62,6 +62,14 @@ waits for a whole wave. Children post to the program's thread as usual. The pool
 when nothing runs and nothing more can start; tickets left behind a stopped blocker are
 reported in a blocked step for a person.
 
+A ticket is never built twice. The pool skips a ticket another run is already building
+(another program, or a single `implement PROJ-7`) and says so ("Left to the run already
+building it: PROJ-7"); starting a single ticket that a run is building blocks with "already
+being built by another run". The pool keeps waiting, instead of finishing with tickets left
+behind, while a remaining ticket is being built elsewhere or waits on one; when that ticket
+merges, its run wakes every pool whose queue holds it (`POST /workflow/running-tickets` on
+memory-api lists running deliveries and pools).
+
 Three other limits decide how many coding jobs really run at once; raise them with the
 project limit:
 

@@ -792,6 +792,48 @@ def resume_blocked_task(conn, body: dict[str, Any]) -> dict[str, str]:
     return {"id": task_id, "status": "pending"}
 
 
+def running_ticket_work(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Tickets with a running delivery, and running ticket pools with their queues.
+
+    The ticket pool and a single-ticket start use it so two runs never build the same ticket,
+    and a ticket that merges wakes the pools waiting on it.
+    """
+    tenant_id = str(body.get("tenant_id") or "default")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT t.input ->> 'jira_issue_key' AS key, w.id AS workflow_id, w.workflow_type,
+                   w.program_id, w.parent_workflow_id
+            FROM workflows w
+            JOIN workflow_tasks t ON t.workflow_id = w.id
+            WHERE w.tenant_id = %s AND w.status = 'running'
+              AND w.workflow_type = ANY(%s)
+              AND COALESCE(t.input ->> 'jira_issue_key', '') <> ''
+            """,
+            (tenant_id, ["implement_jira_ticket", "implement_ticket"]),
+        )
+        tickets = [
+            {key: (str(value) if value is not None and key.endswith("_id") else value) for key, value in row.items()}
+            for row in cur.fetchall()
+        ]
+        cur.execute(
+            """
+            SELECT w.id AS workflow_id, j.id AS join_task_id, j.status AS join_status, f.output -> 'queue' AS queue
+            FROM workflows w
+            JOIN workflow_tasks j ON j.workflow_id = w.id AND j.step_name = 'join_pool'
+            JOIN workflow_tasks f ON f.workflow_id = w.id AND f.step_name = 'fill_pool' AND f.status = 'succeeded'
+            WHERE w.tenant_id = %s AND w.status = 'running' AND w.workflow_type = 'implement_jira_pool'
+            """,
+            (tenant_id,),
+        )
+        pools = [
+            {"workflow_id": str(row["workflow_id"]), "join_task_id": str(row["join_task_id"]),
+             "join_status": row["join_status"], "queue": list(row.get("queue") or [])}
+            for row in cur.fetchall()
+        ]
+    return {"tickets": tickets, "pools": pools}
+
+
 def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
     """Steps waiting for a human decision (revise, accept or stop) in running workflows.
 
@@ -5544,6 +5586,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, resume_blocked_task(conn, body))
                 elif self.path == "/workflow/stuck":
                     self._send_json(200, list_stuck_tasks(conn, body))
+                elif self.path == "/workflow/running-tickets":
+                    self._send_json(200, running_ticket_work(conn, body))
                 elif self.path == "/workflow/runtime":
                     self._send_json(200, record_runtime_task(conn, body))
                 elif self.path == "/workflow/stale":

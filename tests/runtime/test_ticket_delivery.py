@@ -112,6 +112,12 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         out = _run(jira=_Jira(description="Just do it"), configured=("https://github.com/acme/api", "main"))
         self.assertEqual((out["repo_url"], out["base_branch"]), ("https://github.com/acme/api", "main"))
 
+    def test_a_ticket_another_run_is_building_is_not_started_twice(self):
+        memory = _memory()
+        memory.running_ticket_work.return_value = {"tickets": [{"key": "THD-33", "workflow_id": "other-run"}]}
+        with self.assertRaisesRegex(ValueError, "THD-33 is already being built by another run"):
+            _run(jira=_Jira(), memory=memory)
+
     def test_a_ticket_jira_cannot_return_blocks(self):
         jira = mock.Mock()
         jira.get_issue.side_effect = RuntimeError("401")
