@@ -395,6 +395,7 @@ def _write_prompt_file(repo_dir: Path, prompt: str) -> Path:
     return path
 
 
+<<<<<<< HEAD
 # Untrusted text reaches this prompt: the Jira ticket, review and QA findings, human PR comments,
 # knowledge notes, design notes and the repository itself. These rules win over all of it.
 SECURITY_RULES = (
@@ -425,6 +426,9 @@ def protected_path(path: str) -> bool:
 def _work_order_mentions(body: str | None, path: str) -> bool:
     text = str(body or "")
     return ".github/workflows" in text if path.removeprefix("./").startswith(".github/workflows/") else "CODEOWNERS" in text
+=======
+from ts_harness.implementation.revision_scope import allowed_revision_paths  # noqa: E402
+>>>>>>> origin/fix/revision-scope-siblings
 
 
 def build_implement_prompt(
@@ -1238,6 +1242,12 @@ class OpenCodeBackend:
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
             test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            # A review revision may also edit the module glue beside the flagged files and what
+            # they import (revision_scope.allowed_revision_paths); say so and let the editor do it.
+            revision_scope = (
+                sorted(allowed_revision_paths(list(request.revision_files), repo_dir))
+                if request.revision_files else request.revision_files
+            )
             lap("setup", "coding")
             design_files = _materialize_design(repo_dir, request.design_refs)
             prompt = build_implement_prompt(
@@ -1249,7 +1259,7 @@ class OpenCodeBackend:
                 qa_feedback=request.qa_feedback,
                 pr_url=request.pr_url,
                 review_feedback=request.review_feedback,
-                revision_files=request.revision_files,
+                revision_files=revision_scope,
                 human_change_requests=request.human_change_requests,
                 knowledge_notes=request.knowledge_notes,
                 test_environment_note=test_env.services_note,
@@ -1269,7 +1279,7 @@ class OpenCodeBackend:
             env.update(opencode_data_env(request.workspace_dir))
             # The reviewer writes its findings outside the repository, so it runs without the edit scope.
             review_env = dict(env)
-            allowed = opencode_scope_paths(request.work_order_body, request.revision_files)
+            allowed = opencode_scope_paths(request.work_order_body, revision_scope)
             if allowed:
                 env.update(opencode_scope_env(env, request.workspace_dir, allowed))
             _note_opencode_run(binary, env, repo_dir)
