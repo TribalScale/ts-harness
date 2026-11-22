@@ -47,5 +47,39 @@ class StuckTasksTests(PgTestCase):
         self.assertEqual(sorted(task["step_name"] for task in tasks), ["failed_checks", "failed_run", "parked"])
 
 
+
+@requires_pg
+class RunningTicketWorkTests(PgTestCase):
+    def test_running_deliveries_and_pools_with_their_queues(self):
+        with self.db.connect() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO workflows (workflow_type, status) VALUES ('implement_jira_ticket', 'running') RETURNING id")
+            ticket = str(cur.fetchone()["id"])
+            cur.execute("INSERT INTO workflows (workflow_type, status) VALUES ('implement_jira_ticket', 'succeeded') RETURNING id")
+            finished = str(cur.fetchone()["id"])
+            cur.execute("INSERT INTO workflows (workflow_type, status) VALUES ('implement_jira_pool', 'running') RETURNING id")
+            pool = str(cur.fetchone()["id"])
+            for workflow, key in ((ticket, "PROJ-7"), (finished, "PROJ-6")):
+                cur.execute(
+                    "INSERT INTO workflow_tasks (workflow_id, step_name, agent_id, status, input) "
+                    "VALUES (%s, 'prepare_ticket_delivery', 'orchestrator', 'succeeded', %s::jsonb)",
+                    (workflow, '{"jira_issue_key": "%s"}' % key),
+                )
+            cur.execute(
+                "INSERT INTO workflow_tasks (workflow_id, step_name, agent_id, status, output) "
+                "VALUES (%s, 'fill_pool', 'orchestrator', 'succeeded', '{\"queue\": [\"PROJ-7\", \"PROJ-8\"]}')",
+                (pool,),
+            )
+            cur.execute(
+                "INSERT INTO workflow_tasks (workflow_id, step_name, agent_id, status) VALUES (%s, 'join_pool', 'orchestrator', 'blocked')",
+                (pool,),
+            )
+            conn.commit()
+        with self.db.connect() as conn:
+            work = _gateway().running_ticket_work(conn, {"tenant_id": "default"})
+        self.assertEqual([(t["key"], t["workflow_id"]) for t in work["tickets"]], [("PROJ-7", ticket)])
+        self.assertEqual(work["pools"], [{"workflow_id": pool, "join_task_id": work["pools"][0]["join_task_id"],
+                                          "join_status": "blocked", "queue": ["PROJ-7", "PROJ-8"]}])
+
+
 if __name__ == "__main__":
     unittest.main()

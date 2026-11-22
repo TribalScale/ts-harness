@@ -88,6 +88,26 @@ def ready_tickets(
     return ready, done
 
 
+def _rows(result: Any, key: str) -> list[dict[str, Any]]:
+    rows = result.get(key) if isinstance(result, dict) else None
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def busy_elsewhere(memory: Any, tenant_id: str, own: set[str]) -> dict[str, str]:
+    """``{ticket key: workflow id}`` for tickets a run other than ``own`` is building now."""
+    try:
+        rows = _rows(memory.running_ticket_work(tenant_id=tenant_id or "default"), "tickets")
+    except Exception as exc:  # noqa: BLE001 - without the check the pool behaves as before
+        logger.warning("ticket pool: running deliveries not read: %s", exc)
+        return {}
+    busy: dict[str, str] = {}
+    for row in rows:
+        key, workflow_id = str(row.get("key") or ""), str(row.get("workflow_id") or "")
+        if key and workflow_id and workflow_id not in own and str(row.get("parent_workflow_id") or "") not in own:
+            busy.setdefault(key, workflow_id)
+    return busy
+
+
 def _choose(ready: list[dict[str, Any]], running_repos: list[str], room: int) -> list[dict[str, Any]]:
     """Up to ``room`` tickets, those for an idle repository first, queue order otherwise."""
     if room <= 0:
@@ -159,7 +179,15 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
         jira = JiraClient.from_env()
     waiting: dict[str, list[str]] = {}
     ready, done = ready_tickets(jira, queue, waiting)
+    # A ticket another run is already building is left to that run (never built twice).
+    busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), {workflow_id})
+    ready = [item for item in ready if item["key"] not in busy]
     chosen = _choose(ready, [], limit)
+    if not chosen and busy:
+        raise ValueError(
+            "no ticket can start yet: " + ", ".join(sorted(busy)) + " is already being built by another run, "
+            "and the rest wait on blockers"
+        )
     if not chosen:
         raise ValueError("no ticket in the queue is ready: every remaining ticket waits on an open blocker")
     children = _fork(memory, parent={"workflow_id": workflow_id, "tenant_id": task.get("tenant_id")},
@@ -169,7 +197,9 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
         "queue": queue,
         "max_parallel_tickets": limit,
         "already_done": done,
-        "summary": start_text([c["label"] for c in children], waiting, limit),
+        "busy_elsewhere": sorted(busy),
+        "summary": start_text([c["label"] for c in children], waiting, limit)
+        + (f" Left to the run already building it: {', '.join(sorted(busy))}." if busy else ""),
     }
 
 
@@ -228,6 +258,9 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
 
         jira = JiraClient.from_env()
     ready, _done = ready_tickets(jira, remaining)
+    own = {str(task.get("workflow_id") or ""), *(str(child.get("workflow_id") or "") for child in children)}
+    busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), own)
+    ready = [item for item in ready if item["key"] not in busy]
     chosen = _choose(ready, [str(child.get("repo") or "") for child in running], room)
     if not chosen:
         return children
@@ -240,6 +273,58 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
     task.setdefault("input", {})["_wait_options"] = options
     logger.info("ticket pool %s started %s", task.get("workflow_id"), [c["label"] for c in new])
     return pinned
+
+
+def waiting_on_other_runs(ctx: Any, task: dict[str, Any], children: list[dict[str, str]], *, jira: Any = None) -> list[str]:
+    """Remaining tickets the pool must keep waiting for: ones another run is building, or ones
+    blocked by such a ticket. Their run finishing wakes the pool (``wake_pools``)."""
+    memory = ctx.memory_client
+    _, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
+    fill_task = next((item for item in tasks if item.get("step_name") == "fill_pool"), {})
+    queue = [str(key) for key in ((fill_task.get("output") or {}).get("queue") or [])]
+    started = {child.get("label") for child in children}
+    remaining = [key for key in queue if key not in started]
+    if not remaining:
+        return []
+    own = {str(task.get("workflow_id") or ""), *(str(child.get("workflow_id") or "") for child in children)}
+    busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), own)
+    if not busy:
+        return []
+    if jira is None:
+        from ts_harness.integrations.jira_client import JiraClient
+
+        jira = JiraClient.from_env()
+    waiting: dict[str, list[str]] = {}
+    _ready, done = ready_tickets(jira, remaining, waiting)
+    return [key for key in remaining if key not in done and (key in busy or set(waiting.get(key) or []) & set(busy))]
+
+
+def wake_pools(memory: Any, key: str, *, tenant_id: str = "default", actor: str = "workflow-runner",
+               exclude: str = "") -> list[str]:
+    """A ticket another run built has finished: let every pool waiting on it look again."""
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT
+
+    try:
+        pools = _rows(memory.running_ticket_work(tenant_id=tenant_id or "default"), "pools")
+    except Exception:  # noqa: BLE001
+        return []
+    woken: list[str] = []
+    for pool in pools:
+        if str(pool.get("workflow_id") or "") == exclude:
+            continue  # the pool's own child: it already tells its parent
+        if key not in [str(item) for item in pool.get("queue") or []] or pool.get("join_status") != "blocked":
+            continue
+        try:
+            from ts_harness.workflows.engine import get_workflow_engine
+
+            get_workflow_engine().resume_external(
+                str(pool["workflow_id"]), event_type=CHILD_EVENT,
+                payload={"ticket_finished_elsewhere": key}, actor=actor, tenant_id=tenant_id,
+            )
+            woken.append(str(pool["workflow_id"]))
+        except Exception as exc:  # noqa: BLE001 - the pool re-checks on its own next child event
+            logger.info("ticket pool %s not woken for %s: %s", pool.get("workflow_id"), key, exc)
+    return woken
 
 
 def left_behind(queue: list[str], children: list[dict[str, str]]) -> list[str]:
