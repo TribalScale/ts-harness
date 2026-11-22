@@ -274,6 +274,9 @@ def _workflow_engine() -> Any:
 HTTP_RETRY_ATTEMPTS = 3
 HTTP_RETRY_BASE_SECONDS = 0.5
 TRANSPORT_ERROR_PREFIX = "transport_error:"
+# Infrastructure failures (a lost coding job, a dropped connection) get this many retries on
+# top of the step's own budget, with the usual backoff.
+TRANSPORT_EXTRA_RETRIES = 3
 
 
 def compute_poll_backoff(base_interval: int, failures: int, *, cap: int = 60) -> int:
@@ -559,11 +562,11 @@ class MemoryApiClient:
             body["expires_after_seconds"] = expires_after_seconds
         self._request("POST", "/workflow/task/wait", body)
 
-    def retry_task(self, task_id: str, reason: str) -> None:
+    def retry_task(self, task_id: str, reason: str, *, extra_retries: int = 0) -> None:
         self._request(
             "POST",
             "/workflow/retry",
-            {"id": task_id, "reason": reason, "actor": "workflow-runner"},
+            {"id": task_id, "reason": reason, "actor": "workflow-runner", "extra_retries": extra_retries},
         )
 
     def propose_plan(
@@ -1778,12 +1781,12 @@ class WorkflowRunner:
                         error=str(exc),
                     )
                 return
-            should_retry = self._should_retry_task(task) and (
-                error.startswith(TRANSPORT_ERROR_PREFIX)
-                or "output must include artifacts" in error
-            )
+            transport = error.startswith(TRANSPORT_ERROR_PREFIX)
+            should_retry = (
+                transport and int(task.get("attempt", 0)) < int(task.get("max_retries", 0)) + TRANSPORT_EXTRA_RETRIES
+            ) or (self._should_retry_task(task) and "output must include artifacts" in error)
             if should_retry:
-                self.memory.retry_task(task["id"], error)
+                self.memory.retry_task(task["id"], error, extra_retries=TRANSPORT_EXTRA_RETRIES if transport else 0)
                 log_event(
                     "retry_scheduled",
                     workflow_id=task.get("workflow_id"),

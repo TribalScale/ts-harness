@@ -95,15 +95,21 @@ echo "--- build"
 run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
 echo "--- up"
-# Starts the coding launcher again (phase 12 held it at zero).
-HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d
+# Everything but the coding launcher (HOLD_CODING_LAUNCHER=1 is still exported): phase 15 below
+# may recreate agent-runtime again, and a worker launched in between would lose its network.
+start_stack_launcher_last redeploy
 wait_for_agent_runtime_health redeploy
-run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 
 # The system cron jobs (defined in phase 15) reach the live list only through phase 15; it skips
 # itself unless the phase script (so its job list), secrets or compose env changed.
 echo "--- phase 15-automation-cron"
 bash "$PHASES_DIR/15-automation-cron.sh"
+
+echo "--- start the coding launcher"
+# Last, once agent-runtime will not be recreated again (start_stack_launcher_last).
+wait_for_agent_runtime_health redeploy
+HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d
+run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 
 # Each build leaves the previous images and their build cache behind; on a 40 GB root
 # volume a day of redeploys filled the disk and the next image export failed with

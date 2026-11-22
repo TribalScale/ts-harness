@@ -228,8 +228,7 @@ if ! docker image inspect ts-harness-agent-runtime:latest >/dev/null 2>&1; then
 fi
 # Recreating agent-runtime would cut off running coding workers; let them finish first.
 drain_coding_workers "phase:${PHASE_NAME}"
-# shellcheck disable=SC2046
-run_docker_compose_as_admin up -d $(compose_up_hold_args)
+start_stack_launcher_last "phase:${PHASE_NAME}"
 echo "[phase:${PHASE_NAME}] Containers started."
 
 # Persist compose file list and DB vars for Phases 13 and 14.

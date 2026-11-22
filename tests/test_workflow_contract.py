@@ -335,6 +335,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("next_attempt_at", executed_sql)
         self.assertIn("LEAST(300, POWER(2, GREATEST(attempt, 1))::int)", executed_sql)
         self.assertIn("status = 'pending'", executed_sql)
+        # a retry clears any pending human decision, so the step is not shown as stuck while it runs
+        self.assertIn("input = input - '_awaiting_human_decision'", executed_sql)
 
     def test_resume_tool_approval_requeues_without_spending_retry(self):
         gateway = load_gateway()

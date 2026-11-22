@@ -72,7 +72,7 @@ class BootstrapEnvContractTests(unittest.TestCase):
     def test_phase_12_hydrates_before_compose_env_write(self):
         phase = PHASE_12.read_text()
         hydrate_idx = phase.index("hydrate_slack_channel_env")
-        compose_up_idx = phase.index("run_docker_compose_as_admin up -d")
+        compose_up_idx = phase.index("start_stack_launcher_last")
         compose_write_idx = phase.index('} > "$COMPOSE_ENV"')
         require_idx = phase.index('require_slack_channel_env "$PHASE_NAME"')
         self.assertLess(hydrate_idx, compose_up_idx)

@@ -25,7 +25,12 @@ afterEach(() => vi.restoreAllMocks());
 describe("Live page", () => {
   it("shows capacity, each running ticket and its timeline", async () => {
     const user = userEvent.setup();
-    mockFetch((url) => {
+    const posted: string[] = [];
+    mockFetch((url, init) => {
+      if (url === "/admin/workflows/decide") {
+        posted.push(String(init?.body));
+        return jsonResponse({ status: "retried" });
+      }
       if (url === "/admin/live") {
         return jsonResponse({
           generated_at: "", capacity: { running: 2, queued: 1, limit: 3 },
@@ -41,7 +46,10 @@ describe("Live page", () => {
     expect(capacity).toHaveTextContent("1 waiting for you");
     expect(screen.getByText("Waiting for you")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Decide in Inbox" })).toHaveAttribute("href", "#/inbox/stuck_step/t9");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     await user.click(screen.getAllByRole("button", { name: "Timeline" })[0]);
+    expect(posted[0]).toContain('"action":"retry"');
+    expect(posted[0]).toContain('"task_id":"t9"');
     const timeline = screen.getByLabelText("PROJ-4 timeline");
     expect(within(timeline).getAllByText("30m")).toHaveLength(2);
   });

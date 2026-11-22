@@ -29,7 +29,7 @@ class FailedChecksTests(unittest.TestCase):
         self.assertEqual(stage.on_block["revise"]["step_name"], "deliver_work_order")
         self.assertEqual(stage.on_block["revise"]["budget"], "checks")
         self.assertEqual(stage.on_block["revise"]["input_map"]["qa_feedback"], "$reject.comments")
-        self.assertEqual(human_decisions.available_decisions(stage), ["revise", "stop"])
+        self.assertEqual(human_decisions.available_decisions(stage), ["retry", "revise", "stop"])
 
     def test_feedback_names_the_checks_and_quotes_the_log(self):
         output = {**CHECKS_FAILED, "failed_check_logs": {f"{PR}:test": "Error: Cannot bundle node:sqlite"}}
@@ -90,7 +90,7 @@ class FailedChecksTests(unittest.TestCase):
 class FailedCodingRunTests(unittest.TestCase):
     def test_a_failed_coding_run_can_be_run_again_or_stopped(self):
         stage = load_skeleton("deliver_work_order").stage("deliver_work_order")
-        self.assertEqual(human_decisions.available_decisions(stage), ["revise", "stop"])
+        self.assertEqual(human_decisions.available_decisions(stage), ["retry", "revise", "stop"])
 
     def test_revise_re_runs_the_step_with_the_error_and_guidance(self):
         task = {"id": "t-1", "step_name": "deliver_work_order", "status": "blocked", "workflow_type": "deliver_work_order",

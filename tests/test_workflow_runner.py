@@ -92,8 +92,9 @@ class FakeMemoryClient:
             return records[workflow_id]
         return {"workflow": {"id": workflow_id}, "tasks": []}
 
-    def retry_task(self, task_id, reason):
+    def retry_task(self, task_id, reason, *, extra_retries=0):
         self.retried.append((task_id, reason))
+        self.extra_retries = getattr(self, "extra_retries", []) + [extra_retries]
 
 
 class FakeAdapter:
@@ -1510,6 +1511,23 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertTrue(memory.blocked[0][1].startswith(runner_module.TRANSPORT_ERROR_PREFIX))
         self.assertEqual(len(memory.retried), 1)
         self.assertEqual(memory.retried[0][0], "task-1")
+
+    def test_a_lost_coding_job_is_retried_beyond_the_steps_own_budget(self):
+        runner_module = load_runner()
+        # The step's own budget (max_retries 1) is used up; infrastructure failures get 3 more.
+        task = {"id": "task-1", "workflow_id": "workflow-1", "workflow_type": "implement_jira_ticket",
+                "step_name": "deliver_work_order", "agent_id": "dev-agent", "attempt": 2, "max_retries": 1}
+        memory = FakeMemoryClient(ready=[task])
+        adapter = FakeAdapter({"status": "blocked",
+                               "error": f"{runner_module.TRANSPORT_ERROR_PREFIX} coding job lost: no heartbeat for 5 minutes"})
+        runner_module.WorkflowRunner(memory, adapter, runner_id="runner-1").tick()
+        self.assertEqual(len(memory.retried), 1)
+        self.assertEqual(memory.extra_retries, [runner_module.TRANSPORT_EXTRA_RETRIES])
+        # After those, it stops for a person (who can Retry once the cause is fixed).
+        spent = {**task, "attempt": 1 + runner_module.TRANSPORT_EXTRA_RETRIES}
+        memory = FakeMemoryClient(ready=[spent])
+        runner_module.WorkflowRunner(memory, adapter, runner_id="runner-1").tick()
+        self.assertEqual(memory.retried, [])
 
     def test_runner_recovers_when_adapter_raises_after_claim(self):
         runner_module = load_runner()

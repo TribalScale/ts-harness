@@ -15,7 +15,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-COMMAND = re.compile(r"^\s*/(revise|accept|stop)\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL)
+COMMAND = re.compile(r"^\s*/(retry|revise|accept|stop)\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL)
 
 
 def parse_command(text: str) -> tuple[str, str] | None:
@@ -144,6 +144,7 @@ def handle_pr_command(
         say(pr_url, f"@{login} `/{action}` for {work_order} did not go through: {exc}")
         return {"status": "error", "action": action, "work_order": work_order, "error": str(exc)}
     done = {
+        "retry": f"running {work_order}'s stuck step again",
         "revise": f"sent {work_order} back to OpenCode with your guidance and a fresh set of revisions",
         "accept": f"accepted {work_order} as it is; the delivery continues",
         "stop": f"stopped {work_order}",

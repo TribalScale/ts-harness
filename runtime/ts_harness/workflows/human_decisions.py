@@ -18,7 +18,7 @@ from ts_harness.workflows.work_order_waves import (
 
 ACCEPT_KEY = "_human_accept"
 STOPPED_PREFIX = "stopped_by_human:"
-DECISIONS = ("revise", "accept", "stop")
+DECISIONS = ("retry", "revise", "accept", "stop")
 
 
 def _now() -> str:
@@ -63,7 +63,9 @@ def _reruns_on_revise(stage: Any) -> bool:
 
 def available_decisions(stage: Any) -> list[str]:
     """Decisions that make sense for the stage; accepting an external wait would fake its event."""
-    decisions: list[str] = []
+    # Retry runs the same step again with the same input: the fix for a cause outside the
+    # code (a lost coding job, a missing permission, a service that was down).
+    decisions: list[str] = ["retry"]
     on_block = dict(getattr(stage, "on_block", None) or {})
     if on_block.get("hook") == "revise_on_reject" or _reruns_on_revise(stage):
         decisions.append("revise")
@@ -121,6 +123,8 @@ def revision_limit_text(
         if "revise" in decisions:
             lines.append("To try once more with that guidance, send:\n" + suggested_revise(label, diagnosis)[:1500])
     options: list[str] = []
+    if "retry" in decisions:
+        options.append(f"`/retry {label}` to run the step again once its cause is fixed")
     if "revise" in decisions:
         options.append(f"`/revise {label} <guidance>` to send it back with {max_revisions} more automatic revisions")
     if "accept" in decisions:
@@ -132,6 +136,8 @@ def revision_limit_text(
 
 def _decision_options(label: str, decisions: list[str], *, revise_hint: str) -> str:
     options: list[str] = []
+    if "retry" in decisions:
+        options.append(f"`/retry {label}` to run the step again once its cause is fixed")
     if "revise" in decisions:
         options.append(f"`/revise {label} <guidance>` {revise_hint}")
     if "accept" in decisions:
@@ -300,6 +306,22 @@ def decide(
         engine._sync_session(workflow_id, workflow_type, tenant_id, task=task)
         return {**result, **base, "status": "revising"}
 
+    if action == "retry":
+        engine.client.resume_blocked_task(
+            str(task_id),
+            actor=actor,
+            input_patch={HUMAN_DECISION_KEY: None},
+            reason=f"retried by {actor}",
+        )
+        ctx.extras["channel_text"] = f"{who} retried {label} at `{step}`; running it again."
+        ctx.runner_event = "retried"
+        try:
+            from ts_harness.workflows.hooks.notify_bound_channel import handle as notify_bound
+
+            notify_bound(ctx)
+        except Exception:  # noqa: BLE001 - the retry stands without the message
+            pass
+        return {**base, "status": "retried"}
     if action == "accept":
         engine.client.resume_blocked_task(
             str(task_id),

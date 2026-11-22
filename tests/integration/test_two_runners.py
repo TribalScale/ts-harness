@@ -133,7 +133,7 @@ class DirectMemory:
     def block_task(self, task_id, error, output=None):
         self._transition(task_id, {"status": "blocked", "error": error})
 
-    def retry_task(self, task_id, reason):
+    def retry_task(self, task_id, reason, *, extra_retries=0):
         raise AssertionError(f"unexpected retry of {task_id}: {reason}")
 
 
