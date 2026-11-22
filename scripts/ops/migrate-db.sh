@@ -65,6 +65,7 @@ ORDER=(
   048_project_revision_autonomy.sql
   049_project_max_parallel_tickets.sql
   050_coding_job_progress.sql
+  051_data_retention.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
@@ -4949,7 +4950,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
-    _SHARED_STATE_PREFIXES = ("shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup")
+    _SHARED_STATE_PREFIXES = (
+        "shared-files", "skill-index", "runtime-kv", "audit-events", "channel-dedup", "data-retention",
+    )
 
     @classmethod
     def _is_shared_state_path(cls, path: str) -> bool:
@@ -4992,6 +4995,14 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     result = shared_state_routes.mark_channel_event(conn, body)
                 elif head == "channel-dedup" and rest == ["sweep"] and method == "POST":
                     result = shared_state_routes.sweep_channel_dedup(conn, body)
+                elif head == "data-retention" and rest == ["apply"] and method == "POST":
+                    result = data_retention_routes.apply_retention(conn, body)
+                elif head == "data-retention" and rest == ["uploads", "expired"] and method == "POST":
+                    result = data_retention_routes.expired_uploads(conn, body)
+                elif head == "data-retention" and rest == ["uploads", "purged"] and method == "POST":
+                    result = data_retention_routes.mark_uploads_purged(conn, body)
+                elif head == "data-retention" and len(rest) == 3 and rest[0] == "programs" and rest[2] == "purge" and method == "POST":
+                    result = data_retention_routes.purge_program(conn, rest[1], body)
                 elif head == "skill-index" and not rest and method == "GET":
                     result = skill_index_routes.list_skill_index(conn, query)
                 elif head == "skill-index" and rest == ["drafts"] and method in {"POST", "PUT"}:

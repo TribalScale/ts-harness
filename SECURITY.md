@@ -20,6 +20,11 @@ you when the fix is published unless you ask us not to.
 
 Only the latest release on the default branch receives security fixes.
 
+## Client data
+
+What client data the harness stores, what it sends to model providers, how long it is kept
+and how to delete a client's data on request: [`docs/data-handling.md`](docs/data-handling.md).
+
 ## Handling secrets
 
 - Configuration refers to secrets by name only (`credentials_secret`,
