@@ -32,6 +32,11 @@ def _issue(key: str, *blockers: tuple[str, str]) -> dict:
 
 
 class OrderTicketQueueTests(unittest.TestCase):
+    def test_ready_tickets_go_in_issue_number_order_not_text_order(self):
+        issues = [_issue("PROJ-2"), _issue("PROJ-22", ("PROJ-2", "To Do")), _issue("PROJ-7", ("PROJ-2", "To Do")),
+                  _issue("PROJ-10", ("PROJ-2", "To Do"))]
+        self.assertEqual(order_ticket_queue(issues)["ordered"], ["PROJ-2", "PROJ-7", "PROJ-10", "PROJ-22"])
+
     def test_blocker_comes_before_the_blocked_ticket(self):
         ordered = order_ticket_queue(
             [_issue("PROJ-2", ("PROJ-1", "In Progress")), _issue("PROJ-1")]
@@ -79,9 +84,9 @@ class OrderTicketQueueTests(unittest.TestCase):
             [{"key": f"PROJ-{QUEUE_CAP + 1:03d}", "reason": "queue cap 50"}],
         )
 
-    def test_ties_break_by_issue_key(self):
+    def test_ties_break_by_issue_number(self):
         ordered = order_ticket_queue([_issue("PROJ-2"), _issue("PROJ-10"), _issue("PROJ-1")])
-        self.assertEqual(ordered["ordered"], ["PROJ-1", "PROJ-10", "PROJ-2"])
+        self.assertEqual(ordered["ordered"], ["PROJ-1", "PROJ-2", "PROJ-10"])
 
     def test_queue_phrases(self):
         self.assertTrue(wants_ticket_queue("implement all my tickets"))
