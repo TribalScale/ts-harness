@@ -674,6 +674,9 @@ def retry_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
     task_id = parse_uuid(body.get("id"))
     actor = str(body.get("actor", "workflow-runner"))
     reason = str(body.get("reason", "retry requested"))
+    # ``extra`` retries beyond max_retries: infrastructure failures (a lost coding job) do not
+    # spend the step's own budget, which is for failures of the work itself.
+    extra = max(0, min(10, int(body.get("extra_retries") or 0)))
 
     with conn.cursor() as cur:
         cur.execute(
@@ -689,9 +692,9 @@ def retry_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
                 )
             WHERE id = %s
               AND status IN ('failed', 'blocked')
-              AND attempt <= max_retries
+              AND attempt <= max_retries + %s
             """,
-            (task_id,),
+            (task_id, extra),
         )
         if getattr(cur, "rowcount", 1) == 0:
             raise ValueError("workflow task retry was rejected")

@@ -28,13 +28,15 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "knowledge_note", label: "Notes" },
 ];
 
-const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "revise"];
+const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "retry", "revise"];
 const STUCK_DECISION_LABEL: Record<StuckDecision, string> = {
+  retry: "Retry",
   revise: "Revise again",
   accept: "Accept as is",
   stop: "Stop work order",
 };
 const STUCK_DECISION_VARIANT = {
+  retry: "secondary",
   revise: "primary",
   accept: "secondary",
   stop: "danger",

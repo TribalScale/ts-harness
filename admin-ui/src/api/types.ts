@@ -5,7 +5,7 @@ export type InboxType =
   | "stuck_step"
   | "knowledge_note";
 
-export type StuckDecision = "revise" | "accept" | "stop";
+export type StuckDecision = "retry" | "revise" | "accept" | "stop";
 
 export interface WorkflowStep {
   task_id: string;

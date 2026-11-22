@@ -268,7 +268,7 @@ class AdminBffTests(unittest.TestCase):
         self.assertEqual(item["id"], "finalize-4")
         self.assertEqual(item["title"], "WO-003 · finalize_code_review")
         meta = item["meta"]
-        self.assertEqual(meta["decisions"], ["revise", "accept", "stop"])
+        self.assertEqual(meta["decisions"], ["retry", "revise", "accept", "stop"])
         self.assertEqual((meta["workflow_id"], meta["program_id"]), ("wf-d", "prog-1"))
         self.assertEqual(meta["pr_url"], "https://github.com/org/app/pull/18")
         self.assertIn("Fix the persistence bug.", meta["feedback"])

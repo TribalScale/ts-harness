@@ -973,6 +973,21 @@ compose_up_hold_args() {
     fi
 }
 
+# Start the stack with the coding launcher last. Coding workers join agent-runtime's network; a
+# worker launched while agent-runtime is being recreated joins the old container's network and
+# its job is lost. With HOLD_CODING_LAUNCHER=1 the launcher stays stopped (a redeploy starts it).
+start_stack_launcher_last() {
+    local phase="${1:-deploy}"
+    if ! run_docker_compose_as_admin config --services 2>/dev/null | grep -qx coding-launcher; then
+        run_docker_compose_as_admin up -d
+        return
+    fi
+    run_docker_compose_as_admin up -d --scale coding-launcher=0
+    [[ "${HOLD_CODING_LAUNCHER:-0}" == "1" ]] && return 0
+    wait_for_agent_runtime_health "$phase"
+    run_docker_compose_as_admin up -d
+}
+
 wait_for_agent_runtime_health() {
     local phase="${1:-unknown}"
     local timeout="${AGENT_RUNTIME_HEALTH_TIMEOUT:-120}"

@@ -1497,7 +1497,7 @@ def format_tool_approval_ack(result: dict[str, Any]) -> str:
     return f"Done — completed {tool_name}."
 
 
-_STUCK_COMMAND_RE = re.compile(r"^\s*/(revise|accept|stop)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+_STUCK_COMMAND_RE = re.compile(r"^\s*/(retry|revise|accept|stop)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 
 
 def parse_stuck_step_command(user_text: str) -> tuple[str, str] | None:
@@ -1621,6 +1621,8 @@ def format_stuck_step_ack(result: dict[str, Any]) -> str:
             f"Sent {label} back to OpenCode with a fresh revision budget "
             f"(revision {result.get('revision_number')}/{result.get('max_revisions')})."
         )
+    if status == "retried":
+        return f"Running {label}'s stuck step again."
     if status == "accepted":
         return f"Accepted {label} as it is. The delivery continues from the next step."
     if status == "stopped":

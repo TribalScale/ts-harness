@@ -95,8 +95,8 @@ echo "--- build"
 run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
 echo "--- up"
-# Starts the coding launcher again (phase 12 held it at zero).
-HOLD_CODING_LAUNCHER=0 run_docker_compose_as_admin up -d
+# The coding launcher starts last, once the new agent-runtime is healthy (start_stack_launcher_last).
+HOLD_CODING_LAUNCHER=0 start_stack_launcher_last redeploy
 wait_for_agent_runtime_health redeploy
 run_docker_compose_as_admin ps --format "table {{.Service}}\t{{.Status}}"
 

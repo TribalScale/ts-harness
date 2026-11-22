@@ -495,6 +495,7 @@ shows a **Stuck step** item. Deciding needs the `approve_gate` permission.
 
 | Decision | Chat reply | Effect |
 | --- | --- | --- |
+| Retry | `/retry WO-003` | Runs the stuck step again with the same input. Use it once the cause is fixed outside the code: a lost coding job, a missing permission or allowlist entry, a service that was down. It does not spend the revision budget. Offered for every stuck step. |
 | Revise again | `/revise WO-003 <guidance>` | Sends the PR back to OpenCode with the review feedback plus your guidance. Grants a fresh budget of `max_revisions` (the same limit as the original), counted from this revision. |
 | Accept as is | `/accept WO-003` | Completes the step with its reviewed output and continues the delivery. For `finalize_code_review` it also sets `harness/code-review` to success, marked as a human override. Not offered for steps that wait on an external event. |
 | Stop | `/stop WO-003` | Blocks the step terminally (`stopped_by_human: ...`); the wave counts the work order as failed. |
@@ -507,6 +508,13 @@ replies on the PR with what it did, or why it did not (login not mapped, missing
 permission). When no step is waiting for a decision, `/revise` keeps its earlier
 meaning at the merge wait (send the PR back with the comment), and `/accept` or `/stop`
 does nothing.
+
+**Lost coding jobs.** A coding job whose worker stops sending heartbeats is marked lost
+and its step blocks with `transport_error:`. The runner retries such infrastructure failures
+3 times on top of the step's own retry budget, with backoff, before it stops for a person
+(who can then **Retry**). Redeploys start the coding launcher only after the new
+agent-runtime is healthy (`start_stack_launcher_last`), because a worker launched while
+agent-runtime is being recreated joins the old container's network and is lost.
 
 **After a restart.** If the runner restarts between a gate blocking and its revise loop
 running (a redeploy), the step would stay blocked with no revision and no decision

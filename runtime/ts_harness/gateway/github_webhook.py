@@ -212,7 +212,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
         issue = body.get("issue") or {}
         comment = body.get("comment") or {}
         text = str(comment.get("body") or "").strip()
-        if action != "created" or issue.get("pull_request") is None or not re.match(r"^/(revise|accept|stop)\b", text, re.I):
+        if action != "created" or issue.get("pull_request") is None or not re.match(r"^/(retry|revise|accept|stop)\b", text, re.I):
             return None
         return {
             "kind": "github.pr_comment",

@@ -208,3 +208,34 @@ class ConflictingFeedbackTextTests(unittest.TestCase):
         self.assertIn("`/revise WO-004 <guidance>`", text)
         self.assertIn("`/accept WO-004`", text)
         self.assertIn("`/stop WO-004`", text)
+
+
+class RetryDecisionTests(unittest.TestCase):
+    """Retry runs a stuck step again with the same input once its cause is fixed."""
+
+    def test_retry_resumes_the_step_and_clears_the_decision_flag(self):
+        from unittest import mock
+
+        from ts_harness.workflows import human_decisions
+        from ts_harness.workflows.materialize import load_skeleton
+
+        skeleton = load_skeleton("deliver_work_order")
+        task = {"id": "t1", "step_name": "deliver_work_order", "status": "blocked", "workflow_type": "deliver_work_order",
+                "error": "transport_error: coding job lost: no heartbeat for 5 minutes",
+                "input": {"work_order_id": "WO-1", "_awaiting_human_decision": {"reason": "transport"}}}
+        engine = mock.MagicMock()
+        engine.client.get_workflow.return_value = {"workflow": {"id": "wf"}, "tasks": [task]}
+        engine._context.return_value = mock.MagicMock(stage=skeleton.stage("deliver_work_order"), extras={}, workflow={})
+        with mock.patch("ts_harness.workflows.hooks.notify_bound_channel.handle"):
+            result = human_decisions.decide(engine, "wf", "t1", "retry", actor="dana@example.com")
+        self.assertEqual(result["status"], "retried")
+        engine.client.resume_blocked_task.assert_called_once_with(
+            "t1", actor="dana@example.com", input_patch={"_awaiting_human_decision": None}, reason="retried by dana@example.com")
+        self.assertIn("retry", human_decisions.available_decisions(skeleton.stage("deliver_work_order")))
+
+    def test_retry_works_from_chat_and_pr_comments(self):
+        from ts_harness.gateway.channel_confirmations import parse_stuck_step_command
+        from ts_harness.gateway.pr_commands import parse_command
+
+        self.assertEqual(parse_stuck_step_command("/retry WO-1"), ("retry", "WO-1"))
+        self.assertEqual(parse_command("/retry"), ("retry", ""))
