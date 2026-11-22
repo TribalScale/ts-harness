@@ -135,3 +135,13 @@ class WaitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StartTextTests(unittest.TestCase):
+    def test_one_ticket_is_not_called_parallel_and_the_waiting_ones_are_named(self):
+        from ts_harness.jira.ticket_pool import start_text
+
+        text = start_text(["PROJ-7"], {"PROJ-8": ["PROJ-7"], "PROJ-23": ["PROJ-7"], "PROJ-9": ["PROJ-8"]}, 2)
+        self.assertEqual(text, "Started PROJ-7. Up to 2 tickets run at once. PROJ-8 and PROJ-23 wait on PROJ-7; "
+                               "PROJ-9 waits on PROJ-8.")
+        self.assertEqual(start_text(["PROJ-7", "PROJ-30"], {}, 2), "Started PROJ-7 and PROJ-30 in parallel. Up to 2 tickets run at once.")

@@ -447,9 +447,14 @@ def prepare_ticket_delivery(
 
     repo_name = repo_url.split("github.com/")[-1]
     lines = [f"{key}: {summary}", f"PR against `{base_branch}` on `{repo_name}` (from {repo_source})."]
-    named = [str(r["id"]) for r in refs if str(r["id"]) in body]
-    if refs:
-        lines.append("Design: " + ", ".join(f"{r['id']} ({r.get('title') or r.get('source')})" for r in refs if str(r["id"]) in named or not named))
+    # Only the frames the ticket names reach the coding job and QA, so list only those.
+    from ts_harness.intake.design import refs_named_by_work_order
+
+    named_refs = refs_named_by_work_order(refs, body) if refs else []
+    if named_refs:
+        lines.append("Design: " + ", ".join(f"{r['id']} ({r.get('title') or r.get('source')})" for r in named_refs))
+    elif refs:
+        lines.append("Design: none (the ticket names no design frames)")
     if onboarding.get("needed"):
         lines.append("The repository has no .ts-harness.yml yet; this PR also adds it.")
     lines += [f"Note: {w}" for w in warnings]

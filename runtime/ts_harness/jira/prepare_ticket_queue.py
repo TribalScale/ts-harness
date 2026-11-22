@@ -297,6 +297,8 @@ def prepare_ticket_queue(
         if limit > 1 and len(keys) > 1:
             summary_text += f"\nTickets whose blockers are done run in parallel, up to {limit} at a time."
         return {
+            # Heads the message in the thread: this step asks to confirm the whole list.
+            "title": f"Confirm the {project} ticket queue",
             "queue": True,
             "jira_project_key": project,
             "jira_issue_key": keys[0],

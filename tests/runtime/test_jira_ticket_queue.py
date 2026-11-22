@@ -192,6 +192,7 @@ class PrepareTicketQueueTests(unittest.TestCase):
             runtime=self._runtime(),
         )
         self.assertEqual(result["jira_issue_keys"], ["PROJ-1", "PROJ-2"])
+        self.assertEqual(result["title"], "Confirm the PROJ ticket queue")
         self.assertEqual(result["jira_issue_key"], "PROJ-1")
         self.assertIn("assignee", seen["jql"])
         self.assertEqual(seen["max_results"], 100)
