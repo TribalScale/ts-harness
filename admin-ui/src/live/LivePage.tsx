@@ -23,8 +23,26 @@ export const WAITING_STATUS: Record<LiveItem["waiting_on"], SemanticStatus> = {
   done: "success",
 };
 
-function LiveCard({ item }: { item: LiveItem }) {
+function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  async function retry() {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await apiFetch("/admin/workflows/decide", {
+        method: "POST",
+        body: JSON.stringify({ workflow_id: item.workflow_id, task_id: item.stuck_task_id, action: "retry" }),
+      });
+      onChanged?.();
+    } catch (e: any) {
+      setRetryError(String(e?.message || e));
+    } finally {
+      setRetrying(false);
+    }
+  }
   const title = item.jira_issue_key || item.label;
   return (
     <li className={`live-card live-card-${item.waiting_on}`}>
@@ -61,12 +79,18 @@ function LiveCard({ item }: { item: LiveItem }) {
             Pull request
           </a>
         )}
+        {item.stuck_task_id && (
+          <button type="button" className="link-button" disabled={retrying} onClick={() => void retry()}>
+            {retrying ? "Retrying…" : "Retry"}
+          </button>
+        )}
         {item.stuck_task_id && <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>Decide in Inbox</a>}
         {item.program_id && <a href={`#/programs/${item.program_id}`}>Program</a>}
         <button type="button" className="link-button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? "Hide timeline" : "Timeline"}
         </button>
       </div>
+      {retryError && <div className="error-banner" role="alert">{retryError}</div>}
       {open && <Timeline bars={item.timeline} label={`${title} timeline`} />}
     </li>
   );
@@ -147,7 +171,7 @@ export function LivePage({
       {tab === "now" && (
         <ul className="live-cards">
           {items.map((item) => (
-            <LiveCard key={item.workflow_id} item={item} />
+            <LiveCard key={item.workflow_id} item={item} onChanged={() => void load()} />
           ))}
         </ul>
       )}
