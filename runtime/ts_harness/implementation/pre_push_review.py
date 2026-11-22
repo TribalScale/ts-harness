@@ -42,6 +42,18 @@ def review_rounds() -> int:
         return DEFAULT_ROUNDS
 
 
+DEFAULT_BUDGET_SECONDS = 1500
+
+
+def review_budget_seconds() -> int:
+    """Time the pre-push review may take before it stops starting new rounds
+    (``TS_HARNESS_PRE_PUSH_REVIEW_BUDGET_SECONDS``, default 25 minutes; 0 = no limit)."""
+    try:
+        return max(0, int(os.environ.get("TS_HARNESS_PRE_PUSH_REVIEW_BUDGET_SECONDS") or DEFAULT_BUDGET_SECONDS))
+    except ValueError:
+        return DEFAULT_BUDGET_SECONDS
+
+
 def is_blocking(finding: dict[str, Any]) -> bool:
     from ts_harness.workflows.code_review import is_blocking as gate_blocking
 
@@ -192,7 +204,7 @@ def summary_record(rounds: list[dict[str, Any]], *, model: str | None) -> dict[s
     ``fix_failed`` (the fix broke verification and was dropped) or ``no_review``.
     """
     last = rounds[-1] if rounds else {}
-    open_blocking = [] if last.get("status") in {"pass", "no_review"} else [
+    open_blocking = [] if last.get("status") in {"pass", "no_review", "out_of_time"} else [
         item for item in last.get("findings") or [] if is_blocking(item)
     ]
     return {
