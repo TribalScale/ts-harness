@@ -868,9 +868,13 @@ class OpenCodeBackend:
         """
         if request.revision_files:
             return []
+        from ts_harness.implementation.generated_artifacts import generator_steps
         from ts_harness.workflows.code_review import undeclared_paths
 
-        reverted = undeclared_paths(self._working_tree_names(repo_dir), request.work_order_body)
+        # Files CI regenerates are kept: the harness regenerates them on purpose.
+        generated = {path for step in generator_steps(repo_dir) for path in step.files}
+        reverted = [path for path in undeclared_paths(self._working_tree_names(repo_dir), request.work_order_body)
+                    if path not in generated]
         for path in reverted:
             self.runner(
                 ["git", "checkout", "HEAD", "--", path],
