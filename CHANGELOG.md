@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Release process: `scripts/ops/release.py prepare|tag|notes` promotes `dev` to `main` with the changelog cut and version bump, tags the release and publishes its notes; `scripts/ops/rollback.sh v<version>` moves a host to any release. New migrations must be additive (a contract test refuses drops, renames and type changes without a `-- destructive:` reason), so rolling the code back never needs the database rolled back (`docs/releasing.md`).
 - A code review revision may also edit the module glue beside the flagged files (`index`, `types`, `constants`, `schema` files in the same folder) and the files they import directly; the coding prompt and the editor's permissions use the same list. Before, a fix that had to widen a type or export a function was refused twice (`revision_scope`) and parked for a person.
 - A coding job may run 2 hours before it is marked lost (was 60 minutes, which cut off a complex first run in its third pre-push review round), and the pre-push review stops starting rounds after 25 minutes (`TS_HARNESS_PRE_PUSH_REVIEW_BUDGET_SECONDS`) and pushes, leaving the rest to the code review gate.
 - In a parallel run, a ticket waiting for its PR to be merged frees its slot, so independent tickets keep going; at most 4 PRs (`TS_HARNESS_POOL_MAX_WAITING_MERGE`) wait for a merge at once.
