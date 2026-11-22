@@ -125,51 +125,6 @@ export function DeliveryExtras({
   );
 }
 
-const IDENTITY_JSON_KEYS = [
-  "github_logins",
-  "roles",
-  "role_bundles",
-  "departments",
-  "service_permissions",
-  "group_roles",
-] as const;
-
-export function IdentityExtras({
-  merged,
-  definition,
-  onChange,
-}: {
-  merged: RuntimeSettingsDefinition | Record<string, unknown>;
-  definition: RuntimeSettingsDefinition;
-  onChange: (next: RuntimeSettingsDefinition) => void;
-}) {
-  const mergedIdentity = asRecord(asRecord(merged).identity);
-  return (
-    <div>
-      {IDENTITY_JSON_KEYS.map((key) => (
-        <label key={key} className="form-field">
-          <span>{key}</span>
-          <textarea
-            aria-label={key}
-            value={JSON.stringify(definition.identity?.[key] || mergedIdentity[key] || {}, null, 2)}
-            onChange={(event) => {
-              try {
-                const parsed = JSON.parse(event.target.value);
-                onChange({
-                  ...definition,
-                  identity: { ...definition.identity, [key]: parsed },
-                });
-              } catch {
-                /* keep typing until the JSON is valid */
-              }
-            }}
-          />
-        </label>
-      ))}
-    </div>
-  );
-}
-
 export function PolicyForm({
   merged,
   definition,

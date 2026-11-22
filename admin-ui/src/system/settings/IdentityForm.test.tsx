@@ -63,4 +63,63 @@ describe("IdentityForm", () => {
     expect(screen.getByText("Source: overlay")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Remove" }).length).toBeGreaterThan(0);
   });
+
+  it("maps a GitHub login and roles with fields, not JSON", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderPage(
+      <IdentityForm
+        merged={{ identity: { github_logins: { "old@example.com": "old-gh" } } }}
+        sources={{}}
+        definition={{ definition_type: "runtime_settings", definition_version: "1.0.0" }}
+        onChange={onChange}
+      />
+    );
+    expect(screen.queryByRole("textbox", { name: "github_logins" })).not.toBeInTheDocument();
+    expect(screen.getByText("old-gh")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("GitHub email"), "Ada@Example.com");
+    await user.type(screen.getByLabelText("GitHub login"), "ada-gh");
+    await user.click(screen.getAllByRole("button", { name: "Add" })[2]);
+    expect(onChange.mock.calls.at(-1)?.[0].identity.github_logins).toEqual({
+      "old@example.com": "old-gh",
+      "ada@example.com": "ada-gh",
+    });
+    await user.type(screen.getByLabelText("Role email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Roles"), "admin, approver");
+    await user.click(screen.getAllByRole("button", { name: "Add" })[3]);
+    expect(onChange.mock.calls.at(-1)?.[0].identity.roles).toEqual({ "ada@example.com": ["admin", "approver"] });
+  });
+
+  it("asks for both fields instead of saving half a mapping", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderPage(
+      <IdentityForm
+        merged={{ identity: {} }}
+        sources={{}}
+        definition={{ definition_type: "runtime_settings", definition_version: "1.0.0" }}
+        onChange={onChange}
+      />
+    );
+    await user.type(screen.getByLabelText("GitHub email"), "ada@example.com");
+    await user.click(screen.getAllByRole("button", { name: "Add" })[2]);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter both github email and github login.");
+  });
+
+  it("adds service permissions as a list", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderPage(
+      <IdentityForm
+        merged={{ identity: { service_permissions: ["read"] } }}
+        sources={{}}
+        definition={{ definition_type: "runtime_settings", definition_version: "1.0.0" }}
+        onChange={onChange}
+      />
+    );
+    await user.type(screen.getByLabelText("Permission"), "Approve_Gate");
+    await user.click(screen.getAllByRole("button", { name: "Add" }).at(-1)!);
+    expect(onChange.mock.calls.at(-1)?.[0].identity.service_permissions).toEqual(["read", "approve_gate"]);
+  });
 });
