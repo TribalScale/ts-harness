@@ -394,3 +394,14 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AwaitingHumanDecisionTests(unittest.TestCase):
+    def test_parked_block_awaits_a_decision(self):
+        task = {"status": "blocked", "error": "code_review_blocked", "input": {"_awaiting_human_decision": {"reason": "revision_limit"}}}
+        self.assertTrue(work_order_waves.awaiting_human_decision(task))
+
+    def test_step_waiting_on_a_coding_job_is_not_stuck_despite_a_stale_flag(self):
+        task = {"status": "blocked", "error": "awaiting_external:coding.finished",
+                "input": {"_awaiting_human_decision": {"reason": "failed_run"}}}
+        self.assertFalse(work_order_waves.awaiting_human_decision(task))

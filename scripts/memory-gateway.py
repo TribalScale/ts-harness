@@ -684,6 +684,8 @@ def retry_workflow_task(conn, body: dict[str, Any]) -> dict[str, str]:
             UPDATE workflow_tasks
             SET status = 'pending',
                 error = NULL,
+                -- a retry re-runs the step: any decision it was waiting for is moot
+                input = input - '_awaiting_human_decision',
                 completed_at = NULL,
                 locked_by = NULL,
                 lock_expires_at = NULL,

@@ -111,8 +111,14 @@ HUMAN_DECISION_KEY = "_awaiting_human_decision"
 
 
 def awaiting_human_decision(task: dict[str, Any]) -> bool:
-    """A blocked step parked for a human to revise, accept or stop (e.g. after the revision limit)."""
+    """A blocked step parked for a human to revise, accept or stop (e.g. after the revision limit).
+
+    A step that is waiting on something else (a coding job, CI) is not, even when an earlier
+    decision flag was left on it: an automatic retry re-runs the step without a decision.
+    """
     task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+    if str(task.get("error") or "").startswith(_WAIT_ERROR_PREFIXES):
+        return False
     return str(task.get("status") or "") == "blocked" and bool(task_input.get(HUMAN_DECISION_KEY))
 
 
