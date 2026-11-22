@@ -42,6 +42,13 @@ starts it again. If any step fails, the launcher is started again on exit.
 
 Re-running phase 12 on its own drains the same way.
 
+## Deploy results in Slack
+
+When `SLACK_OPS_WEBHOOK_URL` is set (secret `<prefix>/slack-ops-webhook-url`), the script posts
+`redeploy done <sha> (<branch>)` to the ops channel at the end, and
+`redeploy FAILED (exit <n>) at <step> ...` when any step fails. Without the webhook it posts
+nothing. See [production alerts](ops-alerts.md#deploy-results).
+
 ## Check it
 
 ```bash
@@ -52,6 +59,7 @@ The key length must not be 0, and the models should match the template.
 
 ## Related
 
+- [Production alerts](ops-alerts.md)
 - [Re-run one bootstrap phase](re-run-bootstrap-phase.md)
 - [Runtime config store](runtime-config.md)
 - [LLM proxy and usage recording](llm-proxy.md)

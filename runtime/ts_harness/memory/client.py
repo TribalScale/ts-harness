@@ -438,6 +438,15 @@ class MemoryClient:
         """``{"tickets": [{key, workflow_id, ...}], "pools": [{workflow_id, join_task_id, queue}]}``."""
         return self._request("POST", "/workflow/running-tickets", {"tenant_id": tenant_id}) or {}
 
+    def list_repeated_step_runs(
+        self, *, tenant_id: str = "default", steps: list[str] | None = None, min_runs: int = 5
+    ) -> list[dict[str, Any]]:
+        """Running workflows whose coding step ran ``min_runs`` or more times (not converging)."""
+        body: dict[str, Any] = {"tenant_id": tenant_id, "min_runs": int(min_runs)}
+        if steps:
+            body["steps"] = list(steps)
+        return list((self._request("POST", "/workflow/repeated-step-runs", body) or {}).get("workflows") or [])
+
     def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
         result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
         return list(result.get("tasks") or [])

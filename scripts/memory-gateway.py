@@ -869,6 +869,45 @@ def list_stuck_tasks(conn, body: dict[str, Any]) -> dict[str, Any]:
         return {"tasks": list(cur.fetchall())}
 
 
+def list_repeated_step_runs(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Running workflows whose coding step has run at least ``min_runs`` times (the ops alert).
+
+    Every revision of a work order re-runs its coding step as a new task, so the count of
+    non-cancelled runs of ``steps`` is the number of attempts so far, the first included."""
+    tenant_id = str(body.get("tenant_id") or "default")
+    steps = [str(step) for step in (body.get("steps") or ["deliver_work_order", "implement"]) if str(step).strip()]
+    try:
+        min_runs = max(1, int(body.get("min_runs") or 5))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("min_runs must be a whole number") from exc
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT w.id AS workflow_id, w.workflow_type, count(*) AS runs,
+                   max(t.input ->> 'work_order_id') AS work_order_id,
+                   max(t.input ->> 'jira_issue_key') AS jira_issue_key,
+                   max(t.created_at) AS last_run_at
+            FROM workflows w
+            JOIN workflow_tasks t ON t.workflow_id = w.id
+            WHERE w.tenant_id = %s
+              AND w.status = 'running'
+              AND t.step_name = ANY(%s)
+              AND t.status <> 'cancelled'
+            GROUP BY w.id, w.workflow_type
+            HAVING count(*) >= %s
+            ORDER BY count(*) DESC
+            LIMIT 50
+            """,
+            (tenant_id, steps, min_runs),
+        )
+        rows = cur.fetchall()
+    return {
+        "workflows": [
+            {**row, "workflow_id": str(row["workflow_id"]), "runs": int(row["runs"])} for row in rows
+        ]
+    }
+
+
 def record_runtime_task(conn, body: dict[str, Any]) -> dict[str, str]:
     task_id = parse_uuid(body.get("id"))
     runtime_task_id = str(body.get("runtime_task_id", "")).strip()
@@ -5588,6 +5627,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, list_stuck_tasks(conn, body))
                 elif self.path == "/workflow/running-tickets":
                     self._send_json(200, running_ticket_work(conn, body))
+                elif self.path == "/workflow/repeated-step-runs":
+                    self._send_json(200, list_repeated_step_runs(conn, body))
                 elif self.path == "/workflow/runtime":
                     self._send_json(200, record_runtime_task(conn, body))
                 elif self.path == "/workflow/stale":
