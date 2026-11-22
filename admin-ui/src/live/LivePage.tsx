@@ -3,6 +3,7 @@ import { apiFetch } from "../api/client";
 import type { LiveItem, LiveResponse } from "../api/types";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { HistoryView } from "./HistoryView";
+import { MetricsView } from "./MetricsView";
 import { formatDuration } from "./Timeline";
 import { CurrentRunBreakdown, TicketStory } from "./TicketStory";
 
@@ -119,12 +120,22 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
   );
 }
 
+export type LiveTab = "now" | "history" | "metrics";
+
+const TAB_LABELS: Record<LiveTab, string> = { now: "Now", history: "History", metrics: "Metrics" };
+
+const TAB_INTROS: Record<LiveTab, string> = {
+  now: "Every ticket being built right now, refreshed every 10 seconds.",
+  history: "Finished tickets and work orders: merged, accepted, stopped, cancelled or failed.",
+  metrics: "Delivery quality over a period: first-try pass rate, revisions, time to merge, review catch rate and cost.",
+};
+
 export function LivePage({
   tab = "now",
   onTab,
 }: {
-  tab?: "now" | "history";
-  onTab?: (tab: "now" | "history") => void;
+  tab?: LiveTab;
+  onTab?: (tab: LiveTab) => void;
 }) {
   const [data, setData] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,14 +162,10 @@ export function LivePage({
     <div className="page live-page">
       <header className="page-header">
         <h2>Live</h2>
-        <p className="muted">
-          {tab === "now"
-            ? "Every ticket being built right now, refreshed every 10 seconds."
-            : "Finished tickets and work orders: merged, accepted, stopped, cancelled or failed."}
-        </p>
+        <p className="muted">{TAB_INTROS[tab]}</p>
       </header>
       <div className="live-tabs" role="tablist" aria-label="Live views">
-        {(["now", "history"] as const).map((key) => (
+        {(["now", "history", "metrics"] as const).map((key) => (
           <button
             key={key}
             type="button"
@@ -167,11 +174,12 @@ export function LivePage({
             className={tab === key ? "live-tab live-tab-active" : "live-tab"}
             onClick={() => onTab?.(key)}
           >
-            {key === "now" ? "Now" : "History"}
+            {TAB_LABELS[key]}
           </button>
         ))}
       </div>
       {tab === "history" && <HistoryView />}
+      {tab === "metrics" && <MetricsView />}
       {tab === "now" && error && <div className="error-banner" role="alert">{error}</div>}
       {tab === "now" && data && (
         <section className="live-capacity" aria-label="Coding capacity">
