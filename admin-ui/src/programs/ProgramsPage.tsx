@@ -19,6 +19,7 @@ import { Tabs, tabButtonId, tabPanelId } from "../components/Tabs";
 import { SplitView } from "../layout/SplitView";
 import { PHASE_NAMES, PhaseStrip } from "./PhaseStrip";
 import { PhaseActivityPanel, usePhaseActivity } from "./PhaseActivity";
+import { ProgramBoard } from "../live/ProgramBoard";
 import { ShareDialog } from "./ShareDialog";
 
 type ProgramTab = "overview" | "documents" | "artifacts";
@@ -750,6 +751,7 @@ export function ProgramsPage({
                   />
                 )}
               </PhaseStrip>
+              {status.program_id && <ProgramBoard programId={status.program_id} />}
               {pinnedWorkflowLinks.length > 0 && (
                 <div
                   className="key-links"

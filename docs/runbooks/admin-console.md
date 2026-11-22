@@ -99,8 +99,20 @@ Manual path: login → Inbox → Chat round-trip → Programs → System → Cro
 ## Tabs
 
 - **Inbox** — skill drafts (`admin`/`owner`), tool approvals, workflow gates. Each row keeps an explicit type badge; a coloured status pill only appears when the backend reports a lifecycle status (for example `pending`, `blocked`, `approved`). Item type alone never drives success/warning colour.
+- **Live** (`#/live`, `GET /admin/live`) — every ticket or work order being built across the running programs you can read, refreshed every 10 seconds.
+  - **Capacity:** coding jobs running (of `CODING_MAX_RUNNING`), queued, tickets in progress, and how many wait for you.
+  - **One card per ticket:**
+    - **current state:** the step, time in this step, total time, revisions (of 8, and whether the stronger model was used);
+    - **who it waits on:** you, the agent, CI, or a coding slot;
+    - **coding output:** the coding job's latest output line;
+    - **links:** the PR, the Inbox decision and the program.
+  - **Sorting:** waiting-for-you cards come first.
+  - **Timeline:** each card opens a timeline with one bar per step run, so revision loops show. A step starts when it is claimed and ends when it completes, stops, or now while it still runs.
+  - **History** tab (`#/live/history`, `GET /admin/history?days=&project=&repo=&outcome=&q=`): finished tickets and work orders across programs, newest first.
+    - **Each run:** its outcome (merged, accepted, stopped, cancelled, failed, replaced by a later run), who decided (the merger, the person or the harness that accepted or stopped it), when it finished, total time, revisions, PR and program links, and its timeline.
+    - **Filters:** by period (7 to 90 days), project, repository and outcome; search by ticket key, title, program or repository.
 - **Chat** — web channel (`web:` binding keys); Slack remains available. Tool and system transcript events render as annotations rather than assistant bubbles, and an empty transcript response never clears messages that have not been persisted yet.
-- **Programs** — an always-visible detail header carries the program status pill, the waiting indicator, and the Advance/Cancel actions above the Overview, Tasks, and Artifacts tabs, so actions stay reachable from every tab. A failed advance or cancel keeps the Program selected and shows the error.
+- **Programs** — an always-visible detail header carries the program status pill, the waiting indicator, and the Advance/Cancel actions above the Overview, Tasks, and Artifacts tabs, so actions stay reachable from every tab. A failed advance or cancel keeps the Program selected and shows the error. A ticket program's Overview also shows its **board** (`GET /admin/programs/{id}/board`): columns for waiting on blockers, ready, coding, in review, waiting for you, done (and stopped), each ticket's open Jira blockers as chips, the ticket's timeline when opened (with **All attempts** listing earlier runs of the same ticket, their outcome and timeline), and "where the time went" across coding, CI, code review, QA, waiting for merge and waiting for a decision.
 - **System** — Health, Cron, Skills, MCP, and Settings tabs; Health maps backend `ok`, `degraded`, and `unavailable` statuses directly and refreshes every 30 seconds. Skills (`#/system/skills`) is a read catalog plus attach handoff; see [skills-catalog.md](skills-catalog.md). MCP (`#/system/mcp`) overlays HTTP or catalog servers onto YAML bootstrap; see [mcp-settings.md](mcp-settings.md). Settings (`#/system/settings`) edits tenant Jira defaults, identity maps, and Slack routing overlays; see [system-settings.md](system-settings.md).
 
 ### Accessibility notes

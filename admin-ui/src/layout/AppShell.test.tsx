@@ -32,7 +32,7 @@ describe("AppShell on desktop", () => {
   it("keeps the compact labeled sidebar and operator footer without a menu button", () => {
     renderPage(<AppShell active="inbox" onNavigate={() => undefined}>content</AppShell>);
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    for (const label of ["Inbox", "Chat", "Programs", "Workflows", "System"]) {
+    for (const label of ["Inbox", "Live", "Chat", "Programs", "Workflows", "System"]) {
       expect(within(nav).getByRole("button", { name: label })).toBeVisible();
     }
     expect(screen.getByText("operator")).toBeVisible();
@@ -61,7 +61,7 @@ describe("AppShell on phone widths", () => {
     await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    for (const label of ["Inbox", "Chat", "Programs", "Workflows", "System"]) {
+    for (const label of ["Inbox", "Live", "Chat", "Programs", "Workflows", "System"]) {
       expect(within(nav).getByRole("button", { name: label })).toBeVisible();
     }
     expect(screen.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "true");

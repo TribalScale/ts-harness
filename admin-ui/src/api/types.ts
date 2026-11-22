@@ -543,3 +543,82 @@ export interface ProgramBudget {
     "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"
   > | null;
 }
+
+export interface TimelineBar {
+  task_id: string;
+  step_name: string;
+  label: string;
+  category: "coding" | "ci" | "review" | "qa" | "merge" | "decision" | "other";
+  status: string;
+  run: number;
+  start: string;
+  end: string;
+  seconds: number;
+  open: boolean;
+}
+
+export interface LiveItem {
+  workflow_id: string;
+  workflow_type: string;
+  label: string;
+  state: string;
+  kind: string;
+  current_step: string;
+  revisions: number;
+  pr_url: string;
+  stuck_task_id: string;
+  coding_job?: CodingJobProgress | null;
+  jira_issue_key: string;
+  waiting_on: "you" | "agent" | "ci" | "queue" | "done";
+  in_step_since: string;
+  in_step_seconds: number;
+  started_at: string;
+  elapsed_seconds: number;
+  stronger_model: boolean;
+  timeline: TimelineBar[];
+  program_id?: string;
+  program_label?: string;
+}
+
+export interface LiveResponse {
+  generated_at: string;
+  items: LiveItem[];
+  capacity: { running: number; queued: number; limit: number | null };
+}
+
+export interface RunOutcome {
+  outcome?: "merged" | "accepted" | "stopped" | "cancelled" | "failed" | "replaced" | "done";
+  decided_by?: string;
+  finished_at?: string;
+}
+
+export interface HistoryItem extends LiveItem, RunOutcome {
+  project: string;
+  repo: string;
+}
+
+export interface HistoryResponse {
+  generated_at: string;
+  days: number;
+  items: HistoryItem[];
+  total: number;
+  facets: { projects: string[]; repos: string[]; outcomes: string[] };
+}
+
+export interface BoardItem {
+  key: string;
+  title: string;
+  column: string;
+  blocked_by: string[];
+  item: (LiveItem & RunOutcome) | null;
+  attempts?: (LiveItem & RunOutcome)[];
+}
+
+export interface BoardResponse {
+  generated_at: string;
+  program_id: string;
+  columns: string[];
+  items: BoardItem[];
+  totals: { category: string; label: string; seconds: number; share: number }[];
+  parallel_limit: number | null;
+}
