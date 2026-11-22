@@ -5,6 +5,7 @@ import { StatusPill } from "../components/StatusPill";
 import { WAITING_LABELS, WAITING_STATUS } from "./LivePage";
 import { OUTCOME_LABELS } from "./HistoryView";
 import { CATEGORY_LABELS, Timeline, formatDuration } from "./Timeline";
+import { TicketStory } from "./TicketStory";
 
 const POLL_MS = 15000;
 
@@ -112,7 +113,7 @@ export function ProgramBoard({ programId }: { programId: string }) {
               label={WAITING_LABELS[opened.item.waiting_on]}
             />
           </div>
-          <Timeline bars={opened.item.timeline} label={`${opened.key} timeline`} />
+          <TicketStory programId={programId} workflowId={opened.item.workflow_id} />
           {(opened.attempts || []).length > 0 && (
             <details className="board-attempts">
               <summary>All attempts ({(opened.attempts || []).length + 1})</summary>

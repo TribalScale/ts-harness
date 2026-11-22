@@ -3,7 +3,8 @@ import { apiFetch } from "../api/client";
 import type { LiveItem, LiveResponse } from "../api/types";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { HistoryView } from "./HistoryView";
-import { Timeline, formatDuration } from "./Timeline";
+import { formatDuration } from "./Timeline";
+import { CurrentRunBreakdown, TicketStory } from "./TicketStory";
 
 const POLL_MS = 10000;
 
@@ -22,6 +23,13 @@ export const WAITING_STATUS: Record<LiveItem["waiting_on"], SemanticStatus> = {
   queue: "muted",
   done: "success",
 };
+
+/** "claude-opus-5-5" reads as "Opus". */
+export function modelLabel(model?: string): string {
+  const text = String(model || "").split("/").pop()?.toLowerCase() || "";
+  for (const name of ["opus", "sonnet", "haiku", "fable"]) if (text.includes(name)) return name[0].toUpperCase() + name.slice(1);
+  return model || "";
+}
 
 function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -68,6 +76,21 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
           </dd>
         </div>
       </dl>
+      {item.coding_job && (item.coding_job.status !== "queued" || item.coding_job.progress) && (
+        <CurrentRunBreakdown
+          run={{
+            title: item.revisions ? `Revision ${item.revisions}` : "Coding",
+            model: modelLabel(item.coding_job.model),
+            started_at: item.coding_job.started_at,
+            seconds: item.coding_job.started_at ? (Date.now() - Date.parse(item.coding_job.started_at)) / 1000 : null,
+            queued: item.coding_job.status === "queued",
+            phase: item.coding_job.progress?.phase || "",
+            phase_seconds: item.coding_job.progress?.phase_seconds,
+            detail: item.coding_job.progress?.detail || "",
+            done: item.coding_job.progress?.done || {},
+          }}
+        />
+      )}
       {item.coding_job?.last_output && (
         <code className="live-card-output" title="Latest coding output">
           {item.coding_job.last_output}
@@ -87,11 +110,11 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
         {item.stuck_task_id && <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>Decide in Inbox</a>}
         {item.program_id && <a href={`#/programs/${item.program_id}`}>Program</a>}
         <button type="button" className="link-button" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? "Hide timeline" : "Timeline"}
+          {open ? "Hide details" : "Details"}
         </button>
       </div>
       {retryError && <div className="error-banner" role="alert">{retryError}</div>}
-      {open && <Timeline bars={item.timeline} label={`${title} timeline`} />}
+      {open && item.program_id && <TicketStory programId={item.program_id} workflowId={item.workflow_id} />}
     </li>
   );
 }

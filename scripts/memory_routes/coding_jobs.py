@@ -88,9 +88,12 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
         "requested_by", "repo_url", "base_branch", "work_order_id", "status", "launcher",
         "runner_ref", "attempt", "heartbeat_at", "last_output", "result", "error",
         "created_at", "claimed_at", "started_at", "finished_at", "consumed_at",
-        "worker_cpu", "worker_memory_mb",
+        "worker_cpu", "worker_memory_mb", "progress",
     )
     job = {key: row.get(key) for key in keys}
+    row_spec = row.get("spec") if isinstance(row.get("spec"), dict) else {}
+    if row_spec.get("model"):
+        job["model"] = str(row_spec["model"])
     sized = _spec_sizing(row)
     if sized:
         job["spec_memory_mb"] = sized["worker_memory_mb"]
@@ -419,15 +422,23 @@ def get_job_spec(conn, job_id: str) -> dict[str, Any]:
 def heartbeat_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
     jid = _uuid(job_id)
     last_output = body.get("last_output")
+    # Where the run is (phase, seconds in it, finished phases) for the Live page.
+    progress = body.get("progress") if isinstance(body.get("progress"), dict) else None
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE coding_jobs
-            SET heartbeat_at = now(), last_output = COALESCE(%s, last_output)
+            SET heartbeat_at = now(), last_output = COALESCE(%s, last_output),
+                progress = COALESCE(%s::jsonb, progress)
             WHERE id = %s AND status = ANY(%s)
             RETURNING id, status
             """,
-            (str(last_output)[-_LAST_OUTPUT_LIMIT:] if last_output is not None else None, jid, list(RUNNING)),
+            (
+                str(last_output)[-_LAST_OUTPUT_LIMIT:] if last_output is not None else None,
+                json.dumps(progress)[:8000] if progress else None,
+                jid,
+                list(RUNNING),
+            ),
         )
         row = cur.fetchone()
         if not row:

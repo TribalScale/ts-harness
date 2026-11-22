@@ -71,8 +71,11 @@ class JobApi:
     def registries(self) -> list[dict[str, Any]]:
         return list(self._request("GET", "registries").get("registries") or [])
 
-    def heartbeat(self, last_output: str | None) -> str:
-        return str(self._request("POST", "heartbeat", {"last_output": last_output}).get("status") or "")
+    def heartbeat(self, last_output: str | None, progress: dict[str, Any] | None = None) -> str:
+        body: dict[str, Any] = {"last_output": last_output}
+        if progress:
+            body["progress"] = progress
+        return str(self._request("POST", "heartbeat", body).get("status") or "")
 
     def complete(self, *, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
         return self._request("POST", "complete", {"result": result, "error": error})
@@ -198,7 +201,9 @@ def run_job(
             except Exception as exc:  # noqa: BLE001
                 _log("coding_job_github_token_failed", job_id=api.job_id, error=str(exc)[:300])
             try:
-                status = api.heartbeat(last_log_line(log_path))
+                from ts_harness.implementation import progress
+
+                status = api.heartbeat(last_log_line(log_path), progress.snapshot())
             except Exception as exc:  # noqa: BLE001
                 _log("coding_job_heartbeat_failed", job_id=api.job_id, error=str(exc))
                 continue
