@@ -566,11 +566,32 @@ export interface BudgetsOverview {
   raise_limit: number | null;
 }
 
+export type ProgramBudgetAction = "downgrade" | "stop";
+
+/** A delivery program's own LLM budget: a total, not monthly. budget_usd 0 means none. */
+export interface ProgramOwnBudget {
+  budget_usd: number;
+  source: "program" | "default" | "none";
+  spent_usd: number;
+  spent_month_usd: number;
+  percent: number | null;
+  status: BudgetStatus | "none";
+  action: ProgramBudgetAction;
+  currency: string;
+  warn_at_percent: number;
+  held_jobs: number;
+  set_by: string | null;
+  set_at: string | null;
+  can_set: boolean;
+  set_limit: number | null;
+}
+
 export interface ProgramBudget {
   team: Pick<
     TeamBudget,
     "id" | "slug" | "display_name" | "status" | "percent" | "held_tasks"
   > | null;
+  program?: ProgramOwnBudget | null;
 }
 
 export interface TimelineBar {

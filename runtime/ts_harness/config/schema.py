@@ -285,9 +285,16 @@ class SchedulingConfig:
         }
 
 
+PROGRAM_BUDGET_ACTIONS = ("downgrade", "stop")
+
+
 @dataclass
 class BudgetsConfig:
-    """Monthly LLM budgets per team, in ``currency``. Managers may raise their team up to ``manager_max_monthly``."""
+    """Monthly LLM budgets per team, in ``currency``. Managers may raise their team up to ``manager_max_monthly``.
+
+    Delivery programs have a total budget: ``program_default_usd`` (0 means none) unless an
+    admin or manager sets the program's own amount. At it, ``program_action`` applies.
+    """
 
     currency: str = "USD"
     default_team_monthly: float = 5000.0
@@ -297,6 +304,10 @@ class BudgetsConfig:
     teams: dict[str, float] = field(default_factory=dict)
     # Slack channel for warnings; blank uses SLACK_OPS_CHANNEL.
     notify_channel: str = ""
+    program_default_usd: float = 0.0
+    # "downgrade": revisions, complex first runs and the pre-push review stop using the
+    # stronger model; "stop": the program's new coding jobs wait until its budget is raised.
+    program_action: str = "downgrade"
 
     def settings_payload(self) -> dict[str, Any]:
         return {
@@ -305,6 +316,8 @@ class BudgetsConfig:
             "warn_at_percent": self.warn_at_percent,
             "manager_max_monthly": self.manager_max_monthly,
             "teams": dict(self.teams),
+            "program_default_usd": self.program_default_usd,
+            "program_action": self.program_action,
         }
 
 
@@ -824,6 +837,9 @@ def parse_budgets(raw: Any) -> BudgetsConfig:
     teams = raw.get("teams") or {}
     if not isinstance(teams, dict):
         raise ValueError("budgets.teams must map team slugs to monthly amounts")
+    action = str(raw.get("program_action") or defaults.program_action).strip().lower()
+    if action not in PROGRAM_BUDGET_ACTIONS:
+        raise ValueError(f"budgets.program_action must be one of {', '.join(PROGRAM_BUDGET_ACTIONS)}")
     return BudgetsConfig(
         currency=str(raw.get("currency") or defaults.currency).upper(),
         default_team_monthly=amount(raw.get("default_team_monthly", defaults.default_team_monthly), "default_team_monthly"),
@@ -831,6 +847,8 @@ def parse_budgets(raw: Any) -> BudgetsConfig:
         manager_max_monthly=amount(raw.get("manager_max_monthly", defaults.manager_max_monthly), "manager_max_monthly"),
         teams={str(k): amount(v, f"teams.{k}") for k, v in teams.items()},
         notify_channel=str(raw.get("notify_channel") or ""),
+        program_default_usd=amount(raw.get("program_default_usd", defaults.program_default_usd), "program_default_usd"),
+        program_action=action,
     )
 
 

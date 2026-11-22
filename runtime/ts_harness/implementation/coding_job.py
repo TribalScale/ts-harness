@@ -15,6 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from ts_harness.budgets import program_downgrade_note
 from ts_harness.config.bindings import check_repo_allowed_or_linked, github_repo_slug, tenant_bindings
 from ts_harness.implementation.backends.base import CodingRequest
 from ts_harness.implementation.backends.opencode import OpenCodeBackend
@@ -239,10 +240,15 @@ def build_coding_request(
     if not strong and mode == "implement" and is_complex_work_order(work_order_body):
         # A work order the planner marked complex starts on the stronger model.
         strong = complex_work_order_model()
-    model = (
-        str(_guided_model(strong, provider) or args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip()
-        or None
-    )
+    default_model = str(args.get("model") or os.environ.get("CODING_BACKEND_MODEL", "") or backend_cfg.model or "").strip() or None
+    review = _review_settings(mode, provider)
+    stronger = bool(_guided_model(strong, provider)) or review.get("review_model") not in (None, default_model)
+    # A program at its budget with budgets.program_action "downgrade" keeps to the default model.
+    budget_note = program_downgrade_note(program_id) if stronger else None
+    if budget_note:
+        strong = None
+        review = {**review, "review_model": default_model} if review else {}
+    model = str(_guided_model(strong, provider) or default_model or "").strip() or None
 
     approved_prd_markdown = None
     approved_prd = args.get("approved_prd")
@@ -304,7 +310,8 @@ def build_coding_request(
         or None,
         "knowledge_notes": _note_list(bound.get("knowledge_notes") if "knowledge_notes" in bound else args.get("knowledge_notes")),
         "design_refs": _note_list(args.get("design_refs")),
-        **_review_settings(mode, provider),
+        **review,
+        **({"budget_note": budget_note} if budget_note else {}),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
         # Workers on Fargate have no runtime config file; carry what the run needs.
         "backend": {
@@ -317,7 +324,8 @@ def build_coding_request(
 
 
 # worker_memory_mb sizes a retry after the worker ran out of memory; the launcher reads it.
-_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb"}
+# budget_note: why a program over its budget runs on the default model (memory API stores it).
+_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb", "budget_note"}
 
 
 def _note_list(value: Any) -> list[dict[str, Any]] | None:

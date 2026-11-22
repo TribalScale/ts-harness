@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import type {
   CodingJobProgress,
@@ -58,6 +58,14 @@ export function usePhaseActivity(
 ) {
   const [activity, setActivity] = useState<PhaseActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A response that lands after the panel unmounted (or the program changed) is dropped.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const reload = useCallback(async () => {
     if (!programId || !phase) return;
@@ -65,10 +73,11 @@ export function usePhaseActivity(
       const data = await apiFetch<PhaseActivity>(
         `/admin/programs/${encodeURIComponent(programId)}/phases/${encodeURIComponent(phase)}/activity`,
       );
+      if (!mounted.current) return;
       setActivity(data);
       setError(null);
     } catch (e: any) {
-      setError(String(e?.message || e));
+      if (mounted.current) setError(String(e?.message || e));
     }
   }, [programId, phase]);
 

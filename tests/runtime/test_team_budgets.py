@@ -323,12 +323,21 @@ class BudgetConfigAndAlertJobTests(unittest.TestCase):
         memory.claim_budget_alerts.return_value = {
             "alerts": [{"slug": "web", "display_name": "Web", "level": "reached", "spent_usd": 5010.0, "budget_usd": 5000.0, "percent": 100.2}]
         }
+        memory.claim_program_budget_alerts.return_value = {"alerts": [], "notes": []}
         notifier = mock.Mock()
         notifier.post_thread_text.return_value = {"ok": True}
         config = SimpleNamespace(budgets=BudgetsConfig(notify_channel="C-OPS", teams={"web": 5000}))
         result = budget_alerts(memory=memory, config=config, notifier=notifier)
         memory.put_budget_settings.assert_called_once_with(tenant_id="default", **config.budgets.settings_payload())
-        self.assertEqual(result, {"status": "ok", "alerts": [{"team": "web", "level": "reached"}], "sent": 1})
+        self.assertEqual(
+            result,
+            {
+                "status": "ok",
+                "alerts": [{"team": "web", "level": "reached"}],
+                "sent": 1,
+                "programs": {"alerts": [], "notes": 0, "posted": 0},
+            },
+        )
         kwargs = notifier.post_thread_text.call_args.kwargs
         self.assertEqual(kwargs["channel"], "C-OPS")
         self.assertIn("*Web* reached its monthly LLM budget (5,010.00 of 5,000.00 USD)", kwargs["text"])
