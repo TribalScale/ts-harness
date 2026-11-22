@@ -201,6 +201,9 @@ it("approves a pending gate from the stage panel", async () => {
   await waitFor(() =>
     expect(posts).toEqual(['/admin/workflows/approve {"id":"approve_prd"}']),
   );
+  // A decided gate loses its buttons at once, so a second click cannot approve it again.
+  expect(await screen.findByText("Decided; the next step is starting…")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   expect(changed).toBe(1);
 });
 

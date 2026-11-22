@@ -9,6 +9,13 @@ from ts_harness.agent.sessions import SessionRecord, get_session_store
 from ts_harness.gateway.confirmation_classifier import classify_confirmation_deterministic
 
 
+def _now() -> str:
+    """When an offer was made, so the Inbox can show how long it has waited."""
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 @dataclass
 class DelegateConfirmation:
     confirmed: bool = False
@@ -54,6 +61,7 @@ def set_pending_delegate(
         "agent_id": agent_id,
         "task": task,
         "input": input_data or {},
+        "proposed_at": _now(),
     }
     session.metadata = metadata
     get_session_store().save(session)
@@ -140,6 +148,7 @@ def set_pending_workflow(
         "workflow_type": workflow_type,
         "summary": summary,
         "input": input_data or {},
+        "proposed_at": _now(),
     }
     if program_type:
         pending["program_type"] = program_type
@@ -356,6 +365,7 @@ def set_pending_program(
         "summary": summary,
         "artifacts": artifacts or {},
         "program_type": str(program_type or "software_delivery"),
+        "proposed_at": _now(),
     }
     if project_id:
         pending["project_id"] = project_id
@@ -443,6 +453,7 @@ def set_pending_program_advance(
     pending = {
         "program_id": program_id,
         "summary": summary,
+        "proposed_at": _now(),
     }
     if target_phase:
         pending["target_phase"] = target_phase

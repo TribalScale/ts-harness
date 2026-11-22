@@ -589,7 +589,17 @@ class WorkflowEngine:
         """Approve ``gate_task``. ``reply_in_chat``: the caller replies in the thread itself,
         so phase completion returns its message instead of posting it."""
         workflow_type = str(gate_task.get("workflow_type") or "")
-        self._require_ready(gate_task, self._workflow_payload(workflow_id))
+        payload = self._workflow_payload(workflow_id)
+        # Re-read the gate under the workflow lock: a second click (or a chat "yes") that arrived
+        # while the first approval was still running must not approve it, and start the next
+        # phase, a second time.
+        current = next(
+            (task for task in payload.get("tasks") or [] if str(task.get("id")) == str(gate_task.get("id"))), None
+        ) if isinstance(payload, dict) else None
+        if isinstance(current, dict) and str(current.get("approval_status") or "") not in {"", "pending"}:
+            return {"status": "already_decided", "task_id": str(gate_task.get("id") or ""),
+                    "approval_status": str(current.get("approval_status") or "")}
+        self._require_ready(gate_task, payload)
         ctx = self._context(
             workflow_id=workflow_id,
             workflow_type=workflow_type,

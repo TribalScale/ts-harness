@@ -192,6 +192,7 @@ def build_inbox(
 
     items.extend(_stuck_step_items(memory, auth, approvable))
     items.extend(_knowledge_note_items(memory, auth, runtime))
+    items.extend(_proposal_items(auth))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
 
@@ -342,6 +343,29 @@ def _approvable_program_filter(memory: Any, auth: AuthContext, need: str = "appr
         return cache[program_id]
 
     return approvable
+
+
+def _proposal_items(auth: AuthContext) -> list[dict[str, Any]]:
+    """Chat offers still waiting for a yes or no ("I can start the … program"), to see or cancel."""
+    try:
+        from ts_harness.gateway.proposals import tenant_proposals
+
+        rows = tenant_proposals(str(auth.tenant_id or "default"))
+    except Exception:  # noqa: BLE001 - the Inbox shows the rest
+        return []
+    items = []
+    for row in rows:
+        item_id = f"{row['session_id']}:{row['key']}"
+        items.append({
+            "type": "pending_proposal",
+            "id": item_id,
+            "title": row["description"],
+            "subtitle": f"Waiting for a yes or no in {row.get('source') or 'chat'}",
+            "created_at": row.get("proposed_at") or row.get("started_at"),
+            "href": f"/#/inbox/pending_proposal/{quote(item_id, safe='')}",
+            "meta": {**row, "status": "pending"},
+        })
+    return items
 
 
 def _stuck_step_items(memory: Any, auth: AuthContext, approvable: Any = None) -> list[dict[str, Any]]:

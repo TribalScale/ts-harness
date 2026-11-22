@@ -98,6 +98,46 @@ def check_repo_allowed(repo_url: str | None, bindings: TenantBindings) -> str | 
     return None
 
 
+def project_repo_slugs(tenant_id: str = "default", *, memory: Any = None) -> set[str]:
+    """``owner/repo`` of every repository linked to one of the tenant's projects (System → Projects).
+
+    Linking a repository to a project is the decision to build there, so it counts as allowed
+    without also adding it to the repo allowlist.
+    """
+    try:
+        if memory is None:
+            from ts_harness.memory.client import get_memory_client
+
+            memory = get_memory_client()
+        projects = (memory.list_projects(tenant_id=tenant_id or "default") or {}).get("projects") or []
+        slugs: set[str] = set()
+        for project in projects:
+            project_id = str((project or {}).get("id") or "")
+            if not project_id:
+                continue
+            for repo in (memory.list_project_repositories(project_id) or {}).get("repositories") or []:
+                name = str((repo or {}).get("full_name") or "").strip().lower()
+                if name:
+                    slugs.add(name)
+        return slugs
+    except Exception:  # noqa: BLE001 - without the projects the allowlist alone decides
+        return set()
+
+
+def check_repo_allowed_or_linked(
+    repo_url: str | None, bindings: TenantBindings, *, tenant_id: str = "default", memory: Any = None
+) -> str | None:
+    """``check_repo_allowed``, except that a repository linked to a project passes the allowlist.
+
+    The GitHub org restriction still applies.
+    """
+    error = check_repo_allowed(repo_url, bindings)
+    if not error or "repo allowlist" not in error:
+        return error
+    slug = github_repo_slug(repo_url) or ""
+    return None if slug in project_repo_slugs(tenant_id, memory=memory) else error
+
+
 def is_jira_write_tool(tool_name: str) -> bool:
     name = str(tool_name or "").lower()
     return "jira" in name and any(marker in name for marker in _JIRA_WRITE_MARKERS)

@@ -1019,6 +1019,38 @@ async def admin_inbox(request: Request) -> Response:
     )
 
 
+async def admin_proposals_cancel(request: Request) -> Response:
+    """Cancel the chat proposals waiting on a session (Inbox "Cancel")."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "approve_gate")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    session_id = str((body or {}).get("session_id") or "").strip()
+    if not session_id:
+        return _json({"error": "session_id is required"}, 400)
+    from ts_harness.agent.sessions import get_session_store
+    from ts_harness.gateway.proposals import cancel_proposals
+
+    store = get_session_store()
+    session = store.get(session_id)
+    if session is None or str(session.tenant_id or "default") != str(auth.tenant_id or "default"):
+        return _json({"error": "conversation not found"}, 404)
+    cancelled = cancel_proposals(session, store=store)
+    get_runtime().audit.append(
+        tenant_id=str(auth.tenant_id or "default"),
+        action_type="chat_proposal_cancelled",
+        actor_id=str(getattr(auth, "email", None) or auth.actor_id or "admin"),
+        correlation_id=session_id,
+        payload={"session_id": session_id, "cancelled": [item["description"] for item in cancelled], "via": "inbox"},
+    )
+    return _json({"status": "cancelled" if cancelled else "none", "cancelled": cancelled})
+
+
 # ── Programs BFF ──────────────────────────────────────────────────────────────
 
 
@@ -1864,6 +1896,20 @@ def _auth_decision_fields(auth: Any, body: Any) -> dict[str, Any]:
     return fields
 
 
+def _gate_decided(task_id: str) -> str:
+    """``approved`` when ``task_id`` is an approval gate already approved, else ""."""
+    try:
+        memory = get_memory_client()
+        workflow_id = str((memory.task_program(task_id) or {}).get("workflow_id") or "")
+        tasks = (memory.get_workflow_tasks(workflow_id) or {}).get("tasks") or [] if workflow_id else []
+    except Exception:  # noqa: BLE001 - the approval below reports any real problem
+        return ""
+    task = next((item for item in tasks if isinstance(item, dict) and str(item.get("id")) == str(task_id)), None)
+    status = str((task or {}).get("approval_status") or "")
+    # Only an approved gate: a rejected one can still be approved through memory, as before.
+    return status if task and task.get("approval_required") and status == "approved" else ""
+
+
 def _engine_gate(task_id: str) -> tuple[str, dict[str, Any]] | None:
     """``(workflow_id, task)`` when the workflow engine should decide this approval gate.
 
@@ -1937,6 +1983,10 @@ async def admin_workflows_approve(request: Request) -> Response:
         decision = _auth_decision_fields(auth, body)
         actor = str(auth.actor_id or "admin")
         tenant_id = str(auth.tenant_id or "default")
+        decided = _gate_decided(task_id)
+        if decided:
+            # A second click on a gate someone (or this click's first try) already decided.
+            return _json({"status": "already_decided", "task_id": task_id, "approval_status": decided})
         gate = _engine_gate(task_id)
         if gate is not None:
             # Same path as a chat approval: the gate's hooks run (for example mark_prd_approved)
@@ -4348,6 +4398,7 @@ routes = [
     Route("/admin/programs/{id}/board", endpoint=admin_programs_board, methods=["GET"]),
     Route("/admin/programs/{id}/tickets/{workflow_id}/story", endpoint=admin_ticket_story, methods=["GET"]),
     Route("/admin/live", endpoint=admin_live, methods=["GET"]),
+    Route("/admin/proposals/cancel", endpoint=admin_proposals_cancel, methods=["POST"]),
     Route("/admin/history", endpoint=admin_history, methods=["GET"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
