@@ -318,6 +318,29 @@ class CodingJobsPostgresTests(PgTestCase):
             self.assertFalse(lost[0]["result"]["ok"])
             self.assertEqual(self.task(conn, task_id)["status"], "pending")
 
+    def test_a_starting_job_gets_the_longer_start_grace(self):
+        with self.db.connect() as conn:
+            job = self.create(conn)
+            coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+            conn.execute("UPDATE coding_jobs SET heartbeat_at = now() - interval '2 minutes' WHERE id = %s", (job["id"],))
+            conn.commit()
+            # 2 minutes without a beat loses a running job at 90 s, not one still starting.
+            self.assertEqual(coding_jobs.sweep_stale_coding_jobs(conn, {"heartbeat_seconds": 90})["lost"], [])
+            conn.execute("UPDATE coding_jobs SET heartbeat_at = now() - interval '6 minutes' WHERE id = %s", (job["id"],))
+            conn.commit()
+            lost = coding_jobs.sweep_stale_coding_jobs(conn, {"heartbeat_seconds": 90})["lost"]
+            self.assertIn("did not start within 5 minutes", lost[0]["error"])
+
+    def test_a_running_job_is_lost_after_ninety_silent_seconds(self):
+        with self.db.connect() as conn:
+            job = self.create(conn)
+            coding_jobs.claim_coding_jobs(conn, {"max_running": 1})
+            coding_jobs.get_job_spec(conn, job["id"])
+            conn.execute("UPDATE coding_jobs SET heartbeat_at = now() - interval '2 minutes' WHERE id = %s", (job["id"],))
+            conn.commit()
+            lost = coding_jobs.sweep_stale_coding_jobs(conn, {"heartbeat_seconds": 90})["lost"]
+            self.assertIn("no heartbeat for 90 seconds", lost[0]["error"])
+
     def test_sweep_resumes_a_task_parked_after_its_job_ended(self):
         with self.db.connect() as conn:
             workflow_id, task_id = self.parked_task(conn)

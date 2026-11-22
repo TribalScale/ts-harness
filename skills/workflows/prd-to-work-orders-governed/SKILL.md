@@ -7,7 +7,7 @@ allowed_agents: [pm-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.3.0
+version: 1.4.0
 ---
 
 # PRD to Work Orders (Governed Runtime)

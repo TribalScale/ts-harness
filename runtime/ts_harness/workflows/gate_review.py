@@ -47,7 +47,15 @@ def _documents(output: dict[str, Any]) -> list[dict[str, str]]:
 
 def _warnings(output: dict[str, Any]) -> list[str]:
     warnings = output.get("warnings")
-    return [str(w) for w in warnings if str(w).strip()] if isinstance(warnings, list) else []
+    found = [str(w) for w in warnings if str(w).strip()] if isinstance(warnings, list) else []
+    artifacts = output.get("artifacts") if isinstance(output.get("artifacts"), dict) else {}
+    markdown = str(output.get("work_orders_markdown") or artifacts.get("work_orders_markdown") or "")
+    if markdown.strip():
+        # The work-order plan: how many waves it takes, and work orders that look too large.
+        from ts_harness.implementation.work_order_context import delivery_plan
+
+        found = [*delivery_plan(markdown)["warnings"], *found]
+    return found
 
 
 def _ancestors(gate: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

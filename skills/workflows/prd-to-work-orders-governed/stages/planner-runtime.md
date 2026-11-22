@@ -39,6 +39,7 @@ Each WO in `work_orders_markdown`:
 
 ```markdown
 # WO-001 Title
+Complexity: Medium
 
 ## Summary
 ...
@@ -74,6 +75,30 @@ Given ... When ... Then ...
   the stated stack and later WOs depend on it instead of creating parallel
   projects.
 - Each WO independently implementable unless dependencies are explicit.
+
+- **Slice for parallel delivery, at the right size.** Work orders whose dependencies are
+  done run at the same time, so delivery takes as long as the longest dependency chain (the
+  number of waves), not the number of work orders. Plan the fewest waves you can without
+  making any work order too big:
+  - Put the shared foundation (project setup, the schema, shared types or API contracts)
+    first, in as few work orders as it needs, so the features after it fan out in parallel.
+  - Split features along independent seams: separate modules, endpoints, pages or services
+    that touch different files. Those run side by side.
+  - Keep tightly coupled work together. A change and its only consumer, or two pieces that
+    edit the same files, belong in one work order, not a chain of small dependent ones.
+  - Declare a dependency only when a work order needs another's code to build or test. "Comes
+    later in the PRD" is not a dependency.
+  - Do not merge independent features to save a wave. One work order is one coherent feature
+    a coding agent can build, test and have reviewed in one session: about 15 files or
+    fewer and about 12 requirements or fewer. A bigger one is split along a seam that lets
+    both parts run in parallel.
+  - The summary states the plan, for example "9 work orders in 3 waves".
+
+- Every WO has a `Complexity:` line right under its heading (under `Repository:` when there
+  is one): `Low`, `Medium` or `High`. `High` is for work that is hard to get right, not just
+  long: concurrency or transactions, data migrations, security-sensitive logic, intricate
+  calculations or state machines, or many interacting modules. TS Harness runs `High` work
+  orders on a stronger coding model, so do not mark routine work `High`.
 - A fresh coding agent should execute without clarifying questions.
 - Do not silently edit blueprints or FRDs; note issues in `warnings`.
 - When `input.project_repositories` is present, every WO starts with a

@@ -41,6 +41,15 @@ class TimelineTests(unittest.TestCase):
             ("await_pr_checks", "ci", 600), ("code_review", "review", 80 * 60)])
         self.assertTrue(bars[-1]["open"])
 
+    def test_a_revision_starts_when_it_was_created_not_when_the_attempt_it_revises_ended(self):
+        tasks = ticket(stage="none")["tasks"] + [
+            # The decision took 40 minutes; the revision was created and claimed after it.
+            {"id": "dev2", "step_name": "deliver_work_order", "agent_id": "dev-agent", "status": "blocked",
+             "error": "awaiting_external:coding.finished", "depends_on": ["dev1"], "created_at": at(10), "started_at": at(10)},
+        ]
+        bars = lv.step_timeline(tasks, now=NOW)
+        self.assertEqual((bars[-1]["step_name"], bars[-1]["seconds"]), ("deliver_work_order", 600))
+
     def test_who_it_waits_on(self):
         memory = MagicMock()
         memory.list_coding_jobs.return_value = []

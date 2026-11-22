@@ -1362,12 +1362,13 @@ class MemoryClient:
             {"job_ids": job_ids or [], "workflow_ids": workflow_ids or [], "reason": reason, "actor": actor},
         )
 
-    def sweep_stale_coding_jobs(self, *, heartbeat_seconds: int, max_runtime_seconds: int) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/coding-jobs/stale",
-            {"heartbeat_seconds": heartbeat_seconds, "max_runtime_seconds": max_runtime_seconds},
-        )
+    def sweep_stale_coding_jobs(
+        self, *, heartbeat_seconds: int, max_runtime_seconds: int, starting_seconds: int | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"heartbeat_seconds": heartbeat_seconds, "max_runtime_seconds": max_runtime_seconds}
+        if starting_seconds:
+            body["starting_seconds"] = starting_seconds
+        return self._request("POST", "/coding-jobs/stale", body)
 
     def acquire_service_lease(self, name: str, *, holder: str, ttl_seconds: int = 30) -> dict[str, Any]:
         return self._request("POST", "/leases/acquire", {"name": name, "holder": holder, "ttl_seconds": ttl_seconds})

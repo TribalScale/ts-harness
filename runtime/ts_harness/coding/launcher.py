@@ -172,10 +172,33 @@ class LocalDockerConfig:
         )
 
 
+WORKSPACE_LABEL = "ts-harness.coding-workspace"
+WORKSPACE_PRUNE_SECONDS = 3600
+
+
+def workspace_volume(job: Mapping[str, Any], environ: Mapping[str, str]) -> str:
+    """The named volume a ticket's coding jobs share, or "" to give each job a fresh one.
+
+    A revision of the same delivery then finds its clone, installed dependencies and Node
+    toolchain from the run before: the backend fetches the PR head and reinstalls only when a
+    lockfile changed. ``CODING_WORKSPACE_REUSE=off`` turns it off.
+    """
+    if str(environ.get("CODING_WORKSPACE_REUSE") or "").strip().lower() in {"off", "0", "false", "no"}:
+        return ""
+    workflow_id = str(job.get("workflow_id") or "").strip()
+    if not workflow_id:
+        return ""
+    import hashlib
+
+    key = "|".join(str(job.get(name) or "") for name in ("tenant_id", "workflow_id", "work_order_id", "repo_url"))
+    return f"ts-coding-ws-{hashlib.sha256(key.encode()).hexdigest()[:20]}"
+
+
 class LocalDockerLauncher:
     """``docker run --rm`` one container per job on this host."""
 
     name = "local"
+    _pruned_at = 0.0
 
     def __init__(
         self,
@@ -191,6 +214,7 @@ class LocalDockerLauncher:
     def command(self, job: dict[str, Any]) -> list[str]:
         job_id = str(job["id"])
         cfg = self.config
+        volume = workspace_volume(job, self._environ)
         cmd = [
             # --init reaps the processes a coding run leaves behind (PID 1 is the worker script).
             "docker", "run", "-d", "--rm", "--init",
@@ -199,7 +223,7 @@ class LocalDockerLauncher:
             "--cpus", str(int(job["worker_cpu"]) / 1024) if job.get("worker_cpu") else cfg.cpus,
             "--memory", f"{int(job['worker_memory_mb'])}m" if job.get("worker_memory_mb") else cfg.memory,
             "--pids-limit", str(cfg.pids_limit),
-            "--mount", "type=volume,dst=/workspace",
+            "--mount", (f"type=volume,src={volume},dst=/workspace" if volume else "type=volume,dst=/workspace"),
             "-e", f"JOB_ID={job_id}",
             "-e", f"MEMORY_API_URL={cfg.memory_api_url}",
             "-e", f"HARNESS_RUNTIME_URL={cfg.runtime_url}",
@@ -247,8 +271,64 @@ class LocalDockerLauncher:
                 f"waiting for memory: {wanted // 2**20} MB wanted, {in_use // 2**20} MB in use of {max(budget, 0) // 2**20} MB"
             )
 
+    def _ensure_volume(self, job: dict[str, Any]) -> None:
+        volume = workspace_volume(job, self._environ)
+        if not volume:
+            return
+        created = self._run(
+            ["docker", "volume", "create", "--label", f"{WORKSPACE_LABEL}={job.get('workflow_id') or ''}", volume],
+            capture_output=True, text=True, timeout=60,
+        )
+        if created.returncode != 0:
+            raise LaunchError((created.stderr or created.stdout or "docker volume create failed").strip()[-500:])
+
+    def prune_workspaces(self, *, now: float | None = None) -> list[str]:
+        """Remove ticket workspaces older than ``CODING_WORKSPACE_TTL_HOURS`` (default 48) that no worker uses.
+
+        Runs at most hourly. A volume still mounted by a worker cannot be removed and stays.
+        A ticket revised after its workspace was removed just clones again.
+        """
+        now = time.time() if now is None else now
+        if now - self._pruned_at < WORKSPACE_PRUNE_SECONDS:
+            return []
+        self._pruned_at = now
+        try:
+            ttl = float(self._environ.get("CODING_WORKSPACE_TTL_HOURS") or 48) * 3600
+        except ValueError:
+            ttl = 48 * 3600
+        listed = self._run(
+            ["docker", "volume", "ls", "-q", "--filter", f"label={WORKSPACE_LABEL}"], capture_output=True, text=True, timeout=60
+        )
+        names = (listed.stdout or "").split() if listed.returncode == 0 else []
+        if not names:
+            return []
+        inspected = self._run(
+            ["docker", "volume", "inspect", "-f", "{{.Name}} {{.CreatedAt}}", *names], capture_output=True, text=True, timeout=60
+        )
+        removed: list[str] = []
+        from datetime import datetime
+
+        for line in (inspected.stdout or "").splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) != 2:
+                continue
+            name, created = parts
+            try:
+                stamp = datetime.fromisoformat(created.strip().replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            if now - stamp < ttl:
+                continue
+            gone = self._run(["docker", "volume", "rm", name], capture_output=True, text=True, timeout=60)
+            if gone.returncode == 0:
+                removed.append(name)
+        if removed:
+            _log("coding_workspaces_pruned", volumes=removed)
+        return removed
+
     def start(self, job: dict[str, Any], token: str) -> str:
         self._check_memory(job)
+        self._ensure_volume(job)
         proc = self._run(
             self.command(job),
             capture_output=True,
@@ -334,6 +414,12 @@ def launcher_tick(
             launcher.stop(ref)
             stopped.append(str(job["id"]))
             _log("coding_job_worker_stopped", job_id=job["id"], status=job.get("status"))
+    prune = getattr(launcher, "prune_workspaces", None)
+    if callable(prune):
+        try:
+            prune()
+        except Exception as exc:  # noqa: BLE001 - pruning never stops the launcher
+            _log("coding_workspace_prune_failed", error=str(exc)[:300])
     return {"started": started, "failed": failed, "waiting": waiting, "stopped": stopped}
 
 

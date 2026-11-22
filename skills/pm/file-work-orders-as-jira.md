@@ -28,6 +28,7 @@ Use on `file_work_orders_as_jira`.
 5. Description, in this order (Markdown; see `jira-ticket-format`):
    - **Bug issues** with `input.bug_report`: the approved bug report body (Steps to reproduce through Notes) under `## Bug report`. Do not rewrite it.
    - **Other issues**: one line, `As a <persona>, I want <capability> so that <outcome>.` or `Outcome: <what the system does after this ships>.`
+   - The work order's `Complexity:` line (`Complexity: High`, for example), unchanged: a `High` ticket is coded on a stronger model.
    - The single work-order section (Summary, Requirements, Files, E2E Acceptance Tests, Out of Scope), unchanged. Do not replace it with a one-line acceptance criterion.
    - The work order's `## Tests` section, unchanged: its `BDD: required` or `BDD: off` line decides how the coding job tests the ticket.
    - The work order's `## Design frames` section when it has one, unchanged: its `Design:` line and the linked Figma frames. The coding job and QA receive exactly the frames that line names, and the links let the reviewer open each frame.

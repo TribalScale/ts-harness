@@ -35,6 +35,9 @@ class CodingRequest:
     knowledge_notes: list[dict[str, Any]] | None = None
     # Design references the work order names: [{id, title, summary, url, mime, data_url}].
     design_refs: list[dict[str, Any]] | None = None
+    # Pre-push review: the reviewer's model (None skips it) and the local fix rounds it may ask for.
+    review_model: str | None = None
+    review_rounds: int = 0
 
 
 def attribution_markdown(request: CodingRequest) -> str:
@@ -86,6 +89,10 @@ class CodingResult:
     verification: dict[str, Any] = field(default_factory=dict)
     # Screenshots published for review and QA (publish_screenshots result).
     screenshots: dict[str, Any] = field(default_factory=dict)
+    # What the pre-push review found and fixed (pre_push_review.summary_record).
+    pre_push_review: dict[str, Any] = field(default_factory=dict)
+    # Seconds spent in each phase of the run: setup, coding, verification, review, push.
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 def security_markdown(security: dict[str, Any]) -> str:

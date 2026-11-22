@@ -26,7 +26,21 @@ class SweepSystemJobTests(unittest.TestCase):
         ):
             result = system_jobs.dispatch_system_job({"handler": "sweep_coding_jobs"})
         self.assertEqual(result, {"status": "ok", "lost": ["job-1"], "resumed_tasks": ["t"]})
-        client.sweep_stale_coding_jobs.assert_called_once_with(heartbeat_seconds=120, max_runtime_seconds=1800)
+        client.sweep_stale_coding_jobs.assert_called_once_with(
+            heartbeat_seconds=120, max_runtime_seconds=1800, starting_seconds=300
+        )
+
+    def test_defaults_are_ninety_seconds_running_and_five_minutes_starting(self):
+        client = mock.MagicMock()
+        client.sweep_stale_coding_jobs.return_value = {}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CODING_JOB_")}
+        with mock.patch("ts_harness.memory.client.get_memory_client", return_value=client), mock.patch.dict(
+            os.environ, env, clear=True
+        ):
+            system_jobs.sweep_coding_jobs()
+        client.sweep_stale_coding_jobs.assert_called_once_with(
+            heartbeat_seconds=90, max_runtime_seconds=3600, starting_seconds=300
+        )
 
     def test_errors_are_reported_not_raised(self):
         client = mock.MagicMock()

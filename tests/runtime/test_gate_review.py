@@ -40,7 +40,9 @@ class GateReviewTests(unittest.TestCase):
         self.assertEqual(review["kind"], "documents")
         self.assertEqual(review["from_step"], "plan_work_orders")
         self.assertEqual(review["summary"], "5 work orders.")
-        self.assertEqual(review["warnings"], ["FB-004 and FB-005 combined."])
+        self.assertEqual(
+            review["warnings"], ["Delivery plan: 1 work order in 1 wave (WO-001).", "FB-004 and FB-005 combined."]
+        )
         self.assertEqual(
             [(d["title"], d["markdown"]) for d in review["documents"]],
             [("Work orders", "# WO-001"), ("Context graph", "graph")],
@@ -93,3 +95,34 @@ class GateReviewTests(unittest.TestCase):
         self.assertEqual(gate_review(memory, "gate")["kind"], "documents")
         memory.get_workflow_tasks.assert_called_once_with("wf-1")
         self.assertIsNone(gate_review(memory, "missing"))
+
+
+class DeliveryPlanTests(unittest.TestCase):
+    def _wo(self, wo: str, deps: str = "", files: int = 2, requirements: int = 2) -> str:
+        files_md = "\n".join(f"- src/{wo}/f{i}.ts" for i in range(files))
+        reqs = "\n".join(f"- requirement {i}" for i in range(requirements))
+        return f"# {wo} Title\n\n## Requirements\n{reqs}\n\n## Files\n{files_md}\n\n## Context Graph\n- Depends on: {deps or 'None'}\n\n"
+
+    def test_waves_follow_the_dependencies(self):
+        from ts_harness.implementation.work_order_context import delivery_plan
+
+        markdown = self._wo("WO-001") + self._wo("WO-002", "WO-001") + self._wo("WO-003", "WO-001") + self._wo("WO-004", "WO-002, WO-003")
+        plan = delivery_plan(markdown)
+        self.assertEqual(plan["waves"], [["WO-001"], ["WO-002", "WO-003"], ["WO-004"]])
+        self.assertEqual(plan["warnings"], ["Delivery plan: 4 work orders in 3 waves (WO-001 → WO-002, WO-003 → WO-004)."])
+
+    def test_a_long_chain_and_a_large_work_order_are_flagged(self):
+        from ts_harness.implementation.work_order_context import delivery_plan
+
+        markdown = (self._wo("WO-001") + self._wo("WO-002", "WO-001") + self._wo("WO-003", "WO-002")
+                    + self._wo("WO-004", "WO-003", files=20))
+        plan = delivery_plan(markdown)
+        self.assertEqual(len(plan["waves"]), 4)
+        self.assertIn("3 of the 4 waves run a single work order", plan["warnings"][1])
+        self.assertEqual(plan["large"], [{"id": "WO-004", "files": 20, "requirements": 2}])
+        self.assertIn("WO-004 looks large (20 files", plan["warnings"][2])
+
+    def test_a_cycle_does_not_hang(self):
+        from ts_harness.implementation.work_order_context import delivery_waves
+
+        self.assertEqual(delivery_waves({"WO-001": ["WO-002"], "WO-002": ["WO-001"], "WO-003": []}), [["WO-003"], ["WO-001", "WO-002"]])
