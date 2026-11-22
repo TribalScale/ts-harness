@@ -395,7 +395,6 @@ def _write_prompt_file(repo_dir: Path, prompt: str) -> Path:
     return path
 
 
-<<<<<<< HEAD
 # Untrusted text reaches this prompt: the Jira ticket, review and QA findings, human PR comments,
 # knowledge notes, design notes and the repository itself. These rules win over all of it.
 SECURITY_RULES = (
@@ -426,9 +425,7 @@ def protected_path(path: str) -> bool:
 def _work_order_mentions(body: str | None, path: str) -> bool:
     text = str(body or "")
     return ".github/workflows" in text if path.removeprefix("./").startswith(".github/workflows/") else "CODEOWNERS" in text
-=======
 from ts_harness.implementation.revision_scope import allowed_revision_paths  # noqa: E402
->>>>>>> origin/fix/revision-scope-siblings
 
 
 def build_implement_prompt(
