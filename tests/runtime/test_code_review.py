@@ -24,6 +24,10 @@ FINALIZE_CONFIG = {
 }
 
 
+DELIVER = {"step_name": "deliver_work_order", "status": "succeeded", "input": {"work_order_body": "# WO-1"},
+           "output": {"pr_url": PR}, "created_at": "1"}
+
+
 def _memory(body="# WO-1", tasks=None):
     memory = MagicMock()
     memory.get_workflow.return_value = {
@@ -62,7 +66,9 @@ class PrecheckTests(unittest.TestCase):
         output = code_review.review_precheck(
             TASK, PRECHECK_CONFIG, memory=_memory(), github=_github([_file("src/a.py", 5, 2)]), program_defaults={}
         )
-        self.assertEqual(output["prs"], [{"pr_url": PR, "head_sha": "h1", "title": ""}])
+        self.assertEqual(
+            output["prs"], [{"pr_url": PR, "head_sha": "h1", "title": "", "review_round": 1, "review_depth": "full"}]
+        )
         self.assertEqual(output["diff_stats"]["additions"], 5)
         self.assertEqual(output["files"][0]["pr_url"], PR)
         self.assertEqual(output["scope_findings"], [])
@@ -80,8 +86,32 @@ class PrecheckTests(unittest.TestCase):
         )
         self.assertEqual(
             output["prs"],
-            [{"pr_url": PR, "head_sha": "h1", "title": "THD-32 Add knowledge notes proof to README"}],
+            [{"pr_url": PR, "head_sha": "h1", "title": "THD-32 Add knowledge notes proof to README",
+              "review_round": 1, "review_depth": "full"}],
         )
+
+    def test_a_large_pr_gets_a_full_sweep_first(self):
+        files = [_file(f"src/m{i}.ts", 10) for i in range(20)]
+        output = code_review.review_precheck(TASK, PRECHECK_CONFIG, memory=_memory(), github=_github(files), program_defaults={})
+        self.assertEqual(output["prs"][0]["review_depth"], "full_sweep")
+
+    def test_a_later_round_checks_the_previous_findings_and_what_changed(self):
+        blocking = {"severity": "major", "category": "correctness", "pr_url": PR, "file": "src/a.py", "line": 3, "message": "bug"}
+        minor = {"severity": "minor", "category": "tests", "pr_url": PR, "file": "src/a.py", "line": 9, "message": "nit"}
+        earlier = {"id": "cr-1", "step_name": "code_review", "status": "succeeded", "created_at": "2026-01-01T00:00:00Z",
+                   "output": {"result": {"prs": [{"pr_url": PR, "head_sha": "h0"}], "findings": [blocking, minor]}}}
+        task = {**TASK, "created_at": "2026-01-02T00:00:00Z"}
+        github = _github([_file("src/a.py", 5, 2)])
+        github.compare.return_value = {"files": [{"filename": "src/a.py"}, {"filename": "test/a.test.py"}]}
+        output = code_review.review_precheck(task, PRECHECK_CONFIG, memory=_memory(tasks=[DELIVER, earlier]), github=github, program_defaults={})
+        pr = output["prs"][0]
+        self.assertEqual((pr["review_round"], pr["review_depth"], pr["previous_head_sha"]), (2, "follow_up", "h0"))
+        self.assertEqual(pr["previous_findings"], [blocking])
+        self.assertEqual(pr["changed_since_last_review"], ["src/a.py", "test/a.test.py"])
+        github.compare.assert_called_once_with("acme", "app", "h0", "h1")
+        github.compare.side_effect = RuntimeError("compare failed")
+        output = code_review.review_precheck(task, PRECHECK_CONFIG, memory=_memory(tasks=[DELIVER, earlier]), github=github, program_defaults={})
+        self.assertEqual(output["prs"][0]["review_depth"], "full")
 
     def test_excludes_do_not_count_toward_limits(self):
         files = [_file("src/a.py", 10), _file("package-lock.json", 5000), _file("web/yarn.lock", 900), _file("x/generated/y.ts", 900)]

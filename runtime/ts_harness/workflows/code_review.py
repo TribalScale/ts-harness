@@ -13,6 +13,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -290,6 +291,102 @@ def _input_extras(task: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str
     return extras
 
 
+# A first review of a PR this large does a systematic sweep: later rounds only check the fixes
+# and what changed, so whatever the first review misses would otherwise cost a round each.
+DEEP_REVIEW_FILES = 20
+DEEP_REVIEW_LINES = 1500
+
+
+def _deep_review_limits() -> tuple[int, int]:
+    def read(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.environ.get(name) or default))
+        except ValueError:
+            return default
+
+    return read("TS_HARNESS_DEEP_REVIEW_FILES", DEEP_REVIEW_FILES), read("TS_HARNESS_DEEP_REVIEW_LINES", DEEP_REVIEW_LINES)
+
+
+def _earlier_reviews(task: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Earlier rounds' code review results for this workflow, oldest first."""
+    created = str(task.get("created_at") or "")
+    found = []
+    for item in sorted(tasks, key=lambda row: str(row.get("created_at") or "")):
+        if item.get("step_name") != "code_review" or item.get("status") != "succeeded":
+            continue
+        if created and str(item.get("created_at") or "") >= created:
+            continue
+        output = item.get("output") if isinstance(item.get("output"), dict) else {}
+        result = output.get("result") if isinstance(output.get("result"), dict) else output
+        if isinstance(result.get("prs"), list):
+            found.append(result)
+    return found
+
+
+def review_context(
+    task: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    prs: list[dict[str, Any]],
+    files: list[dict[str, Any]],
+    *,
+    github: Any,
+) -> list[dict[str, Any]]:
+    """``prs`` with each PR's review round, how deep to review it, and what changed since the last round.
+
+    ``review_depth`` is ``full_sweep`` (first review of a large PR), ``full`` (first review, or
+    the previous round cannot be compared) or ``follow_up`` (check the previous findings and the
+    files changed since then).
+    """
+    earlier = _earlier_reviews(task, tasks)
+    max_files, max_lines = _deep_review_limits()
+    out = []
+    for pr in prs:
+        url = pr["pr_url"]
+        pr_files = [entry for entry in files if entry.get("pr_url") == url]
+        lines = sum(int(entry.get("additions") or 0) + int(entry.get("deletions") or 0) for entry in pr_files)
+        large = len(pr_files) >= max_files or lines >= max_lines
+        previous = next(
+            (
+                (review, item)
+                for review in reversed(earlier)
+                for item in review.get("prs") or []
+                if isinstance(item, dict) and item.get("pr_url") == url
+            ),
+            None,
+        )
+        entry = {**pr, "review_round": 1 + sum(
+            1 for review in earlier if any(isinstance(i, dict) and i.get("pr_url") == url for i in review.get("prs") or [])
+        )}
+        if previous is None:
+            entry["review_depth"] = "full_sweep" if large else "full"
+            out.append(entry)
+            continue
+        review, item = previous
+        previous_sha = str(item.get("head_sha") or "")
+        entry["previous_head_sha"] = previous_sha
+        entry["previous_findings"] = [
+            finding for finding in review.get("findings") or []
+            if isinstance(finding, dict) and finding.get("pr_url", url) == url and is_blocking(finding)
+        ]
+        changed: list[str] | None = None
+        parsed = parse_github_pr_url(url)
+        if previous_sha and parsed and previous_sha != pr.get("head_sha"):
+            try:
+                compared = github.compare(parsed[0], parsed[1], previous_sha, str(pr.get("head_sha") or ""))
+                changed = sorted({str(f.get("filename") or "") for f in compared.get("files") or [] if f.get("filename")})
+            except Exception:  # noqa: BLE001 - without the comparison the round is a full review
+                changed = None
+        elif previous_sha and previous_sha == pr.get("head_sha"):
+            changed = []
+        if changed is None:
+            entry["review_depth"] = "full"
+        else:
+            entry["review_depth"] = "follow_up"
+            entry["changed_since_last_review"] = changed
+        out.append(entry)
+    return out
+
+
 def review_precheck(
     task: dict[str, Any],
     config: dict[str, Any],
@@ -351,6 +448,7 @@ def review_precheck(
         findings.extend(scope_findings(pr_url, counted, work_order_body))
         findings.extend(boundary_findings(pr_url, counted, work_order_body))
     fit_patch_budget(files)
+    prs = review_context(task, tasks, prs, files, github=github)
     if over:
         raise StepBlocked(
             "diff_limit_exceeded: " + "; ".join(over),

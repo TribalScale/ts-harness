@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.6.0
+version: 1.7.0
 ---
 
 # Governed Code Review
@@ -59,7 +59,56 @@ Then:
 7. If the work order contradicts itself, Requirements and Acceptance Tests win
    over Implementation Notes. Code that follows a contradicting note is still a
    `correctness` finding; say which lines of the work order conflict.
-8. Apply the checklist below to every changed file and return the envelope.
+8. Read each PR's `review_depth` in `input.prs` and review at that depth (see
+   **Review depth** below).
+9. Apply the checklist below to every changed file and return the envelope.
+
+## Review depth
+
+Each entry in `input.prs` carries `review_round` and `review_depth`:
+
+- `full_sweep`: the first review of a large PR. Later rounds only check the fixes
+  and what changed, so a blocking issue you miss now costs a whole extra round.
+  Go file by file through every changed file and apply the **Deep checks** below to
+  each, then trace every requirement and acceptance test. Take the time; do not
+  stop at the first problem in a file.
+- `full`: a first review of a smaller PR (or a later round that could not be
+  compared). Review the whole diff with the checklist and the deep checks.
+- `follow_up`: a later round. `previous_findings` lists the blocking findings of
+  the last round and `changed_since_last_review` the files changed since then.
+  1. Check every previous finding is fixed, including the code around it. One
+     that is not fixed is raised again.
+  2. Review every file in `changed_since_last_review` in full, with the deep checks:
+     the fixes can break things.
+  3. In files not changed since the last round, raise only a `blocker` (broken
+     functionality, data loss, a security hole). The last round already reviewed
+     that code; a `major` you notice there now goes in the summary as a note, not
+     as a finding.
+
+## Deep checks
+
+Problems a test suite written by the same author rarely catches. Check each one
+wherever the change touches it:
+
+- **Input parsing and coercion.** Null, empty or whitespace values turned into `0`,
+  `false` or `""` (for example `z.coerce.number()`, `Number(x)`, `parseInt` without
+  checks); numeric strings, NaN, negative values; dates, time zones and formats.
+  Malformed input should fail loudly, not overwrite good data.
+- **Storage precision and types.** Values compared or reported before they are
+  rounded to what the database stores (decimal scale, integer columns, string
+  lengths), so an identical repeat read looks like a change.
+- **Change detection and idempotency.** An identical repeat input causes no
+  change, log entry, event or hook call; every kind of data that can change
+  (including related or reference data, not only the main rows) is detected and
+  reaches the hooks or events that depend on it.
+- **Partial failure.** A failure halfway leaves no half-applied state: transactions
+  and rollback cover every write, and retries do not duplicate.
+- **Concurrency and ordering.** Two runs at once, out-of-order events, stale reads
+  outside a transaction or lock.
+- **Error paths.** Every failure the work order names (an upstream service down, a
+  not-found, a refused duplicate) returns the stated error and is tested.
+- **Boundaries.** Each limit and example value the work order gives, by hand.
+- **Permissions.** Each endpoint and action checks the roles the work order states.
 
 ## Review Checklist
 

@@ -244,12 +244,24 @@ def guided_coding_model() -> str | None:
     return setting or diagnosis_model()
 
 
-def revision_coding_model() -> str | None:
-    """The coding model for every revision (``TS_HARNESS_REVISION_CODING_MODEL``, else the guided model).
+def strong_model_from_revision() -> int:
+    """The first revision that runs on the stronger model (``TS_HARNESS_STRONG_MODEL_FROM_REVISION``, default 1)."""
+    try:
+        return max(1, int(os.environ.get("TS_HARNESS_STRONG_MODEL_FROM_REVISION") or 1))
+    except ValueError:
+        return 1
+
+
+def revision_coding_model(revision: int = 1) -> str | None:
+    """The coding model for revision number ``revision`` (1 is the first revision after the first run).
 
     The first run has its own verification and a pre-push review; a revision means the gate
-    still found something, so it goes to the stronger model. ``off`` keeps the default model.
+    still found something, so from ``strong_model_from_revision()`` on (default: every revision)
+    it goes to the stronger model (``TS_HARNESS_REVISION_CODING_MODEL``, else the guided model).
+    ``off`` keeps the default model. Before that revision, None: the default model.
     """
+    if revision < strong_model_from_revision():
+        return None
     setting = (os.environ.get("TS_HARNESS_REVISION_CODING_MODEL") or "").strip()
     if setting.lower() in {"off", "none", "false", "0"}:
         return None

@@ -462,6 +462,8 @@ branch). QA and code review revisions share one budget of three
 QA rejected the PR; sending it back to OpenCode (revision 2/3).
 ```
 
+**Review depth.** `review_precheck` adds each PR's `review_round` and `review_depth` to the reviewer's input. The first review of a large PR (20 or more files or 1,500 or more changed lines: `TS_HARNESS_DEEP_REVIEW_FILES`, `TS_HARNESS_DEEP_REVIEW_LINES`) is a `full_sweep`: file by file, with the deep checks (input coercion, storage precision, change detection and idempotency, partial failure, concurrency, error paths, boundaries, permissions). Later rounds are `follow_up`: the reviewer gets the last round's blocking findings (`previous_findings`) and the files changed since that review (`changed_since_last_review`, from GitHub's compare), checks each finding is fixed, reviews the changed files in full, and raises only blockers in code the last round already reviewed. When the comparison is not available the round is a `full` review (`governed-code-review` 1.7.0).
+
 **Guided revision.** When code review or QA raises the same finding again after a
 revision (same file within 40 lines, or a closely matching message), another plain
 revision usually repeats the mistake. Instead, once per budget, the harness asks a
