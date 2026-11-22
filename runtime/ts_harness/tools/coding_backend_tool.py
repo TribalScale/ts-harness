@@ -58,6 +58,7 @@ def handle_run_coding_backend(args: dict[str, Any], ctx: ToolPolicyContext) -> d
             requested_by=str(args.get("requested_by") or ctx.actor_email or ""),
             bound=delivery_binding(ctx),
             agent_id=ctx.agent_id,
+            tenant_id=str(getattr(ctx, "tenant_id", None) or "").strip() or None,
         )
     except CodingRequestError as exc:
         return {"ok": False, "error": str(exc), **exc.extra}

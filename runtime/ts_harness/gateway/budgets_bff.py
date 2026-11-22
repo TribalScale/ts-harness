@@ -87,5 +87,14 @@ def program_budget_admin(memory: Any, auth: AuthContext, config: Any, program_id
     team = data.get("team")
     if not team or data.get("tenant_id") != _tenant(auth):
         return {"team": None}
+    from ts_harness.gateway.program_access import ProgramAccessDenied, actor_context, check_program_access
+
+    try:
+        # Same program-level read check as the other program routes (enforce mode only).
+        check_program_access(
+            memory, program_id, actor_context(auth, config), "read", tenant_id=_tenant(auth), route="budget"
+        )
+    except ProgramAccessDenied:
+        return {"team": None}
     fields = ("id", "slug", "display_name", "status", "percent", "held_tasks")
     return {"team": {k: team.get(k) for k in fields}}
