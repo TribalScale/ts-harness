@@ -45,6 +45,14 @@ def _issue_links(issue: dict[str, Any]) -> list[dict[str, Any]]:
     return [link for link in links if isinstance(link, dict)]
 
 
+def issue_sort_key(key: str) -> tuple[str, int, str]:
+    """``PROJ-7`` before ``PROJ-22``: by project, then issue number, not as text."""
+    match = re.match(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)$", str(key or "").strip())
+    if not match:
+        return (str(key or ""), 0, str(key or ""))
+    return (match.group(1).upper(), int(match.group(2)), str(key))
+
+
 def order_ticket_queue(issues: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Order candidates so open blockers come first.
 
@@ -64,7 +72,7 @@ def order_ticket_queue(issues: list[dict[str, Any]] | None) -> dict[str, Any]:
     blockers_of: dict[str, list[str]] = {}
     for key, issue in candidates.items():
         blockers = open_blockers(_issue_links(issue))
-        outside = sorted({blocker for blocker in blockers if blocker not in candidates})
+        outside = sorted({blocker for blocker in blockers if blocker not in candidates}, key=issue_sort_key)
         if outside:
             excluded.append({"key": key, "reason": "blocked by " + ", ".join(outside)})
             continue
@@ -82,18 +90,19 @@ def order_ticket_queue(issues: list[dict[str, Any]] | None) -> dict[str, Any]:
             dependents[blocker].append(key)
             indegree[key] += 1
 
-    ready = [key for key, degree in indegree.items() if degree == 0]
+    # Among ready tickets, the lowest issue number goes first (PROJ-7 before PROJ-22).
+    ready = [(issue_sort_key(key), key) for key, degree in indegree.items() if degree == 0]
     heapq.heapify(ready)
     ordered: list[str] = []
     while ready:
-        key = heapq.heappop(ready)
+        _, key = heapq.heappop(ready)
         ordered.append(key)
         for child in dependents[key]:
             indegree[child] -= 1
             if indegree[child] == 0:
-                heapq.heappush(ready, child)
+                heapq.heappush(ready, (issue_sort_key(child), child))
 
-    for key in sorted(nodes - set(ordered)):
+    for key in sorted(nodes - set(ordered), key=issue_sort_key):
         excluded.append({"key": key, "reason": "cycle"})
 
     if len(ordered) > QUEUE_CAP:
@@ -101,7 +110,7 @@ def order_ticket_queue(issues: list[dict[str, Any]] | None) -> dict[str, Any]:
             excluded.append({"key": key, "reason": _CAP_REASON})
         ordered = ordered[:QUEUE_CAP]
 
-    excluded.sort(key=lambda item: (item["key"], item["reason"]))
+    excluded.sort(key=lambda item: (issue_sort_key(item["key"]), item["reason"]))
     return {"ordered": ordered, "excluded": excluded}
 
 
