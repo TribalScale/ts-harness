@@ -3003,6 +3003,8 @@ async def admin_program_budget(request: Request) -> Response:
     from ts_harness.gateway import budgets_bff as bff
 
     program_id = request.path_params["program_id"]
+    if request.method == "PUT":
+        return await _admin_projects_call(request, lambda m, a, c, b: bff.set_program_budget_admin(m, a, c, program_id, b))
     return await _admin_projects_call(request, lambda m, a, c, _b: bff.program_budget_admin(m, a, c, program_id))
 
 
@@ -4534,7 +4536,7 @@ routes = [
     Route("/admin/github/sync", endpoint=admin_github_sync, methods=["POST"]),
     Route("/admin/budgets", endpoint=admin_budgets, methods=["GET"]),
     Route("/admin/budgets/{team_id}/raise", endpoint=admin_budget_raise, methods=["POST"]),
-    Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET"]),
+    Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET", "PUT"]),
     Route("/admin/notes", endpoint=admin_org_notes, methods=["GET", "POST"]),
     Route("/admin/notes/{note_id}", endpoint=admin_note, methods=["PATCH"]),
     Route("/admin/notes/{note_id}/status", endpoint=admin_note_status, methods=["POST"]),

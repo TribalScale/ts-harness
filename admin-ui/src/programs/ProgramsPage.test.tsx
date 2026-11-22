@@ -980,7 +980,7 @@ it("opens the share dialog for program admins", async () => {
   ).toBeInTheDocument();
 });
 
-it("warns when the program's team reached its LLM budget", async () => {
+it("warns when the program's team reached its LLM budget and shows the program's budget", async () => {
   mockFetch((url) => {
     if (url === LIST_URL) return jsonResponse(programList());
     if (url === `/admin/programs/${encodeURIComponent(programId)}/status`)
@@ -994,6 +994,22 @@ it("warns when the program's team reached its LLM budget", async () => {
           status: "reached",
           percent: 101,
           held_tasks: 2,
+        },
+        program: {
+          budget_usd: 50,
+          source: "program",
+          spent_usd: 12.5,
+          spent_month_usd: 12.5,
+          percent: 25,
+          status: "ok",
+          action: "stop",
+          currency: "USD",
+          warn_at_percent: 80,
+          held_jobs: 0,
+          set_by: "lead@acme.test",
+          set_at: "2026-11-20T00:00:00Z",
+          can_set: true,
+          set_limit: null,
         },
       });
     }
@@ -1011,6 +1027,11 @@ it("warns when the program's team reached its LLM budget", async () => {
   expect(
     within(banner).getByRole("link", { name: "Open budgets" }),
   ).toHaveAttribute("href", "#/system/budgets");
+  const card = screen.getByRole("region", { name: "Program LLM budget" });
+  expect(card).toHaveTextContent("Spent 12.50 USD of 50.00 USD");
+  expect(
+    within(card).getByRole("button", { name: "Change budget" }),
+  ).toBeInTheDocument();
 });
 
 function endedAtPrd() {

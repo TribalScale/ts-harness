@@ -1138,8 +1138,16 @@ class MemoryClient:
 
         return self._request("GET", f"/budgets/programs/{quote(program_id, safe='')}")
 
+    def set_program_budget(self, program_id: str, **body: Any) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("PUT", f"/budgets/programs/{quote(program_id, safe='')}", body)
+
     def claim_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/alerts", {"tenant_id": tenant_id})
+
+    def claim_program_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        return self._request("POST", "/budgets/program-alerts", {"tenant_id": tenant_id})
 
     def list_knowledge_notes(
         self,

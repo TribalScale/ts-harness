@@ -30,6 +30,7 @@ def configured(stack: ExitStack, *, coding_backend: str = "opencode", backend: o
     stack.enter_context(patch.object(coding_job, "load_active_runtime_config", return_value=MagicMock()))
     stack.enter_context(patch.object(coding_job, "_live_runtime_config", return_value=live))
     stack.enter_context(patch.object(coding_job, "check_repo_allowed_or_linked", return_value=None))
+    stack.enter_context(patch.object(coding_job, "program_downgrade_note", return_value=None))
     stack.enter_context(
         patch.object(
             coding_job,
@@ -99,6 +100,32 @@ class BuildCodingRequestTests(unittest.TestCase):
             )
         self.assertEqual(strong["model"], "claude-opus-5-5")
         self.assertNotEqual(plain["model"], "claude-opus-5-5")
+
+    def test_a_program_at_its_budget_keeps_to_the_default_model(self):
+        body = "# WO-3\n\n- **Complexity:** High\n"
+        env = {"TS_HARNESS_COMPLEX_CODING_MODEL": "anthropic/claude-opus-5-5", "TS_HARNESS_PRE_PUSH_REVIEW_MODEL": "anthropic/claude-opus-5-5"}
+        note = "Program Checkout reached its LLM budget"
+        with ExitStack() as stack, patch.dict("os.environ", env):
+            configured(stack)
+            downgrade = stack.enter_context(patch.object(coding_job, "program_downgrade_note", return_value=note))
+            complex_run = build_coding_request({"work_order_id": "WO-3", "work_order_body": body}, delivery_workflow_id=None, program_id="p-1")
+            revision = build_coding_request(
+                {"work_order_id": "WO-3"}, delivery_workflow_id=None, program_id="p-1", bound={"coding_model": "anthropic/claude-opus-5-5"}
+            )
+        downgrade.assert_called_with("p-1")
+        for spec in (complex_run, revision):
+            self.assertEqual((spec["model"], spec["review_model"], spec["budget_note"]), ("claude", "claude", note))
+        self.assertNotIn("budget_note", coding_request_from_spec(complex_run).__dict__)
+
+    def test_no_budget_note_when_nothing_stronger_would_run(self):
+        env = {"TS_HARNESS_COMPLEX_CODING_MODEL": "off", "TS_HARNESS_PRE_PUSH_REVIEW_MODEL": "off"}
+        with ExitStack() as stack, patch.dict("os.environ", env):
+            configured(stack)
+            downgrade = stack.enter_context(patch.object(coding_job, "program_downgrade_note", return_value="over"))
+            spec = build_coding_request({"work_order_id": "WO-1"}, delivery_workflow_id=None, program_id="p-1")
+        downgrade.assert_not_called()
+        self.assertNotIn("budget_note", spec)
+        self.assertEqual(spec["model"], "claude")
 
     def test_complexity_markers(self):
         for text in ("Complexity: High", "- **Complexity:** high", "| Complexity | High |", "## Complexity\n\nHigh, two services"):

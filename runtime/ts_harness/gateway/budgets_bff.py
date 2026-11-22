@@ -3,6 +3,9 @@
 Admins see and raise every team's budget. A team manager sees their teams and
 may set a budget up to ``budgets.manager_max_monthly``; members see their teams
 read-only. Every raise is audited as ``team_budget_raised``.
+
+A program's own budget can be set by admins and by managers of the team that owns the
+program's project (up to the same limit); it is audited as ``program_budget_set``.
 """
 
 from __future__ import annotations
@@ -81,11 +84,60 @@ def raise_budget_admin(memory: Any, auth: AuthContext, config: Any, team_id: str
     )
 
 
+PROGRAM_FIELDS = (
+    "budget_usd", "source", "spent_usd", "spent_month_usd", "percent", "status", "action",
+    "currency", "warn_at_percent", "held_jobs", "set_by", "set_at",
+)
+
+
+def _can_set_program_budget(auth: AuthContext, config: Any, team: dict[str, Any] | None) -> bool:
+    if _is_admin(auth, config):
+        return True
+    return bool(team) and "manager" in _team_roles(auth).get(str(team.get("slug")), set())
+
+
 def program_budget_admin(memory: Any, auth: AuthContext, config: Any, program_id: str) -> dict[str, Any]:
-    """The owning team's budget status for the program banner."""
+    """The owning team's budget status for the program banner, and the program's own budget and spend."""
     data = memory.get_program_budget(program_id)
+    if data.get("tenant_id") != _tenant(auth):
+        return {"team": None, "program": None}
     team = data.get("team")
-    if not team or data.get("tenant_id") != _tenant(auth):
-        return {"team": None}
+    program = data.get("program")
     fields = ("id", "slug", "display_name", "status", "percent", "held_tasks")
-    return {"team": {k: team.get(k) for k in fields}}
+    payload: dict[str, Any] = {"team": {k: team.get(k) for k in fields} if team else None, "program": None}
+    if program:
+        admin = _is_admin(auth, config)
+        payload["program"] = {
+            **{k: program.get(k) for k in PROGRAM_FIELDS},
+            "can_set": _can_set_program_budget(auth, config, team),
+            "set_limit": None if admin else _manager_max(config),
+        }
+    return payload
+
+
+def set_program_budget_admin(memory: Any, auth: AuthContext, config: Any, program_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Set or clear a program's own budget: admins, or managers of the program's team up to the manager limit."""
+    data = memory.get_program_budget(program_id)
+    if data.get("tenant_id") != _tenant(auth):
+        raise LookupError("program not found")
+    admin = _is_admin(auth, config)
+    if not _can_set_program_budget(auth, config, data.get("team")):
+        raise BudgetAccessDenied("only admins and managers of the program's team can change its budget")
+    raw = body.get("amount_usd")
+    amount: float | None = None
+    if raw not in (None, ""):
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("amount_usd must be a number") from exc
+        limit = _manager_max(config)
+        if not admin and amount > limit:
+            raise BudgetAccessDenied(f"managers can set a budget up to {limit:,.0f}; ask an admin for more")
+    memory.set_program_budget(
+        program_id,
+        tenant_id=_tenant(auth),
+        amount_usd=amount,
+        reason=body.get("reason"),
+        actor=str(getattr(auth, "actor_id", "") or "admin"),
+    )
+    return program_budget_admin(memory, auth, config, program_id)
