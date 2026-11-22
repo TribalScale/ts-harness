@@ -47,7 +47,8 @@ class TimelineTests(unittest.TestCase):
         review = lv.item_view(memory, ticket(), now=NOW)
         self.assertEqual((review["waiting_on"], review["in_step_seconds"], review["jira_issue_key"]), ("agent", 80 * 60, "PROJ-3"))
         merge = lv.item_view(memory, ticket(stage="merge"), now=NOW)
-        self.assertEqual((merge["waiting_on"], merge["in_step_seconds"]), ("you", 30 * 60))
+        # The merge wait started when CI finished (80 minutes ago), not at its last claim.
+        self.assertEqual((merge["waiting_on"], merge["in_step_seconds"]), ("you", 80 * 60))
         self.assertEqual(lv.waiting_on({"kind": "waiting", "current_step": "await_pr_checks", "state": "Waiting for PR checks"}), "ci")
         self.assertEqual(lv.waiting_on({"kind": "stuck", "current_step": "finalize_code_review"}), "you")
 
@@ -78,7 +79,7 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(board["items"][2]["blocked_by"], ["PROJ-3"])
         self.assertEqual(board["parallel_limit"], 2)
         shares = {t["category"]: t["seconds"] for t in board["totals"]}
-        self.assertEqual(shares["merge"], 30 * 60)
+        self.assertEqual(shares["merge"], 80 * 60)
         self.assertEqual(shares["coding"], 29 * 60)
 
 

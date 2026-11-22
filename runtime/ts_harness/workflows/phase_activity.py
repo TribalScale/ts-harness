@@ -165,8 +165,9 @@ def summarize_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
     """Summarize one workflow (``{id, status, workflow_type, tasks}``) for the program page."""
     tasks = [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]
     ordered = _by_created(tasks)
-    first = ordered[0] if ordered else {}
-    coding_step = str(first.get("step_name") or "") if first.get("agent_id") == CODING_AGENT else ""
+    # The coding step is the first one the coding agent runs (a Jira ticket workflow prepares first).
+    coding = next((t for t in ordered if t.get("agent_id") == CODING_AGENT), {})
+    coding_step = str(coding.get("step_name") or "")
     revisions = max(0, sum(1 for t in tasks if t.get("step_name") == coding_step) - 1) if coding_step else 0
     steps = _latest_per_step(tasks)
     current = _current(steps)

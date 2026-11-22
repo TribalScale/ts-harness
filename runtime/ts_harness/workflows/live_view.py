@@ -75,11 +75,16 @@ def step_timeline(tasks: list[dict[str, Any]], *, now: datetime | None = None) -
         status = str(task.get("status") or "")
         if status == "cancelled" and not task.get("started_at"):
             continue  # superseded before it ever ran
-        deps = [by_id.get(str(dep)) or {} for dep in task.get("depends_on") or []]
-        ready = max((d for d in (_parse(dep.get("completed_at")) for dep in deps) if d), default=None)
-        start = _parse(task.get("started_at")) or (ready if status != "pending" else None) or _parse(task.get("created_at"))
         if status == "pending":
             continue  # not started yet: shown as the queue, not as a bar
+        deps = [by_id.get(str(dep)) or {} for dep in task.get("depends_on") or []]
+        ready = max((d for d in (_parse(dep.get("completed_at")) for dep in deps) if d), default=None)
+        # A step starts when it became ready: a parked step (coding job, CI, merge wait) is
+        # claimed again when it resumes, so its started_at is the resume, not the start.
+        claimed = _parse(task.get("started_at"))
+        start = ready or claimed or _parse(task.get("created_at"))
+        if claimed and ready and claimed < ready:
+            start = claimed
         end = _parse(task.get("completed_at"))
         if end is None:
             end = now if status in {"running", "claimed", "blocked"} and not str(task.get("error") or "").startswith(
