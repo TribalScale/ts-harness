@@ -296,3 +296,34 @@ class ConflictingChecksTests(unittest.TestCase):
 
         text = _qa_feedback_text({}, {"output": {"summary": "merge origin/dev", "conflicting_prs": []}}, system_jobs.CONFLICT_REASON)
         self.assertIn("merge origin/dev", text)
+
+
+class RepinChecksWaitTests(unittest.TestCase):
+    """A push to a PR whose CI the harness is waiting for moves the wait to the new commit."""
+
+    def test_the_wait_follows_the_new_head(self):
+        from ts_harness.workflows.merge_readiness import repin_checks_waits
+
+        memory = MagicMock()
+        pr = "https://github.com/org/app/pull/15"
+        memory.find_external_waits.return_value = {"waits": [
+            {"task_id": "t-checks", "input": {"_wait_match": {"repo": "org/app", "head_sha": "old"},
+                                              "_wait_options": {"heads": [{"pr_url": pr, "head_sha": "old"}], "warnings": []}}},
+            {"task_id": "t-other", "input": {"_wait_options": {"heads": [{"pr_url": "https://github.com/org/app/pull/9", "head_sha": "x"}]}}},
+        ]}
+        moved = repin_checks_waits({"pr_url": pr, "head_sha": "new"}, tenant_id="default", memory=memory)
+        self.assertEqual(moved, ["t-checks"])
+        task_id, patched = memory.patch_task_input.call_args.args
+        self.assertEqual(task_id, "t-checks")
+        self.assertEqual(patched["_wait_match"]["head_sha"], "new")
+        self.assertEqual(patched["_wait_options"]["heads"][0]["head_sha"], "new")
+
+    def test_same_head_or_unknown_pr_changes_nothing(self):
+        from ts_harness.workflows.merge_readiness import repin_checks_waits
+
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {"waits": [
+            {"task_id": "t", "input": {"_wait_options": {"heads": [{"pr_url": "https://github.com/o/r/pull/1", "head_sha": "abc"}]}}}]}
+        self.assertEqual(repin_checks_waits({"pr_url": "https://github.com/o/r/pull/1", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
+        self.assertEqual(repin_checks_waits({"pr_url": "", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
+        memory.patch_task_input.assert_not_called()

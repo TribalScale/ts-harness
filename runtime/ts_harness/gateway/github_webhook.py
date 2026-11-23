@@ -585,6 +585,13 @@ def handle_github_webhook(
         result = {"status": "notified", "kind": kind, "pr_url": event.get("pr_url")}
         if kind == "github.pr_opened":
             result["human_pr_statuses"] = _clear_harness_checks_for_human_pr(event, tenant_id=tenant_id)
+            if event.get("action") == "synchronize":
+                from ts_harness.workflows.merge_readiness import repin_checks_waits
+
+                try:
+                    result["checks_waits_moved"] = repin_checks_waits(event, tenant_id=tenant_id)
+                except Exception as exc:  # noqa: BLE001 - the delivery is still acknowledged
+                    logger.warning("checks wait re-pin failed for %s: %s", event.get("pr_url"), exc)
     if subscribers:
         result["subscribers"] = subscribers
     return result
