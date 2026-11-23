@@ -500,6 +500,19 @@ def get_job_spec(conn, job_id: str) -> dict[str, Any]:
     return _public(row, spec=True)
 
 
+_PROGRESS_LIMIT = 8000
+
+
+def _progress_json(progress: dict[str, Any] | None) -> str | None:
+    """Progress as JSON within the size limit: drop the step list before anything else, never cut the text."""
+    if not progress:
+        return None
+    text = json.dumps(progress)
+    if len(text) > _PROGRESS_LIMIT:
+        text = json.dumps({k: v for k, v in progress.items() if k != "steps"})
+    return text if len(text) <= _PROGRESS_LIMIT else None
+
+
 def heartbeat_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
     jid = _uuid(job_id)
     last_output = body.get("last_output")
@@ -516,7 +529,7 @@ def heartbeat_coding_job(conn, job_id: str, body: dict[str, Any]) -> dict[str, A
             """,
             (
                 str(last_output)[-_LAST_OUTPUT_LIMIT:] if last_output is not None else None,
-                json.dumps(progress)[:8000] if progress else None,
+                _progress_json(progress),
                 jid,
                 list(RUNNING),
             ),

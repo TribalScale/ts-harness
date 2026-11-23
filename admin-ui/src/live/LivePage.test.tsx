@@ -38,7 +38,10 @@ describe("Live page", () => {
                   item("PROJ-3", "agent", { program_id: "p1", coding_job: {
                     id: "j1", status: "running", last_output: "npm test", started_at: new Date(Date.now() - 400000).toISOString(),
                     created_at: "", model: "claude-opus-5-5",
-                    progress: { phase: "verification", phase_seconds: 75, detail: "fixing test failures (pass 1)", done: { setup: 5, coding: 320 } },
+                    progress: { phase: "review", phase_seconds: 700, detail: "fixing test failures (pass 1)", done: { setup: 5, coding: 320, verification: 75 },
+                                steps: { review: [{ label: "reviewing (round 1)", seconds: 100 },
+                                                  { label: "fixing 2 review findings", seconds: 540 },
+                                                  { label: "fixing test failures (pass 1)", seconds: 60, active: true }] } },
                   } })],
         });
       }
@@ -59,13 +62,24 @@ describe("Live page", () => {
     const run = screen.getByLabelText("Current coding run");
     expect(run).toHaveTextContent("on Opus");
     expect(run).toHaveTextContent("Coding5 m 20 s");
-    expect(run).toHaveTextContent("Running tests1 m 15 s · fixing test failures (pass 1)");
+    expect(run).toHaveTextContent("Running tests1 m 15 s");
+    // The pre-push phase lists its own timed steps instead of one 11-minute "Pre-push review".
+    expect(run).toHaveTextContent("Pre-push review11 m 40 s");
+    expect(run).not.toHaveTextContent("11 m 40 s · fixing");
+    const steps = within(run).getAllByRole("listitem").filter((li) => li.className.includes("story-step"));
+    expect(steps.map((li) => li.textContent)).toEqual([
+      "reviewing (round 1)1 m 40 s",
+      "fixing 2 review findings9 m 00 s",
+      "fixing test failures (pass 1)1 m 00 s",
+    ]);
+    expect(steps[2].className).toContain("story-step-active");
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]);
     const story = await screen.findByLabelText("What happened");
     expect(story).toHaveTextContent("Revision 4");
     expect(story).toHaveTextContent("Opus · 12 m 47 s · $2.19");
     expect(story).toHaveTextContent("Setup 50 s · Coding 5 m 50 s · Running tests 4 m 52 s · Pre-push review 1 m 04 s · Push 3 s");
     expect(story).toHaveTextContent("Pre-push review: found and fixed 1 blocking issue");
+    expect(story).toHaveTextContent("Pre-push review: reviewing (round 1) 40 s · fixing 1 review finding 24 s");
     expect(story).toHaveTextContent("src/a.ts:4");
     expect(within(story).queryByText("Third finding")).not.toBeInTheDocument();
     await user.click(within(story).getByRole("button", { name: "Show 1 more" }));
@@ -90,6 +104,7 @@ const STORY = {
     { at: "2026-01-02T10:45:00Z", kind: "coding", title: "Revision 4", subtitle: "after /revise by ada@example.com", status: "ok",
       model: "Opus", seconds: 767, cost_usd: 2.19, outcome: "Pushed to the PR",
       phases: { setup: 49.8, coding: 349.8, verification: 291.8, review: 63.7, push: 3.1 },
+      steps: { review: [{ label: "reviewing (round 1)", seconds: 40 }, { label: "fixing 1 review finding", seconds: 23.7 }] },
       review: { status: "pass", fixed: 1, reviews: 2, open_blocking: [] } },
   ],
 };

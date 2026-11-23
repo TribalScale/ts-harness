@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { CurrentRun, StoryEvent, StoryFinding, TicketStoryResponse } from "../api/types";
+import type { CurrentRun, StepTiming, StoryEvent, StoryFinding, TicketStoryResponse } from "../api/types";
 
 const POLL_MS = 10000;
 const FINDINGS_SHOWN = 2;
@@ -39,6 +39,19 @@ function phaseLine(phases: Record<string, number>): string {
   return PHASES.filter((p) => phases[p.key] != null)
     .map((p) => `${p.label} ${preciseDuration(phases[p.key])}`)
     .join(" · ");
+}
+
+/** Steps worth listing under a phase: more than one, or one inside the running phase. */
+function stepsFor(steps: Record<string, StepTiming[]> | null | undefined, phase: string, active: boolean): StepTiming[] {
+  const list = steps?.[phase] || [];
+  return list.length > 1 || (active && list.length > 0) ? list : [];
+}
+
+/** "Pre-push review: reviewing (round 1) 1 m 40 s · fixing 2 review findings 9 m 00 s". */
+function stepLines(steps: Record<string, StepTiming[]> | null | undefined): string[] {
+  return PHASES.map((p) => ({ label: p.label, list: stepsFor(steps, p.key, false) }))
+    .filter((entry) => entry.list.length > 0)
+    .map((entry) => `${entry.label}: ${entry.list.map((s) => `${s.label} ${preciseDuration(s.seconds)}`).join(" · ")}`);
 }
 
 function reviewLine(event: StoryEvent): string {
@@ -113,6 +126,7 @@ export function CurrentRunBreakdown({ run }: { run: CurrentRun }) {
             const done = run.done?.[phase.key];
             const active = phase.key === current;
             const state = active ? "active" : done != null || (currentIndex >= 0 && index < currentIndex) ? "done" : "todo";
+            const steps = stepsFor(run.steps, phase.key, active);
             return (
               <li key={phase.key} className={`story-phase story-phase-${state}`}>
                 <span className="story-phase-mark" aria-hidden="true">
@@ -121,11 +135,21 @@ export function CurrentRunBreakdown({ run }: { run: CurrentRun }) {
                 <span className="story-phase-label">{phase.label}</span>
                 <span className="story-phase-time">
                   {active
-                    ? `${preciseDuration(run.phase_seconds)}${run.detail ? ` · ${run.detail}` : ""}`
+                    ? `${preciseDuration(run.phase_seconds)}${run.detail && !steps.length ? ` · ${run.detail}` : ""}`
                     : done != null
                       ? preciseDuration(done)
                       : ""}
                 </span>
+                {steps.length > 0 && (
+                  <ul className="story-steps">
+                    {steps.map((step, i) => (
+                      <li key={`${step.label}-${i}`} className={step.active ? "story-step story-step-active" : "story-step"}>
+                        <span className="story-step-label">{step.label}</span>
+                        <span className="story-step-time">{preciseDuration(step.seconds)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             );
           })}
@@ -156,6 +180,11 @@ function EventRow({ event }: { event: StoryEvent }) {
         </div>
         {event.kind === "decision" && event.subtitle && <p className="story-guidance">{event.subtitle}</p>}
         {event.phases && <p className="story-detail">{phaseLine(event.phases)}</p>}
+        {stepLines(event.steps).map((line) => (
+          <p key={line} className="story-detail muted">
+            {line}
+          </p>
+        ))}
         {review && <p className="story-detail">{review}</p>}
         {event.outcome && <p className={event.status === "failed" ? "story-detail story-bad" : "story-detail"}>{event.outcome}</p>}
         {event.findings && <Findings findings={event.findings} others={event.other_findings} />}

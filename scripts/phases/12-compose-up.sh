@@ -151,6 +151,27 @@ elif [[ -n "${CODING_EGRESS_ALLOWLIST:-}" && "${CODING_EGRESS_ALLOWLIST}" != "of
     echo "[phase:${PHASE_NAME}] Coding egress allowlist not applied: it needs coding jobs on the local launcher (ECS workers use the Terraform egress proxy)"
 fi
 
+CODING_LAUNCHER_RESOLVED="$(resolve_coding_launcher)"
+export CODING_LAUNCHER="$CODING_LAUNCHER_RESOLVED"
+echo "[phase:${PHASE_NAME}] Coding launcher: ${CODING_LAUNCHER_RESOLVED}"
+if [[ "$CODING_LAUNCHER_RESOLVED" == "ecs" ]] && is_blank_or_placeholder "${CODING_ECS_CLUSTER:-}"; then
+    echo "[phase:${PHASE_NAME}] ERROR: coding launcher ecs but the runtime config has no ECS cluster (apply Terraform with runtime.coding_workers_on_ecs: true)" >&2
+    exit 1
+fi
+if [[ "${DEPLOYMENT_PROFILE:-single_host}" != "scale_out" ]] && ! is_blank_or_placeholder "${CODING_ECS_CLUSTER:-}"; then
+    # Fargate workers on single_host reach memory-api through the internal load balancer, so
+    # publish its port like scale_out does (the host security group admits only the LB). It
+    # follows the stack, not the launcher, so switching launchers recreates coding-launcher only.
+    SCALE_OUT_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.scale-out.yml"
+    if [[ -f "$SCALE_OUT_COMPOSE" ]]; then
+        COMPOSE_FILES+=(-f "$SCALE_OUT_COMPOSE")
+        echo "[phase:${PHASE_NAME}] Fargate stack present: publishing memory-api for the internal load balancer"
+    else
+        echo "[phase:${PHASE_NAME}] ERROR: the Fargate stack needs $SCALE_OUT_COMPOSE" >&2
+        exit 1
+    fi
+fi
+
 if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
     SCALE_OUT_COMPOSE="$ENTERPRISE_DOCKER_DIR/docker-compose.scale-out.yml"
     if [[ -f "$SCALE_OUT_COMPOSE" ]]; then
@@ -196,8 +217,10 @@ fi
 STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BACKEND}:${TS_HARNESS_SKILLS_BUCKET}:${TS_HARNESS_WORKSPACE_BUCKET}:${TS_HARNESS_INTAKE_BUCKET:-}"
 # The extra allowed domains reach coding-launcher's environment; a change re-runs compose up.
 EGRESS_FINGERPRINT="egress:${CODING_EGRESS_ALLOWLIST:-off}:${CODING_EGRESS_ALLOW:-}:${CODING_EGRESS_NETWORK:-}:${CODING_EGRESS_PROXY_IMAGE:-}"
+# Launcher, parallel limit and ECS identifiers reach coding-launcher's environment.
+CODING_FINGERPRINT="coding:${CODING_LAUNCHER_RESOLVED}:${CODING_MAX_RUNNING:-}:${CODING_QUOTA_PER_USER:-}:${CODING_QUOTA_PER_PROGRAM:-}:${CODING_QUOTA_PER_TEAM:-}:${CODING_ECS_CLUSTER:-}:${CODING_ECS_TASK_DEFINITION:-}:${CODING_ECS_SUBNETS:-}:${CODING_ECS_SECURITY_GROUPS:-}:${CODING_ECS_ASSIGN_PUBLIC_IP:-}"
 # This script is an input too: a change to the compose env it writes must re-run compose up.
-PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$EGRESS_FINGERPRINT" "$STORAGE_FINGERPRINT")"
+PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$EGRESS_FINGERPRINT" "$STORAGE_FINGERPRINT" "$CODING_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
     echo "[phase:${PHASE_NAME}] Already complete for current inputs. Skipping."
     exit 0
@@ -283,7 +306,10 @@ fi
     echo "export CODING_EGRESS_ALLOWLIST=$(printf '%q' "${CODING_EGRESS_ALLOWLIST:-off}")"
     echo "export CODING_EGRESS_ALLOW=$(printf '%q' "${CODING_EGRESS_ALLOW:-}")"
     echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
-    echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER:-}")"
+    echo "export CODING_QUOTA_PER_USER=$(printf '%q' "${CODING_QUOTA_PER_USER:-}")"
+    echo "export CODING_QUOTA_PER_PROGRAM=$(printf '%q' "${CODING_QUOTA_PER_PROGRAM:-}")"
+    echo "export CODING_QUOTA_PER_TEAM=$(printf '%q' "${CODING_QUOTA_PER_TEAM:-}")"
+    echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER_RESOLVED}")"
     echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"
     echo "export TS_HARNESS_STATE_BACKEND=$(printf '%q' "${TS_HARNESS_STATE_BACKEND}")"
     echo "export TS_HARNESS_OBJECT_BACKEND=$(printf '%q' "${TS_HARNESS_OBJECT_BACKEND}")"
@@ -300,6 +326,9 @@ fi
     echo "export CODING_ECS_CONTAINER=$(printf '%q' "${CODING_ECS_CONTAINER:-coding-worker}")"
     echo "export CODING_ECS_SUBNETS=$(printf '%q' "${CODING_ECS_SUBNETS:-}")"
     echo "export CODING_ECS_SECURITY_GROUPS=$(printf '%q' "${CODING_ECS_SECURITY_GROUPS:-}")"
+    echo "export CODING_ECS_ASSIGN_PUBLIC_IP=$(printf '%q' "${CODING_ECS_ASSIGN_PUBLIC_IP:-false}")"
+    echo "export CODING_WORKER_ECR_REPOSITORY=$(printf '%q' "${CODING_WORKER_ECR_REPOSITORY:-}")"
+    echo "export CODING_WORKER_ECR_TAG=$(printf '%q' "${CODING_WORKER_ECR_TAG:-}")"
     echo "export AGENT_RUNTIME_URL=$(printf '%q' "${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}")"
     echo "export TS_HARNESS_TOOLS_ROOT_HOST=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT_HOST}")"
     echo "export TS_HARNESS_TOOLS_ROOT=$(printf '%q' "${TS_HARNESS_TOOLS_ROOT:-/tools}")"

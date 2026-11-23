@@ -531,6 +531,8 @@ class EcsConfig:
     container: str = "coding-worker"
     capacity_provider: str = "FARGATE"
     region: str = ""
+    # Default-VPC workers need a public IP for outbound traffic; private subnets use the egress proxy.
+    assign_public_ip: bool = False
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "EcsConfig":
@@ -552,6 +554,7 @@ class EcsConfig:
             container=str(env.get("CODING_ECS_CONTAINER") or cls.container).strip(),
             capacity_provider=str(env.get("CODING_ECS_CAPACITY_PROVIDER") or cls.capacity_provider).strip(),
             region=str(env.get("CLOUD_REGION") or env.get("AWS_REGION") or "").strip(),
+            assign_public_ip=str(env.get("CODING_ECS_ASSIGN_PUBLIC_IP") or "").strip().lower() in {"1", "true", "yes", "on"},
         )
 
 
@@ -632,7 +635,7 @@ class EcsLauncher:
                 "awsvpcConfiguration": {
                     "subnets": list(cfg.subnets),
                     "securityGroups": list(cfg.security_groups),
-                    "assignPublicIp": "DISABLED",
+                    "assignPublicIp": "ENABLED" if cfg.assign_public_ip else "DISABLED",
                 }
             },
             "overrides": {

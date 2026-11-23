@@ -632,6 +632,28 @@ def _existing_pull_request_url(
     return ""
 
 
+def set_pull_request_draft(
+    pr_url: str,
+    draft: bool,
+    *,
+    runner=subprocess.run,
+    env: dict[str, str] | None = None,
+) -> bool:
+    """Mark a PR as a draft (``draft=True``) or ready for review. Best effort: False when ``gh`` fails.
+
+    A revision drafts its PR while OpenCode works on it, so the PR does not look reviewable
+    or mergeable with the previous commit's checks, and marks it ready when the run ends.
+    """
+    if not str(pr_url or "").startswith("https://"):
+        return False
+    cmd = ["gh", "pr", "ready", pr_url] + (["--undo"] if draft else [])
+    try:
+        completed = runner(cmd, capture_output=True, text=True, check=False, env=env, timeout=60)
+    except Exception:  # noqa: BLE001 - the run goes on without the draft state
+        return False
+    return getattr(completed, "returncode", 1) == 0
+
+
 def create_pull_request(
     repo_dir: Path,
     *,

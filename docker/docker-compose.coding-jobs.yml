@@ -17,17 +17,23 @@ services:
     # Shares agent-runtime netns; workers join it too (CODING_WORKER_NETWORK=auto) to reach memory-api.
     network_mode: "service:agent-runtime"
     environment:
-      # Blank follows DEPLOYMENT_PROFILE: local on single_host, ecs on scale_out.
+      # Phase 12 resolves it: host override, then runtime.coding_launcher, then the profile.
       CODING_LAUNCHER: ${CODING_LAUNCHER:-}
       DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}
       CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}
-      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them.
+      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them
+      # (install config runtime.coding_quota_per_user / _program / _team; blank keeps the file's value).
+      CODING_QUOTA_PER_USER: ${CODING_QUOTA_PER_USER:-}
+      CODING_QUOTA_PER_PROGRAM: ${CODING_QUOTA_PER_PROGRAM:-}
+      CODING_QUOTA_PER_TEAM: ${CODING_QUOTA_PER_TEAM:-}
       TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
       CODING_ECS_CLUSTER: ${CODING_ECS_CLUSTER:-}
       CODING_ECS_TASK_DEFINITION: ${CODING_ECS_TASK_DEFINITION:-}
       CODING_ECS_CONTAINER: ${CODING_ECS_CONTAINER:-coding-worker}
       CODING_ECS_SUBNETS: ${CODING_ECS_SUBNETS:-}
       CODING_ECS_SECURITY_GROUPS: ${CODING_ECS_SECURITY_GROUPS:-}
+      # true for workers in the default VPC (outbound only; no inbound rules).
+      CODING_ECS_ASSIGN_PUBLIC_IP: ${CODING_ECS_ASSIGN_PUBLIC_IP:-false}
       CODING_ECS_CAPACITY_PROVIDER: ${CODING_ECS_CAPACITY_PROVIDER:-FARGATE}
       CLOUD_REGION: ${CLOUD_REGION:-}
       CODING_WORKER_IMAGE: ${CODING_WORKER_IMAGE:-ts-harness-coding-worker:latest}

@@ -288,6 +288,24 @@ variable "coding_max_running" {
   }
 }
 
+variable "coding_quota_per_user" {
+  description = "Coding jobs one requester may have running at once (fair share). Null keeps the harness default (2); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
+variable "coding_quota_per_program" {
+  description = "Coding jobs one program may have running at once. Null keeps the harness default (3); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
+variable "coding_quota_per_team" {
+  description = "Coding jobs one team may have running at once. Null keeps the harness default (8); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
 variable "workflow_runner_poll_interval_seconds" {
   description = "Workflow runner polling interval in seconds."
   type        = number
@@ -501,6 +519,29 @@ variable "network_mode" {
     condition     = contains(["default", "vpc"], var.network_mode)
     error_message = "network_mode must be default or vpc."
   }
+}
+
+variable "coding_workers_on_ecs" {
+  description = "Build the Fargate coding worker stack without scale_out. With network_mode = default, workers run in the default VPC with a public IP for outbound traffic only (no inbound rules, no egress proxy). scale_out with network_mode = vpc builds it regardless."
+  type        = bool
+  default     = false
+}
+
+variable "coding_launcher" {
+  description = "Where coding jobs run: local (containers on the host) or ecs (Fargate tasks). Blank follows deployment_profile: ecs on scale_out, local otherwise. ecs needs the Fargate stack (coding_workers_on_ecs or scale_out in a vpc)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "local", "ecs"], var.coding_launcher)
+    error_message = "coding_launcher must be blank, local or ecs."
+  }
+}
+
+variable "coding_ecs_excluded_zone_ids" {
+  description = "Availability zone ids left out of the default-VPC subnets for Fargate workers and their load balancer (Fargate does not run in use1-az3)."
+  type        = list(string)
+  default     = ["use1-az3"]
 }
 
 variable "vpc_cidr" {

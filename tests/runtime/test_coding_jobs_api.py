@@ -395,3 +395,17 @@ class CodingJobsPostgresTests(PgTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProgressSizeTests(unittest.TestCase):
+    def test_oversized_progress_drops_steps_instead_of_cutting_json(self):
+        import json as _json
+
+        from memory_routes.coding_jobs import _progress_json
+
+        small = {"phase": "review", "done": {"setup": 1}, "steps": {"review": [{"label": "x", "seconds": 1}]}}
+        self.assertEqual(_json.loads(_progress_json(small)), small)
+        big = {"phase": "review", "done": {}, "steps": {"review": [{"label": "y" * 80, "seconds": 1}] * 200}}
+        parsed = _json.loads(_progress_json(big))
+        self.assertEqual(parsed, {"phase": "review", "done": {}})
+        self.assertIsNone(_progress_json(None))

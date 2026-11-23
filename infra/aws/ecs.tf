@@ -1,4 +1,4 @@
-# Fargate coding workers (deployment_profile = scale_out). The coding launcher
+# Fargate coding workers (scale_out, or coding_workers_on_ecs). The coding launcher
 # on the host calls ecs:RunTask per coding job; each task clones, runs OpenCode
 # and reports back to the memory API through the internal load balancer.
 
@@ -17,12 +17,29 @@ locals {
       CODING_BACKEND_MODEL    = "coding-backend-model"
       GITHUB_TOKEN            = "github-token"
     },
-    var.llm_proxy_enabled ? {} : { CODING_BACKEND_API_KEY = "coding-backend-api-key" },
+    # Without the proxy, workers get the provider keys local workers get from the host .env.
+    var.llm_proxy_enabled ? {} : merge(
+      {
+        CODING_BACKEND_API_KEY = "coding-backend-api-key"
+        ANTHROPIC_API_KEY      = "anthropic-api-key"
+      },
+      contains(keys(local.all_secrets), "openai-api-key") ? { OPENAI_API_KEY = "openai-api-key" } : {},
+    ),
   )
   coding_worker_secret_arns = [
     for name in values(local.coding_worker_secret_env) : aws_secretsmanager_secret.harness[name].arn
   ]
-  egress_proxy_url = local.ecs_enabled ? "http://egress-proxy.${var.project_name}.internal:3128" : ""
+  egress_proxy_url       = local.ecs_private ? "http://egress-proxy.${var.project_name}.internal:3128" : ""
+  coding_worker_no_proxy = local.ecs_enabled ? "${aws_lb.memory_api[0].dns_name},.amazonaws.com,169.254.170.2,localhost,127.0.0.1" : ""
+  # Proxy variables only where the egress proxy exists (private subnets).
+  coding_worker_proxy_env = local.ecs_private ? [
+    { name = "HTTPS_PROXY", value = local.egress_proxy_url },
+    { name = "HTTP_PROXY", value = local.egress_proxy_url },
+    { name = "https_proxy", value = local.egress_proxy_url },
+    { name = "http_proxy", value = local.egress_proxy_url },
+    { name = "NO_PROXY", value = local.coding_worker_no_proxy },
+    { name = "no_proxy", value = local.coding_worker_no_proxy },
+  ] : []
 }
 
 resource "aws_ecs_cluster" "coding" {
@@ -93,10 +110,13 @@ data "aws_iam_policy_document" "coding_worker_execution_secrets" {
     resources = local.coding_worker_secret_arns
   }
 
-  statement {
-    sid       = "ReadEgressAllowlist"
-    actions   = ["ssm:GetParameters"]
-    resources = [aws_ssm_parameter.egress_extra_domains[0].arn]
+  dynamic "statement" {
+    for_each = local.ecs_private ? [1] : []
+    content {
+      sid       = "ReadEgressAllowlist"
+      actions   = ["ssm:GetParameters"]
+      resources = [aws_ssm_parameter.egress_extra_domains[0].arn]
+    }
   }
 }
 
@@ -131,15 +151,17 @@ resource "aws_iam_role_policy" "coding_worker_task_logs" {
 }
 
 # ---------------------------------------------------------------------------
-# Worker network: no public IP, no ingress. Egress only to AWS endpoints,
-# the egress proxy and the internal memory API load balancer.
+# Worker network: no ingress. In private subnets: no public IP, egress only to
+# AWS endpoints, the egress proxy and the internal memory API load balancer.
+# In the default VPC: a public IP for outbound traffic, egress on 80/443 and to
+# the load balancer.
 # ---------------------------------------------------------------------------
 
 resource "aws_security_group" "coding_worker" {
   count       = local.ecs_enabled ? 1 : 0
   name        = "${var.project_name}-coding-worker"
   description = "Fargate coding workers: egress to endpoints, proxy and memory API only"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.ecs_vpc_id
 
   tags = {
     Name = "${var.project_name}-coding-worker"
@@ -147,7 +169,7 @@ resource "aws_security_group" "coding_worker" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "coding_worker_to_endpoints" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id            = aws_security_group.coding_worker[0].id
   from_port                    = 443
@@ -158,7 +180,7 @@ resource "aws_vpc_security_group_egress_rule" "coding_worker_to_endpoints" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "coding_worker_to_s3" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id = aws_security_group.coding_worker[0].id
   from_port         = 443
@@ -169,7 +191,7 @@ resource "aws_vpc_security_group_egress_rule" "coding_worker_to_s3" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "coding_worker_to_proxy" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id            = aws_security_group.coding_worker[0].id
   from_port                    = 3128
@@ -188,6 +210,17 @@ resource "aws_vpc_security_group_egress_rule" "coding_worker_to_memory_api" {
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.memory_api_lb[0].id
   description                  = "Internal memory API load balancer"
+}
+
+resource "aws_vpc_security_group_egress_rule" "coding_worker_internet" {
+  for_each = local.ecs_default_vpc ? toset(["80", "443"]) : toset([])
+
+  security_group_id = aws_security_group.coding_worker[0].id
+  from_port         = tonumber(each.key)
+  to_port           = tonumber(each.key)
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
+  description       = "Outbound ${each.key} (AWS APIs, GitHub, package registries, model providers)"
 }
 
 # ---------------------------------------------------------------------------
@@ -222,13 +255,7 @@ resource "aws_ecs_task_definition" "coding_worker" {
       environment = concat([
         { name = "MEMORY_API_URL", value = local.memory_api_worker_url },
         { name = "HARNESS_RUNTIME_URL", value = local.memory_api_worker_url },
-        { name = "HTTPS_PROXY", value = local.egress_proxy_url },
-        { name = "HTTP_PROXY", value = local.egress_proxy_url },
-        { name = "https_proxy", value = local.egress_proxy_url },
-        { name = "http_proxy", value = local.egress_proxy_url },
-        { name = "NO_PROXY", value = "${aws_lb.memory_api[0].dns_name},.amazonaws.com,169.254.170.2,localhost,127.0.0.1" },
-        { name = "no_proxy", value = "${aws_lb.memory_api[0].dns_name},.amazonaws.com,169.254.170.2,localhost,127.0.0.1" },
-        ], var.llm_proxy_enabled ? [
+        ], local.coding_worker_proxy_env, var.llm_proxy_enabled ? [
         { name = "LLM_PROXY_URL", value = local.llm_proxy_worker_url },
       ] : [])
       secrets = [

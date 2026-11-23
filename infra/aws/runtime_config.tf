@@ -15,6 +15,9 @@ locals {
     WORKFLOW_RUNNER_STALE_POLICY          = var.workflow_runner_stale_policy
     CODING_JOBS_ENABLED                   = tostring(var.coding_jobs_enabled)
     CODING_MAX_RUNNING                    = tostring(var.coding_max_running)
+    CODING_QUOTA_PER_USER                 = var.coding_quota_per_user == null ? "" : tostring(var.coding_quota_per_user)
+    CODING_QUOTA_PER_PROGRAM              = var.coding_quota_per_program == null ? "" : tostring(var.coding_quota_per_program)
+    CODING_QUOTA_PER_TEAM                 = var.coding_quota_per_team == null ? "" : tostring(var.coding_quota_per_team)
     LLM_PROXY_ENABLED                     = tostring(var.llm_proxy_enabled)
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider
@@ -49,8 +52,12 @@ locals {
     CODING_ECS_CLUSTER                    = try(aws_ecs_cluster.coding[0].name, "")
     CODING_ECS_TASK_DEFINITION            = local.ecs_enabled ? local.coding_worker_family : ""
     CODING_ECS_CONTAINER                  = local.coding_worker_container
-    CODING_ECS_SUBNETS                    = join(",", local.ecs_enabled ? local.private_subnet_ids : [])
+    CODING_ECS_SUBNETS                    = join(",", local.ecs_enabled ? local.ecs_subnet_ids : [])
     CODING_ECS_SECURITY_GROUPS            = join(",", aws_security_group.coding_worker[*].id)
+    CODING_ECS_ASSIGN_PUBLIC_IP           = tostring(local.ecs_default_vpc)
+    CODING_LAUNCHER                       = var.coding_launcher
+    CODING_WORKER_ECR_REPOSITORY          = try(aws_ecr_repository.coding_worker[0].repository_url, "")
+    CODING_WORKER_ECR_TAG                 = local.ecs_enabled ? var.coding_worker_image_tag : ""
     CODING_EGRESS_PROXY_SERVICE           = try(aws_ecs_service.egress_proxy[0].name, "")
     CODING_EGRESS_DOMAINS_PARAMETER       = try(aws_ssm_parameter.egress_extra_domains[0].name, "")
     CODING_EGRESS_PROXY_URL               = local.egress_proxy_url

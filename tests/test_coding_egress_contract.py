@@ -29,7 +29,11 @@ def _function(text: str, name: str) -> str:
 
 
 def _wanted(**env: str) -> bool:
-    body = _function(COMMON.read_text(), "coding_egress_allowlist_wanted")
+    common = COMMON.read_text()
+    body = "\n".join(
+        _function(common, name)
+        for name in ("coding_launcher_override_path", "resolve_coding_launcher", "coding_egress_allowlist_wanted")
+    )
     assignments = " ".join(f"{k}={v!r}" for k, v in env.items())
     script = f"{body}\n{assignments} coding_egress_allowlist_wanted"
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True).returncode == 0

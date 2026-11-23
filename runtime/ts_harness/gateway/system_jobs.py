@@ -135,9 +135,81 @@ def reconcile_due(*, now: float | None = None, memory: Any = None) -> bool:
     return False
 
 
+CONFLICT_REASON = "external_blocked:github.pr_checks base_conflict"
+CONFLICT_FEEDBACK = (
+    "The PR conflicts with its base branch ({base}): changes merged there since this branch was cut "
+    "touch the same lines. GitHub runs no CI on a conflicting PR, so it cannot move on. "
+    "Fetch and merge origin/{base} into this branch, resolve each conflict keeping the intent of both "
+    "sides (usually both additions), run the checks, and push. Conflicting PR: {prs}."
+)
+
+
+def send_back_conflicting_checks(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:
+    """A PR waiting for CI that conflicts with its base never gets CI: send it back to resolve the conflict.
+
+    The checks wait blocks with the conflict as feedback, which starts the stage's revision (the
+    same path as failed CI); the re-gate pins the new head.
+    """
+    from ts_harness.integrations.github_client import parse_github_pr_url
+    from ts_harness.workflows.merge_readiness import CHECKS_EVENT, pinned_heads
+
+    github = github or _github_or_none()
+    if github is None:
+        return {"checked": 0, "sent_back": 0}
+    memory = get_memory_client()
+    engine = get_workflow_engine()
+    waits = list((memory.find_external_waits(event_type=CHECKS_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
+    checked = sent_back = errors = 0
+    for wait in waits:
+        workflow_id, task_id = str(wait.get("workflow_id") or ""), str(wait.get("task_id") or "")
+        heads = pinned_heads(wait)
+        if not workflow_id or not task_id or not heads:
+            continue
+        checked += 1
+        try:
+            conflicting = []
+            for head in heads:
+                parsed = parse_github_pr_url(str(head.get("pr_url") or ""))
+                if parsed is None:
+                    continue
+                pull = github.get_pull(*parsed)
+                if pull.get("merged") or pull.get("state") == "closed":
+                    continue
+                # None while GitHub is still computing; only a definite conflict counts.
+                if pull.get("mergeable") is False:
+                    conflicting.append({"pr_url": head["pr_url"], "base_ref": str((pull.get("base") or {}).get("ref") or "")})
+            if not conflicting:
+                continue
+            base = conflicting[0]["base_ref"] or "the base branch"
+            summary = CONFLICT_FEEDBACK.format(base=base, prs=", ".join(c["pr_url"] for c in conflicting))
+            engine.block_wait(workflow_id, task_id, CONFLICT_REASON, output={"summary": summary, "conflicting_prs": conflicting},
+                              actor="github-merge-poller")
+            sent_back += 1
+            logger.info("checks wait sent back for a base conflict workflow_id=%s prs=%s", workflow_id, conflicting)
+        except Exception as exc:  # noqa: BLE001 - one wait must not stop the others
+            errors += 1
+            logger.warning("conflict check failed workflow_id=%s error=%s", workflow_id, exc)
+    return {"checked": checked, "sent_back": sent_back, "errors": errors}
+
+
+def _reopen_pools(tenant_id: str) -> dict[str, Any]:
+    from ts_harness.jira.ticket_pool import reopen_pools
+
+    try:
+        return {"reopened": reopen_pools(get_memory_client(), tenant_id=tenant_id, actor="github-merge-poller")}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ticket pool reopen check failed: %s", exc)
+        return {"reopened": [], "error": str(exc)[:200]}
+
+
 def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> dict[str, Any]:
-    """Reconcile GitHub waits when webhooks may have been missed; joins and release tracks always."""
-    local = {"joins": poll_wave_joins(tenant_id=tenant_id), "upstreams": poll_release_upstreams(tenant_id=tenant_id)}
+    """Reconcile GitHub waits when webhooks may have been missed; joins, release tracks and PR conflicts always."""
+    local = {
+        "joins": poll_wave_joins(tenant_id=tenant_id),
+        "upstreams": poll_release_upstreams(tenant_id=tenant_id),
+        "conflicts": send_back_conflicting_checks(tenant_id=tenant_id),
+        "pools": _reopen_pools(tenant_id),
+    }
     if not force and not reconcile_due():
         return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0, **local}
     github = _github_or_none()

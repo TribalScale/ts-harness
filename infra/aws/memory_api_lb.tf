@@ -18,7 +18,7 @@ resource "aws_security_group" "memory_api_lb" {
   count       = local.ecs_enabled ? 1 : 0
   name        = "${var.project_name}-memory-api-lb"
   description = "Internal memory API load balancer, reachable from coding workers only"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.ecs_vpc_id
 
   tags = {
     Name = "${var.project_name}-memory-api-lb"
@@ -64,7 +64,7 @@ resource "aws_lb" "memory_api" {
   internal           = true
   load_balancer_type = "application"
   security_groups    = [aws_security_group.memory_api_lb[0].id]
-  subnets            = local.private_subnet_ids
+  subnets            = local.ecs_subnet_ids
 
   drop_invalid_header_fields = true
   # Non-streamed model calls through the LLM proxy can run for minutes.
@@ -80,7 +80,7 @@ resource "aws_lb_target_group" "memory_api" {
   name        = "${var.project_name}-memory-api"
   port        = local.memory_api_port
   protocol    = "HTTP"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.ecs_vpc_id
   target_type = "instance"
 
   health_check {
@@ -173,7 +173,7 @@ resource "aws_lb_target_group" "runtime_tokens" {
   name        = "${var.project_name}-runtime-tokens"
   port        = local.runtime_port
   protocol    = "HTTP"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.ecs_vpc_id
   target_type = "instance"
 
   health_check {
@@ -255,7 +255,7 @@ resource "aws_lb_target_group" "llm_proxy" {
   name        = "${var.project_name}-llm-proxy"
   port        = local.llm_proxy_port
   protocol    = "HTTP"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.ecs_vpc_id
   target_type = "instance"
 
   health_check {

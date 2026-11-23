@@ -89,6 +89,7 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
             phase_seconds: item.coding_job.progress?.phase_seconds,
             detail: item.coding_job.progress?.detail || "",
             done: item.coding_job.progress?.done || {},
+            steps: item.coding_job.progress?.steps || {},
           }}
         />
       )}

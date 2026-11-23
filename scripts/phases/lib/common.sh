@@ -526,6 +526,13 @@ INSTANCE_ENV_KEYS=(
     CODING_ECS_CONTAINER
     CODING_ECS_SUBNETS
     CODING_ECS_SECURITY_GROUPS
+    CODING_ECS_ASSIGN_PUBLIC_IP
+    CODING_LAUNCHER
+    CODING_QUOTA_PER_USER
+    CODING_QUOTA_PER_PROGRAM
+    CODING_QUOTA_PER_TEAM
+    CODING_WORKER_ECR_REPOSITORY
+    CODING_WORKER_ECR_TAG
     CODING_EGRESS_PROXY_SERVICE
     CODING_EGRESS_DOMAINS_PARAMETER
     CODING_EGRESS_PROXY_URL
@@ -561,20 +568,40 @@ INSTANCE_ENV_KEYS=(
     TS_HARNESS_RETENTION_BATCH
 )
 
+# Where coding jobs run: local (host containers) or ecs (Fargate tasks). A host override
+# written by scripts/ops/coding-launcher.sh wins, then CODING_LAUNCHER from the runtime
+# config (install config runtime.coding_launcher), then the profile (ecs on scale_out).
+coding_launcher_override_path() {
+    [[ -n "${DATA_DIR:-}" ]] && echo "${DATA_DIR}/.setup/coding-launcher.override"
+}
+
+resolve_coding_launcher() {
+    local candidate override
+    override="$(coding_launcher_override_path || true)"
+    for candidate in \
+        "$([[ -n "$override" && -f "$override" ]] && tr -d '[:space:]' < "$override")" \
+        "${CODING_LAUNCHER:-}"; do
+        candidate="$(printf '%s' "$candidate" | tr '[:upper:]' '[:lower:]')"
+        case "$candidate" in
+            local|ecs) printf '%s' "$candidate"; return 0 ;;
+        esac
+    done
+    if [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]]; then
+        printf 'ecs'
+    else
+        printf 'local'
+    fi
+}
+
 # Coding worker egress allowlist (docker/docker-compose.coding-egress.yml): wanted when
 # CODING_EGRESS_ALLOWLIST is on and coding jobs run on this host (local launcher). ECS
-# workers (scale_out) have their own egress proxy from Terraform (infra/aws/egress.tf).
+# workers in private subnets have their own egress proxy from Terraform (infra/aws/egress.tf).
 coding_egress_allowlist_wanted() {
-    local flag launcher
+    local flag
     flag="$(printf '%s' "${CODING_EGRESS_ALLOWLIST:-off}" | tr '[:upper:]' '[:lower:]')"
     case "$flag" in on|true|1|yes) ;; *) return 1 ;; esac
     [[ "${WORKFLOW_RUNNER_ENABLED:-false}" == "true" && "${CODING_JOBS_ENABLED:-false}" == "true" ]] || return 1
-    launcher="$(printf '%s' "${CODING_LAUNCHER:-}" | tr '[:upper:]' '[:lower:]')"
-    if [[ -z "$launcher" ]]; then
-        launcher=local
-        [[ "${DEPLOYMENT_PROFILE:-single_host}" == "scale_out" ]] && launcher=ecs
-    fi
-    [[ "$launcher" == "local" ]]
+    [[ "$(resolve_coding_launcher)" == "local" ]]
 }
 
 # Storage flags (docs/runbooks/shared-state.md). Unset flags follow the profile:
@@ -878,6 +905,10 @@ run_docker_compose_as_admin() {
             CODING_ECS_CONTAINER="${CODING_ECS_CONTAINER:-coding-worker}" \
             CODING_ECS_SUBNETS="${CODING_ECS_SUBNETS:-}" \
             CODING_ECS_SECURITY_GROUPS="${CODING_ECS_SECURITY_GROUPS:-}" \
+            CODING_ECS_ASSIGN_PUBLIC_IP="${CODING_ECS_ASSIGN_PUBLIC_IP:-false}" \
+            CODING_QUOTA_PER_USER="${CODING_QUOTA_PER_USER:-}" \
+            CODING_QUOTA_PER_PROGRAM="${CODING_QUOTA_PER_PROGRAM:-}" \
+            CODING_QUOTA_PER_TEAM="${CODING_QUOTA_PER_TEAM:-}" \
             AGENT_RUNTIME_URL="${AGENT_RUNTIME_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}" \
             RUNTIME_FAKE_PROVIDER="${RUNTIME_FAKE_PROVIDER:-false}" \
             LLM_PROXY_RUNTIME_URL="${LLM_PROXY_RUNTIME_URL:-}" \
@@ -1000,6 +1031,29 @@ coding_launcher_containers() {
 
 running_coding_workers() {
     docker ps --filter "name=^ts-coding-" --format '{{.Names}}'
+    running_ecs_coding_jobs
+}
+
+# Fargate workers are not containers on this host, but they report to memory-api here: a
+# redeploy that restarts it mid-job loses their heartbeats and results. List the coding jobs
+# starting or running on ECS (from the session database, through agent-runtime) as ecs:<id>.
+running_ecs_coding_jobs() {
+    local runtime
+    runtime="$(docker ps --filter "label=com.docker.compose.service=agent-runtime" --format '{{.Names}}' | head -1)"
+    [[ -n "$runtime" ]] || return 0
+    docker exec "$runtime" python3 -c '
+import os, sys
+url = os.environ.get("TS_HARNESS_SESSION_DB_URL")
+if not url:
+    sys.exit(0)
+import psycopg
+with psycopg.connect(url, connect_timeout=10) as c:
+    for (job_id,) in c.execute(
+        "select id::text from coding_jobs where status in (%s, %s) and runner_ref like %s",
+        ("starting", "running", "arn:aws:ecs:%"),
+    ):
+        print("ecs:" + job_id[:8])
+' 2>/dev/null || true
 }
 
 drain_coding_workers() {

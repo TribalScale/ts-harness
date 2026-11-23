@@ -740,7 +740,14 @@ class WorkflowEngine:
                 )
                 revise_result = self.registry.invoke("revise_on_reject", ctx)
                 cause, failed = _revision_cause(error)
-                if revise_result.get("status") == "revising" and revise_result.get("auto_grant"):
+                if revise_result.get("status") == "revising" and (revise_result.get("triage") or {}).get("arbitrated"):
+                    plan = revise_result.get("triage") or {}
+                    ctx.extras["error"] = (
+                        f"{cause}; code review and QA sent it back in turn, so an arbiter ruled against the work order "
+                        f"({plan.get('reason') or 'the work order settles it'}) and it was sent back with one consolidated "
+                        f"instruction (revision {plan.get('total_revisions', 0) + 1} of at most 8)."
+                    )
+                elif revise_result.get("status") == "revising" and revise_result.get("auto_grant"):
                     triage = revise_result.get("triage") or {}
                     ctx.extras["error"] = (
                         f"{cause}; the automatic revisions ran out, but {triage.get('reason') or 'the PR is improving'}, "

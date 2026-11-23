@@ -278,6 +278,19 @@ def merge_wait_started(memory: Any, workflow_id: str, *, actor: str = "workflow-
         return False
 
 
+def current_limit(memory: Any, task: dict[str, Any], queue: list[str], started_with: int) -> int:
+    """The project's parallel limit as it is now, so raising it reaches a running pool; else the limit it started with."""
+    key = next((str(k).split("-", 1)[0] for k in queue if "-" in str(k)), "")
+    if not key:
+        return started_with
+    from ts_harness.jira.prepare_ticket_queue import project_ticket_limit
+
+    live = project_ticket_limit(memory, str(task.get("tenant_id") or "default"), key)
+    if live is not None and live != started_with:
+        logger.info("ticket pool %s parallel limit %s -> %s (project setting)", task.get("workflow_id"), started_with, live)
+    return live if live is not None else started_with
+
+
 def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str, str]]:
     """Start the tickets that became ready since the last child finished; return every pinned child."""
     from ts_harness.workflows.work_order_waves import child_state, pinned_children
@@ -288,7 +301,7 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
     fill_task = next((item for item in tasks if item.get("step_name") == "fill_pool"), {})
     fill_output = fill_task.get("output") if isinstance(fill_task.get("output"), dict) else {}
     queue = [str(key) for key in fill_output.get("queue") or []]
-    limit = pool_limit(fill_output.get("max_parallel_tickets"))
+    limit = current_limit(memory, task, queue, pool_limit(fill_output.get("max_parallel_tickets")))
     running, finished_bad, waiting_merge = [], [], []
     for child in children:
         workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
@@ -379,6 +392,49 @@ def wake_pools(memory: Any, key: str, *, tenant_id: str = "default", actor: str 
         except Exception as exc:  # noqa: BLE001 - the pool re-checks on its own next child event
             logger.info("ticket pool %s not woken for %s: %s", pool.get("workflow_id"), key, exc)
     return woken
+
+
+GAVE_UP_PREFIX = "external_blocked:workflow.child_terminal"
+
+
+def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workflow-runner") -> list[str]:
+    """A pool that stopped because a ticket failed or was stopped: when that ticket recovered
+    (a person retried or revised it, and it is running or merged now), wait on the children again
+    and start the tickets it left behind."""
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT, child_state, pinned_children
+
+    try:
+        pools = _rows(memory.running_ticket_work(tenant_id=tenant_id or "default"), "pools")
+    except Exception:  # noqa: BLE001
+        return []
+    reopened: list[str] = []
+    for pool in pools:
+        if pool.get("join_status") != "blocked":
+            continue
+        workflow_id = str(pool.get("workflow_id") or "")
+        try:
+            _, tasks = load_workflow_payload(memory, workflow_id)
+            join = next((t for t in tasks if str(t.get("id")) == str(pool.get("join_task_id"))), None)
+            if join is None or not str(join.get("error") or "").startswith(GAVE_UP_PREFIX):
+                continue
+            states = []
+            for child in pinned_children(join):
+                child_workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
+                states.append(child_state(child_workflow, child_tasks))
+            if any(state in {"failed", "cancelled"} for state in states):
+                continue  # still a failed ticket: the person's decision is pending
+            memory.block_task_api(str(join["id"]), f"awaiting_external:{CHILD_EVENT}", actor=actor)
+            from ts_harness.workflows.engine import get_workflow_engine
+
+            get_workflow_engine().resume_external(
+                workflow_id, event_type=CHILD_EVENT, payload={"reopened": "the failed ticket recovered"},
+                actor=actor, tenant_id=tenant_id,
+            )
+            reopened.append(workflow_id)
+            logger.info("ticket pool %s reopened: its failed ticket recovered", workflow_id)
+        except Exception as exc:  # noqa: BLE001 - checked again on the next poll
+            logger.info("ticket pool %s not reopened: %s", workflow_id, exc)
+    return reopened
 
 
 def left_behind(queue: list[str], children: list[dict[str, str]]) -> list[str]:

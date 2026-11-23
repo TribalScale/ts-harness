@@ -32,7 +32,9 @@ DEFAULT_AUTONOMY = "autonomous"
 
 # Security-sensitive work always goes to a person, whatever the model says.
 _SECURITY = re.compile(
-    r"\b(auth\w*|authori[sz]\w*|permission\w*|privilege\w*|secret\w*|password\w*|credential\w*|token\w*|jwt|jwks|"
+    # Nouns and adjectives only: the verb ("the spec does not authorize this order") is plain prose.
+    r"\b(auth|authn|authz|authenticat\w*|authori[sz]ation\w*|unauthori[sz]ed|permissions?|privileges?|"
+    r"secrets?|passwords?|credentials?|tokens?|jwt|jwks|"
     r"oauth|entra|saml|sso|encrypt\w*|decrypt\w*|injection|xss|csrf|ssrf|rbac|access control|session hijack|"
     r"pii|data exposure|leak\w*)\b",
     re.IGNORECASE,

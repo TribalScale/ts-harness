@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import os
 import queue
 import re
@@ -43,6 +45,7 @@ from ts_harness.implementation.repo import (
     github_authenticated_url,
     list_changed_files,
     push_branch,
+    set_pull_request_draft,
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
@@ -267,6 +270,14 @@ def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -
 _USAGE_RUN = threading.local()
 
 
+def summary_record_or_empty(review_rounds: list[dict[str, Any]], model: str | None) -> dict[str, Any]:
+    if not review_rounds:
+        return {}
+    from ts_harness.implementation.pre_push_review import summary_record
+
+    return summary_record(review_rounds, model=model)
+
+
 def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
     """A data directory of its own for each work order's OpenCode runs.
 
@@ -320,6 +331,75 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
             glob = "**/" + glob  # a file name pattern: at any depth
         allowed.append(glob)
     return list(dict.fromkeys(allowed))
+
+
+DEFAULT_MODEL_LIMIT = {"context": 200000, "output": 64000}
+
+
+def _catalog_entry(provider: str, model_id: str, env: dict[str, str]) -> dict[str, Any]:
+    """The model's entry in the catalog OpenCode downloaded (models.dev), if it is on disk."""
+    import json
+
+    roots = [env.get("XDG_CACHE_HOME") or "", str(Path(env.get("HOME") or Path.home()) / ".cache")]
+    for root in roots:
+        path = Path(root) / "opencode" / "models.json" if root else None
+        if path is None or not path.is_file():
+            continue
+        try:
+            entry = ((json.loads(path.read_text()).get(provider) or {}).get("models") or {}).get(model_id) or {}
+        except (ValueError, OSError, AttributeError):
+            continue
+        if isinstance(entry, dict) and entry:
+            return entry
+    return {}
+
+
+def opencode_models_env(env: dict[str, str], config_dir: Any, provider: str, models: list[str | None]) -> dict[str, str]:
+    """An ``OPENCODE_CONFIG`` that declares the run's models, so OpenCode always knows them.
+
+    OpenCode resolves a model against its catalog; an OpenCode build that drops a newer model
+    from the catalog fails the run at once ("Model not found: anthropic/claude-opus-5-5"). A
+    Fargate worker has no cached catalog, so this showed up there. Declared models resolve with
+    or without the catalog; their limits come from the downloaded catalog when it has them.
+    """
+    import json
+
+    declared: dict[str, dict[str, Any]] = {}
+    for model in models:
+        text = str(model or "").strip()
+        if not text:
+            continue
+        owner, _, model_id = text.partition("/") if "/" in text else (provider, "", text)
+        if not owner or not model_id:
+            continue
+        entry = _catalog_entry(owner, model_id, env)
+        limit = entry.get("limit") if isinstance(entry.get("limit"), dict) else {}
+        declared.setdefault(owner, {})[model_id] = {
+            "name": str(entry.get("name") or model_id),
+            "limit": {"context": int(limit.get("context") or DEFAULT_MODEL_LIMIT["context"]),
+                      "output": int(limit.get("output") or DEFAULT_MODEL_LIMIT["output"])},
+        }
+    if not declared:
+        return {}
+    base: dict[str, Any] = {}
+    existing = str(env.get("OPENCODE_CONFIG") or "")
+    if existing and Path(existing).is_file():
+        try:
+            loaded = json.loads(Path(existing).read_text())
+            base = loaded if isinstance(loaded, dict) else {}
+        except ValueError:
+            base = {}
+    providers = dict(base.get("provider") or {}) if isinstance(base.get("provider"), dict) else {}
+    for owner, entries in declared.items():
+        current = dict(providers.get(owner) or {}) if isinstance(providers.get(owner), dict) else {}
+        current["models"] = {**dict(current.get("models") or {}), **entries}
+        providers[owner] = current
+    config = {"$schema": "https://opencode.ai/config.json", **base, "provider": providers}
+    directory = Path(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "opencode-models.json"
+    path.write_text(json.dumps(config, indent=2))
+    return {"OPENCODE_CONFIG": str(path)}
 
 
 def opencode_scope_env(env: dict[str, str], config_dir: Any, allowed: list[str]) -> dict[str, str]:
@@ -713,6 +793,7 @@ class OpenCodeBackend:
         check_changeset: bool = True,
         test_env: TestEnvironment | None = None,
         quick: bool = False,
+        check_label: str = "running checks",
     ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
@@ -723,6 +804,7 @@ class OpenCodeBackend:
         base_ref = f"origin/{request.base_branch}" if request.base_branch else None
         reverted: list[str] = []
         while True:
+            progress.detail(check_label if not fix_passes_used else f"{check_label} after fix pass {fix_passes_used}")
             reverted = sorted({*reverted, *self._revert_undeclared(repo_dir, request)})
             strays = stop_stray_processes(repo_dir)
             if strays:
@@ -940,70 +1022,54 @@ class OpenCodeBackend:
             return security
         return {**security, "scanned_sha": sha}
 
-    def _reject_out_of_scope_revision(
-        self,
-        repo_dir: Path,
-        request: CodingRequest,
-        *,
-        baseline: str,
-        binary: str,
-        provider: str,
-        env: dict[str, str],
-        branch: str,
-        log: str,
-        log_path: Path,
-    ) -> CodingResult | None:
+    def _merge_latest_base(self, repo_dir: Path, request: CodingRequest) -> str:
+        """Merge ``origin/<base>`` into the revision branch when it moved. Returns a note for the
+        prompt when the merge conflicts (left for OpenCode to do and resolve), else ""."""
+        base = str(request.base_branch or "").strip()
+        if not base:
+            return ""
+        fetched = self._git(repo_dir, "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
+        if fetched.returncode != 0:
+            return ""
+        behind = self._git(repo_dir, "rev-list", "--count", f"HEAD..origin/{base}")
+        if str(behind.stdout or "").strip() in {"", "0"}:
+            return ""
+        merged = self._git(repo_dir, "merge", f"origin/{base}", "--no-edit")
+        if merged.returncode == 0:
+            log_event("coding_revision_base_merged", work_order_id=request.work_order_id, base=base,
+                      behind=str(behind.stdout or "").strip())
+            return ""
+        conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")
+        files = [line.strip() for line in str(conflicts.stdout or "").splitlines() if line.strip()]
+        self._git(repo_dir, "merge", "--abort")
+        log_event("coding_revision_base_conflict", work_order_id=request.work_order_id, base=base, files=files[:20])
+        return (
+            f"This branch is behind origin/{base} and merging it conflicts in: {', '.join(files) or 'some files'}. "
+            f"First run `git merge origin/{base}`, resolve each conflict keeping the intent of both sides, "
+            "and commit the merge. Then make the changes below."
+        )
+
+    def _out_of_scope_files(self, repo_dir: Path, request: CodingRequest, *, baseline: str) -> list[str]:
+        """Files the revision changed beyond the cited ones and their tests. They stay in the PR.
+
+        A fix often needs a supporting file the finding did not name (a package script, a
+        repository method). Reverting them undid correct fixes (the reverting agent also
+        checked out the cited files), so the code-review gate, which reads the whole diff,
+        decides whether they belong.
+        """
         cited = [path for path in (request.revision_files or []) if str(path).strip()]
         if not cited or not baseline:
-            return None
+            return []
         from ts_harness.implementation.revision_scope import (
             allowed_revision_paths,
             unexpected_revision_paths,
         )
 
-        def extras() -> list[str]:
-            allowed = allowed_revision_paths(cited, repo_dir)
-            return unexpected_revision_paths(self._names_since(repo_dir, baseline), allowed)
-
-        extra = extras()
-        if not extra:
-            return None
-        prompt = (
-            "Revert changes to these files: "
-            + ", ".join(extra)
-            + ". You may only edit: "
-            + ", ".join(cited)
-            + ", plus tests. Do not add a new dependency file.\n"
-        )
-        fix_cmd = build_opencode_command(
-            binary=binary,
-            repo_dir=repo_dir,
-            prompt=prompt,
-            run_args=self.run_args,
-            provider=provider,
-            model=request.model,
-        )
-        self._run_opencode(
-            fix_cmd,
-            cwd=str(repo_dir),
-            env=env,
-            log_path=log_path,
-            work_order_id=request.work_order_id,
-        )
-        commit_all_changes(repo_dir, message=commit_message(request), runner=self.runner)
-        extra = extras()
-        if not extra:
-            return None
-        changed = list_changed_files(repo_dir, runner=self.runner)
-        return CodingResult(
-            ok=False,
-            branch=branch,
-            summary="Revision edited files the blocking findings did not name",
-            changed_files=changed,
-            log_tail=log,
-            log_path=str(log_path),
-            error="revision_scope: " + ", ".join(extra),
-        )
+        allowed = allowed_revision_paths(cited, repo_dir)
+        extra = unexpected_revision_paths(self._names_since(repo_dir, baseline), allowed)
+        if extra:
+            log_event("coding_revision_out_of_scope", work_order_id=request.work_order_id, files=extra[:50])
+        return extra
 
     def _pre_push_review(
         self,
@@ -1048,7 +1114,7 @@ class OpenCodeBackend:
                 rounds.append({"status": "out_of_time", "summary": "", "findings": []})
                 break
             output_path = out_dir / f"review-{number + 1}.json"
-            progress.detail(f"review round {number + 1}")
+            progress.detail(f"reviewing (round {number + 1})")
             output_path.unlink(missing_ok=True)
             prompt = ppr.build_review_prompt(
                 work_order_id=request.work_order_id,
@@ -1094,10 +1160,16 @@ class OpenCodeBackend:
                 # only when CI runs the full suite on the PR; without CI the full verification runs again,
                 # so the pushed commit always has a full test run behind it.
                 quick = request.repo_has_pr_ci is True
-                progress.detail("re-checking the fix" if quick else "re-running the full verification (no CI on pull requests)")
+                if quick:
+                    label = "quick re-check of the fix"
+                elif request.repo_has_pr_ci is False:
+                    label = "full re-verification (no CI on pull requests)"
+                else:
+                    label = "full re-verification (could not tell whether CI runs on pull requests)"
                 failure, log, _passes, new_changed, new_security, new_verification = self._verify_with_fixes(
                     repo_dir, request, binary=binary, provider=provider, env=env, branch=branch, log=log,
                     log_path=log_path, skills_materialized=skills_materialized, test_env=test_env, quick=quick,
+                    check_label=label,
                 )
             if fixed.returncode != 0 or failure is not None:
                 self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
@@ -1185,11 +1257,15 @@ class OpenCodeBackend:
             if following:
                 progress.begin(following, timings)
 
+        drafted = False
         try:
             gone, pr_head = self._revision_target(request)
             if gone:
                 return CodingResult(ok=False, branch=branch, summary="", pr_url=request.pr_url, error=gone)
             branch = pr_head or branch
+            if request.pr_url:
+                # While OpenCode revises it, the PR is a draft: its checks are the previous commit's.
+                drafted = set_pull_request_draft(request.pr_url, True, runner=self.runner, env=_git_env(request.repo_url))
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
             claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
             reused = (Path(request.workspace_dir) / "repo" / ".git").is_dir()
@@ -1214,7 +1290,18 @@ class OpenCodeBackend:
                 runner=self.runner,
                 from_remote=bool(pr_head),
             )
-            baseline = self._head_sha(repo_dir) if request.revision_files else ""
+            # The head the gates reviewed: a revision must change it.
+            review_head = self._head_sha(repo_dir) if request.pr_url else ""
+            if pr_head:
+                # Start from the latest base: a revision built on a stale branch pushes a PR that
+                # conflicts with what merged since, and GitHub runs no CI on it.
+                note = self._merge_latest_base(repo_dir, request)
+                if note:
+                    request = dataclasses.replace(
+                        request, review_feedback=(note + "\n\n" + str(request.review_feedback or "")).strip()
+                    )
+            # The cited files bound the revision's scope from here (the base merge is not the revision's).
+            baseline = self._head_sha(repo_dir) if (request.revision_files or request.pr_url) else ""
             docs_written: list[str] = []
             skills_written: list[str] = []
             primary_spec: str | None = None
@@ -1279,6 +1366,7 @@ class OpenCodeBackend:
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            env.update(opencode_models_env(env, request.workspace_dir, provider, [request.model, request.review_model]))
             # The reviewer writes its findings outside the repository, so it runs without the edit scope.
             review_env = dict(env)
             allowed = opencode_scope_paths(request.work_order_body, revision_scope)
@@ -1353,20 +1441,6 @@ class OpenCodeBackend:
             if committed:
                 changed = changed or list_changed_files(repo_dir, runner=self.runner)
 
-            scope_failure = self._reject_out_of_scope_revision(
-                repo_dir,
-                request,
-                baseline=baseline,
-                binary=binary,
-                provider=provider,
-                env=env,
-                branch=branch,
-                log=log,
-                log_path=log_path,
-            )
-            if scope_failure is not None:
-                return scope_failure
-
             review_rounds, log, changed, security, verification = self._pre_push_review(
                 repo_dir,
                 request,
@@ -1384,17 +1458,27 @@ class OpenCodeBackend:
                 verification=verification,
             )
             lap("review", "push")
-            if any(item.get("status") == "fixed" for item in review_rounds):
-                scope_failure = self._reject_out_of_scope_revision(
-                    repo_dir, request, baseline=baseline, binary=binary, provider=provider,
-                    env=env, branch=branch, log=log, log_path=log_path,
+            progress.detail("checking the changes")
+            out_of_scope = self._out_of_scope_files(repo_dir, request, baseline=baseline)
+            if (review_head or baseline) and not self._names_since(repo_dir, review_head or baseline):
+                # Sending an unchanged PR back to review only repeats the same findings.
+                return CodingResult(
+                    ok=False,
+                    branch=branch,
+                    summary="The revision ended with no change to the pull request",
+                    changed_files=changed,
+                    log_tail=log,
+                    log_path=str(log_path),
+                    pr_url=request.pr_url,
+                    pre_push_review=summary_record_or_empty(review_rounds, request.review_model),
+                    timings=timings,
+                    error="revision produced no changes: the branch is identical to the reviewed head",
                 )
-                if scope_failure is not None:
-                    return scope_failure
             from ts_harness.implementation.pre_push_review import summary_record
 
             review_record = summary_record(review_rounds, model=request.review_model) if review_rounds else {}
 
+            progress.detail("scanning for secrets")
             security = self._with_scanned_sha(repo_dir, security)
             # The reviewer can close the PR while OpenCode is still working.
             gone, _head = self._revision_target(request)
@@ -1410,6 +1494,7 @@ class OpenCodeBackend:
                     error=gone,
                 )
             git_env = _git_env(request.repo_url)
+            progress.detail("pushing the branch")
             push_branch(
                 repo_dir,
                 branch=branch,
@@ -1417,6 +1502,7 @@ class OpenCodeBackend:
                 env=git_env,
                 remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
             )
+            progress.detail("updating the pull request" if request.pr_url else "opening the pull request")
             pr_url = create_pull_request(
                 repo_dir,
                 title=pr_title(request),
@@ -1434,6 +1520,7 @@ class OpenCodeBackend:
                 runner=self.runner,
                 env=git_env,
             )
+            progress.detail("publishing screenshots")
             screenshots = self._publish_screenshots(repo_dir, test_env, branch=branch, pr_url=pr_url, env=git_env)
             lap("push")
             progress.begin("done", timings)
@@ -1453,6 +1540,7 @@ class OpenCodeBackend:
                 screenshots=screenshots,
                 pre_push_review=review_record,
                 timings=timings,
+                out_of_scope_files=out_of_scope,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(
@@ -1462,6 +1550,9 @@ class OpenCodeBackend:
                 log_path=str(log_path),
                 error=str(exc),
             )
+        finally:
+            if drafted:
+                set_pull_request_draft(request.pr_url or "", False, runner=self.runner, env=_git_env(request.repo_url))
 
     # Refresh: bring an open PR up to date with its base branch.
 
@@ -1597,6 +1688,7 @@ class OpenCodeBackend:
             if provider and api_key:
                 env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            env.update(opencode_models_env(env, request.workspace_dir, provider or "", [request.model]))
             binary = ""
             if merged.returncode != 0:
                 conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")

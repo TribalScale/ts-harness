@@ -258,7 +258,31 @@
         "coding_max_running": {
           "type": "integer",
           "minimum": 1,
-          "description": "Coding jobs that may run at once."
+          "description": "Coding jobs that may run at once. On ECS, keep it at or below (Fargate vCPU quota - 1) / worker vCPUs."
+        },
+        "coding_quota_per_user": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Coding jobs one requester may have running at once. Unset keeps the default (2); 0 removes the limit. When one person starts all the work, set it to coding_max_running."
+        },
+        "coding_quota_per_program": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Coding jobs one program may have running at once. Unset keeps the default (3); 0 removes the limit."
+        },
+        "coding_quota_per_team": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Coding jobs one team may have running at once. Unset keeps the default (8); 0 removes the limit."
+        },
+        "coding_workers_on_ecs": {
+          "type": "boolean",
+          "description": "AWS only. Build the Fargate coding worker stack without scale_out (in the default VPC when scale_out.network_mode is default). Switching coding_launcher back to local keeps it in place."
+        },
+        "coding_launcher": {
+          "type": "string",
+          "enum": ["local", "ecs"],
+          "description": "Where coding jobs run: local (containers on the host) or ecs (Fargate tasks). Unset follows deployment_profile (ecs on scale_out). ecs needs coding_workers_on_ecs or scale_out."
         },
         "workflow_runner_poll_interval_seconds": {
           "type": "integer",

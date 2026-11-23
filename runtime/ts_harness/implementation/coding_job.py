@@ -9,6 +9,7 @@ worker in another process.
 from __future__ import annotations
 
 import os
+import time
 import re
 import threading
 from dataclasses import asdict
@@ -340,6 +341,8 @@ def build_coding_request(
         or None,
         "knowledge_notes": _note_list(bound.get("knowledge_notes") if "knowledge_notes" in bound else args.get("knowledge_notes")),
         "design_refs": _note_list(args.get("design_refs")),
+        # A pre-push review fix gets the quick re-check only when CI runs the full suite on the PR.
+        "repo_has_pr_ci": repo_has_pr_ci(repo_url, base_branch) if review else None,
         **review,
         **({"budget_note": budget_note} if budget_note else {}),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
@@ -481,8 +484,10 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
     """
     backend_spec = spec.get("backend")
     backend = _backend_from_spec(backend_spec) if isinstance(backend_spec, dict) else _backend_from_config()
+    request = coding_request_from_spec(spec)
+    started_ms = int(time.time() * 1000)
     with _run_slots():
-        result = backend.implement(coding_request_from_spec(spec))
+        result = backend.implement(request)
     if record_refs and spec.get("program_id"):
         record_coding_refs(
             spec["program_id"],
@@ -510,12 +515,33 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "screenshots": dict(getattr(result, "screenshots", None) or {}),
         "pre_push_review": dict(getattr(result, "pre_push_review", None) or {}),
         "timings": dict(getattr(result, "timings", None) or {}),
+        "step_timings": _step_timings(),
+        "opencode_timeline": _opencode_timeline(request.workspace_dir, started_ms),
+        "out_of_scope_files": list(getattr(result, "out_of_scope_files", None) or []),
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",
         "repo_url": spec["repo_url"],
         "base_branch": spec["base_branch"],
         "provider": spec.get("provider") or "",
     }
+
+
+def _step_timings() -> dict[str, list[dict[str, Any]]]:
+    """Seconds per step inside each phase ("reviewing (round 1)", "pushing the branch")."""
+    from ts_harness.implementation import progress
+
+    return progress.step_timings()
+
+
+def _opencode_timeline(workspace_dir: Any, since_ms: int) -> list[dict[str, Any]]:
+    """Model time vs tool time per OpenCode session of this run (empty when unreadable)."""
+    try:
+        from ts_harness.implementation.backends.opencode import opencode_data_env
+        from ts_harness.implementation.opencode_timeline import summarize
+
+        return summarize(opencode_data_env(workspace_dir)["XDG_DATA_HOME"], since_ms=since_ms)
+    except Exception:  # noqa: BLE001 - diagnostics must never fail a run
+        return []
 
 
 STAGE_OUTPUT_KEYS = (
@@ -544,6 +570,8 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
     for key in ("pre_push_review", "timings"):
         if isinstance(result.get(key), dict) and result[key]:
             output[key] = result[key]
+    if result.get("out_of_scope_files"):
+        output["out_of_scope_files"] = list(result["out_of_scope_files"])
     if result.get("mode") == "refresh":
         output["refresh_method"] = result.get("refresh_method")
         output["resolved_files"] = list(result.get("resolved_files") or [])

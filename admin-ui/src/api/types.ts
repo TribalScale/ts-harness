@@ -24,6 +24,7 @@ export interface CodingRunProgress {
   phase_seconds?: number;
   detail?: string;
   done?: Record<string, number>;
+  steps?: Record<string, StepTiming[]>;
 }
 
 export interface CodingJobProgress {
@@ -749,6 +750,8 @@ export interface StoryEvent {
   queued_seconds?: number;
   cost_usd?: number | null;
   phases?: Record<string, number> | null;
+  /** Timed steps inside each phase ("reviewing (round 1)", "pushing the branch"). */
+  steps?: Record<string, StepTiming[]> | null;
   review?: PrePushReview | null;
   outcome?: string;
   findings?: StoryFinding[];
@@ -765,6 +768,13 @@ export interface CurrentRun {
   phase_seconds?: number | null;
   detail: string;
   done: Record<string, number>;
+  steps?: Record<string, StepTiming[]>;
+}
+
+export interface StepTiming {
+  label: string;
+  seconds: number;
+  active?: boolean;
 }
 
 export interface TicketStoryResponse {

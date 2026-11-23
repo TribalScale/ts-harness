@@ -1,7 +1,8 @@
 # Coding workers on ECS Fargate
 
-On `deployment_profile: scale_out`, each queued coding job runs as one Fargate
-task instead of a container on the host. The flow is the same as with the
+On `deployment_profile: scale_out`, or with `runtime.coding_workers_on_ecs` on
+`single_host`, each queued coding job runs as one Fargate task instead of a
+container on the host. The flow is the same as with the
 local launcher (see [implement-work-orders-opencode.md](implement-work-orders-opencode.md#coding-jobs-opencode-outside-agent-runtime)).
 Only where the worker runs changes:
 
@@ -14,9 +15,76 @@ Only where the worker runs changes:
 4. The memory API records the branch and PR refs, resumes the parked step, and
    the runner validates the result as usual.
 
-The launcher type follows the profile (`ecs` on `scale_out`). Set
-`CODING_LAUNCHER=local` in the host `.env` to fall back to host containers
-without changing the profile.
+## Choosing the launcher
+
+Where jobs run is resolved in this order:
+
+1. A host override written by `scripts/ops/coding-launcher.sh local|ecs`
+   (removed with `clear`). Use it to switch quickly, without Terraform.
+2. `runtime.coding_launcher` in the install config (`local` or `ecs`), which
+   reaches the host through the runtime config.
+3. The profile: `ecs` on `scale_out`, `local` otherwise.
+
+`runtime.coding_max_running` sets how many jobs run at once on either launcher.
+On ECS, keep it within the Fargate quota (see below). If you switch back to
+`local` with a high value, the host's memory check holds extra jobs until they
+fit.
+
+```bash
+sudo ADMIN_USER=<admin-user> bash scripts/ops/coding-launcher.sh status
+sudo ADMIN_USER=<admin-user> bash scripts/ops/coding-launcher.sh local
+```
+
+The switch waits until no coding job is queued, starting or running. It checks
+twice, 60 s apart; `FORCE=1` skips the wait. It then re-runs phase 12, which
+recreates only `coding-launcher`. Afterwards, make the lasting change in the
+install config, then `clear` the override.
+
+## ECS workers on single_host (default VPC)
+
+You can run coding jobs on Fargate without `scale_out` or a dedicated VPC:
+
+```yaml
+runtime:
+  coding_workers_on_ecs: true   # builds the Fargate stack
+  coding_launcher: ecs          # runs jobs on it (local keeps the stack, unused)
+  coding_max_running: 5
+```
+
+With `network_mode: default`, Terraform builds the cluster, the task
+definition, ECR, the worker security group and the internal memory API load
+balancer in the account's default VPC. Workers use the default subnets, except
+the zones in `coding_ecs_excluded_zone_ids` (default `use1-az3`, where Fargate
+does not run).
+
+How this differs from private subnets:
+
+- Each worker gets a public IP, used only for outbound traffic. Its security
+  group has no inbound rules.
+- Workers reach AWS APIs, GitHub, package registries and model providers
+  directly, on ports 80 and 443 only. There is no egress proxy or VPC endpoint,
+  so there is no domain allowlist. Registry **Test** connects directly too.
+  For an enforced allowlist, use `network_mode: vpc`.
+- The memory API port is published on the host whenever the stack exists, so
+  switching launchers never recreates `agent-runtime`.
+
+Worker size comes from the `scale_out:` block even on `single_host`
+(`coding_worker_cpu`, `coding_worker_memory`,
+`coding_worker_ephemeral_storage_gib`; default 2 vCPU, 4 GB, 50 GiB). Without
+the LLM proxy, workers get `coding-backend-api-key`, `anthropic-api-key` and,
+with OpenAI embeddings, `openai-api-key`. These are the same keys local workers
+get.
+
+Turning it on:
+
+1. Check the Fargate quota (below).
+2. Set the three keys above, then run `install.sh plan` and apply it.
+3. On the host, redeploy (`scripts/ops/redeploy.sh`). Phase 10a picks up the
+   `CODING_ECS_*` values, phase 12 publishes the memory API port, and the
+   redeploy pushes the worker image to ECR before starting the launcher.
+4. Watch the first job (see "Turn it on" below, steps 3 to 5).
+5. If it misbehaves, run `coding-launcher.sh local`. Jobs go back to host
+   containers, and the stack stays in place for the next try.
 
 ## Before the first run
 
@@ -42,9 +110,20 @@ the job back in the queue without spending one of its three launch attempts,
 and logs `coding_job_launch_deferred`. Jobs wait as "OpenCode queued" until a
 running worker finishes.
 
-**Worker image.** Run the **Build coding worker (AWS)** workflow, then
-**Deploy (AWS)** with `coding_worker_image_tag` set to the SHA it printed.
-The task definition pins that tag; a new image needs a new deploy.
+**Worker image.** `scripts/ops/redeploy.sh` pushes the worker image it has
+just built to `<project>-coding-worker` in ECR. It pushes it under
+`coding_worker_image_tag` (default `latest`, which the task definition pulls)
+and under the commit's short SHA. Each new task pulls the image at start, so
+workers always run the same harness code as the host, with no Terraform apply.
+After the first apply, push by hand once:
+`sudo ADMIN_USER=<admin-user> bash scripts/ops/push-coding-worker-image.sh`.
+To roll workers back, set `scale_out.coding_worker_image_tag` to an older SHA
+and apply.
+
+You can still use the **Build coding worker (AWS)** workflow if the repository
+has GitHub environments `<env>-plan` with `AWS_DEPLOY_ROLE_ARN` and
+`AWS_REGION`. Deploy its SHA as `coding_worker_image_tag`. The next host push
+then also updates that tag.
 
 **Secrets.** Workers read `coding-backend-api-key`, `coding-backend-provider`,
 `coding-backend-model` and `github-token` from Secrets Manager through the
@@ -81,9 +160,27 @@ scheduling:
     global: 20       # optional; replaces CODING_MAX_RUNNING
 ```
 
-A value of 0 removes that limit. `CODING_QUOTA_PER_USER`,
-`CODING_QUOTA_PER_PROGRAM` and `CODING_QUOTA_PER_TEAM` override the file
-without a restart of the runtime (restart `coding-launcher`).
+A value of 0 removes that limit. Without a `scheduling.coding` block the
+defaults are 2 per requester, 3 per program and 8 per team. When one person
+starts all the work, the per-requester default caps the whole install at 2,
+whatever `coding_max_running` says.
+
+Set them in the install config instead of editing the rendered file (a
+redeploy re-renders it):
+
+```yaml
+runtime:
+  coding_max_running: 5
+  coding_quota_per_user: 5
+  coding_quota_per_program: 5
+  # coding_quota_per_team: 8
+```
+
+They reach the launcher as `CODING_QUOTA_PER_USER`, `CODING_QUOTA_PER_PROGRAM`
+and `CODING_QUOTA_PER_TEAM`, which override the file. The launcher reads them
+when it starts. A ticket pool has its own limit, the project's
+`max_parallel_tickets` (Project settings), which a running pool re-reads each
+time a slot frees.
 
 ## Project sizing and package registries
 
@@ -117,7 +214,8 @@ owning team; admins and that team's managers change the rest.
 | Jobs stay "OpenCode queued", launcher logs `coding_job_launch_deferred` | Fargate vCPU quota or regional capacity | Raise the quota or lower `coding_max_running` |
 | One person's jobs stay queued while others start | That requester, program or team is at its `scheduling.coding` quota (the claim reports `deferred_by_quota`) | Expected; raise the quota if the work is urgent |
 | `coding_job_launch_failed` with `AccessDenied` | Host role lacks `ecs:RunTask` or `iam:PassRole` for the worker roles | Re-apply Terraform; check `<project>-coding-launcher` policy |
-| Task stops with `CannotPullContainerError` | Image tag not in ECR | Run the build workflow, redeploy with that tag |
+| Task stops with `CannotPullContainerError` | Image tag not in ECR | Run `scripts/ops/push-coding-worker-image.sh` on the host (or the build workflow) |
+| Task stops with `ResourceInitializationError` mentioning a timeout (default VPC) | The subnet does not give the task a route out (no public IP) | Check `CODING_ECS_ASSIGN_PUBLIC_IP=true` in `coding-launcher.sh status` and the default subnets' internet gateway route |
 | Task stops with `ResourceInitializationError: unable to pull secrets` | Secret missing or execution role scope | Populate the secret; re-apply Terraform |
 | Job goes lost with "no heartbeat" right after start | Worker cannot reach the memory API load balancer | Check the host security group admits port 18792 from the load balancer and the target group is healthy (`/health`) |
 | Clone or `npm install` fails with 403 from the proxy | Domain not on the egress allowlist | Add it to `egress_allowed_domains` or the project registries; the proxy restarts on change |
@@ -125,8 +223,14 @@ owning team; admins and that team's managers change the rest.
 | Registry **Test** shows "request failed: ConnectTimeout" | Host cannot reach the egress proxy | Check the proxy security group admits 3128 from the host security group |
 | Cancelled job keeps running for a minute | Launcher stops tasks on its next tick (about 5 s) once it sees the job cancelled | None; the task gets `StopTask` with reason "coding job cancelled or lost" |
 
+Redeploys wait for running ECS jobs, as well as host containers, before they
+restart the memory API. Their heartbeats and results go through it.
+
 ## Security notes
 
+- In the default VPC, workers have a public IP for outbound traffic, no
+  inbound rules, and egress only on 80 and 443 and to the load balancer.
+  What follows describes private subnets.
 - Workers have no public IP and no inbound rules. Outbound traffic reaches
   only the AWS VPC endpoints, the egress proxy and the memory API load
   balancer, which forwards `/health` and `/coding-jobs/*` and returns 404 for

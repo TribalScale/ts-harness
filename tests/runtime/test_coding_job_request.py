@@ -31,6 +31,7 @@ def configured(stack: ExitStack, *, coding_backend: str = "opencode", backend: o
     stack.enter_context(patch.object(coding_job, "_live_runtime_config", return_value=live))
     stack.enter_context(patch.object(coding_job, "check_repo_allowed_or_linked", return_value=None))
     stack.enter_context(patch.object(coding_job, "program_downgrade_note", return_value=None))
+    stack.enter_context(patch.object(coding_job, "repo_has_pr_ci", return_value=True))
     stack.enter_context(
         patch.object(
             coding_job,
@@ -89,6 +90,15 @@ class BuildCodingRequestTests(unittest.TestCase):
         self.assertIsInstance(request, CodingRequest)
         self.assertEqual(request.workspace_dir, Path(spec["workspace_dir"]))
         self.assertEqual(request.program_id, "prog-1")
+
+    def test_spec_says_whether_the_repo_runs_ci_on_pull_requests(self):
+        with ExitStack() as stack, patch.dict("os.environ", {"TS_HARNESS_PRE_PUSH_REVIEW_MODEL": "anthropic/claude-opus-5-5"}):
+            configured(stack)
+            checks = stack.enter_context(patch.object(coding_job, "repo_has_pr_ci", return_value=True))
+            spec = build_coding_request({"work_order_id": "WO-1"}, delivery_workflow_id=None)
+        self.assertIs(spec["repo_has_pr_ci"], True)
+        checks.assert_called_once_with("https://github.com/example/app.git", "dev")
+        self.assertIs(coding_request_from_spec(spec).repo_has_pr_ci, True)
 
     def test_a_complex_work_order_starts_on_the_stronger_model(self):
         body = "# WO-3\n\n- **Complexity:** High (shared schema and two services)\n"

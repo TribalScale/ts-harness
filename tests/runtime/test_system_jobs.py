@@ -254,3 +254,76 @@ class PollGithubMergesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConflictingChecksTests(unittest.TestCase):
+    """A PR waiting for CI that conflicts with its base is sent back to resolve the conflict."""
+
+    def _wait(self):
+        return {"workflow_id": "wf-1", "task_id": "t-checks", "options": {"heads": [
+            {"repo": "org/app", "pr_url": "https://github.com/org/app/pull/9", "head_sha": "abc"}]}}
+
+    def _run(self, pull):
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {"waits": [self._wait()]}
+        engine = MagicMock()
+        github = MagicMock()
+        github.get_pull.return_value = pull
+        with patch.object(system_jobs, "get_memory_client", return_value=memory), \
+                patch.object(system_jobs, "get_workflow_engine", return_value=engine):
+            result = system_jobs.send_back_conflicting_checks(github=github)
+        return result, engine, memory
+
+    def test_a_conflicting_pr_blocks_the_wait_with_merge_instructions(self):
+        result, engine, memory = self._run({"mergeable": False, "state": "open", "base": {"ref": "dev"}})
+        self.assertEqual(result["sent_back"], 1)
+        memory.find_external_waits.assert_called_once_with(event_type="github.pr_checks", tenant_id="default")
+        args, kwargs = engine.block_wait.call_args
+        self.assertEqual(args[:3], ("wf-1", "t-checks", system_jobs.CONFLICT_REASON))
+        summary = kwargs["output"]["summary"]
+        self.assertIn("merge origin/dev", summary)
+        self.assertIn("https://github.com/org/app/pull/9", summary)
+
+    def test_mergeable_unknown_or_merged_prs_are_left_alone(self):
+        for pull in ({"mergeable": None, "state": "open"}, {"mergeable": True, "state": "open"},
+                     {"mergeable": False, "merged": True, "state": "closed"}):
+            result, engine, _ = self._run(pull)
+            self.assertEqual(result["sent_back"], 0, pull)
+            engine.block_wait.assert_not_called()
+
+    def test_the_feedback_reaches_the_revision(self):
+        from ts_harness.workflows.engine import _qa_feedback_text
+
+        text = _qa_feedback_text({}, {"output": {"summary": "merge origin/dev", "conflicting_prs": []}}, system_jobs.CONFLICT_REASON)
+        self.assertIn("merge origin/dev", text)
+
+
+class RepinChecksWaitTests(unittest.TestCase):
+    """A push to a PR whose CI the harness is waiting for moves the wait to the new commit."""
+
+    def test_the_wait_follows_the_new_head(self):
+        from ts_harness.workflows.merge_readiness import repin_checks_waits
+
+        memory = MagicMock()
+        pr = "https://github.com/org/app/pull/15"
+        memory.find_external_waits.return_value = {"waits": [
+            {"task_id": "t-checks", "input": {"_wait_match": {"repo": "org/app", "head_sha": "old"},
+                                              "_wait_options": {"heads": [{"pr_url": pr, "head_sha": "old"}], "warnings": []}}},
+            {"task_id": "t-other", "input": {"_wait_options": {"heads": [{"pr_url": "https://github.com/org/app/pull/9", "head_sha": "x"}]}}},
+        ]}
+        moved = repin_checks_waits({"pr_url": pr, "head_sha": "new"}, tenant_id="default", memory=memory)
+        self.assertEqual(moved, ["t-checks"])
+        task_id, patched = memory.patch_task_input.call_args.args
+        self.assertEqual(task_id, "t-checks")
+        self.assertEqual(patched["_wait_match"]["head_sha"], "new")
+        self.assertEqual(patched["_wait_options"]["heads"][0]["head_sha"], "new")
+
+    def test_same_head_or_unknown_pr_changes_nothing(self):
+        from ts_harness.workflows.merge_readiness import repin_checks_waits
+
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {"waits": [
+            {"task_id": "t", "input": {"_wait_options": {"heads": [{"pr_url": "https://github.com/o/r/pull/1", "head_sha": "abc"}]}}}]}
+        self.assertEqual(repin_checks_waits({"pr_url": "https://github.com/o/r/pull/1", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
+        self.assertEqual(repin_checks_waits({"pr_url": "", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
+        memory.patch_task_input.assert_not_called()
