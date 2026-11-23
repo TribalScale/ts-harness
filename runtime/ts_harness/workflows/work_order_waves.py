@@ -153,6 +153,26 @@ def failure_details(tasks: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# A step blocked a moment ago may be about to get its automatic revision (the gate's on_block
+# creates it right after the block, and a deploy can delay that): it is not a failure yet.
+BLOCK_GRACE_SECONDS = 600
+
+
+def _settled(task: dict[str, Any], now: float | None = None) -> bool:
+    """The block is older than the grace period (or its time is unknown)."""
+    import time
+    from datetime import datetime
+
+    raw = str(task.get("updated_at") or "")
+    if not raw:
+        return True
+    try:
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return True
+    return ((time.time() if now is None else now) - when) >= BLOCK_GRACE_SECONDS
+
+
 def child_state(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> str | None:
     """``succeeded``, ``failed``, ``cancelled`` or ``None`` while the child is still running.
 
@@ -172,7 +192,7 @@ def child_state(workflow: dict[str, Any], tasks: list[dict[str, Any]]) -> str | 
     if not latest:
         return None
     statuses = {str(task.get("status") or "") for task in latest.values()}
-    if "failed" in statuses or any(_is_terminal_block(task) for task in latest.values()):
+    if "failed" in statuses or any(_is_terminal_block(task) and _settled(task) for task in latest.values()):
         return "failed"
     if statuses <= {"succeeded", "cancelled"}:
         return "succeeded"

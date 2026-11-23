@@ -1588,6 +1588,23 @@ class WorkflowRunner:
         )
         return True
 
+    def _retry_transient_provider_error(self, task: dict[str, Any], error: str) -> bool:
+        """Run the step again when its model call failed for the provider's reasons.
+
+        Checked before the block reaches the stage's hooks: a gate's on_block would otherwise
+        send the provider's error message to OpenCode as review or QA feedback.
+        """
+        from ts_harness.agent.provider import is_transient_provider_error
+
+        if not is_transient_provider_error(error):
+            return False
+        if int(task.get("attempt", 0)) >= int(task.get("max_retries", 0)) + TRANSPORT_EXTRA_RETRIES:
+            return False
+        self.memory.retry_task(task["id"], error[:500], extra_retries=TRANSPORT_EXTRA_RETRIES)
+        log_event("retry_scheduled", workflow_id=task.get("workflow_id"), task_id=task.get("id"),
+                  reason="model provider unavailable", error=error[:300])
+        return True
+
     def _apply_dispatch_result(
         self,
         task: dict[str, Any],
@@ -1761,6 +1778,8 @@ class WorkflowRunner:
                 )
         elif status == "blocked":
             error = str(result.get("error", "dispatch blocked"))
+            if self._retry_transient_provider_error(task, error):
+                return
             if str(task.get("step_name") or "") == "qa_gate":
                 _runner_metrics.inc("runner_qa_gate_failed")
             if not self._transition_task_or_log_conflict(

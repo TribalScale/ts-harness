@@ -899,6 +899,33 @@ class WorkflowRunnerTests(unittest.TestCase):
             self.assertEqual(bool(memory.blocked), blocks, prompt)
             self.assertEqual(bool(memory.completed), not blocks, prompt)
 
+    def test_a_provider_outage_reruns_the_gate_instead_of_rejecting(self):
+        runner_module = load_runner()
+        transitions = []
+        engine = SimpleNamespace(on_task_transition=lambda *a, **k: transitions.append(a) or {}, reload_if_changed=lambda: False)
+        memory = FakeMemoryClient(ready=[])
+        workflow_runner = runner_module.WorkflowRunner(memory, FakeAdapter({}), runner_id="runner-1")
+        task = {"id": "qa-1", "workflow_id": "wf-1", "workflow_type": "implement_jira_ticket", "step_name": "qa_gate",
+                "agent_id": "qa-agent", "input": {}, "attempt": 1, "max_retries": 1}
+        error = 'model provider error: {"error": {"code": "server_is_overloaded", "type": "service_unavailable_error"}}'
+        with patch("ts_harness.workflows.engine.hook_engine_enabled", return_value=True), patch(
+            "ts_harness.workflows.engine.get_workflow_engine", return_value=engine
+        ):
+            workflow_runner._apply_dispatch_result(task, None, {"status": "blocked", "error": error}, 0.0)
+        self.assertEqual([r[0] for r in memory.retried], ["qa-1"])
+        self.assertEqual(memory.blocked, [])
+        self.assertEqual(transitions, [])  # the gate's revision hook never saw it
+
+    def test_transient_provider_errors_are_recognised(self):
+        from ts_harness.agent.provider import is_transient_provider_error
+
+        self.assertTrue(is_transient_provider_error('model provider error: {"code": "server_is_overloaded"}'))
+        self.assertTrue(is_transient_provider_error("model provider error: HTTP Error 529"))
+        self.assertTrue(is_transient_provider_error("model provider error: rate_limit_error"))
+        self.assertFalse(is_transient_provider_error("model provider error: invalid_request_error: max_tokens"))
+        self.assertFalse(is_transient_provider_error("stage contract outcome: blocked"))
+        self.assertFalse(is_transient_provider_error("QA failed: the server is overloaded with requests in the UI"))
+
     def test_runner_blocks_when_artifact_presentation_fails(self):
         runner_module = load_runner()
         task = {

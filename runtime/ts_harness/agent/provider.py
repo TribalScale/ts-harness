@@ -26,6 +26,25 @@ ANTHROPIC_CONTENT_KEY = "_anthropic_content"
 OPENAI_OUTPUT_KEY = "_openai_output"
 
 
+_TRANSIENT_PROVIDER_MARKERS = (
+    "overloaded", "server_is_overloaded", "rate_limit", "rate limit", "too many requests", "429",
+    "500", "502", "503", "504", "529", "service_unavailable", "service unavailable", "bad gateway",
+    "gateway timeout", "timed out", "timeout", "temporarily", "try again later", "connection reset",
+)
+
+
+def is_transient_provider_error(text: str) -> bool:
+    """A model call that failed for the provider's reasons (overloaded, rate limited, 5xx, timeout).
+
+    Such a failure says nothing about the work: a gate that hit it must run again, not count it
+    as a rejection (a QA "verdict" of ``server_is_overloaded`` once sent a ticket back to OpenCode).
+    """
+    lowered = str(text or "").lower()
+    if not lowered.startswith("model provider error") and "transport_error" not in lowered:
+        return False
+    return any(marker in lowered for marker in _TRANSIENT_PROVIDER_MARKERS)
+
+
 @dataclass
 class ProviderEndpoint:
     provider: str
