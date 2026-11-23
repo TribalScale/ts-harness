@@ -397,6 +397,7 @@ First public release.
 
 ### Fixed
 
+- A PR that conflicts with its base while waiting for CI no longer waits forever (GitHub runs no CI on a conflicting PR). The GitHub poller, every minute, sends such a PR back to OpenCode with instructions to merge the base branch and resolve the conflicts, through the same revision path as failed CI; the re-gate then waits for CI on the new head, and the run's own security scan covers it.
 - A running ticket pool now reads the project's `max_parallel_tickets` each time a slot frees, instead of keeping the value it started with, so raising the limit in Project settings takes effect without restarting the program.
 - Code review revisions no longer revert files outside the cited list. A fix often needs a supporting file (a package script, a repository method); the OpenCode session that reverted them also checked out the cited files, so correct fixes were erased and the same findings came back revision after revision. Extra files are now kept, logged (`coding_revision_out_of_scope`) and listed in the result (`out_of_scope_files`) for the code-review gate. A revision that ends identical to the reviewed head fails (`revision produced no changes`) instead of reporting success.
 - The quick re-check after a pre-push review fix never ran: the coding job never set `repo_has_pr_ci`, so every fix re-ran the full verification, even on repositories with CI on pull requests.
