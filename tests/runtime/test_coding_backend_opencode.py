@@ -1619,3 +1619,86 @@ class ModelDeclarationTests(unittest.TestCase):
         from ts_harness.implementation.backends.opencode import opencode_models_env
 
         self.assertEqual(opencode_models_env({}, "/tmp/ws", "anthropic", [None, ""]), {})
+
+
+class RevisionBaseMergeTests(unittest.TestCase):
+    """A revision starts from the latest base, so its PR does not conflict with what merged since."""
+
+    def _backend(self, *, behind="0", merge_rc=0, conflicts=""):
+        calls: list[list[str]] = []
+
+        def runner(cmd, **_kwargs):
+            cmd = [cmd[0], *cmd[3:]] if cmd[:2] == ["git", "-C"] else list(cmd)
+            calls.append(cmd)
+            out = MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["git", "rev-list", "--count"]:
+                out.stdout = behind + "\n"
+            if cmd[:2] == ["git", "merge"] and "--abort" not in cmd:
+                out.returncode = merge_rc
+            if cmd[:3] == ["git", "diff", "--name-only"]:
+                out.stdout = conflicts
+            return out
+
+        return OpenCodeBackend(runner=runner), calls
+
+    def _request(self):
+        return CodingRequest(repo_url="https://github.com/org/app.git", base_branch="dev", work_order_id="WO-1",
+                             work_order_body="x", workspace_dir=Path("/tmp/ws"), provider="anthropic",
+                             pr_url="https://github.com/org/app/pull/7")
+
+    def test_up_to_date_branch_is_left_alone(self):
+        backend, calls = self._backend(behind="0")
+        self.assertEqual(backend._merge_latest_base(Path("/tmp/repo"), self._request()), "")
+        self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls))
+
+    def test_a_clean_merge_needs_no_note(self):
+        backend, calls = self._backend(behind="3")
+        self.assertEqual(backend._merge_latest_base(Path("/tmp/repo"), self._request()), "")
+        self.assertIn(["git", "merge", "origin/dev", "--no-edit"], calls)
+
+    def test_a_conflict_is_left_to_opencode_with_the_files_named(self):
+        backend, calls = self._backend(behind="2", merge_rc=1, conflicts="AGENTS.md\nsrc/plan.test.ts\n")
+        note = backend._merge_latest_base(Path("/tmp/repo"), self._request())
+        self.assertIn("AGENTS.md, src/plan.test.ts", note)
+        self.assertIn("git merge origin/dev", note)
+        self.assertIn(["git", "merge", "--abort"], calls)
+
+
+class DraftWhileRevisingTests(unittest.TestCase):
+    def test_draft_toggle_uses_gh_and_is_best_effort(self):
+        from ts_harness.implementation.repo import set_pull_request_draft
+
+        calls = []
+        ok = MagicMock(returncode=0)
+        self.assertTrue(set_pull_request_draft("https://github.com/o/r/pull/1", True,
+                                               runner=lambda cmd, **k: calls.append(cmd) or ok))
+        self.assertTrue(set_pull_request_draft("https://github.com/o/r/pull/1", False,
+                                               runner=lambda cmd, **k: calls.append(cmd) or ok))
+        self.assertEqual(calls, [["gh", "pr", "ready", "https://github.com/o/r/pull/1", "--undo"],
+                                 ["gh", "pr", "ready", "https://github.com/o/r/pull/1"]])
+        self.assertFalse(set_pull_request_draft("", True, runner=lambda *a, **k: ok))
+        self.assertFalse(set_pull_request_draft("https://github.com/o/r/pull/1", True,
+                                                runner=lambda *a, **k: (_ for _ in ()).throw(OSError("no gh"))))
+
+    def test_a_revision_drafts_its_pr_and_marks_it_ready_when_the_run_ends(self):
+        calls: list[list[str]] = []
+
+        def runner(cmd, **_kwargs):
+            calls.append(list(cmd))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        backend = OpenCodeBackend(runner=runner)
+        request = CodingRequest(repo_url="https://github.com/org/app.git", base_branch="dev", work_order_id="WO-1",
+                                work_order_body="x", workspace_dir=Path("/tmp/ws"), provider="anthropic",
+                                pr_url="https://github.com/org/app/pull/7")
+        with (
+            patch.object(backend, "_revision_target", return_value=(None, "wo/wo-1")),
+            patch("ts_harness.implementation.backends.opencode.resolve_coding_backend_credentials",
+                  return_value=("anthropic", "key")),
+            patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_test"}),
+            patch("ts_harness.implementation.backends.opencode.resolve_opencode_binary", side_effect=RuntimeError("stop here")),
+        ):
+            backend.implement(request)
+        gh = [c for c in calls if c[:3] == ["gh", "pr", "ready"]]
+        self.assertEqual(gh, [["gh", "pr", "ready", "https://github.com/org/app/pull/7", "--undo"],
+                              ["gh", "pr", "ready", "https://github.com/org/app/pull/7"]])

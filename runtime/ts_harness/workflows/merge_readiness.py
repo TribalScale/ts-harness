@@ -452,6 +452,48 @@ def _wait_pr_urls(wait: dict[str, Any]) -> list[str]:
     return urls
 
 
+def repin_checks_waits(event: dict[str, Any], *, tenant_id: str, memory: Any = None) -> list[str]:
+    """A PR got a new commit while the harness waits for its CI: wait for the new commit's checks.
+
+    The wait is pinned to the head it was armed with; CI on a later push never matched it, so
+    the wait sat until a person moved it (a conflict resolved by hand, a fix pushed to the PR).
+    """
+    pr_url = str(event.get("pr_url") or "")
+    head_sha = str(event.get("head_sha") or "")
+    if not pr_url or not head_sha:
+        return []
+    if memory is None:
+        from ts_harness.memory.client import get_memory_client
+
+        memory = get_memory_client()
+    waits = list((memory.find_external_waits(event_type=CHECKS_EVENT, tenant_id=tenant_id) or {}).get("waits") or [])
+    moved: list[str] = []
+    for wait in waits:
+        task_id = str(wait.get("task_id") or wait.get("id") or "")
+        task_input = dict(wait.get("input") or {}) if isinstance(wait.get("input"), dict) else {}
+        options = dict(task_input.get("_wait_options") or {})
+        heads = [dict(h) for h in options.get("heads") or [] if isinstance(h, dict)]
+        hit = [h for h in heads if str(h.get("pr_url") or "") == pr_url and str(h.get("head_sha") or "") != head_sha]
+        if not task_id or not hit:
+            continue
+        for head in heads:
+            if str(head.get("pr_url") or "") == pr_url:
+                head["head_sha"] = head_sha
+        options["heads"] = heads
+        task_input["_wait_options"] = options
+        match = dict(task_input.get("_wait_match") or {})
+        if match.get("head_sha") and len(heads) == 1:
+            match["head_sha"] = head_sha
+            task_input["_wait_match"] = match
+        try:
+            memory.patch_task_input(task_id, task_input, actor="github-webhook")
+            moved.append(task_id)
+            logger.info("checks wait %s moved to %s for %s", task_id, head_sha[:12], pr_url)
+        except Exception as exc:  # noqa: BLE001 - the next push or the poller tries again
+            logger.warning("checks wait %s not moved: %s", task_id, exc)
+    return moved
+
+
 def fan_out_base_advanced(
     event: dict[str, Any],
     *,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import os
 import queue
 import re
@@ -43,6 +45,7 @@ from ts_harness.implementation.repo import (
     github_authenticated_url,
     list_changed_files,
     push_branch,
+    set_pull_request_draft,
     work_order_branch_name,
 )
 from ts_harness.implementation.security_scan import SecurityConfig
@@ -1019,6 +1022,33 @@ class OpenCodeBackend:
             return security
         return {**security, "scanned_sha": sha}
 
+    def _merge_latest_base(self, repo_dir: Path, request: CodingRequest) -> str:
+        """Merge ``origin/<base>`` into the revision branch when it moved. Returns a note for the
+        prompt when the merge conflicts (left for OpenCode to do and resolve), else ""."""
+        base = str(request.base_branch or "").strip()
+        if not base:
+            return ""
+        fetched = self._git(repo_dir, "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
+        if fetched.returncode != 0:
+            return ""
+        behind = self._git(repo_dir, "rev-list", "--count", f"HEAD..origin/{base}")
+        if str(behind.stdout or "").strip() in {"", "0"}:
+            return ""
+        merged = self._git(repo_dir, "merge", f"origin/{base}", "--no-edit")
+        if merged.returncode == 0:
+            log_event("coding_revision_base_merged", work_order_id=request.work_order_id, base=base,
+                      behind=str(behind.stdout or "").strip())
+            return ""
+        conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")
+        files = [line.strip() for line in str(conflicts.stdout or "").splitlines() if line.strip()]
+        self._git(repo_dir, "merge", "--abort")
+        log_event("coding_revision_base_conflict", work_order_id=request.work_order_id, base=base, files=files[:20])
+        return (
+            f"This branch is behind origin/{base} and merging it conflicts in: {', '.join(files) or 'some files'}. "
+            f"First run `git merge origin/{base}`, resolve each conflict keeping the intent of both sides, "
+            "and commit the merge. Then make the changes below."
+        )
+
     def _out_of_scope_files(self, repo_dir: Path, request: CodingRequest, *, baseline: str) -> list[str]:
         """Files the revision changed beyond the cited ones and their tests. They stay in the PR.
 
@@ -1227,11 +1257,15 @@ class OpenCodeBackend:
             if following:
                 progress.begin(following, timings)
 
+        drafted = False
         try:
             gone, pr_head = self._revision_target(request)
             if gone:
                 return CodingResult(ok=False, branch=branch, summary="", pr_url=request.pr_url, error=gone)
             branch = pr_head or branch
+            if request.pr_url:
+                # While OpenCode revises it, the PR is a draft: its checks are the previous commit's.
+                drafted = set_pull_request_draft(request.pr_url, True, runner=self.runner, env=_git_env(request.repo_url))
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
             claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
             reused = (Path(request.workspace_dir) / "repo" / ".git").is_dir()
@@ -1256,7 +1290,17 @@ class OpenCodeBackend:
                 runner=self.runner,
                 from_remote=bool(pr_head),
             )
-            # The reviewed head: a revision must change it, and its cited files bound its scope.
+            # The head the gates reviewed: a revision must change it.
+            review_head = self._head_sha(repo_dir) if request.pr_url else ""
+            if pr_head:
+                # Start from the latest base: a revision built on a stale branch pushes a PR that
+                # conflicts with what merged since, and GitHub runs no CI on it.
+                note = self._merge_latest_base(repo_dir, request)
+                if note:
+                    request = dataclasses.replace(
+                        request, review_feedback=(note + "\n\n" + str(request.review_feedback or "")).strip()
+                    )
+            # The cited files bound the revision's scope from here (the base merge is not the revision's).
             baseline = self._head_sha(repo_dir) if (request.revision_files or request.pr_url) else ""
             docs_written: list[str] = []
             skills_written: list[str] = []
@@ -1416,7 +1460,7 @@ class OpenCodeBackend:
             lap("review", "push")
             progress.detail("checking the changes")
             out_of_scope = self._out_of_scope_files(repo_dir, request, baseline=baseline)
-            if baseline and not self._names_since(repo_dir, baseline):
+            if (review_head or baseline) and not self._names_since(repo_dir, review_head or baseline):
                 # Sending an unchanged PR back to review only repeats the same findings.
                 return CodingResult(
                     ok=False,
@@ -1506,6 +1550,9 @@ class OpenCodeBackend:
                 log_path=str(log_path),
                 error=str(exc),
             )
+        finally:
+            if drafted:
+                set_pull_request_draft(request.pr_url or "", False, runner=self.runner, env=_git_env(request.repo_url))
 
     # Refresh: bring an open PR up to date with its base branch.
 
