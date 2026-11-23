@@ -516,6 +516,7 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "pre_push_review": dict(getattr(result, "pre_push_review", None) or {}),
         "timings": dict(getattr(result, "timings", None) or {}),
         "opencode_timeline": _opencode_timeline(request.workspace_dir, started_ms),
+        "out_of_scope_files": list(getattr(result, "out_of_scope_files", None) or []),
         "mode": spec.get("mode") or "implement",
         "work_order_id": spec.get("work_order_id") or "",
         "repo_url": spec["repo_url"],
@@ -561,6 +562,8 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
     for key in ("pre_push_review", "timings"):
         if isinstance(result.get(key), dict) and result[key]:
             output[key] = result[key]
+    if result.get("out_of_scope_files"):
+        output["out_of_scope_files"] = list(result["out_of_scope_files"])
     if result.get("mode") == "refresh":
         output["refresh_method"] = result.get("refresh_method")
         output["resolved_files"] = list(result.get("resolved_files") or [])

@@ -97,6 +97,8 @@ class CodingResult:
     pre_push_review: dict[str, Any] = field(default_factory=dict)
     # Seconds spent in each phase of the run: setup, coding, verification, review, push.
     timings: dict[str, float] = field(default_factory=dict)
+    # Files a revision changed beyond the ones the blocking findings named (kept, for the reviewer).
+    out_of_scope_files: list[str] = field(default_factory=list)
 
 
 def security_markdown(security: dict[str, Any]) -> str:
