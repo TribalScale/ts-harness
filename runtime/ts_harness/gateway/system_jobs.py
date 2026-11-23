@@ -192,12 +192,23 @@ def send_back_conflicting_checks(*, tenant_id: str = "default", github: GitHubCl
     return {"checked": checked, "sent_back": sent_back, "errors": errors}
 
 
+def _reopen_pools(tenant_id: str) -> dict[str, Any]:
+    from ts_harness.jira.ticket_pool import reopen_pools
+
+    try:
+        return {"reopened": reopen_pools(get_memory_client(), tenant_id=tenant_id, actor="github-merge-poller")}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ticket pool reopen check failed: %s", exc)
+        return {"reopened": [], "error": str(exc)[:200]}
+
+
 def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> dict[str, Any]:
     """Reconcile GitHub waits when webhooks may have been missed; joins, release tracks and PR conflicts always."""
     local = {
         "joins": poll_wave_joins(tenant_id=tenant_id),
         "upstreams": poll_release_upstreams(tenant_id=tenant_id),
         "conflicts": send_back_conflicting_checks(tenant_id=tenant_id),
+        "pools": _reopen_pools(tenant_id),
     }
     if not force and not reconcile_due():
         return {"status": "skipped", "reason": "webhooks healthy; next reconcile later", "checked": 0, "resumed": 0, **local}

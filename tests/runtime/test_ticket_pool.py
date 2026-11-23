@@ -266,3 +266,57 @@ class MergeWaitSlotTests(unittest.TestCase):
             self.assertTrue(tp.merge_wait_started(MagicMock(), "child"))
             self.assertFalse(tp.merge_wait_started(MagicMock(), "lone"))
         self.assertEqual(engine.resume_external.call_args.kwargs["payload"], {"ready_to_merge": "child"})
+
+
+class BlockGraceTests(unittest.TestCase):
+    """A step blocked a moment ago (its revision may be on the way) is not a failed ticket yet."""
+
+    def test_a_fresh_block_is_still_running_and_an_old_one_failed(self):
+        from datetime import datetime, timedelta, timezone
+
+        from ts_harness.workflows.work_order_waves import child_state
+
+        def block(minutes_ago):
+            at = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
+            return {"step_name": "finalize_code_review", "status": "blocked", "updated_at": at,
+                    "error": "barrier_blocked: code_review_blocked: 2 blocking findings"}
+
+        done = {"step_name": "deliver_work_order", "status": "succeeded"}
+        self.assertIsNone(child_state({"status": "running"}, [done, block(1)]))
+        self.assertEqual(child_state({"status": "running"}, [done, block(30)]), "failed")
+
+
+class ReopenPoolTests(unittest.TestCase):
+    def _memory(self, join_error, child_states):
+        memory = MagicMock()
+        memory.running_ticket_work.return_value = {"pools": [
+            {"workflow_id": "pool", "join_task_id": "join", "join_status": "blocked", "queue": ["P-1", "P-2"]}]}
+        join = {"id": "join", "step_name": "join_pool", "status": "blocked", "error": join_error,
+                "input": {"_wait_options": {"children": [{"workflow_id": "c1", "label": "P-1"}]}}}
+        self.states = child_states
+        return memory, join
+
+    def _run(self, join_error, state):
+        memory, join = self._memory(join_error, state)
+        engine = MagicMock()
+        with patch("ts_harness.jira.ticket_pool.load_workflow_payload",
+                   side_effect=lambda m, wid: ({}, [join]) if wid == "pool" else ({"id": wid}, [])), \
+                patch("ts_harness.workflows.work_order_waves.child_state", return_value=state), \
+                patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine):
+            reopened = tp.reopen_pools(memory)
+        return reopened, memory, engine
+
+    def test_a_pool_that_gave_up_reopens_when_its_failed_ticket_recovered(self):
+        reopened, memory, engine = self._run(
+            "external_blocked:workflow.child_terminal tickets not started because a blocker was not delivered: P-2; stopped or failed: P-1",
+            None)
+        self.assertEqual(reopened, ["pool"])
+        memory.block_task_api.assert_called_once_with("join", "awaiting_external:workflow.child_terminal", actor="workflow-runner")
+        self.assertEqual(engine.resume_external.call_args.kwargs["event_type"], "workflow.child_terminal")
+
+    def test_still_failed_or_just_waiting_pools_are_left_alone(self):
+        reopened, memory, _ = self._run("external_blocked:workflow.child_terminal ...; stopped or failed: P-1", "failed")
+        self.assertEqual(reopened, [])
+        reopened, memory, _ = self._run("awaiting_external:workflow.child_terminal", None)
+        self.assertEqual(reopened, [])
+        memory.block_task_api.assert_not_called()

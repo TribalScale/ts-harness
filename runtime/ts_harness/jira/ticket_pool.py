@@ -394,6 +394,49 @@ def wake_pools(memory: Any, key: str, *, tenant_id: str = "default", actor: str 
     return woken
 
 
+GAVE_UP_PREFIX = "external_blocked:workflow.child_terminal"
+
+
+def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workflow-runner") -> list[str]:
+    """A pool that stopped because a ticket failed or was stopped: when that ticket recovered
+    (a person retried or revised it, and it is running or merged now), wait on the children again
+    and start the tickets it left behind."""
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT, child_state, pinned_children
+
+    try:
+        pools = _rows(memory.running_ticket_work(tenant_id=tenant_id or "default"), "pools")
+    except Exception:  # noqa: BLE001
+        return []
+    reopened: list[str] = []
+    for pool in pools:
+        if pool.get("join_status") != "blocked":
+            continue
+        workflow_id = str(pool.get("workflow_id") or "")
+        try:
+            _, tasks = load_workflow_payload(memory, workflow_id)
+            join = next((t for t in tasks if str(t.get("id")) == str(pool.get("join_task_id"))), None)
+            if join is None or not str(join.get("error") or "").startswith(GAVE_UP_PREFIX):
+                continue
+            states = []
+            for child in pinned_children(join):
+                child_workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
+                states.append(child_state(child_workflow, child_tasks))
+            if any(state in {"failed", "cancelled"} for state in states):
+                continue  # still a failed ticket: the person's decision is pending
+            memory.block_task_api(str(join["id"]), f"awaiting_external:{CHILD_EVENT}", actor=actor)
+            from ts_harness.workflows.engine import get_workflow_engine
+
+            get_workflow_engine().resume_external(
+                workflow_id, event_type=CHILD_EVENT, payload={"reopened": "the failed ticket recovered"},
+                actor=actor, tenant_id=tenant_id,
+            )
+            reopened.append(workflow_id)
+            logger.info("ticket pool %s reopened: its failed ticket recovered", workflow_id)
+        except Exception as exc:  # noqa: BLE001 - checked again on the next poll
+            logger.info("ticket pool %s not reopened: %s", workflow_id, exc)
+    return reopened
+
+
 def left_behind(queue: list[str], children: list[dict[str, str]]) -> list[str]:
     started = {child.get("label") for child in children}
     return [key for key in queue if key not in started]
