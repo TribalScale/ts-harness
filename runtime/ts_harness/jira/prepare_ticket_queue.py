@@ -195,12 +195,12 @@ def _ensure_project_ready(memory: Any, workflow: dict[str, Any], project_key: st
         raise StepBlocked("\n".join(lines), output={"queue": False, "bootstrap_prs": [r.pr_url for r in pending]})
 
 
-def _ticket_limit(memory: Any, tenant_id: str, jira_key: str) -> int:
-    """The project's ``max_parallel_tickets`` (matched by key or Jira key); 1 when unknown."""
+def project_ticket_limit(memory: Any, tenant_id: str, jira_key: str) -> int | None:
+    """The project's ``max_parallel_tickets`` (matched by key or Jira key); None when unknown."""
     try:
         rows = (memory.list_projects(tenant_id=tenant_id) or {}).get("projects") or []
-    except Exception:  # noqa: BLE001 - one at a time when the project cannot be read
-        return 1
+    except Exception:  # noqa: BLE001 - unknown when the project cannot be read
+        return None
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -208,7 +208,12 @@ def _ticket_limit(memory: Any, tenant_id: str, jira_key: str) -> int:
             from ts_harness.jira.ticket_pool import pool_limit
 
             return pool_limit(row.get("max_parallel_tickets") or 1)
-    return 1
+    return None
+
+
+def _ticket_limit(memory: Any, tenant_id: str, jira_key: str) -> int:
+    """The project's ``max_parallel_tickets``; 1 when unknown (one at a time)."""
+    return project_ticket_limit(memory, tenant_id, jira_key) or 1
 
 
 def _project_name(memory: Any, tenant_id: str, project_key: str) -> str | None:

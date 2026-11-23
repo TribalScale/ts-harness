@@ -278,6 +278,19 @@ def merge_wait_started(memory: Any, workflow_id: str, *, actor: str = "workflow-
         return False
 
 
+def current_limit(memory: Any, task: dict[str, Any], queue: list[str], started_with: int) -> int:
+    """The project's parallel limit as it is now, so raising it reaches a running pool; else the limit it started with."""
+    key = next((str(k).split("-", 1)[0] for k in queue if "-" in str(k)), "")
+    if not key:
+        return started_with
+    from ts_harness.jira.prepare_ticket_queue import project_ticket_limit
+
+    live = project_ticket_limit(memory, str(task.get("tenant_id") or "default"), key)
+    if live is not None and live != started_with:
+        logger.info("ticket pool %s parallel limit %s -> %s (project setting)", task.get("workflow_id"), started_with, live)
+    return live if live is not None else started_with
+
+
 def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str, str]]:
     """Start the tickets that became ready since the last child finished; return every pinned child."""
     from ts_harness.workflows.work_order_waves import child_state, pinned_children
@@ -288,7 +301,7 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
     fill_task = next((item for item in tasks if item.get("step_name") == "fill_pool"), {})
     fill_output = fill_task.get("output") if isinstance(fill_task.get("output"), dict) else {}
     queue = [str(key) for key in fill_output.get("queue") or []]
-    limit = pool_limit(fill_output.get("max_parallel_tickets"))
+    limit = current_limit(memory, task, queue, pool_limit(fill_output.get("max_parallel_tickets")))
     running, finished_bad, waiting_merge = [], [], []
     for child in children:
         workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])

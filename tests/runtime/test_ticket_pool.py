@@ -82,6 +82,35 @@ class FillAndRefillTests(unittest.TestCase):
         self.assertEqual(tp.left_behind(["P-3", "P-4", "P-5", "P-6"], pinned), ["P-6"])
 
 
+class LiveLimitTests(unittest.TestCase):
+    """Raising the project's parallel limit reaches a pool that is already running."""
+
+    @patch("ts_harness.workflows.hooks.fork_subworkflow.fork_child", side_effect=lambda *a, **k: "child-" + k["intake_input"]["jira_issue_key"])
+    def test_a_raised_project_limit_starts_more_tickets(self, _fork):
+        fill = {"id": "fill", "step_name": "fill_pool", "input": {"summary": "s"},
+                "output": {"queue": ["P-3", "P-4", "P-5", "P-6"], "max_parallel_tickets": 2}}
+        join = {"id": "join", "workflow_id": "pool", "tenant_id": "default", "step_name": "join_pool",
+                "input": {"_wait_options": {"children": [{"workflow_id": "c3", "label": "P-3", "repo": "org/api"},
+                                                         {"workflow_id": "c5", "label": "P-5", "repo": "org/web"}]}}}
+        memory = MagicMock()
+        memory.list_projects.return_value = {"projects": [{"key": "P", "max_parallel_tickets": 4}]}
+        ctx = MagicMock(memory_client=memory, actor="runner")
+        jira = Jira([_issue("P-3"), _issue("P-4"), _issue("P-5", repo="org/web"), _issue("P-6")])
+        with patch("ts_harness.workflows.work_order_waves.child_state", return_value=None), \
+                patch("ts_harness.jira.ticket_pool.load_workflow_payload",
+                      side_effect=lambda m, wid: ({"id": wid}, []) if wid.startswith("c") else ({}, [fill, join])):
+            pinned = tp.refill(ctx, join, jira=jira)
+        # Started with 2 (both running); the project now allows 4, so two more start.
+        self.assertEqual([c["label"] for c in pinned], ["P-3", "P-5", "P-4", "P-6"])
+
+    def test_unknown_project_keeps_the_starting_limit(self):
+        memory = MagicMock()
+        memory.list_projects.return_value = {"projects": []}
+        self.assertEqual(tp.current_limit(memory, {"tenant_id": "default"}, ["P-1"], 2), 2)
+        memory.list_projects.side_effect = RuntimeError("down")
+        self.assertEqual(tp.current_limit(memory, {"tenant_id": "default"}, ["P-1"], 3), 3)
+
+
 class ProgramTests(unittest.TestCase):
     def test_a_parallel_queue_runs_the_pool_and_feeds_it_the_remaining_tickets(self):
         from ts_harness.workflows.program_adapters import _build_implement_inputs, _extract_pick_ticket_outputs
