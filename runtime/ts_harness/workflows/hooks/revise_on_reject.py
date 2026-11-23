@@ -30,7 +30,7 @@ def select_block_case(config: dict[str, Any], error: str) -> dict[str, Any]:
 
 _REVISION_ONLY_KEYS = frozenset(
     {"_revision_budget", "_revision_source", "refresh", "qa_feedback", "review_feedback", "revision_files",
-     "_guided", "_guidance", "coding_model", "_auto_grant", "_triage"}
+     "_guided", "_guidance", "coding_model", "_auto_grant", "_triage", "_arbitration"}
 )
 # Gates whose verdicts can contradict each other. When the revisions they ask for alternate
 # (review, QA, review), they are pulling the code in opposite directions, usually because the
@@ -77,6 +77,20 @@ def _with_gate_output(ctx: HookContext, tasks: list[dict[str, Any]]) -> list[dic
     if not any(str(task.get("id") or "") == gate_id for task in tasks):
         merged.append({**dict(ctx.task or {}), "output": output, "status": "blocked"})
     return merged
+
+
+def _arbiter_plan(ctx: HookContext, run: list[dict[str, str]], tasks: list[dict[str, Any]], implement_step: str) -> dict[str, Any] | None:
+    from ts_harness.workflows import review_arbiter
+
+    try:
+        return review_arbiter.plan(
+            run, tasks=tasks, workflow=dict(ctx.workflow or {}), memory=ctx.memory_client, implement_step=implement_step,
+        )
+    except Exception:  # noqa: BLE001 - a failed arbitration leaves the decision to a person
+        import logging
+
+        logging.getLogger(__name__).exception("review arbitration failed")
+        return None
 
 
 def _triage_plan(ctx: HookContext, tasks: list[dict[str, Any]], gate_step: str, implement_step: str) -> dict[str, Any] | None:
@@ -371,26 +385,35 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         # a human grant restarts the count at the granted revision.
         limit = max_revisions if budget or grant or granted_at is not None else 1 + max_revisions
         conflict = None if grant else conflicting_gates(existing, str(gate.get("step_name") or ""), ctx.reject_comments or "")
+        arbiter_plan: dict[str, Any] | None = None
         if conflict:
-            return {
-                "status": "revision_limit",
-                "reason": "conflicting_feedback",
-                "workflow_id": ctx.workflow_id,
-                "existing_revisions": len(existing),
-                "max_revisions": max_revisions,
-                "conflict": conflict,
-            }
+            # Code review and QA keep sending it back in turn: an arbiter rules against the work
+            # order, and the policy decides whether the next revision runs or a person is asked.
+            arbiter_plan = _arbiter_plan(ctx, conflict, tasks, revise_step)
+            if (arbiter_plan or {}).get("decision") != "continue":
+                result = {
+                    "status": "revision_limit",
+                    "reason": "conflicting_feedback",
+                    "workflow_id": ctx.workflow_id,
+                    "existing_revisions": len(existing),
+                    "max_revisions": max_revisions,
+                    "conflict": conflict,
+                }
+                if arbiter_plan:
+                    result["arbitration"] = arbiter_plan
+                return result
+            auto_plan = {**arbiter_plan, "arbitrated": True}
         guided_plan = None
         guided_before = next(
             (dict((task.get("input") or {}).get("_guidance") or {}) for task in reversed(existing)
              if isinstance(task.get("input"), dict) and task["input"].get("_guided")),
             None,
         )
-        if not grant and guided_before is None:
+        if not grant and guided_before is None and auto_plan is None:
             # The same finding came back after a revision: diagnose it and send one guided
             # attempt (even past the limit) before asking a person.
             guided_plan = _guided_plan(_with_gate_output(ctx, tasks), str(gate.get("step_name") or ""), revise_step)
-        if len(existing) >= limit and guided_plan is None:
+        if len(existing) >= limit and guided_plan is None and auto_plan is None:
             # Out of automatic revisions: triage decides whether to keep going, accept, or ask.
             triage_plan = _triage_plan(ctx, _with_gate_output(ctx, tasks), str(gate.get("step_name") or ""), revise_step)
             decision = str((triage_plan or {}).get("decision") or "escalate")
@@ -449,7 +472,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         feedback_key = "qa_feedback" if "qa_feedback" in mapped and "review_feedback" not in mapped else "review_feedback"
         revise_input[feedback_key] = auto_plan["feedback"]
         revise_input["_auto_grant"] = True
-        revise_input["_triage"] = {"reason": auto_plan.get("reason"), "total_revisions": auto_plan.get("total_revisions")}
+        if auto_plan.get("arbitrated"):
+            revise_input["_arbitration"] = {"reason": auto_plan.get("reason"), "ruling": auto_plan.get("ruling"),
+                                            "total_revisions": auto_plan.get("total_revisions")}
+        else:
+            revise_input["_triage"] = {"reason": auto_plan.get("reason"), "total_revisions": auto_plan.get("total_revisions")}
         if auto_plan.get("coding_model"):
             revise_input["coding_model"] = auto_plan["coding_model"]
     if block_loop and guided_plan is not None:
