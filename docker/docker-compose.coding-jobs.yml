@@ -21,7 +21,11 @@ services:
       CODING_LAUNCHER: ${CODING_LAUNCHER:-}
       DEPLOYMENT_PROFILE: ${DEPLOYMENT_PROFILE:-single_host}
       CODING_MAX_RUNNING: ${CODING_MAX_RUNNING:-3}
-      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them.
+      # Quotas come from scheduling.coding in the runtime config; CODING_QUOTA_PER_* override them
+      # (install config runtime.coding_quota_per_user / _program / _team; blank keeps the file's value).
+      CODING_QUOTA_PER_USER: ${CODING_QUOTA_PER_USER:-}
+      CODING_QUOTA_PER_PROGRAM: ${CODING_QUOTA_PER_PROGRAM:-}
+      CODING_QUOTA_PER_TEAM: ${CODING_QUOTA_PER_TEAM:-}
       TS_HARNESS_CONFIG: /config/ts-harness-runtime.yaml
       CODING_ECS_CLUSTER: ${CODING_ECS_CLUSTER:-}
       CODING_ECS_TASK_DEFINITION: ${CODING_ECS_TASK_DEFINITION:-}

@@ -83,6 +83,9 @@ runtime:
   # builds the stack (in the default VPC on single_host), the second chooses the launcher.
   # See docs/runbooks/coding-workers-ecs.md.
   # coding_workers_on_ecs: true
+  # Fair-share quotas (defaults 2 per requester, 3 per program, 8 per team; 0 = no limit).
+  # coding_quota_per_user: 5
+  # coding_quota_per_program: 5
   # coding_launcher: ecs
   embeddings_provider: openai
   embeddings_model: text-embedding-3-small

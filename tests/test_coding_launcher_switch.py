@@ -82,6 +82,16 @@ class HostWiringTests(unittest.TestCase):
         self.assertIn('CODING_ECS_ASSIGN_PUBLIC_IP="${CODING_ECS_ASSIGN_PUBLIC_IP:-false}"', compose)
         self.assertIn('echo "export CODING_ECS_ASSIGN_PUBLIC_IP=', PHASE_12.read_text())
 
+    def test_coding_quotas_reach_the_launcher(self):
+        compose = CODING_JOBS_COMPOSE.read_text()
+        wrapper = _function(COMMON.read_text(), "run_docker_compose_as_admin")
+        phase = PHASE_12.read_text()
+        for name in ("CODING_QUOTA_PER_USER", "CODING_QUOTA_PER_PROGRAM", "CODING_QUOTA_PER_TEAM"):
+            self.assertIn(f"{name}: ${{{name}:-}}", compose)
+            self.assertIn(f'{name}="${{{name}:-}}"', wrapper)
+            self.assertIn(f'echo "export {name}=', phase)
+            self.assertIn(name, phase[phase.index("CODING_FINGERPRINT="):phase.index("PHASE_FINGERPRINT=")])
+
     def test_redeploy_drains_ecs_jobs_too(self):
         common = COMMON.read_text()
         self.assertIn("running_ecs_coding_jobs", _function(common, "running_coding_workers"))

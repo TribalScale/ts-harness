@@ -288,6 +288,24 @@ variable "coding_max_running" {
   }
 }
 
+variable "coding_quota_per_user" {
+  description = "Coding jobs one requester may have running at once (fair share). Null keeps the harness default (2); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
+variable "coding_quota_per_program" {
+  description = "Coding jobs one program may have running at once. Null keeps the harness default (3); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
+variable "coding_quota_per_team" {
+  description = "Coding jobs one team may have running at once. Null keeps the harness default (8); 0 removes the limit."
+  type        = number
+  default     = null
+}
+
 variable "workflow_runner_poll_interval_seconds" {
   description = "Workflow runner polling interval in seconds."
   type        = number

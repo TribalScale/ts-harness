@@ -160,9 +160,27 @@ scheduling:
     global: 20       # optional; replaces CODING_MAX_RUNNING
 ```
 
-A value of 0 removes that limit. `CODING_QUOTA_PER_USER`,
-`CODING_QUOTA_PER_PROGRAM` and `CODING_QUOTA_PER_TEAM` override the file
-without a restart of the runtime (restart `coding-launcher`).
+A value of 0 removes that limit. Without a `scheduling.coding` block the
+defaults are 2 per requester, 3 per program and 8 per team. When one person
+starts all the work, the per-requester default caps the whole install at 2,
+whatever `coding_max_running` says.
+
+Set them in the install config instead of editing the rendered file (a
+redeploy re-renders it):
+
+```yaml
+runtime:
+  coding_max_running: 5
+  coding_quota_per_user: 5
+  coding_quota_per_program: 5
+  # coding_quota_per_team: 8
+```
+
+They reach the launcher as `CODING_QUOTA_PER_USER`, `CODING_QUOTA_PER_PROGRAM`
+and `CODING_QUOTA_PER_TEAM`, which override the file. The launcher reads them
+when it starts. A ticket pool has its own limit, the project's
+`max_parallel_tickets` (Project settings), which a running pool re-reads each
+time a slot frees.
 
 ## Project sizing and package registries
 

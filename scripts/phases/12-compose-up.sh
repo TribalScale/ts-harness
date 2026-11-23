@@ -218,7 +218,7 @@ STORAGE_FINGERPRINT="storage:${TS_HARNESS_STATE_BACKEND}:${TS_HARNESS_OBJECT_BAC
 # The extra allowed domains reach coding-launcher's environment; a change re-runs compose up.
 EGRESS_FINGERPRINT="egress:${CODING_EGRESS_ALLOWLIST:-off}:${CODING_EGRESS_ALLOW:-}:${CODING_EGRESS_NETWORK:-}:${CODING_EGRESS_PROXY_IMAGE:-}"
 # Launcher, parallel limit and ECS identifiers reach coding-launcher's environment.
-CODING_FINGERPRINT="coding:${CODING_LAUNCHER_RESOLVED}:${CODING_MAX_RUNNING:-}:${CODING_ECS_CLUSTER:-}:${CODING_ECS_TASK_DEFINITION:-}:${CODING_ECS_SUBNETS:-}:${CODING_ECS_SECURITY_GROUPS:-}:${CODING_ECS_ASSIGN_PUBLIC_IP:-}"
+CODING_FINGERPRINT="coding:${CODING_LAUNCHER_RESOLVED}:${CODING_MAX_RUNNING:-}:${CODING_QUOTA_PER_USER:-}:${CODING_QUOTA_PER_PROGRAM:-}:${CODING_QUOTA_PER_TEAM:-}:${CODING_ECS_CLUSTER:-}:${CODING_ECS_TASK_DEFINITION:-}:${CODING_ECS_SUBNETS:-}:${CODING_ECS_SECURITY_GROUPS:-}:${CODING_ECS_ASSIGN_PUBLIC_IP:-}"
 # This script is an input too: a change to the compose env it writes must re-run compose up.
 PHASE_FINGERPRINT="$(calculate_phase_fingerprint "${BASH_SOURCE[0]}" "${COMPOSE_FILES[@]}" "$SECRETS_ENV" "$SCRIPT_DIR/preflight-memory-env.sh" "$EGRESS_FINGERPRINT" "$STORAGE_FINGERPRINT" "$CODING_FINGERPRINT")"
 if phase_marker_matches "$PHASE_DONE" "$PHASE_FINGERPRINT"; then
@@ -306,6 +306,9 @@ fi
     echo "export CODING_EGRESS_ALLOWLIST=$(printf '%q' "${CODING_EGRESS_ALLOWLIST:-off}")"
     echo "export CODING_EGRESS_ALLOW=$(printf '%q' "${CODING_EGRESS_ALLOW:-}")"
     echo "export CODING_MAX_RUNNING=$(printf '%q' "${CODING_MAX_RUNNING:-3}")"
+    echo "export CODING_QUOTA_PER_USER=$(printf '%q' "${CODING_QUOTA_PER_USER:-}")"
+    echo "export CODING_QUOTA_PER_PROGRAM=$(printf '%q' "${CODING_QUOTA_PER_PROGRAM:-}")"
+    echo "export CODING_QUOTA_PER_TEAM=$(printf '%q' "${CODING_QUOTA_PER_TEAM:-}")"
     echo "export CODING_LAUNCHER=$(printf '%q' "${CODING_LAUNCHER_RESOLVED}")"
     echo "export DEPLOYMENT_PROFILE=$(printf '%q' "${DEPLOYMENT_PROFILE:-single_host}")"
     echo "export TS_HARNESS_STATE_BACKEND=$(printf '%q' "${TS_HARNESS_STATE_BACKEND}")"

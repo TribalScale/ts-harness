@@ -15,6 +15,9 @@ locals {
     WORKFLOW_RUNNER_STALE_POLICY          = var.workflow_runner_stale_policy
     CODING_JOBS_ENABLED                   = tostring(var.coding_jobs_enabled)
     CODING_MAX_RUNNING                    = tostring(var.coding_max_running)
+    CODING_QUOTA_PER_USER                 = var.coding_quota_per_user == null ? "" : tostring(var.coding_quota_per_user)
+    CODING_QUOTA_PER_PROGRAM              = var.coding_quota_per_program == null ? "" : tostring(var.coding_quota_per_program)
+    CODING_QUOTA_PER_TEAM                 = var.coding_quota_per_team == null ? "" : tostring(var.coding_quota_per_team)
     LLM_PROXY_ENABLED                     = tostring(var.llm_proxy_enabled)
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider

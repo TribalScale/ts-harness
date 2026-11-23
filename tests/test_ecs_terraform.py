@@ -134,6 +134,9 @@ class LauncherPermissionTests(unittest.TestCase):
             "CODING_LAUNCHER",
             "CODING_WORKER_ECR_REPOSITORY",
             "CODING_WORKER_ECR_TAG",
+            "CODING_QUOTA_PER_USER",
+            "CODING_QUOTA_PER_PROGRAM",
+            "CODING_QUOTA_PER_TEAM",
         ):
             self.assertIn(key, runtime_config)
             self.assertRegex(common, rf"\n    {key}\n")
@@ -202,6 +205,15 @@ class InstallerScaleOutTests(unittest.TestCase):
         self.assertEqual(tfvars["coding_launcher"], "ecs")
         self.assertEqual(tfvars["coding_max_running"], 5)
 
+    def test_coding_quotas_map_and_default_to_unset(self):
+        cfg = self._aws()
+        cfg["runtime"].update(coding_quota_per_user=5, coding_quota_per_program=0)
+        validate_install_config(cfg)
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual((tfvars["coding_quota_per_user"], tfvars["coding_quota_per_program"]), (5, 0))
+        self.assertNotIn("coding_quota_per_team", tfvars)
+        self.assertNotIn("coding_quota_per_user", install_mod.generate_tfvars(self._aws(), cloud="aws"))
+
     def test_launcher_unset_leaves_terraform_default(self):
         tfvars = install_mod.generate_tfvars(self._aws(), cloud="aws")
         self.assertNotIn("coding_launcher", tfvars)
@@ -267,7 +279,7 @@ class TerraformPlanTests(unittest.TestCase):
                 ["terraform", "test"], cwd=workdir, env=env, capture_output=True, text=True, timeout=600,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("9 passed, 0 failed", result.stdout)
+            self.assertIn("10 passed, 0 failed", result.stdout)
 
 
 if __name__ == "__main__":

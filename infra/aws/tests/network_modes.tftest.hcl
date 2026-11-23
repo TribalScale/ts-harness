@@ -364,6 +364,20 @@ run "ecs_launcher_needs_the_fargate_stack" {
   ]
 }
 
+run "coding_quotas_reach_runtime_config" {
+  command = plan
+
+  variables {
+    memory_backend        = "rds"
+    coding_quota_per_user = 5
+  }
+
+  assert {
+    condition     = local.runtime_config_object.CODING_QUOTA_PER_USER == "5" && local.runtime_config_object.CODING_QUOTA_PER_PROGRAM == ""
+    error_message = "a set quota is published; an unset one stays blank so the harness default applies"
+  }
+}
+
 run "local_launcher_keeps_the_stack_for_fallback" {
   command = plan
 
