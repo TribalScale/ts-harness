@@ -395,6 +395,7 @@ First public release.
 
 ### Fixed
 
+- A running ticket pool now reads the project's `max_parallel_tickets` each time a slot frees, instead of keeping the value it started with, so raising the limit in Project settings takes effect without restarting the program.
 - Code review revisions no longer revert files outside the cited list. A fix often needs a supporting file (a package script, a repository method); the OpenCode session that reverted them also checked out the cited files, so correct fixes were erased and the same findings came back revision after revision. Extra files are now kept, logged (`coding_revision_out_of_scope`) and listed in the result (`out_of_scope_files`) for the code-review gate. A revision that ends identical to the reviewed head fails (`revision produced no changes`) instead of reporting success.
 - The quick re-check after a pre-push review fix never ran: the coding job never set `repo_has_pr_ci`, so every fix re-ran the full verification, even on repositories with CI on pull requests.
 - Request sources were cut at 80,000 characters each (150,000 in total): a plant's 275,000-character scheduling-rules document reached the PRD only up to its fourth section. The defaults are now 300,000 and 400,000, adjustable with `intake_max_doc_chars` / `intake_max_total_chars` (Terraform and install YAML, through the runtime-config store) or `TS_HARNESS_INTAKE_MAX_DOC_CHARS` / `TS_HARNESS_INTAKE_MAX_TOTAL_CHARS`. The intake agent tells the requester when a source was still cut (`prd-intake` 1.3.0).
