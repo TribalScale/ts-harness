@@ -133,6 +133,16 @@ run "scale_out_in_vpc" {
   }
 
   assert {
+    condition     = local.runtime_config_object.CODING_ECS_ASSIGN_PUBLIC_IP == "false" && length(aws_vpc_security_group_egress_rule.coding_worker_internet) == 0
+    error_message = "private-subnet workers get no public IP and no direct internet egress"
+  }
+
+  assert {
+    condition     = length(local.coding_worker_proxy_env) == 6
+    error_message = "private-subnet workers send traffic through the egress proxy"
+  }
+
+  assert {
     condition     = local.runtime_config_object.CODING_ECS_TASK_DEFINITION == "ts-harness-coding-worker"
     error_message = "runtime config names the worker task family"
   }
@@ -283,5 +293,88 @@ run "scale_out_with_llm_proxy" {
   assert {
     condition     = contains(keys(local.all_secrets), "llm-proxy-secret")
     error_message = "the proxy token signing secret is provisioned"
+  }
+}
+
+run "ecs_workers_in_default_vpc" {
+  command = plan
+
+  variables {
+    memory_backend        = "rds"
+    coding_workers_on_ecs = true
+    coding_launcher       = "ecs"
+  }
+
+  assert {
+    condition     = length(module.vpc) == 0 && length(aws_ecs_cluster.coding) == 1 && length(aws_ecs_task_definition.coding_worker) == 1
+    error_message = "coding_workers_on_ecs builds the cluster and task definition without a VPC"
+  }
+
+  assert {
+    condition     = aws_lb.memory_api[0].internal && tolist(aws_lb.memory_api[0].subnets) == tolist(["subnet-default-a", "subnet-default-b"])
+    error_message = "the internal load balancer sits in the default-VPC subnets"
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.egress_proxy) == 0 && length(aws_vpc_endpoint.interface) == 0 && length(aws_vpc_endpoint.s3) == 0
+    error_message = "the default VPC has no egress proxy or VPC endpoints"
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.coding_worker_internet) == 2 && length(aws_vpc_security_group_egress_rule.coding_worker_to_proxy) == 0
+    error_message = "default-VPC workers egress directly on 80 and 443"
+  }
+
+  assert {
+    condition     = length(local.coding_worker_proxy_env) == 0 && local.egress_proxy_url == ""
+    error_message = "default-VPC workers get no proxy variables"
+  }
+
+  assert {
+    condition     = local.runtime_config_object.CODING_ECS_ASSIGN_PUBLIC_IP == "true" && local.runtime_config_object.CODING_LAUNCHER == "ecs" && local.runtime_config_object.CODING_ECS_SUBNETS == "subnet-default-a,subnet-default-b"
+    error_message = "runtime config tells the launcher to use ECS with public IPs in the default subnets"
+  }
+
+  assert {
+    condition     = local.runtime_config_object.CODING_EGRESS_PROXY_SERVICE == "" && local.runtime_config_object.CODING_EGRESS_DOMAINS_PARAMETER == ""
+    error_message = "no egress proxy service or allowlist parameter is published"
+  }
+
+  assert {
+    condition     = contains(keys(local.coding_worker_secret_env), "ANTHROPIC_API_KEY") && contains(keys(local.coding_worker_secret_env), "CODING_BACKEND_API_KEY")
+    error_message = "without the LLM proxy, workers get the same provider keys as local workers"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.coding_launcher) == 1
+    error_message = "the host may run worker tasks and push the worker image"
+  }
+}
+
+run "ecs_launcher_needs_the_fargate_stack" {
+  command = plan
+
+  variables {
+    memory_backend  = "rds"
+    coding_launcher = "ecs"
+  }
+
+  expect_failures = [
+    terraform_data.coding_launcher_ecs,
+  ]
+}
+
+run "local_launcher_keeps_the_stack_for_fallback" {
+  command = plan
+
+  variables {
+    memory_backend        = "rds"
+    coding_workers_on_ecs = true
+    coding_launcher       = "local"
+  }
+
+  assert {
+    condition     = length(aws_ecs_cluster.coding) == 1 && local.runtime_config_object.CODING_LAUNCHER == "local"
+    error_message = "switching the launcher back to local keeps the Fargate stack in place"
   }
 }

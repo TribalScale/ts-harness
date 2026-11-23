@@ -145,6 +145,22 @@ class EcsConfigTests(unittest.TestCase):
         )
         self.assertEqual((cfg.subnets, cfg.capacity_provider, cfg.region), (["subnet-a", "subnet-b"], "FARGATE_SPOT", "us-west-2"))
 
+    def test_public_ip_only_when_asked(self):
+        base = {
+            "CODING_ECS_CLUSTER": "c",
+            "CODING_ECS_TASK_DEFINITION": "t",
+            "CODING_ECS_SUBNETS": "s",
+            "CODING_ECS_SECURITY_GROUPS": "g",
+        }
+        self.assertFalse(EcsConfig.from_env(base).assign_public_ip)
+        self.assertFalse(EcsConfig.from_env({**base, "CODING_ECS_ASSIGN_PUBLIC_IP": "false"}).assign_public_ip)
+        cfg = EcsConfig.from_env({**base, "CODING_ECS_ASSIGN_PUBLIC_IP": "true"})
+        self.assertTrue(cfg.assign_public_ip)
+        request = EcsLauncher(cfg, client=object(), environ={}).run_task_request(JOB, "tok")
+        self.assertEqual(request["networkConfiguration"]["awsvpcConfiguration"]["assignPublicIp"], "ENABLED")
+        request = EcsLauncher(CONFIG, client=object(), environ={}).run_task_request(JOB, "tok")
+        self.assertEqual(request["networkConfiguration"]["awsvpcConfiguration"]["assignPublicIp"], "DISABLED")
+
     def test_build_launcher_picks_ecs(self):
         launcher = launcher_mod.build_launcher(
             {

@@ -49,8 +49,12 @@ locals {
     CODING_ECS_CLUSTER                    = try(aws_ecs_cluster.coding[0].name, "")
     CODING_ECS_TASK_DEFINITION            = local.ecs_enabled ? local.coding_worker_family : ""
     CODING_ECS_CONTAINER                  = local.coding_worker_container
-    CODING_ECS_SUBNETS                    = join(",", local.ecs_enabled ? local.private_subnet_ids : [])
+    CODING_ECS_SUBNETS                    = join(",", local.ecs_enabled ? local.ecs_subnet_ids : [])
     CODING_ECS_SECURITY_GROUPS            = join(",", aws_security_group.coding_worker[*].id)
+    CODING_ECS_ASSIGN_PUBLIC_IP           = tostring(local.ecs_default_vpc)
+    CODING_LAUNCHER                       = var.coding_launcher
+    CODING_WORKER_ECR_REPOSITORY          = try(aws_ecr_repository.coding_worker[0].repository_url, "")
+    CODING_WORKER_ECR_TAG                 = local.ecs_enabled ? var.coding_worker_image_tag : ""
     CODING_EGRESS_PROXY_SERVICE           = try(aws_ecs_service.egress_proxy[0].name, "")
     CODING_EGRESS_DOMAINS_PARAMETER       = try(aws_ssm_parameter.egress_extra_domains[0].name, "")
     CODING_EGRESS_PROXY_URL               = local.egress_proxy_url

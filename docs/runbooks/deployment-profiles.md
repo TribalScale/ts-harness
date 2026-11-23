@@ -10,6 +10,11 @@ switching later is a config change plus a redeploy.
 
 `scale_out` is AWS only. The installer rejects it for GCP.
 
+To move only the coding jobs to Fargate and keep everything else on one host,
+stay on `single_host` and set `runtime.coding_workers_on_ecs: true` and
+`runtime.coding_launcher: ecs`. See
+[ECS workers on single_host](coding-workers-ecs.md#ecs-workers-on-single_host-default-vpc).
+
 ## Choosing a profile
 
 Set it in the install config:

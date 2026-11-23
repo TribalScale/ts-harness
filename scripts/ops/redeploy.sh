@@ -110,6 +110,13 @@ REDEPLOY_STEP="image build"
 # worker never bakes in the previous runtime code.
 run_docker_compose_as_admin build agent-runtime
 run_docker_compose_as_admin build
+# Fargate workers pull the image from ECR: push the one just built so they run this commit.
+# A failed push leaves workers on the previous image; the deploy goes on and says so.
+REDEPLOY_STEP="push coding worker image"
+if ! bash "$OPS_DIR/push-coding-worker-image.sh"; then
+    echo "WARNING: coding worker image push failed; Fargate workers keep the previous image" >&2
+    bash "$OPS_DIR/notify-ops.sh" "redeploy: coding worker image push failed on ${deploy_sha}; Fargate workers keep the previous image" || true
+fi
 echo "--- up"
 REDEPLOY_STEP="container start"
 # Everything but the coding launcher (HOLD_CODING_LAUNCHER=1 is still exported): phase 15 below

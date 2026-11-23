@@ -13,7 +13,7 @@ locals {
 # ---------------------------------------------------------------------------
 
 data "aws_vpc" "default" {
-  count   = local.create_rds == 1 && !local.use_vpc ? 1 : 0
+  count   = (local.create_rds == 1 || var.coding_workers_on_ecs) && !local.use_vpc ? 1 : 0
   default = true
 }
 

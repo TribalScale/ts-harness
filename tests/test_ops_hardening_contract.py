@@ -407,7 +407,7 @@ class SharedStateContractTests(unittest.TestCase):
             self.assertIn(f'{mode}="${{{mode}:-rw}}"', compose_env)
         phase12 = (REPO_ROOT / "scripts" / "phases" / "12-compose-up.sh").read_text()
         self.assertLess(phase12.index("resolve_storage_backends"), phase12.index("PHASE_FINGERPRINT="))
-        self.assertIn('"$STORAGE_FINGERPRINT")"', phase12)
+        self.assertIn('"$STORAGE_FINGERPRINT" "$CODING_FINGERPRINT")"', phase12)
         for name in (*STORAGE_FLAGS, "TS_HARNESS_STATE_VOLUME_MODE", "TS_HARNESS_OBJECT_VOLUME_MODE"):
             self.assertIn(f'echo "export {name}=', phase12)
         phase10b = (REPO_ROOT / "scripts" / "phases" / "10b-render-workspace.sh").read_text()

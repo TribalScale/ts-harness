@@ -126,6 +126,16 @@ def validate_install_config(
         and scale_out.get("network_mode", "vpc") != "vpc"
     ):
         raise InstallContractError("deployment_profile=scale_out requires scale_out.network_mode=vpc")
+    runtime = config.get("runtime") or {}
+    ecs_workers = bool(runtime.get("coding_workers_on_ecs")) or (
+        config.get("deployment_profile", "single_host") == "scale_out"
+    )
+    if provider == "gcp" and (runtime.get("coding_workers_on_ecs") or runtime.get("coding_launcher") == "ecs"):
+        raise InstallContractError("coding workers on ECS are only supported on aws")
+    if runtime.get("coding_launcher") == "ecs" and not ecs_workers:
+        raise InstallContractError(
+            "runtime.coding_launcher=ecs needs runtime.coding_workers_on_ecs=true or deployment_profile=scale_out"
+        )
 
     managed_db = config.get("managed_db")
     if not isinstance(managed_db, Mapping) or not managed_db:

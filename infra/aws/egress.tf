@@ -1,4 +1,5 @@
-# Squid forward proxy on Fargate. Coding workers have no NAT route of their
+# Squid forward proxy on Fargate (private subnets only; default-VPC workers go
+# direct). Coding workers have no NAT route of their
 # own; package installs, git and LLM calls go through this allowlist.
 # Terraform owns the base list. Project registries are appended at runtime
 # through the egress-extra-domains SSM parameter (Projects > Registries),
@@ -47,7 +48,7 @@ locals {
 }
 
 resource "aws_ssm_parameter" "egress_extra_domains" {
-  count       = local.ecs_enabled ? 1 : 0
+  count       = local.ecs_private ? 1 : 0
   name        = "/${local.secret_prefix_effective}/egress-extra-domains"
   description = "Comma-separated registry domains added from project settings; 'none' when empty."
   type        = "String"
@@ -59,13 +60,13 @@ resource "aws_ssm_parameter" "egress_extra_domains" {
 }
 
 resource "aws_cloudwatch_log_group" "egress_proxy" {
-  count             = local.ecs_enabled ? 1 : 0
+  count             = local.ecs_private ? 1 : 0
   name              = "/${var.project_name}/egress-proxy"
   retention_in_days = var.coding_worker_log_retention_days
 }
 
 resource "aws_security_group" "egress_proxy" {
-  count       = local.ecs_enabled ? 1 : 0
+  count       = local.ecs_private ? 1 : 0
   name        = "${var.project_name}-egress-proxy"
   description = "Squid egress proxy for coding workers"
   vpc_id      = local.vpc_id
@@ -76,7 +77,7 @@ resource "aws_security_group" "egress_proxy" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_workers" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id            = aws_security_group.egress_proxy[0].id
   from_port                    = 3128
@@ -87,7 +88,7 @@ resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_workers" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_host" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id            = aws_security_group.egress_proxy[0].id
   from_port                    = 3128
@@ -98,7 +99,7 @@ resource "aws_vpc_security_group_ingress_rule" "egress_proxy_from_host" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "egress_proxy_https" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id = aws_security_group.egress_proxy[0].id
   from_port         = 443
@@ -109,7 +110,7 @@ resource "aws_vpc_security_group_egress_rule" "egress_proxy_https" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "egress_proxy_http" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
 
   security_group_id = aws_security_group.egress_proxy[0].id
   from_port         = 80
@@ -120,13 +121,13 @@ resource "aws_vpc_security_group_egress_rule" "egress_proxy_http" {
 }
 
 resource "aws_service_discovery_private_dns_namespace" "internal" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
   name  = "${var.project_name}.internal"
   vpc   = local.vpc_id
 }
 
 resource "aws_service_discovery_service" "egress_proxy" {
-  count = local.ecs_enabled ? 1 : 0
+  count = local.ecs_private ? 1 : 0
   name  = "egress-proxy"
 
   dns_config {
@@ -141,7 +142,7 @@ resource "aws_service_discovery_service" "egress_proxy" {
 }
 
 resource "aws_ecs_task_definition" "egress_proxy" {
-  count                    = local.ecs_enabled ? 1 : 0
+  count                    = local.ecs_private ? 1 : 0
   family                   = "${var.project_name}-egress-proxy"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -176,7 +177,7 @@ resource "aws_ecs_task_definition" "egress_proxy" {
 }
 
 resource "aws_ecs_service" "egress_proxy" {
-  count           = local.ecs_enabled ? 1 : 0
+  count           = local.ecs_private ? 1 : 0
   name            = "egress-proxy"
   cluster         = aws_ecs_cluster.coding[0].id
   task_definition = aws_ecs_task_definition.egress_proxy[0].arn

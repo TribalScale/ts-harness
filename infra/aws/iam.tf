@@ -111,8 +111,8 @@ resource "aws_iam_role_policy" "bedrock_invoke_model" {
   policy = data.aws_iam_policy_document.bedrock_invoke_model[0].json
 }
 
-# Coding launcher (scale_out): start, inspect and stop Fargate coding workers,
-# and restart the egress proxy after a registry allowlist change.
+# Coding launcher (Fargate workers): start, inspect and stop coding worker tasks,
+# push the worker image, and restart the egress proxy after a registry allowlist change.
 data "aws_iam_policy_document" "coding_launcher" {
   count = local.ecs_enabled ? 1 : 0
 
@@ -146,16 +146,45 @@ data "aws_iam_policy_document" "coding_launcher" {
     }
   }
 
+  dynamic "statement" {
+    for_each = local.ecs_private ? [1] : []
+    content {
+      sid       = "RestartEgressProxy"
+      actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+      resources = [aws_ecs_service.egress_proxy[0].id]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.ecs_private ? [1] : []
+    content {
+      sid       = "EditEgressAllowlist"
+      actions   = ["ssm:GetParameter", "ssm:PutParameter"]
+      resources = [aws_ssm_parameter.egress_extra_domains[0].arn]
+    }
+  }
+
+  # scripts/ops/push-coding-worker-image.sh pushes the image the host just built,
+  # so workers run the same harness code as the host after every redeploy.
   statement {
-    sid       = "RestartEgressProxy"
-    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
-    resources = [aws_ecs_service.egress_proxy[0].id]
+    sid       = "EcrLogin"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
   }
 
   statement {
-    sid       = "EditEgressAllowlist"
-    actions   = ["ssm:GetParameter", "ssm:PutParameter"]
-    resources = [aws_ssm_parameter.egress_extra_domains[0].arn]
+    sid = "PushCodingWorkerImage"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:CompleteLayerUpload",
+      "ecr:DescribeImages",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+    ]
+    resources = [aws_ecr_repository.coding_worker[0].arn]
   }
 }
 

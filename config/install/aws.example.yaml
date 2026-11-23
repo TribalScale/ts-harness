@@ -79,6 +79,11 @@ runtime:
   # OpenCode runs as queued jobs in worker containers; turn on after one supervised run.
   coding_jobs_enabled: false
   coding_max_running: 3
+  # Run coding jobs as Fargate tasks instead of host containers (AWS). The first key
+  # builds the stack (in the default VPC on single_host), the second chooses the launcher.
+  # See docs/runbooks/coding-workers-ecs.md.
+  # coding_workers_on_ecs: true
+  # coding_launcher: ecs
   embeddings_provider: openai
   embeddings_model: text-embedding-3-small
   embeddings_dimensions: 1536

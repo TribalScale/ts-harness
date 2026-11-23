@@ -46,6 +46,7 @@ class WorkerIsolationTests(unittest.TestCase):
         self.assertEqual(
             sorted(egress_rules),
             [
+                "coding_worker_internet",
                 "coding_worker_to_endpoints",
                 "coding_worker_to_memory_api",
                 "coding_worker_to_proxy",
@@ -53,7 +54,17 @@ class WorkerIsolationTests(unittest.TestCase):
             ],
         )
         for rule in egress_rules:
+            if rule == "coding_worker_internet":
+                continue
             self.assertNotIn("0.0.0.0/0", _resource_block(ecs, "aws_vpc_security_group_egress_rule", rule))
+
+    def test_direct_internet_egress_only_in_the_default_vpc(self):
+        ecs = _tf("ecs.tf")
+        internet = _resource_block(ecs, "aws_vpc_security_group_egress_rule", "coding_worker_internet")
+        self.assertIn("local.ecs_default_vpc", internet)
+        self.assertIn('toset(["80", "443"])', internet)
+        for rule in ("coding_worker_to_endpoints", "coding_worker_to_s3", "coding_worker_to_proxy"):
+            self.assertIn("local.ecs_private", _resource_block(ecs, "aws_vpc_security_group_egress_rule", rule))
 
     def test_task_role_only_writes_logs(self):
         ecs = _tf("ecs.tf")
@@ -119,6 +130,10 @@ class LauncherPermissionTests(unittest.TestCase):
             "CODING_ECS_SECURITY_GROUPS",
             "CODING_EGRESS_PROXY_SERVICE",
             "CODING_EGRESS_DOMAINS_PARAMETER",
+            "CODING_ECS_ASSIGN_PUBLIC_IP",
+            "CODING_LAUNCHER",
+            "CODING_WORKER_ECR_REPOSITORY",
+            "CODING_WORKER_ECR_TAG",
         ):
             self.assertIn(key, runtime_config)
             self.assertRegex(common, rf"\n    {key}\n")
@@ -175,6 +190,36 @@ class InstallerScaleOutTests(unittest.TestCase):
             validate_install_config(cfg)
         self.assertIn("network_mode=vpc", str(ctx.exception))
 
+    def test_single_host_ecs_workers_map_switches(self):
+        cfg = self._aws()
+        cfg["runtime"]["coding_workers_on_ecs"] = True
+        cfg["runtime"]["coding_launcher"] = "ecs"
+        cfg["runtime"]["coding_max_running"] = 5
+        validate_install_config(cfg)
+        tfvars = install_mod.generate_tfvars(cfg, cloud="aws")
+        self.assertEqual(tfvars["network_mode"], "default")
+        self.assertIs(tfvars["coding_workers_on_ecs"], True)
+        self.assertEqual(tfvars["coding_launcher"], "ecs")
+        self.assertEqual(tfvars["coding_max_running"], 5)
+
+    def test_launcher_unset_leaves_terraform_default(self):
+        tfvars = install_mod.generate_tfvars(self._aws(), cloud="aws")
+        self.assertNotIn("coding_launcher", tfvars)
+        self.assertIs(tfvars["coding_workers_on_ecs"], False)
+
+    def test_ecs_launcher_needs_the_fargate_stack(self):
+        cfg = self._aws()
+        cfg["runtime"]["coding_launcher"] = "ecs"
+        with self.assertRaises(InstallContractError) as ctx:
+            validate_install_config(cfg)
+        self.assertIn("coding_workers_on_ecs", str(ctx.exception))
+
+    def test_gcp_rejects_ecs_workers(self):
+        cfg = yaml.safe_load(GCP_EXAMPLE.read_text())
+        cfg["runtime"]["coding_workers_on_ecs"] = True
+        with self.assertRaises(InstallContractError):
+            validate_install_config(cfg)
+
     def test_gcp_rejects_scale_out_settings(self):
         cfg = yaml.safe_load(GCP_EXAMPLE.read_text())
         cfg["scale_out"] = {"network_mode": "vpc"}
@@ -222,7 +267,7 @@ class TerraformPlanTests(unittest.TestCase):
                 ["terraform", "test"], cwd=workdir, env=env, capture_output=True, text=True, timeout=600,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("6 passed, 0 failed", result.stdout)
+            self.assertIn("9 passed, 0 failed", result.stdout)
 
 
 if __name__ == "__main__":

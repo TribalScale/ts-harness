@@ -503,6 +503,29 @@ variable "network_mode" {
   }
 }
 
+variable "coding_workers_on_ecs" {
+  description = "Build the Fargate coding worker stack without scale_out. With network_mode = default, workers run in the default VPC with a public IP for outbound traffic only (no inbound rules, no egress proxy). scale_out with network_mode = vpc builds it regardless."
+  type        = bool
+  default     = false
+}
+
+variable "coding_launcher" {
+  description = "Where coding jobs run: local (containers on the host) or ecs (Fargate tasks). Blank follows deployment_profile: ecs on scale_out, local otherwise. ecs needs the Fargate stack (coding_workers_on_ecs or scale_out in a vpc)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "local", "ecs"], var.coding_launcher)
+    error_message = "coding_launcher must be blank, local or ecs."
+  }
+}
+
+variable "coding_ecs_excluded_zone_ids" {
+  description = "Availability zone ids left out of the default-VPC subnets for Fargate workers and their load balancer (Fargate does not run in use1-az3)."
+  type        = list(string)
+  default     = ["use1-az3"]
+}
+
 variable "vpc_cidr" {
   description = "CIDR block for the dedicated VPC when network_mode = vpc."
   type        = string
