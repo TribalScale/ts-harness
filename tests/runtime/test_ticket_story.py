@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 
 from ts_harness.implementation import progress
 from ts_harness.workflows import ticket_story as ts
@@ -129,6 +129,43 @@ class ProgressTests(unittest.TestCase):
         progress.begin("verification", {"setup": 4.2, "coding": 300})
         self.assertEqual(progress.snapshot()["detail"], "")
         progress.reset()
+
+    def test_each_step_inside_a_phase_is_timed(self):
+        clock = [100.0]
+        with patch.object(progress, "_clock", side_effect=lambda: clock[0]):
+            progress.reset()
+            progress.begin("review", {"setup": 5})
+            progress.detail("reviewing (round 1)")
+            clock[0] += 100
+            progress.detail("fixing 2 review findings")
+            clock[0] += 540
+            progress.detail("quick re-check of the fix")
+            clock[0] += 60
+            snap = progress.snapshot()
+            self.assertEqual(snap["steps"]["review"], [
+                {"label": "reviewing (round 1)", "seconds": 100.0},
+                {"label": "fixing 2 review findings", "seconds": 540.0},
+                {"label": "quick re-check of the fix", "seconds": 60.0, "active": True},
+            ])
+            progress.begin("push", {"setup": 5, "review": 700})
+            progress.detail("pushing the branch")
+            clock[0] += 4
+            timings = progress.step_timings()
+            self.assertEqual(timings["review"][-1], {"label": "quick re-check of the fix", "seconds": 60.0})
+            self.assertEqual(timings["push"], [{"label": "pushing the branch", "seconds": 4.0}])
+            progress.reset()
+
+    def test_repeating_a_step_label_extends_it(self):
+        clock = [0.0]
+        with patch.object(progress, "_clock", side_effect=lambda: clock[0]):
+            progress.reset()
+            progress.begin("verification")
+            progress.detail("running checks")
+            clock[0] += 30
+            progress.detail("running checks")
+            clock[0] += 30
+            self.assertEqual(progress.step_timings()["verification"], [{"label": "running checks", "seconds": 60.0}])
+            progress.reset()
 
 
 if __name__ == "__main__":

@@ -515,6 +515,7 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "screenshots": dict(getattr(result, "screenshots", None) or {}),
         "pre_push_review": dict(getattr(result, "pre_push_review", None) or {}),
         "timings": dict(getattr(result, "timings", None) or {}),
+        "step_timings": _step_timings(),
         "opencode_timeline": _opencode_timeline(request.workspace_dir, started_ms),
         "out_of_scope_files": list(getattr(result, "out_of_scope_files", None) or []),
         "mode": spec.get("mode") or "implement",
@@ -523,6 +524,13 @@ def run_coding_request(spec: dict[str, Any], *, record_refs: bool = True) -> dic
         "base_branch": spec["base_branch"],
         "provider": spec.get("provider") or "",
     }
+
+
+def _step_timings() -> dict[str, list[dict[str, Any]]]:
+    """Seconds per step inside each phase ("reviewing (round 1)", "pushing the branch")."""
+    from ts_harness.implementation import progress
+
+    return progress.step_timings()
 
 
 def _opencode_timeline(workspace_dir: Any, since_ms: int) -> list[dict[str, Any]]:

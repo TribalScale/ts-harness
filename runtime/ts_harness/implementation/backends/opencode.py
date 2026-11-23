@@ -721,6 +721,7 @@ class OpenCodeBackend:
         check_changeset: bool = True,
         test_env: TestEnvironment | None = None,
         quick: bool = False,
+        check_label: str = "running checks",
     ) -> tuple[CodingResult | None, str, int, list[str], dict[str, Any], dict[str, Any]]:
         """Run host verification with OpenCode fix passes.
 
@@ -731,6 +732,7 @@ class OpenCodeBackend:
         base_ref = f"origin/{request.base_branch}" if request.base_branch else None
         reverted: list[str] = []
         while True:
+            progress.detail(check_label if not fix_passes_used else f"{check_label} after fix pass {fix_passes_used}")
             reverted = sorted({*reverted, *self._revert_undeclared(repo_dir, request)})
             strays = stop_stray_processes(repo_dir)
             if strays:
@@ -1013,7 +1015,7 @@ class OpenCodeBackend:
                 rounds.append({"status": "out_of_time", "summary": "", "findings": []})
                 break
             output_path = out_dir / f"review-{number + 1}.json"
-            progress.detail(f"review round {number + 1}")
+            progress.detail(f"reviewing (round {number + 1})")
             output_path.unlink(missing_ok=True)
             prompt = ppr.build_review_prompt(
                 work_order_id=request.work_order_id,
@@ -1059,10 +1061,16 @@ class OpenCodeBackend:
                 # only when CI runs the full suite on the PR; without CI the full verification runs again,
                 # so the pushed commit always has a full test run behind it.
                 quick = request.repo_has_pr_ci is True
-                progress.detail("re-checking the fix" if quick else "re-running the full verification (no CI on pull requests)")
+                if quick:
+                    label = "quick re-check of the fix"
+                elif request.repo_has_pr_ci is False:
+                    label = "full re-verification (no CI on pull requests)"
+                else:
+                    label = "full re-verification (could not tell whether CI runs on pull requests)"
                 failure, log, _passes, new_changed, new_security, new_verification = self._verify_with_fixes(
                     repo_dir, request, binary=binary, provider=provider, env=env, branch=branch, log=log,
                     log_path=log_path, skills_materialized=skills_materialized, test_env=test_env, quick=quick,
+                    check_label=label,
                 )
             if fixed.returncode != 0 or failure is not None:
                 self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
@@ -1336,6 +1344,7 @@ class OpenCodeBackend:
                 verification=verification,
             )
             lap("review", "push")
+            progress.detail("checking the changes")
             out_of_scope = self._out_of_scope_files(repo_dir, request, baseline=baseline)
             if baseline and not self._names_since(repo_dir, baseline):
                 # Sending an unchanged PR back to review only repeats the same findings.
@@ -1355,6 +1364,7 @@ class OpenCodeBackend:
 
             review_record = summary_record(review_rounds, model=request.review_model) if review_rounds else {}
 
+            progress.detail("scanning for secrets")
             security = self._with_scanned_sha(repo_dir, security)
             # The reviewer can close the PR while OpenCode is still working.
             gone, _head = self._revision_target(request)
@@ -1370,6 +1380,7 @@ class OpenCodeBackend:
                     error=gone,
                 )
             git_env = _git_env(request.repo_url)
+            progress.detail("pushing the branch")
             push_branch(
                 repo_dir,
                 branch=branch,
@@ -1377,6 +1388,7 @@ class OpenCodeBackend:
                 env=git_env,
                 remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
             )
+            progress.detail("updating the pull request" if request.pr_url else "opening the pull request")
             pr_url = create_pull_request(
                 repo_dir,
                 title=pr_title(request),
@@ -1394,6 +1406,7 @@ class OpenCodeBackend:
                 runner=self.runner,
                 env=git_env,
             )
+            progress.detail("publishing screenshots")
             screenshots = self._publish_screenshots(repo_dir, test_env, branch=branch, pr_url=pr_url, env=git_env)
             lap("push")
             progress.begin("done", timings)

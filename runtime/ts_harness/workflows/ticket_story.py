@@ -165,6 +165,7 @@ def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any
             "queued_seconds": _seconds(created, started) or 0,
             "cost_usd": _cost(job),
             "phases": result.get("timings") if isinstance(result.get("timings"), dict) else None,
+            "steps": result.get("step_timings") if isinstance(result.get("step_timings"), dict) else None,
             "review": result.get("pre_push_review") if isinstance(result.get("pre_push_review"), dict) else None,
         }
         if status in {"queued", "starting", "running"}:
@@ -324,6 +325,7 @@ def current_run(events: list[dict[str, Any]], now: datetime) -> dict[str, Any] |
         "phase_seconds": progress.get("phase_seconds"),
         "detail": str(progress.get("detail") or ""),
         "done": progress.get("done") if isinstance(progress.get("done"), dict) else {},
+        "steps": progress.get("steps") if isinstance(progress.get("steps"), dict) else {},
     }
 
 
