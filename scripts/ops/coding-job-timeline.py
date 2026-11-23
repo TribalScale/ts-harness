@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Where a ticket's coding runs spent their time.
 
-    docker exec docker-agent-runtime-1 python3 /app/scripts/ops/coding-job-timeline.py JMT-12
+    docker exec docker-agent-runtime-1 python3 /app/scripts/ops/coding-job-timeline.py PROJ-12
     docker exec docker-agent-runtime-1 python3 /app/scripts/ops/coding-job-timeline.py --last 10
 
 For each coding job: queue wait, harness phases (setup, coding, verification, review, push),
@@ -24,7 +24,7 @@ def _m(seconds) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("work_order", nargs="?", help="work order id (e.g. JMT-12) or job id prefix")
+    parser.add_argument("work_order", nargs="?", help="work order id (e.g. PROJ-12) or job id prefix")
     parser.add_argument("--last", type=int, default=0, help="the last N finished jobs instead")
     args = parser.parse_args()
     if not args.work_order and not args.last:

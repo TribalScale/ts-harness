@@ -1359,13 +1359,18 @@ class CodingBackendToolTests(unittest.TestCase):
 
 
 class RevisionScopePushTests(unittest.TestCase):
-    def test_out_of_scope_revision_is_not_pushed(self):
+    """A revision may need files the findings did not name; they are kept and reported, never reverted."""
+
+    def _run(self, names_since: str):
+        calls: list[list[str]] = []
+
         def runner(cmd, **_kwargs):
+            calls.append(list(cmd))
             completed = MagicMock(returncode=0, stdout="", stderr="")
             if cmd[:2] == ["git", "rev-parse"]:
                 completed.stdout = "abc123\n"
-            if cmd[:3] == ["git", "diff", "--name-only"]:
-                completed.stdout = "requirements-dev.txt\n"
+            if cmd[:3] == ["git", "diff", "--name-only"] and any(".." in part for part in cmd):
+                completed.stdout = names_since
             return completed
 
         backend = OpenCodeBackend(runner=runner, verification_fix_passes=0)
@@ -1379,6 +1384,7 @@ class RevisionScopePushTests(unittest.TestCase):
             revision_files=["app/pricing_client.py"],
         )
         pushed: list[str] = []
+        opencode_prompts: list[str] = []
         with (
             patch(
                 "ts_harness.implementation.backends.opencode.resolve_coding_backend_credentials",
@@ -1390,7 +1396,12 @@ class RevisionScopePushTests(unittest.TestCase):
             patch.object(backend, "_prepare_test_env", return_value=(TestEnvironment(python="python3"), "")),
             patch("ts_harness.implementation.backends.opencode.install_declared_dependencies", return_value=""),
             patch("ts_harness.implementation.backends.opencode.resolve_opencode_binary", return_value="opencode"),
-            patch.object(backend, "_run_opencode", return_value=MagicMock(returncode=0, stdout="", stderr="")),
+            patch.object(
+                backend,
+                "_run_opencode",
+                side_effect=lambda cmd, **_k: opencode_prompts.append(" ".join(map(str, cmd)))
+                or MagicMock(returncode=0, stdout="", stderr=""),
+            ),
             patch(
                 "ts_harness.implementation.backends.opencode.verify_implementation",
                 return_value=VerifyResult(ok=True, reasons=[], summary="ok", log_tail=""),
@@ -1398,16 +1409,28 @@ class RevisionScopePushTests(unittest.TestCase):
             patch("ts_harness.implementation.backends.opencode.commit_all_changes", return_value=True),
             patch(
                 "ts_harness.implementation.backends.opencode.list_changed_files",
-                return_value=["requirements-dev.txt"],
+                return_value=["app/pricing_client.py", "requirements-dev.txt"],
             ),
             patch(
                 "ts_harness.implementation.backends.opencode.push_branch",
                 side_effect=lambda *_args, **_kwargs: pushed.append("pushed"),
             ),
+            patch("ts_harness.implementation.backends.opencode.create_pull_request", return_value="https://github.com/org/app/pull/9"),
         ):
             result = backend.implement(request)
+        return result, pushed, opencode_prompts, calls
+
+    def test_extra_files_are_kept_and_reported(self):
+        result, pushed, prompts, calls = self._run("app/pricing_client.py\nrequirements-dev.txt\n")
+        self.assertEqual(pushed, ["pushed"], result.error)
+        self.assertEqual(result.out_of_scope_files, ["requirements-dev.txt"])
+        self.assertFalse(any("Revert changes" in prompt for prompt in prompts))
+        self.assertFalse(any(cmd[:2] == ["git", "checkout"] for cmd in calls))
+
+    def test_a_revision_with_no_net_change_fails_instead_of_pushing(self):
+        result, pushed, _prompts, _calls = self._run("")
         self.assertFalse(result.ok)
-        self.assertTrue(str(result.error).startswith("revision_scope:"))
+        self.assertIn("revision produced no changes", str(result.error))
         self.assertEqual(pushed, [])
 
 

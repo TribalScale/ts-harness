@@ -267,6 +267,14 @@ def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -
 _USAGE_RUN = threading.local()
 
 
+def summary_record_or_empty(review_rounds: list[dict[str, Any]], model: str | None) -> dict[str, Any]:
+    if not review_rounds:
+        return {}
+    from ts_harness.implementation.pre_push_review import summary_record
+
+    return summary_record(review_rounds, model=model)
+
+
 def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
     """A data directory of its own for each work order's OpenCode runs.
 
@@ -940,70 +948,27 @@ class OpenCodeBackend:
             return security
         return {**security, "scanned_sha": sha}
 
-    def _reject_out_of_scope_revision(
-        self,
-        repo_dir: Path,
-        request: CodingRequest,
-        *,
-        baseline: str,
-        binary: str,
-        provider: str,
-        env: dict[str, str],
-        branch: str,
-        log: str,
-        log_path: Path,
-    ) -> CodingResult | None:
+    def _out_of_scope_files(self, repo_dir: Path, request: CodingRequest, *, baseline: str) -> list[str]:
+        """Files the revision changed beyond the cited ones and their tests. They stay in the PR.
+
+        A fix often needs a supporting file the finding did not name (a package script, a
+        repository method). Reverting them undid correct fixes (the reverting agent also
+        checked out the cited files), so the code-review gate, which reads the whole diff,
+        decides whether they belong.
+        """
         cited = [path for path in (request.revision_files or []) if str(path).strip()]
         if not cited or not baseline:
-            return None
+            return []
         from ts_harness.implementation.revision_scope import (
             allowed_revision_paths,
             unexpected_revision_paths,
         )
 
-        def extras() -> list[str]:
-            allowed = allowed_revision_paths(cited, repo_dir)
-            return unexpected_revision_paths(self._names_since(repo_dir, baseline), allowed)
-
-        extra = extras()
-        if not extra:
-            return None
-        prompt = (
-            "Revert changes to these files: "
-            + ", ".join(extra)
-            + ". You may only edit: "
-            + ", ".join(cited)
-            + ", plus tests. Do not add a new dependency file.\n"
-        )
-        fix_cmd = build_opencode_command(
-            binary=binary,
-            repo_dir=repo_dir,
-            prompt=prompt,
-            run_args=self.run_args,
-            provider=provider,
-            model=request.model,
-        )
-        self._run_opencode(
-            fix_cmd,
-            cwd=str(repo_dir),
-            env=env,
-            log_path=log_path,
-            work_order_id=request.work_order_id,
-        )
-        commit_all_changes(repo_dir, message=commit_message(request), runner=self.runner)
-        extra = extras()
-        if not extra:
-            return None
-        changed = list_changed_files(repo_dir, runner=self.runner)
-        return CodingResult(
-            ok=False,
-            branch=branch,
-            summary="Revision edited files the blocking findings did not name",
-            changed_files=changed,
-            log_tail=log,
-            log_path=str(log_path),
-            error="revision_scope: " + ", ".join(extra),
-        )
+        allowed = allowed_revision_paths(cited, repo_dir)
+        extra = unexpected_revision_paths(self._names_since(repo_dir, baseline), allowed)
+        if extra:
+            log_event("coding_revision_out_of_scope", work_order_id=request.work_order_id, files=extra[:50])
+        return extra
 
     def _pre_push_review(
         self,
@@ -1214,7 +1179,8 @@ class OpenCodeBackend:
                 runner=self.runner,
                 from_remote=bool(pr_head),
             )
-            baseline = self._head_sha(repo_dir) if request.revision_files else ""
+            # The reviewed head: a revision must change it, and its cited files bound its scope.
+            baseline = self._head_sha(repo_dir) if (request.revision_files or request.pr_url) else ""
             docs_written: list[str] = []
             skills_written: list[str] = []
             primary_spec: str | None = None
@@ -1353,20 +1319,6 @@ class OpenCodeBackend:
             if committed:
                 changed = changed or list_changed_files(repo_dir, runner=self.runner)
 
-            scope_failure = self._reject_out_of_scope_revision(
-                repo_dir,
-                request,
-                baseline=baseline,
-                binary=binary,
-                provider=provider,
-                env=env,
-                branch=branch,
-                log=log,
-                log_path=log_path,
-            )
-            if scope_failure is not None:
-                return scope_failure
-
             review_rounds, log, changed, security, verification = self._pre_push_review(
                 repo_dir,
                 request,
@@ -1384,13 +1336,21 @@ class OpenCodeBackend:
                 verification=verification,
             )
             lap("review", "push")
-            if any(item.get("status") == "fixed" for item in review_rounds):
-                scope_failure = self._reject_out_of_scope_revision(
-                    repo_dir, request, baseline=baseline, binary=binary, provider=provider,
-                    env=env, branch=branch, log=log, log_path=log_path,
+            out_of_scope = self._out_of_scope_files(repo_dir, request, baseline=baseline)
+            if baseline and not self._names_since(repo_dir, baseline):
+                # Sending an unchanged PR back to review only repeats the same findings.
+                return CodingResult(
+                    ok=False,
+                    branch=branch,
+                    summary="The revision ended with no change to the pull request",
+                    changed_files=changed,
+                    log_tail=log,
+                    log_path=str(log_path),
+                    pr_url=request.pr_url,
+                    pre_push_review=summary_record_or_empty(review_rounds, request.review_model),
+                    timings=timings,
+                    error="revision produced no changes: the branch is identical to the reviewed head",
                 )
-                if scope_failure is not None:
-                    return scope_failure
             from ts_harness.implementation.pre_push_review import summary_record
 
             review_record = summary_record(review_rounds, model=request.review_model) if review_rounds else {}
@@ -1453,6 +1413,7 @@ class OpenCodeBackend:
                 screenshots=screenshots,
                 pre_push_review=review_record,
                 timings=timings,
+                out_of_scope_files=out_of_scope,
             )
         except Exception as exc:  # noqa: BLE001 - surface to agent tool
             return CodingResult(
