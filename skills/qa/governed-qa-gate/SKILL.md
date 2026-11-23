@@ -105,7 +105,12 @@ Then:
    one of them, mark the other criterion `unverified` with a note quoting both
    statements. Failing the PR sends it back to the dev agent, code review then
    asks for the opposite, and the work order loops; a person settles it.
-4. For each PR, evaluate acceptance criteria and record evidence:
+4. **Report every gap in one pass.** Judge every acceptance criterion before you
+   decide, and list each one that is not met as its own defect. Do not stop at
+   the first failure: each QA rejection costs a full revision, and a second
+   pass that only now mentions a gap that was there all along wastes one.
+   Every criterion marked `fail` has a matching entry in `defects`.
+   For each PR, evaluate acceptance criteria and record evidence:
    - `acceptance_criteria`: per-criterion `pass`, `fail` or `unverified` with a short note.
    - `tests`: tests exercised or the host verify summary reused as evidence.
    - `defects`: blocking issues found (empty when the PR passes).

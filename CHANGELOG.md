@@ -396,6 +396,7 @@ First public release.
 
 ### Fixed
 
+- QA reports every unmet acceptance criterion in one pass: the gate's instructions say so, and its output is rejected (and repaired) when it marks more criteria failed than it lists defects, or fails a PR without a defect. A second QA pass that only then mentioned a gap that was there all along cost a full revision.
 - A step whose model call fails for the provider's reasons (overloaded, rate limited, 5xx, timeout) runs again instead of blocking. A QA gate once recorded `server_is_overloaded` as its verdict, which sent the ticket back to OpenCode and then stopped it as a review/QA disagreement.
 - A ticket pool no longer gives up on a ticket whose step blocked moments ago (its automatic revision may still be on the way): a block counts as a failure only after 10 minutes. A pool that did stop because a ticket failed reopens by itself, within a minute, once that ticket is retried, revised or merged, and starts the tickets it left behind.
 - The security check that makes revision triage and review arbitration ask a person no longer matches the verb "authorize" in prose ("the spec does not authorize this order"); it matches security terms such as authentication, authorization, unauthorized, secrets, tokens and credentials.

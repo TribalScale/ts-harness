@@ -390,6 +390,22 @@ def validate_qa_pr_url_set(
                     "add one acceptance_criteria entry (quoting the test) for: " + "; ".join(missing_tests),
                 )
             )
+        # Every unmet criterion is reported in this pass, so one revision fixes them all.
+        failed = [c for c in pr.get("acceptance_criteria") or []
+                  if isinstance(c, dict) and str(c.get("status") or "").strip().lower() == "fail"]
+        defects = [d for d in pr.get("defects") or [] if d]
+        if len(defects) < len(failed):
+            violations.append(
+                ContractViolation(
+                    "/result/prs/defects",
+                    f"qa_gate marks {len(failed)} acceptance criteria failed on {pr.get('pr_url')} but lists "
+                    f"{len(defects)} defect(s); list one defect per failed criterion",
+                )
+            )
+        if str(pr.get("status") or "").strip().lower() == "failed" and not defects:
+            violations.append(
+                ContractViolation("/result/prs/defects", f"qa_gate fails {pr.get('pr_url')} without listing a defect")
+            )
     return violations
 
 

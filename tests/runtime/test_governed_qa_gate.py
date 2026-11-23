@@ -39,7 +39,7 @@ def _pr(pr_url: str, status: str = "success", ref: str = "WO-001") -> dict[str, 
         "status": status,
         "acceptance_criteria": [{"id": "AC1", "result": "pass"}],
         "tests": [{"name": "pytest", "result": "pass"}],
-        "defects": [],
+        "defects": [] if status == "success" else [{"description": "a required behaviour is missing"}],
         "summary": "ready",
     }
 
@@ -112,7 +112,21 @@ class QAContractTests(unittest.TestCase):
             {"criterion": "Given an order with exactly 100 units, Then a 10% discount applies.", "status": "fail"},
             {"criterion": "exactly 50 units gets a 5% discount", "status": "pass"},
         ]
-        self.assertEqual(sc.validate_stage_output(contract, _qa_output("failed", [{**covered, "status": "failed"}]), {"pr_url": PR1, "work_order_body": body}, []), [])
+        self.assertEqual(sc.validate_stage_output(contract, _qa_output("failed", [{**covered, "status": "failed", "defects": [{"description": "100 units gets no discount"}]}]), {"pr_url": PR1, "work_order_body": body}, []), [])
+
+    def test_every_failed_criterion_needs_its_own_defect(self):
+        contract = _qa_contract()
+        pr = _pr(PR1, status="failed")
+        pr["acceptance_criteria"] = [{"criterion": "CSV export", "status": "fail"}, {"criterion": "Retry failure", "status": "fail"}]
+        pr["defects"] = [{"description": "no CSV export"}]
+        violations = sc.validate_stage_output(contract, _qa_output("failed", [pr]), {"pr_url": PR1}, [])
+        self.assertTrue(any("2 acceptance criteria failed" in v.message for v in violations))
+        pr["defects"].append({"description": "no Retry-failure scenario"})
+        self.assertEqual(sc.validate_stage_output(contract, _qa_output("failed", [pr]), {"pr_url": PR1}, []), [])
+        bare = _pr(PR1, status="failed")
+        bare["defects"] = []
+        self.assertTrue(any("without listing a defect" in v.message
+                            for v in sc.validate_stage_output(contract, _qa_output("failed", [bare]), {"pr_url": PR1}, [])))
 
     def test_jira_multi_pr_set_equality(self):
         contract = _qa_contract("implement_delivery")
