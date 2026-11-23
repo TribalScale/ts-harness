@@ -80,3 +80,14 @@ class PlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SecurityWordsTests(unittest.TestCase):
+    def test_the_verb_authorize_is_not_a_security_finding(self):
+        from ts_harness.workflows.revision_triage import security_sensitive
+
+        prose = {"message": "REQ-PKG-005 does not authorize replacing that order with a load-balancing penalty"}
+        self.assertFalse(security_sensitive(prose))
+        for text in ("missing authorization check on /admin", "unauthorized users can read orders",
+                     "the session token is logged", "auth middleware skipped", "password stored in plain text"):
+            self.assertTrue(security_sensitive({"message": text}), text)

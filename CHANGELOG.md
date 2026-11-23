@@ -396,6 +396,7 @@ First public release.
 
 ### Fixed
 
+- The security check that makes revision triage and review arbitration ask a person no longer matches the verb "authorize" in prose ("the spec does not authorize this order"); it matches security terms such as authentication, authorization, unauthorized, secrets, tokens and credentials.
 - Coding runs no longer fail at start with "Model not found" for a model OpenCode's catalog drops (seen on Fargate workers, which start without a cached catalog: `anthropic/claude-opus-5-5`). Each run declares its coding and review models in OpenCode's config, with limits from the downloaded catalog when it has them.
 - A PR that conflicts with its base while waiting for CI no longer waits forever (GitHub runs no CI on a conflicting PR). The GitHub poller, every minute, sends such a PR back to OpenCode with instructions to merge the base branch and resolve the conflicts, through the same revision path as failed CI; the re-gate then waits for CI on the new head, and the run's own security scan covers it.
 - A running ticket pool now reads the project's `max_parallel_tickets` each time a slot frees, instead of keeping the value it started with, so raising the limit in Project settings takes effect without restarting the program.
