@@ -375,6 +375,42 @@ class WorkflowHookTests(unittest.TestCase):
         ctx.memory_client.get_workflow.return_value = {"workflow": ctx.workflow, "tasks": tasks}
         return ctx
 
+    def _turns(self):
+        gate = {"id": "finalize-3", "step_name": "finalize_code_review", "status": "blocked", "created_at": "2026-01-05"}
+        return [
+            self._deliver(1),
+            {**self._deliver(2), "input": {"work_order_id": "WO-004", "_revision_source": "finalize_code_review",
+                                           "review_feedback": "sort explicitly"}},
+            {**self._deliver(3), "input": {"work_order_id": "WO-004", "_revision_source": "qa_gate",
+                                           "qa_feedback": "sorting contradicts keep order"}},
+            gate,
+        ]
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk", side_effect=[["rev-4"], ["gate-4"], ["r1"], ["r2"], ["r3"], ["r4"], ["r5"], ["r6"]])
+    def test_an_arbiter_ruling_runs_the_next_revision_instead_of_asking(self, mock_bulk):
+        plan = {"decision": "continue", "reason": "the work order says keep the existing order",
+                "ruling": {"contradiction": True}, "feedback": "Ruling: keep the order. Fix the persistence bug.",
+                "coding_model": "anthropic/strong", "total_revisions": 2}
+        with patch("ts_harness.workflows.review_arbiter.plan", return_value=plan) as arbiter:
+            result = revise_on_reject.handle(self._review_block_ctx(self._turns()))
+        self.assertEqual(result["status"], "revising")
+        self.assertEqual([item["step"] for item in arbiter.call_args.args[0]],
+                         ["finalize_code_review", "qa_gate", "finalize_code_review"])
+        revision = mock_bulk.call_args_list[0].kwargs["tasks"][0]["input"]
+        self.assertEqual(revision["review_feedback"], "Ruling: keep the order. Fix the persistence bug.")
+        self.assertEqual(revision["_arbitration"]["reason"], "the work order says keep the existing order")
+        self.assertTrue(revision["_auto_grant"])
+        self.assertEqual(revision["coding_model"], "anthropic/strong")
+
+    @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
+    def test_an_arbiter_that_escalates_still_asks_a_person(self, mock_bulk):
+        plan = {"decision": "escalate", "reason": "a product decision is needed"}
+        with patch("ts_harness.workflows.review_arbiter.plan", return_value=plan):
+            result = revise_on_reject.handle(self._review_block_ctx(self._turns()))
+        self.assertEqual((result["status"], result["reason"]), ("revision_limit", "conflicting_feedback"))
+        self.assertEqual(result["arbitration"]["reason"], "a product decision is needed")
+        mock_bulk.assert_not_called()
+
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
     def test_review_and_qa_taking_turns_go_to_a_human(self, mock_bulk):
         # WO-004 in the rehearsal: review asked for explicit sorting, QA said it contradicts
