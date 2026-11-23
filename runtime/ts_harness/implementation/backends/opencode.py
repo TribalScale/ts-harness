@@ -330,6 +330,75 @@ def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None 
     return list(dict.fromkeys(allowed))
 
 
+DEFAULT_MODEL_LIMIT = {"context": 200000, "output": 64000}
+
+
+def _catalog_entry(provider: str, model_id: str, env: dict[str, str]) -> dict[str, Any]:
+    """The model's entry in the catalog OpenCode downloaded (models.dev), if it is on disk."""
+    import json
+
+    roots = [env.get("XDG_CACHE_HOME") or "", str(Path(env.get("HOME") or Path.home()) / ".cache")]
+    for root in roots:
+        path = Path(root) / "opencode" / "models.json" if root else None
+        if path is None or not path.is_file():
+            continue
+        try:
+            entry = ((json.loads(path.read_text()).get(provider) or {}).get("models") or {}).get(model_id) or {}
+        except (ValueError, OSError, AttributeError):
+            continue
+        if isinstance(entry, dict) and entry:
+            return entry
+    return {}
+
+
+def opencode_models_env(env: dict[str, str], config_dir: Any, provider: str, models: list[str | None]) -> dict[str, str]:
+    """An ``OPENCODE_CONFIG`` that declares the run's models, so OpenCode always knows them.
+
+    OpenCode resolves a model against its catalog; an OpenCode build that drops a newer model
+    from the catalog fails the run at once ("Model not found: anthropic/claude-opus-5-5"). A
+    Fargate worker has no cached catalog, so this showed up there. Declared models resolve with
+    or without the catalog; their limits come from the downloaded catalog when it has them.
+    """
+    import json
+
+    declared: dict[str, dict[str, Any]] = {}
+    for model in models:
+        text = str(model or "").strip()
+        if not text:
+            continue
+        owner, _, model_id = text.partition("/") if "/" in text else (provider, "", text)
+        if not owner or not model_id:
+            continue
+        entry = _catalog_entry(owner, model_id, env)
+        limit = entry.get("limit") if isinstance(entry.get("limit"), dict) else {}
+        declared.setdefault(owner, {})[model_id] = {
+            "name": str(entry.get("name") or model_id),
+            "limit": {"context": int(limit.get("context") or DEFAULT_MODEL_LIMIT["context"]),
+                      "output": int(limit.get("output") or DEFAULT_MODEL_LIMIT["output"])},
+        }
+    if not declared:
+        return {}
+    base: dict[str, Any] = {}
+    existing = str(env.get("OPENCODE_CONFIG") or "")
+    if existing and Path(existing).is_file():
+        try:
+            loaded = json.loads(Path(existing).read_text())
+            base = loaded if isinstance(loaded, dict) else {}
+        except ValueError:
+            base = {}
+    providers = dict(base.get("provider") or {}) if isinstance(base.get("provider"), dict) else {}
+    for owner, entries in declared.items():
+        current = dict(providers.get(owner) or {}) if isinstance(providers.get(owner), dict) else {}
+        current["models"] = {**dict(current.get("models") or {}), **entries}
+        providers[owner] = current
+    config = {"$schema": "https://opencode.ai/config.json", **base, "provider": providers}
+    directory = Path(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "opencode-models.json"
+    path.write_text(json.dumps(config, indent=2))
+    return {"OPENCODE_CONFIG": str(path)}
+
+
 def opencode_scope_env(env: dict[str, str], config_dir: Any, allowed: list[str]) -> dict[str, str]:
     """An ``OPENCODE_CONFIG`` that denies edits outside ``allowed``, kept outside the repository.
 
@@ -1253,6 +1322,7 @@ class OpenCodeBackend:
             env.update(test_env.env)
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            env.update(opencode_models_env(env, request.workspace_dir, provider, [request.model, request.review_model]))
             # The reviewer writes its findings outside the repository, so it runs without the edit scope.
             review_env = dict(env)
             allowed = opencode_scope_paths(request.work_order_body, revision_scope)
@@ -1571,6 +1641,7 @@ class OpenCodeBackend:
             if provider and api_key:
                 env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
+            env.update(opencode_models_env(env, request.workspace_dir, provider or "", [request.model]))
             binary = ""
             if merged.returncode != 0:
                 conflicts = self._git(repo_dir, "diff", "--name-only", "--diff-filter=U")
