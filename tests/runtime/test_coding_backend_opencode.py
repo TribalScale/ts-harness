@@ -1589,3 +1589,33 @@ class SecurityRulesTests(unittest.TestCase):
         self.assertIn("Never read, print, copy or send secrets", prompt)
         self.assertIn("within the security rules", prompt)
 
+
+
+class ModelDeclarationTests(unittest.TestCase):
+    """OpenCode always knows the run's models, catalog or not."""
+
+    def test_models_are_declared_with_catalog_limits_when_known(self):
+        import json
+        import tempfile
+
+        from ts_harness.implementation.backends.opencode import opencode_models_env
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "opencode"
+            cache.mkdir(parents=True)
+            (cache / "models.json").write_text(json.dumps({"anthropic": {"models": {
+                "claude-opus-5-5": {"name": "Claude Opus 5.5", "limit": {"context": 500000, "output": 128000}}}}}))
+            proxy = Path(tmp) / "proxy.json"
+            proxy.write_text(json.dumps({"provider": {"anthropic": {"options": {"baseURL": "http://proxy"}}}}))
+            env = {"XDG_CACHE_HOME": str(Path(tmp) / "cache"), "OPENCODE_CONFIG": str(proxy), "HOME": tmp}
+            out = opencode_models_env(env, Path(tmp) / "ws", "anthropic", ["claude-opus-5-5", "anthropic/claude-sonnet-5-5", None])
+            config = json.loads(Path(out["OPENCODE_CONFIG"]).read_text())
+        anthropic = config["provider"]["anthropic"]
+        self.assertEqual(anthropic["options"], {"baseURL": "http://proxy"})  # the proxy config is kept
+        self.assertEqual(anthropic["models"]["claude-opus-5-5"]["limit"], {"context": 500000, "output": 128000})
+        self.assertEqual(anthropic["models"]["claude-sonnet-5-5"]["limit"], {"context": 200000, "output": 64000})
+
+    def test_no_models_no_config(self):
+        from ts_harness.implementation.backends.opencode import opencode_models_env
+
+        self.assertEqual(opencode_models_env({}, "/tmp/ws", "anthropic", [None, ""]), {})
