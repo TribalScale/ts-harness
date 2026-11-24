@@ -43,6 +43,41 @@ from ts_harness.tools.registry import build_default_registry
 from ts_harness.state import get_state_store
 
 
+def _with_final_reply(new_messages: list[dict[str, Any]], result: Any) -> list[dict[str, Any]]:
+    """The turn's messages, ending with the reply the person was sent.
+
+    A turn that ends on a tool (a proposal returns its formatted message, which says how to
+    confirm) has no final assistant message, so the thread showed only the text written before
+    the tool call. The reply is added when it is not already the last thing said.
+    """
+    summary = str(((getattr(result, "output", None) or {}).get("summary")) or "").strip()
+    if not summary or getattr(result, "status", "") != "succeeded":
+        return new_messages
+    last = new_messages[-1] if new_messages else {}
+    if last.get("role") == "assistant" and not last.get("tool_calls") and str(last.get("content") or "").strip() == summary:
+        return new_messages
+    return [*new_messages, {"role": "assistant", "content": summary}]
+
+
+def _waiting_proposal(metadata: dict[str, Any], *, confirmed: bool) -> str:
+    """A one-line name for the proposal still awaiting a yes, or ''."""
+    if confirmed:
+        return ""
+    program = metadata.get("pending_program")
+    if isinstance(program, dict) and program:
+        kind = str(program.get("program_type") or "delivery program").replace("_", " ")
+        return f"A proposal to start the {kind} program"
+    advance = metadata.get("pending_program_advance")
+    if isinstance(advance, dict) and advance:
+        target = str(advance.get("target_phase") or advance.get("entry_phase") or "next").replace("_", " ")
+        return f"A proposal to move the program to the {target} phase"
+    workflow = metadata.get("pending_workflow")
+    if isinstance(workflow, dict) and workflow:
+        kind = str(workflow.get("workflow_type") or "").replace("_", " ")
+        return f"A proposal to start the {kind} workflow".replace("the  workflow", "a workflow")
+    return ""
+
+
 def _build_channel_system_context(
     session,
     *,
@@ -93,6 +128,15 @@ def _build_channel_system_context(
         parts.append(
             "[system context] Pending bridge confirmed. "
             f"Call bridge_workflow with summary={pending.get('summary')!r}."
+        )
+    waiting = _waiting_proposal(metadata, confirmed=program_confirmed or workflow_confirmed or program_advance_confirmed)
+    if waiting:
+        parts.append(
+            f"[system context] {waiting} is waiting for this person's confirmation. You cannot start it "
+            "with a tool, and no one else has to approve it: the harness starts it when the person "
+            "replies yes (or cancels it on no). If their message is about the proposal, answer it and "
+            "end with: Reply **yes** to start it, or **no** to cancel. Never say it cannot be started "
+            "from this channel."
         )
     if orchestrator_hint and not metadata.get("workflow_id"):
         parts.append(f"[system context] {orchestrator_hint.strip()}")
@@ -2053,7 +2097,7 @@ class RuntimeState:
                 transcript.append_turn(
                     session.session_id,
                     user_text=user_text,
-                    assistant_messages=new_messages,
+                    assistant_messages=_with_final_reply(new_messages, result),
                 )
             elif result.status == "succeeded":
                 transcript.append_turn(
@@ -2253,7 +2297,7 @@ class RuntimeState:
                 transcript.append_turn(
                     session.session_id,
                     user_text=user_text,
-                    assistant_messages=new_messages,
+                    assistant_messages=_with_final_reply(new_messages, result),
                 )
             elif result.status == "succeeded":
                 transcript.append_turn(
@@ -2498,7 +2542,7 @@ class RuntimeState:
             transcript.append_turn(
                 session.session_id,
                 user_text=user_text,
-                assistant_messages=new_messages,
+                assistant_messages=_with_final_reply(new_messages, result),
             )
         elif result.status == "succeeded":
             transcript.append_turn(

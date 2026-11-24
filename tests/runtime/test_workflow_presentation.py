@@ -111,6 +111,29 @@ class WorkflowPresentationTests(unittest.TestCase):
         self.assertEqual(result["reason"], "no bound channel")
         router.send.assert_not_called()
 
+    def test_two_chats_on_one_binding_get_their_own_programs_posts(self):
+        def chat(session_id, program_id, started_at):
+            return SessionRecord(
+                session_id=session_id,
+                routing_key=f"web:{session_id}",
+                tenant_id="default",
+                agent_id="orchestrator",
+                source="web",
+                started_at=started_at,
+                metadata={"binding_key": "web:web:web:shared-1", "program_id": program_id, "workflow_id": f"wf-{program_id}"},
+            )
+
+        get_session_store().save(chat("sess-old", "program-old", "2026-11-19T21:35:34Z"))
+        get_session_store().save(chat("sess-new", "program-new", "2026-11-24T21:30:24Z"))
+
+        new_program = _session_for_workflow("wf-later-phase", "default", "web:web:web:web:web:shared-1", program_id="program-new")
+        old_program = _session_for_workflow("wf-pool", "default", "web:web:web:shared-1", program_id="program-old")
+        binding_only = _session_for_workflow("wf-unknown", "default", "web:web:shared-1")
+
+        self.assertEqual(new_program.session_id, "sess-new")
+        self.assertEqual(old_program.session_id, "sess-old")
+        self.assertEqual(binding_only.session_id, "sess-new")
+
     def test_session_lookup_matches_admin_chat_after_the_workflow_changes(self):
         chat = SessionRecord(
             session_id="sess-web-1",

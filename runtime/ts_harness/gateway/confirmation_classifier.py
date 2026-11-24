@@ -35,6 +35,30 @@ _APPROVE_RE = re.compile(
     r")\s*\.?$",
     re.IGNORECASE,
 )
+# "yes, start it", "yes please", "ok go ahead", "confirm, thanks": an approval word followed
+# only by words that add nothing but more approval. Anything else ("yes but change X", "yes,
+# use PROJ") is not a plain approval and goes to the normal handling.
+_APPROVE_LEAD_RE = re.compile(
+    r"^(?P<lead>yes|yeah|yep|yup|approve|approved|confirm|confirmed|proceed|ok|okay|sure|"
+    r"lgtm|go ahead|good to go|ship it|let'?s do it|let'?s go|do it)\b(?P<rest>.*)$",
+    re.IGNORECASE,
+)
+_APPROVE_FILLER = frozenset(
+    "please pls start it go ahead do proceed run kick off now thanks thank you thx lets let's "
+    "sounds good looks great that works the program workflow run approved confirmed confirm "
+    "approve yes ok okay sure ship and so all right alright begin launch continue".split()
+)
+
+
+def _approval_with_filler(text: str) -> bool:
+    match = _APPROVE_LEAD_RE.match(text)
+    if not match:
+        return False
+    words = re.findall(r"[a-z']+", match.group("rest").lower())
+    leftovers = re.sub(r"[a-z'\s,.!:;-]+", "", match.group("rest").lower())
+    return not leftovers and all(word in _APPROVE_FILLER for word in words)
+
+
 _REJECT_PREFIX_RE = re.compile(
     r"^(?:no|n|nope|reject|rejected|cancel|cancelled|needs? changes?|revise|not yet)"
     r"(?:[\s:,-]+(?P<feedback>.+))?\s*\.?$",
@@ -137,7 +161,7 @@ def classify_confirmation_deterministic(
     if _AMBIGUOUS_RE.match(text):
         return ConfirmationClassification(decision="ambiguous", source="deterministic")
 
-    if _APPROVE_RE.match(text):
+    if _APPROVE_RE.match(text) or _approval_with_filler(text):
         return ConfirmationClassification(decision="approve", source="deterministic")
 
     rejected = _REJECT_PREFIX_RE.match(text)
