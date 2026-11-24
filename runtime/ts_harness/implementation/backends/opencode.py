@@ -120,6 +120,45 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
     return f"opencode exit {completed.returncode}"
 
 
+PROVIDER_INTERRUPTED = "provider_interrupted"
+RESUME_NOTE = (
+    "Note: a previous run of this work order was interrupted by the model provider. Its work in "
+    "progress is already committed on this branch. Review what is there, keep what is right, and "
+    "finish the work order; do not start over."
+)
+_INTERRUPTION_MARKERS = (
+    "content filter", "content_filter", "blocked by the provider", "overloaded", "rate limit",
+    "rate_limit", "too many requests", "service unavailable", "bad gateway", "gateway timeout",
+    "internal server error", "529", "503", "502", "504",
+)
+_ERROR_LINE = re.compile(r"^\s*(?:error|apierror|providererror)\b[:\s]", re.IGNORECASE)
+
+
+def provider_interruption(text: str, *, last_lines: int = 60) -> str:
+    """The provider error that ended OpenCode ("Error: The response was blocked by the provider's
+    content filter", an overload, a rate limit, a 5xx), or "" when the run ended for another reason.
+
+    Only OpenCode's own error lines near the end count, so a failing test that prints "503" does not.
+    """
+    for line in reversed(str(text or "").splitlines()[-last_lines:]):
+        if _ERROR_LINE.match(line):
+            lowered = line.lower()
+            if any(marker in lowered for marker in _INTERRUPTION_MARKERS):
+                return line.strip()[:300]
+    return ""
+
+
+def _file_tail(path: Path, limit: int = 20000) -> str:
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
         try:
@@ -1020,6 +1059,50 @@ class OpenCodeBackend:
             )
         return reverted
 
+    def _ahead_of_base(self, repo_dir: Path, base_branch: str) -> bool:
+        base = str(base_branch or "").strip()
+        if not base:
+            return False
+        ahead = self._git(repo_dir, "rev-list", "--count", f"origin/{base}..HEAD")
+        return ahead.returncode == 0 and str(ahead.stdout or "").strip() not in {"", "0"}
+
+    def _save_interrupted_work(self, repo_dir: Path, request: CodingRequest, branch: str, changed: list[str]) -> str:
+        """Commit and push a first run's work when the provider cut it off, so the retry continues it.
+
+        Never onto an open PR (its branch is what reviewers see), never without changes, and never
+        when the secret scan finds anything. Returns a note for the error, or "".
+        """
+        if request.pr_url or not changed:
+            return ""
+        try:
+            from ts_harness.implementation.repo import commit_all_changes
+            from ts_harness.implementation.security_scan import scan_secrets
+
+            base = str(request.base_branch or "").strip()
+            scan = scan_secrets(repo_dir, f"origin/{base}" if base else None, list(changed), self.runner)
+            if scan.findings:
+                log_event("coding_interrupted_work_not_pushed", work_order_id=request.work_order_id, reason="secret scan")
+                return "work in progress not pushed: the secret scan found something"
+            if not commit_all_changes(
+                repo_dir,
+                message=f"WIP {request.work_order_id}: interrupted by the model provider; the next run continues it",
+                runner=self.runner,
+            ):
+                return ""
+            git_env = _git_env(request.repo_url)
+            push_branch(
+                repo_dir,
+                branch=branch,
+                runner=self.runner,
+                env=git_env,
+                remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
+            )
+        except Exception as exc:  # noqa: BLE001 - the retry starts over instead
+            log_event("coding_interrupted_work_not_pushed", work_order_id=request.work_order_id, error=str(exc)[:300])
+            return ""
+        log_event("coding_interrupted_work_pushed", work_order_id=request.work_order_id, branch=branch, files=len(changed))
+        return f"work in progress pushed to {branch}"
+
     def _with_scanned_sha(self, repo_dir: Path, security: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(security, dict):
             return security
@@ -1294,8 +1377,13 @@ class OpenCodeBackend:
                 branch=branch,
                 base_branch=request.base_branch,
                 runner=self.runner,
-                from_remote=bool(pr_head),
+                # A first run also starts from the branch on GitHub when one exists: a run the
+                # model provider interrupted pushed its work there, and this run finishes it.
+                from_remote=bool(pr_head) or not request.pr_url,
             )
+            if not pr_head and not request.pr_url and self._ahead_of_base(repo_dir, request.base_branch):
+                log_event("coding_resumed_interrupted_work", work_order_id=request.work_order_id, branch=branch)
+                request = dataclasses.replace(request, work_order_body=RESUME_NOTE + "\n\n" + str(request.work_order_body or ""))
             # The head the gates reviewed: a revision must change it.
             review_head = self._head_sha(repo_dir) if request.pr_url else ""
             if pr_head:
@@ -1400,6 +1488,19 @@ class OpenCodeBackend:
                 log = log[-_OPENCODE_LOG_TAIL_CHARS:]
             changed = list_changed_files(repo_dir, runner=self.runner)
             if completed.returncode != 0:
+                interrupted = provider_interruption("\n".join([log, _file_tail(log_path)]))
+                if interrupted:
+                    saved = self._save_interrupted_work(repo_dir, request, branch, changed)
+                    return CodingResult(
+                        ok=False,
+                        branch=branch,
+                        summary="The model provider interrupted OpenCode",
+                        changed_files=changed,
+                        log_tail=log,
+                        log_path=str(log_path),
+                        pr_url=request.pr_url,
+                        error=f"{PROVIDER_INTERRUPTED}: {interrupted}" + (f"; {saved}" if saved else ""),
+                    )
                 return CodingResult(
                     ok=False,
                     branch=branch,

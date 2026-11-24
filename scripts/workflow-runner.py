@@ -277,6 +277,8 @@ TRANSPORT_ERROR_PREFIX = "transport_error:"
 # Infrastructure failures (a lost coding job, a dropped connection) get this many retries on
 # top of the step's own budget, with the usual backoff.
 TRANSPORT_EXTRA_RETRIES = 3
+# A coding run the model provider cut off is queued again this many times per step.
+PROVIDER_INTERRUPTED_RETRIES = 2
 
 
 def compute_poll_backoff(base_interval: int, failures: int, *, cap: int = 60) -> int:
@@ -1492,6 +1494,8 @@ class WorkflowRunner:
         finished = next((j for j in jobs if j.get("status") in coding_job_stage.TERMINAL), None)
         if finished is not None and self._retry_out_of_memory(task, task_input, finished):
             return
+        if finished is not None and self._retry_provider_interrupted(task, task_input, finished):
+            return
         if finished is not None:
             result = coding_job_stage.dispatch_result(finished, contract, task_input)
             job_id = result.pop("coding_job_id", "")
@@ -1585,6 +1589,56 @@ class WorkflowRunner:
         log_event(
             "coding_job_retried_with_more_memory",
             workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"], memory_mb=larger, previous_mb=current,
+        )
+        return True
+
+    def _retry_provider_interrupted(self, task: dict[str, Any], task_input: dict[str, Any], finished: dict[str, Any]) -> bool:
+        """Queue the job again when the model provider cut OpenCode off (a content filter, an overload).
+
+        Such a stop says nothing about the work. The interrupted run pushed its work in progress
+        when it could, and the new run continues from that branch. At most
+        ``PROVIDER_INTERRUPTED_RETRIES`` times per step; after that the step blocks as before.
+        """
+        from ts_harness.workflows import coding_job_stage
+
+        result = finished.get("result") if isinstance(finished.get("result"), dict) else {}
+        error = str(result.get("error") or finished.get("error") or "")
+        if finished.get("status") == "succeeded" or not error.startswith("provider_interrupted"):
+            return False
+        task_id = str(task["id"])
+        try:
+            earlier = self.memory.list_coding_jobs(task_id=task_id, limit=20)
+        except Exception:  # noqa: BLE001
+            earlier = []
+        interrupted = sum(
+            1 for job in earlier or []
+            if str((job.get("result") or {}).get("error") or job.get("error") or "").startswith("provider_interrupted")
+        )
+        if interrupted > PROVIDER_INTERRUPTED_RETRIES:
+            return False
+        try:
+            program_id = (self.memory.task_program(task_id) or {}).get("program_id")
+        except Exception:
+            program_id = None
+        spec = coding_job_stage.stage_spec(task, task_input, program_id=program_id)
+        if finished.get("worker_memory_mb"):
+            spec = {**spec, "worker_memory_mb": int(finished["worker_memory_mb"])}
+        job = self.memory.create_coding_job(
+            spec=spec,
+            workflow_id=str(task.get("workflow_id") or "") or None,
+            task_id=task_id,
+            program_id=program_id,
+            tenant_id=str(task.get("tenant_id") or "default"),
+        )
+        try:
+            self.memory.consume_coding_job(str(finished["id"]))
+        except Exception as exc:  # noqa: BLE001
+            log_event("coding_job_consume_error", task_id=task_id, job_id=finished.get("id"), error=str(exc))
+        self.memory.set_task_wait(task_id, wait_token=str(job["id"]), expected_event_type=coding_job_stage.EVENT_TYPE)
+        self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
+        log_event(
+            "coding_job_retried_after_provider_interruption",
+            workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"], attempt=interrupted, error=error[:300],
         )
         return True
 
