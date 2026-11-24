@@ -286,7 +286,12 @@ def handle(ctx: HookContext) -> dict[str, Any]:
                 ctx, str(program_id), program, snapshot, program_phase, result, complete_channel_text
             )
         completed = {"status": "phase_completed", "program_id": str(program_id), "artifacts": result}
-        offer = _offer_next_phase(ctx, workflow, snapshot, program_phase, complete_channel_text)
+        # A child program's parent decides what runs next, so it offers nothing itself.
+        offer = (
+            {}
+            if program.get("parent_program_id")
+            else _offer_next_phase(ctx, workflow, snapshot, program_phase, complete_channel_text)
+        )
         if offer:
             completed.update(offer)
         return _with_brief(ctx, program_id, program, program_phase, completed)

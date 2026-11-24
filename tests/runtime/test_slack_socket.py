@@ -641,7 +641,7 @@ class WorkflowProposeFailureReplyTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["status"], "succeeded")
-        self.assertIn("sent your feedback", result["output"]["summary"].lower())
+        self.assertIn("revising it now with your feedback", result["output"]["summary"].lower())
         engine.handle_reject.assert_called_once()
         self.assertEqual(
             engine.handle_reject.call_args.kwargs["comments"],

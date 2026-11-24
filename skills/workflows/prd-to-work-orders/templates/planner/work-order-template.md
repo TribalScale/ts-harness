@@ -69,3 +69,4 @@
 - In Scope and Out of Scope are mandatory.
 - Every Work Order has context graph links.
 - Every Work Order includes a local verification path.
+- E2E acceptance tests cover user-visible behaviour only. Checks of build or test tooling (type checks, lint, contract checkers, generation scripts) are unit tests listed under Requirements, never E2E scenarios.

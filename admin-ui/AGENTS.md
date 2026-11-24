@@ -33,3 +33,7 @@ RULES:
   docs authoring     build an integration package, and every field it holds
   upgrade --from <old version> --apply   run after a dependency bump
 <!-- ASTRYX:END -->
+
+## Tests
+
+`npm test` runs vitest with jsdom. On Node 25 or later, Node's own `localStorage` global shadows jsdom's and every test fails with "Cannot read properties of undefined (reading 'clear')". Run `NODE_OPTIONS=--no-experimental-webstorage npm test` there; CI uses Node 20 and needs nothing.

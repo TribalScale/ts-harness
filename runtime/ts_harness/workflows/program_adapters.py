@@ -607,6 +607,21 @@ class ProgramAdapterRegistry:
         return handler(**kwargs)
 
 
+REQUESTER_CONTEXT_MESSAGES = 6
+REQUESTER_CONTEXT_CHARS = 16000
+
+
+def requester_context(transcript_messages: list[dict[str, Any]] | None) -> str:
+    """The person's recent messages in the starting chat, oldest first, as plain text."""
+    said = [
+        str(item.get("content") or "").strip()
+        for item in list(transcript_messages or [])[-20:]
+        if isinstance(item, dict) and item.get("role") == "user" and str(item.get("content") or "").strip()
+    ][-REQUESTER_CONTEXT_MESSAGES:]
+    text = "\n\n".join(said)
+    return text[-REQUESTER_CONTEXT_CHARS:] if len(text) > REQUESTER_CONTEXT_CHARS else text
+
+
 def _build_declared_inputs(
     *,
     summary: str,
@@ -616,8 +631,12 @@ def _build_declared_inputs(
     required_artifacts: list[str] | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    del transcript_messages
     intake: dict[str, Any] = {"summary": summary, **(extra_input or {})}
+    context = requester_context(transcript_messages)
+    if context and "context" not in intake:
+        # The request in the person's own words: the summary is a short paraphrase that drops
+        # the file paths, field names and errors the intake steps need.
+        intake["context"] = context
     for name in list(required_artifacts or []):
         key = str(name or "").strip()
         if key and artifacts.get(key) is not None:

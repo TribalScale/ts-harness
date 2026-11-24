@@ -24,10 +24,12 @@ from ts_harness.workflows.hooks._helpers import load_workflow_payload
 
 TREE_CHAR_BUDGET = 60_000
 DIRECTORY_LIMIT = 150
-FILE_LIMIT = 8
+FILE_LIMIT = 12
 MATCHED_FILE_LIMIT = 4
 FILE_CHAR_LIMIT = 20_000
 
+_FILE_NAME_RE = re.compile(r"(?<![\w@./-])([A-Za-z_][\w-]*\.(?:tsx?|jsx?|py|go|rb|java|kt|cs|php|vue|svelte|json|ya?ml|sql|prisma|md))(?![\w/-])")
+_DIR_RE = re.compile(r"(?<![\w@./-])((?:[\w.-]+/)+)(?=[\s,.;:)]|$)")
 _PATH_RE = re.compile(r"(?<![\w@./-])((?:[\w.-]+/)+[\w.-]+(?:\.[\w.-]+)?)")
 _WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 _STOPWORDS = frozenset(
@@ -103,6 +105,25 @@ def cited_paths(report: str, tree_paths: list[str]) -> list[str]:
         if index >= 0:
             seen.add(path)
             found.append((index, path))
+    # A bare file name ("WeekView.tsx") names the one tree file with that name.
+    by_name: dict[str, list[str]] = {}
+    for path in tree_paths:
+        by_name.setdefault(path.rsplit("/", 1)[-1], []).append(path)
+    for match in _FILE_NAME_RE.finditer(text):
+        candidates = by_name.get(match.group(1)) or []
+        if len(candidates) == 1 and candidates[0] not in seen:
+            seen.add(candidates[0])
+            found.append((match.start(), candidates[0]))
+    # A named folder ("src/api/") with its files listed by stem ("health, hub ... .d.ts").
+    for match in _DIR_RE.finditer(text):
+        folder = match.group(1).rstrip("/")
+        inside = [path for path in tree_paths if path.startswith(folder + "/") and "/" not in path[len(folder) + 1:]]
+        for path in inside:
+            stem = path.rsplit("/", 1)[-1].split(".", 1)[0]
+            if path not in seen and stem and re.search(rf"(?<![\w./-]){re.escape(stem)}(?![\w/-])", text):
+                seen.add(path)
+                # After every file named outright, so a long folder list never crowds those out.
+                found.append((len(text) + match.start(), path))
     found.sort(key=lambda item: item[0])
     return [path for _index, path in found[:FILE_LIMIT]]
 
