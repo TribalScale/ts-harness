@@ -272,7 +272,7 @@ def _resume_children(
         _, pool_tasks = _load(ctx.memory_client, str(task.get("workflow_id") or ""))
         fill_task = next((item for item in pool_tasks if item.get("step_name") == "fill_pool"), {})
         queue = [str(key) for key in ((fill_task.get("output") or {}).get("queue") or [])]
-        left = ticket_pool.left_behind(queue, children)
+        left = ticket_pool.open_left_behind(queue, children)
     output = {**aggregate["output"], "event_type": event_type, "external_event": payload}
     if left:
         output["not_started"] = left

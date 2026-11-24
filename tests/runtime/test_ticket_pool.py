@@ -320,3 +320,47 @@ class ReopenPoolTests(unittest.TestCase):
         reopened, memory, _ = self._run("awaiting_external:workflow.child_terminal", None)
         self.assertEqual(reopened, [])
         memory.block_task_api.assert_not_called()
+
+
+class LeftBehindTests(unittest.TestCase):
+    """A ticket another run delivered is not left behind (the pool skipped it on purpose)."""
+
+    def test_tickets_done_in_jira_are_not_left_behind(self):
+        pinned = [{"workflow_id": "c3", "label": "P-3"}]
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True), _issue("P-5")])
+        self.assertEqual(tp.left_behind(["P-3", "P-4", "P-5"], pinned, jira=jira), ["P-5"])
+
+    def test_every_ticket_delivered_elsewhere_leaves_nothing_behind(self):
+        pinned = [{"workflow_id": "c3", "label": "P-3"}]
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True)])
+        self.assertEqual(tp.open_left_behind(["P-3", "P-4"], pinned, jira=jira), [])
+
+    def test_without_jira_every_unstarted_ticket_counts(self):
+        self.assertEqual(tp.left_behind(["P-3", "P-4"], [{"label": "P-3"}]), ["P-4"])
+
+
+class WorthReopeningTests(unittest.TestCase):
+    """A pool that gave up only for unstarted tickets is reopened when something changed, not every poll."""
+
+    ERROR = "external_blocked:workflow.child_terminal tickets not started because a blocker was not delivered: P-4, P-5"
+
+    def _join(self):
+        return {"input": {"_wait_options": {"children": [{"workflow_id": "c3", "label": "P-3"}]}}}
+
+    def test_same_open_tickets_still_waiting_is_not_reopened(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", blocked_by=["X-1"]), _issue("P-5", blocked_by=["X-1"])])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertFalse(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_tickets_delivered_elsewhere_reopen_it(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True), _issue("P-5", done=True)])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertTrue(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_a_left_behind_ticket_that_became_ready_reopens_it(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4"), _issue("P-5", blocked_by=["X-1"])])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertTrue(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_a_failed_ticket_block_still_reopens_on_recovery(self):
+        self.assertTrue(tp._worth_reopening(self.ERROR + "; stopped or failed: P-3", {"queue": []}, self._join()))
