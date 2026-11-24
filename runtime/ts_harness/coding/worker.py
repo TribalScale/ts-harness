@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -118,6 +119,9 @@ class GitHubTokens:
         return True
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\\\)")
+
+
 def last_log_line(path: Path) -> str | None:
     try:
         with open(path, "rb") as handle:
@@ -127,7 +131,8 @@ def last_log_line(path: Path) -> str | None:
             tail = handle.read().decode("utf-8", errors="replace")
     except OSError:
         return None
-    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    # OpenCode colours its output; a line that is only a colour code ("\x1b[0m") showed as "[0m".
+    lines = [clean for line in tail.splitlines() if (clean := _ANSI.sub("", line).strip())]
     return lines[-1][:500] if lines else None
 
 

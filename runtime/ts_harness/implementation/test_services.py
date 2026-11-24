@@ -1158,6 +1158,57 @@ def capture_screenshots(repo_dir: Path, specs: list[str], out_dir: Path, env: di
     return f"screenshots: {len(shots)} captured from {', '.join(specs)} (exit {code})" + ("" if code == 0 else f"\n{text[-1500:]}")
 
 
+def uses_playwright_bdd(repo_dir: Path) -> bool:
+    """The repository runs its Gherkin features in Playwright through ``playwright-bdd``."""
+    from ts_harness.implementation.test_env import package_manifest
+
+    manifest = package_manifest(Path(repo_dir))
+    deps = {**(manifest.get("dependencies") or {}), **(manifest.get("devDependencies") or {})}
+    return "playwright-bdd" in deps
+
+
+def changed_features(changed_files: list[str] | None) -> list[str]:
+    """The ``.feature`` files the change added or edited (repo-relative)."""
+    return sorted({path for path in changed_files or [] if path.endswith(".feature")})
+
+
+def generated_bdd_specs(repo_dir: Path, features: list[str]) -> list[str]:
+    """The Playwright specs ``bddgen`` wrote for ``features`` (``<outputDir>/<feature path>.spec.js``)."""
+    repo_dir = Path(repo_dir)
+    wanted = {Path(feature).as_posix() for feature in features}
+    specs = []
+    for spec in repo_dir.rglob("*.feature.spec.*"):
+        rel = spec.relative_to(repo_dir).as_posix()
+        if "/node_modules/" in f"/{rel}":
+            continue
+        source = rel[: rel.index(".feature.spec.")] + ".feature"
+        if any(source.endswith(feature) for feature in wanted):
+            specs.append(rel)
+    return sorted(specs)
+
+
+def capture_bdd_screenshots(repo_dir: Path, features: list[str], out_dir: Path, env: dict[str, str], *, timeout: int = 600) -> str:
+    """Screenshots of the change's own features in a ``playwright-bdd`` repository.
+
+    The features are Playwright tests once ``bddgen`` has generated their specs, so they go
+    through the same capture as plain specs: the repository's config with screenshots on.
+    """
+    from ts_harness.implementation.workspaces import find_bin
+
+    repo_dir = Path(repo_dir)
+    base = playwright_config(repo_dir, features)
+    bddgen = find_bin(repo_dir, base.parent, "bddgen") if base is not None else None
+    if base is None or bddgen is None:
+        return "screenshots: no Playwright config or bddgen"
+    code, text = _shell(shlex.join([str(bddgen)]), cwd=base.parent, env=env, timeout=300)
+    if code != 0:
+        return f"screenshots: bddgen failed (exit {code})\n{text[-1000:]}"
+    specs = generated_bdd_specs(repo_dir, features)
+    if not specs:
+        return "screenshots: bddgen wrote no spec for " + ", ".join(features)
+    return capture_screenshots(repo_dir, specs, out_dir, env, timeout=timeout)
+
+
 FRAMES_PER_TEST = 4
 
 

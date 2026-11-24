@@ -1655,6 +1655,20 @@ class OpenCodeBackend:
             return CodingResult(ok=False, branch=head_ref, summary="", pr_url=pr_url, error=_NO_GITHUB_CREDENTIALS)
         log_path = opencode_progress_log_path(request.workspace_dir, request.work_order_id)
         log = ""
+        # A branch refresh reports the same phases as a coding run, so the card is never blank.
+        timings: dict[str, float] = {}
+        clock = [time.monotonic()]
+
+        def lap(name: str, following: str = "") -> None:
+            now = time.monotonic()
+            timings[name] = round(timings.get(name, 0.0) + now - clock[0], 1)
+            clock[0] = now
+            if following:
+                progress.begin(following, timings)
+
+        progress.reset()
+        progress.begin("setup")
+        progress.detail("cloning and fetching")
         try:
             repo_dir = ensure_repo_clone(
                 repo_url=repo_url,
@@ -1676,6 +1690,8 @@ class OpenCodeBackend:
             checkout = self._git(repo_dir, "checkout", "-B", head_ref, f"origin/{head_ref}")
             if checkout.returncode != 0:
                 raise RuntimeError(f"git checkout {head_ref} failed: {(checkout.stderr or checkout.stdout or '').strip()[-2000:]}")
+            lap("setup", "coding")
+            progress.detail(f"merging {base_ref} into the branch")
             merged = self._git(repo_dir, "merge", f"origin/{base_ref}", "--no-edit")
             resolved: list[str] = []
             method = "local_merge"
@@ -1699,6 +1715,7 @@ class OpenCodeBackend:
                     raise RuntimeError("CODING_BACKEND_PROVIDER and CODING_BACKEND_API_KEY are required to resolve conflicts")
                 binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
                 _note_opencode_run(binary, env, repo_dir)
+                progress.detail(f"resolving conflicts in {len(resolved)} file{'s' if len(resolved) != 1 else ''}")
                 completed = self._run_opencode(
                     build_opencode_command(
                         binary=binary,
@@ -1738,6 +1755,7 @@ class OpenCodeBackend:
                         error="conflict_markers_remain: " + ", ".join(remaining),
                     )
                 method = "conflict_resolution"
+            lap("coding", "verification")
             failure, log, _passes, _changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
@@ -1755,12 +1773,15 @@ class OpenCodeBackend:
                 failure.pr_url = pr_url
                 failure.resolved_files = resolved
                 return failure
+            lap("verification", "push")
             commit_all_changes(
                 repo_dir,
                 message=f"{request.work_order_id}: merge {base_ref} into branch",
                 runner=self.runner,
             )
+            progress.detail("scanning for secrets")
             security = self._with_scanned_sha(repo_dir, security)
+            progress.detail("pushing the branch")
             push_branch(
                 repo_dir,
                 branch=head_ref,
@@ -1769,9 +1790,12 @@ class OpenCodeBackend:
                 remote_url=github_authenticated_url(repo_url, repo_token(repo_url)),
             )
             head_sha = (self._git(repo_dir, "rev-parse", "HEAD").stdout or "").strip() or None
+            lap("push")
+            progress.begin("done", timings)
             return CodingResult(
                 ok=True,
                 branch=head_ref,
+                timings=timings,
                 summary=f"Merged {base_ref} into {head_ref} ({method}) for {pr_url}",
                 changed_files=resolved,
                 log_tail=log,

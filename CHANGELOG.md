@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- Screenshots for repositories whose acceptance tests are Gherkin features run by Playwright (`playwright-bdd`): when a change adds or edits `.feature` files and the BDD check passes, the harness generates their Playwright specs (`bddgen`) and reruns them with screenshots on, so the PR gets the same evidence as plain Playwright specs (up to 6 images, frames at each assertion).
 - Coding job quotas are install-config settings: `runtime.coding_quota_per_user`, `coding_quota_per_program` and `coding_quota_per_team` (unset keeps the defaults of 2, 3 and 8; 0 removes a limit). They reach the launcher through the runtime config, so a redeploy no longer resets them. With one person starting all the work, the per-requester default of 2 had capped the install at 2 running jobs regardless of `coding_max_running`.
 - A PR is marked draft while a revision runs and ready again when the run ends, whatever its outcome, so it does not look reviewable or mergeable on the previous commit's checks.
 - Disagreements between code review and QA are arbitrated instead of always stopping for a person. When the gates send a work order back in turn, a strong model reads the work order and both gates' feedback, and the next revision runs with its ruling as one consolidated instruction. A person is still asked for conservative projects, at 8 revisions, for security findings, when the work order does not settle the dispute, or when no arbiter model is configured. See `docs/runbooks/governed-delivery-flow.md`.
@@ -399,6 +400,8 @@ First public release.
 
 ### Fixed
 
+- The integration check no longer reruns the BDD suite when it is the same suite (a `playwright-bdd` repository declaring `npm run test:bdd`, or Playwright running the generated specs) and the BDD check passed; it saved about two minutes per verification pass.
+- A branch-refresh run reports its phases (setup, merging the base, resolving conflicts, running tests, push) on the run card instead of staying on "Waiting for the worker's first progress report". The card's last-output line no longer shows raw terminal colour codes (`[0m`).
 - A revision starts from the latest base: when the base branch moved, it is merged into the PR branch before OpenCode runs (a conflicting merge is left to OpenCode with the files named), so the revision does not push a PR that conflicts with what merged since. When a PR gets a new commit while the harness waits for its CI (a hand-resolved conflict, a pushed fix), the wait moves to the new commit instead of waiting for checks that will never come.
 - QA reports every unmet acceptance criterion in one pass: the gate's instructions say so, and its output is rejected (and repaired) when it marks more criteria failed than it lists defects, or fails a PR without a defect. A second QA pass that only then mentioned a gap that was there all along cost a full revision.
 - A step whose model call fails for the provider's reasons (overloaded, rate limited, 5xx, timeout) runs again instead of blocking. A QA gate once recorded `server_is_overloaded` as its verdict, which sent the ticket back to OpenCode and then stopped it as a review/QA disagreement.

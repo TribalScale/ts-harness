@@ -798,6 +798,18 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(result.refresh_method, "local_merge")
         self.assertFalse(any(str(c[0]).endswith("/opencode") for c in self.calls))
 
+    def test_a_refresh_reports_its_phases_for_the_run_card(self):
+        from ts_harness.implementation import progress
+
+        result = self._backend(self._conflict_github()).implement(self._request())
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(list(result.timings), ["setup", "coding", "verification", "push"])
+        steps = progress.step_timings()
+        self.assertEqual(steps["setup"][0]["label"], "cloning and fetching")
+        self.assertTrue(steps["coding"][0]["label"].startswith("merging "))
+        self.assertEqual([s["label"] for s in steps["push"]], ["scanning for secrets", "pushing the branch"])
+        progress.reset()
+
     def test_remaining_markers_fail(self):
         self.merge_rc = 1
         self.conflicts = "src/app.py\n"

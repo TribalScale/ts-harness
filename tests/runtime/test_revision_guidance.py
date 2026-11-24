@@ -51,7 +51,7 @@ class RepeatTests(unittest.TestCase):
         self.assertIn("Do this: Lock the row", text)
         self.assertIn("Do not: relying on the per-instance write queue", text)
         self.assertIn("Round 2:", text)
-        self.assertTrue(rg.suggested_revise("JMT-2", diagnosis).startswith("/revise JMT-2 Lock the row"))
+        self.assertTrue(rg.suggested_revise("PROJ-2", diagnosis).startswith("/revise PROJ-2 Lock the row"))
         self.assertIsNone(rg.diagnose(rounds=rounds, attempts=[], work_order="", files={}, model_call=lambda p: "no json"))
         self.assertIsNone(rg.diagnose(rounds=rounds, attempts=[], work_order="", files={}, model_call=lambda p: 1 / 0))
 
@@ -98,10 +98,10 @@ class GuidedLoopTests(unittest.TestCase):
         self.assertEqual(result["status"], "revision_limit")
         self.assertEqual(result["diagnosis"]["approach"], DIAGNOSIS["approach"])
         bulk.assert_not_called()
-        text = human_decisions.revision_limit_text(label="JMT-2", cause="code review blocked", feedback="f", max_revisions=3,
+        text = human_decisions.revision_limit_text(label="PROJ-2", cause="code review blocked", feedback="f", max_revisions=3,
                                                    decisions=["revise", "accept"], diagnosis=result["diagnosis"])
         self.assertIn("A guided revision already tried this diagnosis", text)
-        self.assertIn("/revise JMT-2 Lock the row", text)
+        self.assertIn("/revise PROJ-2 Lock the row", text)
 
     @patch("ts_harness.workflows.revision_guidance.diagnosis_model", return_value="anthropic/claude-opus-5-5")
     @patch("ts_harness.workflows.hooks.revise_on_reject.create_tasks_bulk")
