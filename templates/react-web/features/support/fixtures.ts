@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test as base, createBdd } from 'playwright-bdd';
+import { contractProblems } from './contract';
 
 /** Who a scenario signs in as ("Given I am signed in as an admin"). */
 export const PERSONAS: Record<string, { id: string; name: string; roles: string[] }> = {
@@ -17,10 +18,15 @@ type Row = Record<string, unknown> & { id: string };
  */
 export class FakeApi {
   tables: Record<string, Row[]> = {};
+  /** Requests or responses the backend's openapi.json would not allow (see contract.ts). */
+  contractViolations: string[] = [];
 
   seed(table: string, rows: Record<string, unknown>[]) {
     this.tables[table] = rows.map((row) => ({
       id: crypto.randomUUID(),
+      // The same defaults as a row the fake creates (POST below), so seeded rows match the contract.
+      createdBy: 'user-1',
+      body: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...row,
@@ -28,9 +34,30 @@ export class FakeApi {
   }
 
   async attach(page: Page) {
-    await page.route('http://api.test/**', async (route) => {
-      const request = route.request();
+    await page.route('http://api.test/**', async (raw) => {
+      const request = raw.request();
       const url = new URL(request.url());
+      // Every reply is checked against the backend's contract before the app sees it.
+      const route = {
+        fulfill: (reply: { status?: number; json?: unknown }) => {
+          let sent: unknown;
+          try {
+            sent = request.postDataJSON();
+          } catch {
+            sent = undefined;
+          }
+          this.contractViolations.push(
+            ...contractProblems(
+              request.method(),
+              url.pathname,
+              sent ?? undefined,
+              reply.status ?? 200,
+              reply.json,
+            ),
+          );
+          return raw.fulfill(reply);
+        },
+      };
       const [table, id] = url.pathname.split('/').filter(Boolean);
       if (!table) return route.fulfill({ status: 404 });
       const rows = (this.tables[table] ??= []);
@@ -94,6 +121,12 @@ export const test = base.extend<{ fakeApi: FakeApi }>({
       const api = new FakeApi();
       await api.attach(page);
       await use(api);
+      if (api.contractViolations.length) {
+        throw new Error(
+          "The fake API broke the backend's contract (openapi.json):\n- " +
+            [...new Set(api.contractViolations)].join('\n- '),
+        );
+      }
     },
     { auto: true },
   ],

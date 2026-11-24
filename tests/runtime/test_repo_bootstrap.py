@@ -283,3 +283,17 @@ class SettingsValidationTests(unittest.TestCase):
         _canonicalize_program_defaults({"repo_templates": {"by_role": ["api"], "colour": 1}}, path="$", issues=issues)
         self.assertEqual({i["code"] for i in issues} >= {"invalid_map"}, True)
         self.assertTrue(any("colour" in i["message"] for i in issues))
+
+
+class ContractMarkerTests(unittest.TestCase):
+    def test_a_web_repo_started_from_the_template_names_its_backend_for_the_contract_check(self):
+        from ts_harness.workflows import repo_bootstrap as rb
+
+        templates = rb.load_templates()
+        web = rb.render(templates["react-web"], repo_name="acme-web", contract_repo="acme/acme-api")
+        self.assertIn("contract:\n  openapi:\n    repo: acme/acme-api\n    path: openapi.json\n", web[rb.MARKER_FILE])
+        self.assertIn("features/support/contract.ts", web)
+        self.assertIn("src/api/openapi.json", web)
+        api = rb.render(templates["node-api"], repo_name="acme-api", contract_repo="acme/acme-api")
+        self.assertNotIn("contract:", api[rb.MARKER_FILE])
+        self.assertNotIn("contract:", rb.render(templates["react-web"], repo_name="acme-web")[rb.MARKER_FILE])

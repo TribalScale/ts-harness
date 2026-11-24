@@ -6,3 +6,4 @@ playwright-report
 test-results
 .features-gen
 src/api/schema.d.ts
+src/api/openapi.json

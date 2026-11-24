@@ -167,7 +167,7 @@ def _template_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def render(template: Template, *, repo_name: str, title: str | None = None) -> dict[str, str]:
+def render(template: Template, *, repo_name: str, title: str | None = None, contract_repo: str | None = None) -> dict[str, str]:
     """``{path: text}`` for every template file, with substitutions applied and the marker set."""
     values = {"package_name": package_name(repo_name), "display_name": title or display_name(repo_name)}
     files: dict[str, str] = {}
@@ -189,6 +189,9 @@ def render(template: Template, *, repo_name: str, title: str | None = None) -> d
         f"# Started from the TS Harness `{template.name}` template.\n"
         f"template: {template.name}\ntemplate_version: {template.version}\n" + marker.lstrip("\n")
     )
+    if contract_repo and "features/support/contract.ts" in files and "contract:" not in files[MARKER_FILE]:
+        # The acceptance tests check the fake API against the backend's current openapi.json.
+        files[MARKER_FILE] += f"contract:\n  openapi:\n    repo: {contract_repo}\n    path: openapi.json\n"
     return files
 
 
@@ -334,6 +337,7 @@ def ensure_ready(
     title: str | None = None,
     templates: dict[str, Template] | None = None,
     config: dict[str, Any] | None = None,
+    contract_repo: str | None = None,
 ) -> Readiness:
     """Bootstrap ``repo_url`` when it is empty and its role has a template; otherwise ready.
 
@@ -368,18 +372,28 @@ def ensure_ready(
                 result.notes.append(f"{name}: could not require the template's CI checks ({exc})")
         return result
 
-    url, opened, refreshed = open_bootstrap_pr(github, owner, repo, base_branch, template, render(template, repo_name=repo, title=title))
+    rendered = render(template, repo_name=repo, title=title, contract_repo=contract_repo)
+    url, opened, refreshed = open_bootstrap_pr(github, owner, repo, base_branch, template, rendered)
     return Readiness(repo=name, ready=False, template=template.name, pr_url=url, opened=opened, refreshed=refreshed)
 
 
 def repositories_ready(github: Any, repositories: list[dict[str, Any]], *, title: str | None = None) -> list[Readiness]:
     """``ensure_ready`` for each project repository (``full_name``/``repo_url``, ``role``, ``default_branch``)."""
     templates, config = load_templates(), live_settings()
+    # The project's backend (the repository the node-api template is for): web repositories
+    # started from a template check their fake API against its openapi.json.
+    backend = next(
+        (str(item.get("full_name") or str(item.get("repo_url") or "").removeprefix("https://github.com/").removesuffix(".git"))
+         for item in repositories
+         if getattr(template_for_role(item.get("role"), templates, config), "name", "") == "node-api"),
+        None,
+    )
     results = []
     for item in repositories:
         url = str(item.get("repo_url") or f"https://github.com/{item.get('full_name')}")
         branch = str(item.get("default_branch") or "dev")
-        results.append(ensure_ready(github, url, branch, role=item.get("role"), title=title, templates=templates, config=config))
+        results.append(ensure_ready(github, url, branch, role=item.get("role"), title=title, templates=templates,
+                                    config=config, contract_repo=backend))
     return results
 
 

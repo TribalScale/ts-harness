@@ -768,6 +768,12 @@ class OpenCodeBackend:
         test_env.env.update(services.env)
         test_env.services_note = services.note()
         test_env.services_running = bool(services.services)
+        contract_log = ""
+        if test_env.state_dir is not None:
+            from ts_harness.implementation.api_contract import fetch_contract
+
+            contract_env, contract_log = fetch_contract(repo_dir, test_env.state_dir)
+            test_env.env.update(contract_env)
         plan = integration_plan(repo_dir, services_running=test_env.services_running)
         if plan is not None and not test_env.services_note:
             test_env.services_note = (
@@ -776,7 +782,7 @@ class OpenCodeBackend:
                 + ". Add or update e2e tests for user-visible changes and run only those before finishing "
                 "(`ts-harness-integration <spec files>`); the host runs the whole suite afterwards."
             )
-        return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log] if part)
+        return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log, contract_log] if part)
 
     def _verify_with_fixes(
         self,
