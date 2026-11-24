@@ -765,6 +765,34 @@ def _pool_delivered(ctx: HookContext) -> list[str]:
     return [str(pr.get("work_order_id")) for pr in output.get("prs") or [] if isinstance(pr, dict) and pr.get("work_order_id")]
 
 
+def _pool_done_elsewhere(ctx: HookContext, *, jira: Any = None) -> list[str]:
+    """Queued tickets the pool did not start because they are already Done in Jira.
+
+    Another run delivered them. Left out of the completed list, they looked unfinished and the
+    program started a new wave for tickets that could never start.
+    """
+    from ts_harness.jira.ticket_pool import ready_tickets
+    from ts_harness.workflows.work_order_waves import pinned_children
+
+    _, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
+    fill = next((task for task in tasks if task.get("step_name") == "fill_pool"), {})
+    join = next((task for task in tasks if task.get("step_name") == "join_pool"), {})
+    queue = [str(key) for key in ((fill.get("output") or {}).get("queue") or []) if key]
+    started = {str(child.get("label") or "") for child in pinned_children(join)} if join else set()
+    remaining = [key for key in queue if key not in started]
+    if not remaining:
+        return []
+    try:
+        if jira is None:
+            from ts_harness.integrations.jira_client import JiraClient
+
+            jira = JiraClient.from_env()
+        _ready, done = ready_tickets(jira, remaining)
+    except Exception:  # noqa: BLE001 - without Jira they stay in the queue
+        return []
+    return [key for key in remaining if key in set(done)]
+
+
 def _advance_list_reentry(
     ctx: HookContext,
     service: Any,
@@ -787,7 +815,7 @@ def _advance_list_reentry(
             completed.append(key)
     # The ticket pool delivered many items in one run: each merged child counts as done.
     if str(workflow.get("workflow_type") or "") == "implement_jira_pool":
-        for key in _pool_delivered(ctx):
+        for key in [*_pool_delivered(ctx), *_pool_done_elsewhere(ctx)]:
             if key not in {reentry_item_key(item) for item in completed}:
                 completed.append(key)
     count, iterations = _bump_iterations(artifacts, program_phase)

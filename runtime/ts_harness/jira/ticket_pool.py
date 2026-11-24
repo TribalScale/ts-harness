@@ -183,9 +183,12 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
     busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), {workflow_id})
     ready = [item for item in ready if item["key"] not in busy]
     chosen = _choose(ready, [], limit)
-    if not chosen and busy:
+    queued_busy = sorted(key for key in busy if key in set(queue))
+    if not chosen and len(done) == len(queue):
+        raise ValueError("every ticket in the queue is already done in Jira: nothing to deliver")
+    if not chosen and queued_busy:
         raise ValueError(
-            "no ticket can start yet: " + ", ".join(sorted(busy)) + " is already being built by another run, "
+            "no ticket can start yet: " + ", ".join(queued_busy) + " is already being built by another run, "
             "and the rest wait on blockers"
         )
     if not chosen:

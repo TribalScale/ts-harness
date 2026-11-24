@@ -393,3 +393,39 @@ class StaleChildWaitTests(unittest.TestCase):
         self.assertEqual(self._run(updated_at="2026-01-01T00:00:00+00:00", state=None)[0], [])
         fresh = datetime.now(timezone.utc).isoformat()
         self.assertEqual(self._run(updated_at=fresh, state="succeeded")[0], [])
+
+
+class DeliveredElsewhereTests(unittest.TestCase):
+    """Tickets another run delivered do not start a new wave or a misleading block."""
+
+    def _memory(self, tasks, busy=()):
+        memory = MagicMock()
+        memory.get_workflow.return_value = {"workflow": {"id": "pool"}, "tasks": tasks}
+        memory.running_ticket_work.return_value = {"tickets": [{"key": k, "workflow_id": "other"} for k in busy], "pools": []}
+        return memory
+
+    def test_a_queue_of_done_tickets_says_so(self):
+        task = {"id": "fill", "workflow_id": "pool", "tenant_id": "default", "step_name": "fill_pool",
+                "input": {"summary": "s", "jira_issue_keys": ["P-3", "P-4"]}}
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True)])
+        with self.assertRaisesRegex(ValueError, "every ticket in the queue is already done"):
+            tp.fill(task, {}, memory=self._memory([task], busy=["X-9"]), jira=jira)
+
+    def test_a_busy_ticket_outside_the_queue_is_not_named(self):
+        task = {"id": "fill", "workflow_id": "pool", "tenant_id": "default", "step_name": "fill_pool",
+                "input": {"summary": "s", "jira_issue_keys": ["P-3", "P-4"]}}
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", blocked_by=["P-9"])])
+        with self.assertRaisesRegex(ValueError, "every remaining ticket waits on an open blocker"):
+            tp.fill(task, {}, memory=self._memory([task], busy=["X-9"]), jira=jira)
+
+    def test_the_finished_wave_counts_tickets_done_elsewhere(self):
+        from types import SimpleNamespace
+
+        from ts_harness.workflows.hooks.complete_program_phase import _pool_done_elsewhere
+
+        fill = {"step_name": "fill_pool", "output": {"queue": ["P-3", "P-4", "P-5"]}}
+        join = {"step_name": "join_pool", "input": {"_wait_options": {"children": [{"label": "P-3", "workflow_id": "c3"}]}}}
+        ctx = SimpleNamespace(memory_client=MagicMock(), workflow_id="pool")
+        jira = Jira([_issue("P-4", done=True), _issue("P-5")])
+        with patch("ts_harness.workflows.hooks.complete_program_phase.load_workflow_payload", return_value=({}, [fill, join])):
+            self.assertEqual(_pool_done_elsewhere(ctx, jira=jira), ["P-4"])
