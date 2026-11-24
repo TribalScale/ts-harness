@@ -28,6 +28,7 @@ def _runtime_present_specialist_output(
     requester_actor_id: str = "",
     program_id: str = "",
     program_summary: str = "",
+    revised: bool = False,
 ) -> dict[str, Any]:
     runtime_url = (
         os.environ.get("AGENT_RUNTIME_URL")
@@ -51,6 +52,7 @@ def _runtime_present_specialist_output(
             "requester_actor_id": requester_actor_id or actor,
             "program_id": program_id,
             "program_summary": program_summary,
+            "revised": revised,
         }
     ).encode()
     request = urllib.request.Request(
@@ -129,5 +131,12 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         requester_actor_id=str(workflow.get("requester_actor_id") or ""),
         program_id=program_id,
         program_summary=program_summary,
+        revised=_is_revision(task),
     )
     return {"hook": "present_specialist_output", **result}
+
+
+def _is_revision(task: dict[str, Any]) -> bool:
+    """A step re-run on a reviewer's feedback (``revise_on_reject`` maps the comments in)."""
+    task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
+    return bool(task_input.get("comments") or task_input.get("prior_artifact"))

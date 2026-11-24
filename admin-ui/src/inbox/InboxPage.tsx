@@ -231,6 +231,8 @@ export function InboxPage({
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [guidance, setGuidance] = useState("");
+  // What a gate's approval (or rejection) carries: a repo for a repo pick, answers, or feedback.
+  const [gateReply, setGateReply] = useState("");
   const skillsOk = canManageSkills();
   const desktop = useMediaQuery("(min-width: 1024px)");
   const autoSelected = useRef(false);
@@ -325,6 +327,7 @@ export function InboxPage({
 
   useEffect(() => {
     setGuidance("");
+    setGateReply("");
   }, [selectedType, selectedId]);
 
   useEffect(() => {
@@ -472,7 +475,7 @@ export function InboxPage({
         approve ? "/admin/workflows/approve" : "/admin/workflows/reject",
         {
           method: "POST",
-          body: JSON.stringify({ id: taskId }),
+          body: JSON.stringify({ id: taskId, ...(gateReply.trim() ? { comments: gateReply.trim() } : {}) }),
         },
       );
       // Hide it at once: a refresh can still list it for a moment while the next step starts,
@@ -663,6 +666,13 @@ export function InboxPage({
           <div className="detail-card">
             <GateReview taskId={gateTaskId} />
           </div>
+        )}
+        {type === "workflow_gate" && (
+          <GateReplyCard
+            reply={(selectedItem?.meta?.reply || detail?.reply) as GateReply | undefined}
+            value={gateReply}
+            onChange={setGateReply}
+          />
         )}
         {type === "workflow_gate" && Array.isArray(detail?.prd_checks) && (
           <PrdChecksCard
@@ -934,5 +944,69 @@ export function InboxPage({
       detailOpen={Boolean(selectedId)}
       onCloseDetail={() => onSelect(selectedType || "tool_approval", "")}
     />
+  );
+}
+
+
+type GateReply = { kind?: string; options?: { id: string; default_branch?: string }[] };
+
+/** The answer a gate's decision carries: Approve sends it as the reply, Reject as the feedback. */
+export function GateReplyCard({
+  reply,
+  value,
+  onChange,
+}: {
+  reply?: GateReply;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const kind = reply?.kind || "";
+  const options = reply?.options || [];
+  if (kind === "repo") {
+    return (
+      <section className="detail-card">
+        <label className="stuck-guidance">
+          <h3>Repository</h3>
+          <p className="muted">Pick the repository this is for, then Approve.</p>
+          {options.length > 0 && (
+            <select aria-label="Repository" value={value} onChange={(event) => onChange(event.target.value)}>
+              <option value="">Choose a repository</option>
+              {options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.id}
+                  {option.default_branch ? ` (${option.default_branch})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          {options.length === 0 && (
+            <input
+              aria-label="Repository"
+              value={value}
+              placeholder="owner/repo"
+              onChange={(event) => onChange(event.target.value)}
+            />
+          )}
+        </label>
+      </section>
+    );
+  }
+  return (
+    <section className="detail-card">
+      <label className="stuck-guidance">
+        <h3>{kind === "answer" ? "Your answers" : "Reply (optional)"}</h3>
+        <p className="muted">
+          {kind === "answer"
+            ? "Answer the questions above, then Approve to start the draft."
+            : "Sent with Approve as your reply, or with Reject as the feedback for the revision."}
+        </p>
+        <textarea
+          aria-label={kind === "answer" ? "Your answers" : "Reply"}
+          rows={4}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    </section>
   );
 }

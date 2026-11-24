@@ -1030,7 +1030,7 @@ def format_workflow_gate_response_ack(
         return "Got it. Say ready when you want a draft."
     if result.get("status") == "approved":
         phase = result.get("phase") if isinstance(result.get("phase"), dict) else {}
-        if phase.get("status") == "phase_completed_program_ended" and phase.get("offer_text"):
+        if phase.get("offer_text"):
             return f"Approved. {phase['offer_text']}"
         message = "Approved the current workflow gate. I'll continue the workflow."
         resolved_type = workflow_type or str(result.get("workflow_type") or "")
@@ -1050,7 +1050,10 @@ def format_workflow_gate_response_ack(
                 pass
         return message
     if result.get("status") == "rejected":
-        return "Thanks — I sent your feedback back for revision."
+        return (
+            "Revising it now with your feedback. I'll post the revised version in this thread "
+            "when it's ready, usually within a few minutes."
+        )
     return "Updated the current workflow gate."
 
 

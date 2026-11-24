@@ -9,6 +9,7 @@ import type {
 import { hasPermission } from "../auth/session";
 import { Button } from "../components/Button";
 import { StatusPill, type SemanticStatus } from "../components/StatusPill";
+import { GateReplyCard } from "../inbox/InboxPage";
 import { GateReview } from "./GateReview";
 
 const POLL_MS = 15000;
@@ -229,6 +230,8 @@ export function PhaseActivityPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   // Gates whose review the user closed; a waiting gate shows what it approves by default.
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  // The answer typed for a gate (a repo, intake answers or feedback), sent with the decision.
+  const [replies, setReplies] = useState<Record<string, string>>({});
   const canApprove =
     hasPermission("approve_gate") && canApproveProgram && !programClosed;
   const workflow = activity?.workflow || null;
@@ -247,7 +250,10 @@ export function PhaseActivityPanel({
         approve ? "/admin/workflows/approve" : "/admin/workflows/reject",
         {
           method: "POST",
-          body: JSON.stringify({ id: taskId }),
+          body: JSON.stringify({
+            id: taskId,
+            ...((replies[taskId] || "").trim() ? { comments: (replies[taskId] || "").trim() } : {}),
+          }),
         },
       );
       setDecided((prev) => ({ ...prev, [taskId]: true }));
@@ -302,6 +308,15 @@ export function PhaseActivityPanel({
         {reviewing && (
           <div className="workflow-step-review">
             <GateReview taskId={step.task_id} />
+          </div>
+        )}
+        {step.reply && (
+          <div className="workflow-step-review">
+            <GateReplyCard
+              reply={step.reply}
+              value={replies[step.task_id] || ""}
+              onChange={(value) => setReplies((prev) => ({ ...prev, [step.task_id]: value }))}
+            />
           </div>
         )}
       </>

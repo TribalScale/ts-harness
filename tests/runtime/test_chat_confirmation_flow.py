@@ -56,3 +56,73 @@ class WaitingProposalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NextPhaseOfferTests(unittest.TestCase):
+    SNAPSHOT = {
+        "nodes": [{"id": "bug_intake"}, {"id": "work_order"}, {"id": "file_jira"}],
+        "edges": [
+            {"source": "bug_intake", "target": "work_order", "mode": "manual", "signals": ["draft the work order"]},
+            {"source": "work_order", "target": "file_jira", "mode": "manual", "signals": ["file these tickets"]},
+            {"source": "file_jira", "target": "file_jira", "mode": "manual", "signals": ["refile the work orders"]},
+        ],
+    }
+
+    def test_a_finished_phase_says_what_to_reply_for_the_next(self):
+        from ts_harness.workflows.program_materialize import next_phase_offer
+
+        offer = next_phase_offer(self.SNAPSHOT, "bug_intake")
+        self.assertIn("Reply **draft the work order**", offer["text"])
+        self.assertEqual(offer["next_steps"][0]["target_node"], "work_order")
+
+    def test_a_self_edge_is_not_offered(self):
+        from ts_harness.workflows.program_materialize import next_phase_offer
+
+        self.assertEqual(next_phase_offer(self.SNAPSHOT, "file_jira")["text"], "")
+
+    def test_a_chat_approval_reply_carries_the_offer(self):
+        from ts_harness.gateway.channel_confirmations import format_workflow_gate_response_ack
+
+        ack = format_workflow_gate_response_ack(
+            {"status": "approved", "phase": {"status": "phase_completed", "offer_text": "Reply **draft the work order** to start work order."}}
+        )
+        self.assertEqual(ack, "Approved. Reply **draft the work order** to start work order.")
+
+
+class RevisionTests(unittest.TestCase):
+    def test_sending_feedback_says_the_revision_will_be_posted(self):
+        from ts_harness.gateway.channel_confirmations import format_workflow_gate_response_ack
+
+        self.assertIn("I'll post the revised version", format_workflow_gate_response_ack({"status": "rejected"}))
+
+    def test_a_running_redraft_reads_revising(self):
+        from ts_harness.workflows.phase_activity import summarize_workflow
+
+        summary = summarize_workflow({
+            "id": "wf", "status": "running", "workflow_type": "bug_work_order",
+            "tasks": [
+                {"id": "a", "step_name": "draft_work_order", "agent_id": "pm-agent", "status": "succeeded", "created_at": "1"},
+                {"id": "b", "step_name": "approve_work_order", "agent_id": "orchestrator", "status": "cancelled", "created_at": "2"},
+                {"id": "c", "step_name": "draft_work_order", "agent_id": "pm-agent", "status": "running", "created_at": "3",
+                 "input": {"comments": "fix the field names"}},
+            ],
+        })
+        self.assertTrue(summary["state"].startswith("Revising"), summary["state"])
+
+    def test_a_revision_is_marked_when_presented(self):
+        from ts_harness.workflows.hooks.present_artifact_for_review import _is_revision
+
+        self.assertTrue(_is_revision({"input": {"comments": "x"}}))
+        self.assertFalse(_is_revision({"input": {}}))
+
+
+class GateReplyKindTests(unittest.TestCase):
+    def test_a_repo_pick_lists_the_allowlisted_repos(self):
+        from unittest.mock import patch
+
+        from ts_harness.gateway.admin_bff import gate_reply_kind
+
+        with patch("ts_harness.workflows.repo_pick.allowlisted_repos", return_value=[{"id": "org/web", "default_branch": "dev"}]):
+            self.assertEqual(gate_reply_kind("pick_repo", "p1"), {"kind": "repo", "options": [{"id": "org/web", "default_branch": "dev"}]})
+        self.assertEqual(gate_reply_kind("await_ready", "p1"), {"kind": "answer"})
+        self.assertIsNone(gate_reply_kind("approve_bug", "p1"))

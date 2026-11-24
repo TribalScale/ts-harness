@@ -778,6 +778,7 @@ class RuntimeState:
             requester_actor_id=str(body.get("requester_actor_id") or auth.actor_id or ""),
             program_id=str(body.get("program_id") or ""),
             program_summary=str(body.get("program_summary") or ""),
+            revised=bool(body.get("revised")),
         )
         self.audit.append(
             tenant_id=req.tenant_id,

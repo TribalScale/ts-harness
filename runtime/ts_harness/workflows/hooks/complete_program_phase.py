@@ -285,17 +285,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             return _end_at_may_end_node(
                 ctx, str(program_id), program, snapshot, program_phase, result, complete_channel_text
             )
-        return _with_brief(
-            ctx,
-            program_id,
-            program,
-            program_phase,
-            {
-                "status": "phase_completed",
-                "program_id": str(program_id),
-                "artifacts": result,
-            },
-        )
+        completed = {"status": "phase_completed", "program_id": str(program_id), "artifacts": result}
+        offer = _offer_next_phase(ctx, workflow, snapshot, program_phase, complete_channel_text)
+        if offer:
+            completed.update(offer)
+        return _with_brief(ctx, program_id, program, program_phase, completed)
 
     if program_cfg.get("auto_advance") and program_cfg.get("next_phase"):
         advance = service.advance_program(
@@ -411,6 +405,29 @@ def _end_at_may_end_node(
             "offer_text": text,
         },
     )
+
+
+def _offer_next_phase(
+    ctx: HookContext,
+    workflow: dict[str, Any],
+    snapshot: dict[str, Any],
+    program_phase: str,
+    complete_channel_text: str,
+) -> dict[str, Any]:
+    """The phase is done and the next one starts only when asked: say what to reply.
+
+    A chat approval (``reply_in_chat``) puts the offer in its own reply; otherwise the bound
+    thread gets it, so the person is never left with "I'll continue the workflow".
+    """
+    from ts_harness.workflows.program_materialize import next_phase_offer
+
+    offer = next_phase_offer(snapshot, program_phase)
+    if not offer["text"]:
+        return {}
+    text = "\n\n".join(part for part in (complete_channel_text, offer["text"]) if part)
+    if not (ctx.extras or {}).get("reply_in_chat"):
+        _notify_channel(ctx, workflow, text)
+    return {"next_steps": offer["next_steps"], "offer_text": text}
 
 
 def _mark_program_succeeded(

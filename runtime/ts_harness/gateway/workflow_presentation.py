@@ -474,6 +474,7 @@ def present_workflow_artifact(
     requester_actor_id: str | None = None,
     program_id: str = "",
     program_summary: str = "",
+    revised: bool = False,
 ) -> dict[str, Any]:
     if not artifact:
         return {"status": "skipped", "reason": "empty artifact"}
@@ -517,6 +518,8 @@ def present_workflow_artifact(
         existing_drive_library=existing_drive_library,
     )
     message = str(built.get("message") or "")
+    if revised and message:
+        message = f"**Revised with your feedback.** Here is the new version.\n\n{message}"
     doc_result = built.get("google_doc")
     doc_url = built.get("doc_url")
     library_result = built.get("drive_library")

@@ -139,6 +139,9 @@ def _state(
             if revisions:
                 return f"OpenCode revising (revision {revisions})", "running"
             return "OpenCode implementing", "running"
+        if _input(current).get("comments") or _input(current).get("prior_artifact"):
+            # A draft re-run on a reviewer's feedback: the gate is gone until it is done.
+            return f"Revising {label} with your feedback", "running"
         return f"{label[:1].upper()}{label[1:]} running", "running"
     if status == "blocked":
         if error.startswith("awaiting_external:"):
@@ -254,7 +257,9 @@ def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
     }
     if not workflow_id:
         return result
-    result["workflow"] = _with_coding_job(memory, summarize_workflow(_workflow_record(memory, workflow_id)))
+    result["workflow"] = _with_reply_kinds(
+        _with_coding_job(memory, summarize_workflow(_workflow_record(memory, workflow_id))), program_id
+    )
     stage_workflows = {
         str(other.get("workflow_id") or "")
         for other in (status.get("phases") or {}).values()
@@ -279,6 +284,18 @@ def phase_activity(memory: Any, program_id: str, phase: str) -> dict[str, Any]:
     children = [{k: v for k, v in item.items() if k != "_created_at"} for item in latest.values()]
     result["children"] = sorted(children, key=lambda item: (item["label"], item["workflow_id"]))
     return result
+
+
+def _with_reply_kinds(summary: dict[str, Any], program_id: str) -> dict[str, Any]:
+    """A waiting gate whose approval carries an answer (a repo pick, intake answers) says so."""
+    from ts_harness.gateway.admin_bff import gate_reply_kind
+
+    for step in summary.get("steps") or []:
+        if step.get("approval_pending"):
+            reply = gate_reply_kind(str(step.get("step_name") or ""), program_id)
+            if reply:
+                step["reply"] = reply
+    return summary
 
 
 def _phase_workflow_ids(memory: Any, program_id: str, phase: str) -> list[str]:
