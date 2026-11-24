@@ -2,45 +2,26 @@
   "name": "react-web",
   "version": "1.2.0",
   "description": "React web app: Vite, TypeScript, Entra ID sign-in, typed OpenAPI client, Tailwind, Vitest, Gherkin via Playwright, GitHub Actions CI, Docker",
-  "roles": [
-    "web",
-    "frontend",
-    "ui",
-    "spa",
-    "app"
-  ],
-  "required_checks": [
-    "checks",
-    "bdd",
-    "docker"
-  ],
+  "roles": ["web", "frontend", "ui", "spa", "app"],
+  "required_checks": ["checks", "bdd", "docker"],
   "substitutions": [
     {
-      "files": [
-        "package.json",
-        "package-lock.json"
-      ],
+      "files": ["package.json", "package-lock.json"],
       "from": "\"name\": \"frontend-template\"",
       "to": "\"name\": \"{package_name}\""
     },
     {
-      "files": [
-        "index.html"
-      ],
+      "files": ["index.html"],
       "from": "<title>App</title>",
       "to": "<title>{display_name}</title>"
     },
     {
-      "files": [
-        "src/components/AppLayout.tsx"
-      ],
+      "files": ["src/components/AppLayout.tsx"],
       "from": "font-semibold\">App<",
       "to": "font-semibold\">{display_name}<"
     },
     {
-      "files": [
-        "README.md"
-      ],
+      "files": ["README.md"],
       "from": "# Frontend template",
       "to": "# {display_name}"
     }
