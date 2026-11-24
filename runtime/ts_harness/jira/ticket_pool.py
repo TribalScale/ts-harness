@@ -415,6 +415,18 @@ def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workf
         try:
             _, tasks = load_workflow_payload(memory, workflow_id)
             join = next((t for t in tasks if str(t.get("id")) == str(pool.get("join_task_id"))), None)
+            if join is not None and _stale_child_wait(memory, join):
+                # It waits for a child to finish, but every child already has: the event that
+                # would wake it was lost (a restart between the last child ending and the join).
+                from ts_harness.workflows.engine import get_workflow_engine
+
+                get_workflow_engine().resume_external(
+                    workflow_id, event_type=CHILD_EVENT, payload={"reopened": "every child had already finished"},
+                    actor=actor, tenant_id=tenant_id,
+                )
+                reopened.append(workflow_id)
+                logger.info("ticket pool %s woken: every child had already finished", workflow_id)
+                continue
             if join is None or not str(join.get("error") or "").startswith(GAVE_UP_PREFIX):
                 continue
             states = []
@@ -437,6 +449,34 @@ def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workf
         except Exception as exc:  # noqa: BLE001 - checked again on the next poll
             logger.info("ticket pool %s not reopened: %s", workflow_id, exc)
     return reopened
+
+
+STALE_WAIT_SECONDS = 300
+
+
+def _stale_child_wait(memory: Any, join: dict[str, Any], *, now: float | None = None) -> bool:
+    """The join has waited for a child event for a while, and no child is still running."""
+    from datetime import datetime, timezone
+
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT, child_state, pinned_children
+
+    if str(join.get("error") or "") != f"awaiting_external:{CHILD_EVENT}":
+        return False
+    try:
+        since = datetime.fromisoformat(str(join.get("updated_at") or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return False
+    current = now if now is not None else datetime.now(timezone.utc).timestamp()
+    if current - since < STALE_WAIT_SECONDS:
+        return False
+    children = pinned_children(join)
+    if not children:
+        return False
+    for child in children:
+        child_workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
+        if child_state(child_workflow, child_tasks) is None:
+            return False
+    return True
 
 
 _NOT_STARTED_MARK = "tickets not started because a blocker was not delivered: "

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -364,3 +365,31 @@ class WorthReopeningTests(unittest.TestCase):
 
     def test_a_failed_ticket_block_still_reopens_on_recovery(self):
         self.assertTrue(tp._worth_reopening(self.ERROR + "; stopped or failed: P-3", {"queue": []}, self._join()))
+
+
+class StaleChildWaitTests(unittest.TestCase):
+    """A pool waiting for a child event that can no longer come (every child finished) is woken."""
+
+    def _run(self, *, updated_at, state):
+        memory = MagicMock()
+        memory.running_ticket_work.return_value = {"pools": [
+            {"workflow_id": "pool", "join_task_id": "join", "join_status": "blocked", "queue": ["P-1"]}]}
+        join = {"id": "join", "step_name": "join_pool", "status": "blocked", "updated_at": updated_at,
+                "error": "awaiting_external:workflow.child_terminal",
+                "input": {"_wait_options": {"children": [{"workflow_id": "c1", "label": "P-1"}]}}}
+        engine = MagicMock()
+        with patch("ts_harness.jira.ticket_pool.load_workflow_payload",
+                   side_effect=lambda m, wid: ({}, [join]) if wid == "pool" else ({"id": wid}, [])), \
+                patch("ts_harness.workflows.work_order_waves.child_state", return_value=state), \
+                patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine):
+            return tp.reopen_pools(memory), engine
+
+    def test_every_child_finished_long_ago_wakes_it(self):
+        reopened, engine = self._run(updated_at="2026-01-01T00:00:00+00:00", state="succeeded")
+        self.assertEqual(reopened, ["pool"])
+        self.assertEqual(engine.resume_external.call_args.kwargs["event_type"], "workflow.child_terminal")
+
+    def test_a_running_child_or_a_fresh_wait_is_left_alone(self):
+        self.assertEqual(self._run(updated_at="2026-01-01T00:00:00+00:00", state=None)[0], [])
+        fresh = datetime.now(timezone.utc).isoformat()
+        self.assertEqual(self._run(updated_at=fresh, state="succeeded")[0], [])
