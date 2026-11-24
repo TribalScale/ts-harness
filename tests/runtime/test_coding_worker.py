@@ -142,7 +142,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class LastLogLineTests(unittest.TestCase):
+class LastLogLineColourTests(unittest.TestCase):
     def test_colour_codes_are_stripped_and_colour_only_lines_skipped(self):
         import tempfile
         from pathlib import Path
