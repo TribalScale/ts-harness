@@ -306,6 +306,12 @@ variable "coding_quota_per_team" {
   default     = null
 }
 
+variable "coding_job_max_runtime_minutes" {
+  description = "Minutes a coding job may run before it is marked lost. Null keeps the harness default (240)."
+  type        = number
+  default     = null
+}
+
 variable "workflow_runner_poll_interval_seconds" {
   description = "Workflow runner polling interval in seconds."
   type        = number

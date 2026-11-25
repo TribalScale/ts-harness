@@ -275,6 +275,11 @@
           "minimum": 0,
           "description": "Coding jobs one team may have running at once. Unset keeps the default (8); 0 removes the limit."
         },
+        "coding_job_max_runtime_minutes": {
+          "type": "integer",
+          "minimum": 30,
+          "description": "Minutes a coding job may run before it is marked lost and retried. Unset keeps the default (240). A run stops cleanly about 20 minutes before it and pushes its work in progress, so the retry continues it."
+        },
         "coding_workers_on_ecs": {
           "type": "boolean",
           "description": "AWS only. Build the Fargate coding worker stack without scale_out (in the default VPC when scale_out.network_mode is default). Switching coding_launcher back to local keeps it in place."

@@ -39,6 +39,9 @@ class CodingRequest:
     review_model: str | None = None
     review_rounds: int = 0
     review_budget_seconds: int = 0
+    # Time the run may use before it stops starting fix passes or review rounds, pushes its work in
+    # progress and ends as time_limit (0 = no limit); the job limit less a margin.
+    run_budget_seconds: int = 0
     # Whether the repository runs CI on pull requests into the base branch (None: unknown). The
     # quick re-check after a pre-push review fix relies on CI running the full suite.
     repo_has_pr_ci: bool | None = None

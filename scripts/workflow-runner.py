@@ -279,6 +279,9 @@ TRANSPORT_ERROR_PREFIX = "transport_error:"
 TRANSPORT_EXTRA_RETRIES = 3
 # A coding run the model provider cut off is queued again this many times per step.
 PROVIDER_INTERRUPTED_RETRIES = 2
+# Coding runs that stopped for a reason outside the work and pushed what they had: queued again,
+# and the new run continues from the branch.
+RESUMABLE_STOPS = ("provider_interrupted", "time_limit")
 
 
 def compute_poll_backoff(base_interval: int, failures: int, *, cap: int = 60) -> int:
@@ -1603,7 +1606,7 @@ class WorkflowRunner:
 
         result = finished.get("result") if isinstance(finished.get("result"), dict) else {}
         error = str(result.get("error") or finished.get("error") or "")
-        if finished.get("status") == "succeeded" or not error.startswith("provider_interrupted"):
+        if finished.get("status") == "succeeded" or not error.startswith(RESUMABLE_STOPS):
             return False
         task_id = str(task["id"])
         try:
@@ -1612,7 +1615,7 @@ class WorkflowRunner:
             earlier = []
         interrupted = sum(
             1 for job in earlier or []
-            if str((job.get("result") or {}).get("error") or job.get("error") or "").startswith("provider_interrupted")
+            if str((job.get("result") or {}).get("error") or job.get("error") or "").startswith(RESUMABLE_STOPS)
         )
         if interrupted > PROVIDER_INTERRUPTED_RETRIES:
             return False

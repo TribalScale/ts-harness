@@ -121,6 +121,7 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
 
 
 PROVIDER_INTERRUPTED = "provider_interrupted"
+TIME_LIMIT = "time_limit"
 RESUME_NOTE = (
     "Note: a previous run of this work order was interrupted by the model provider. Its work in "
     "progress is already committed on this branch. Review what is there, keep what is right, and "
@@ -926,6 +927,12 @@ class OpenCodeBackend:
                     verify.security,
                     verification_evidence(verify),
                 )
+            if self._out_of_time(request):
+                stopped = self._time_limit_result(
+                    repo_dir, request, branch, f"fix pass {fix_passes_used + 1}",
+                    log="\n".join([log, *verify_logs])[-8000:], log_path=log_path,
+                )
+                return stopped, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
             progress.detail(f"fixing test failures (pass {fix_passes_used + 1})")
             fix_prompt = build_verification_fix_prompt(
                 request.work_order_id,
@@ -949,6 +956,8 @@ class OpenCodeBackend:
                 work_order_id=request.work_order_id,
             )
             fix_passes_used += 1
+            if fix_completed.returncode == 0:
+                self._checkpoint(repo_dir, request, branch, f"after fix pass {fix_passes_used}")
             fix_log = "\n".join(
                 part
                 for part in [
@@ -1058,6 +1067,96 @@ class OpenCodeBackend:
                 check=False,
             )
         return reverted
+
+    _run_started: float = 0.0
+
+    def _out_of_time(self, request: CodingRequest) -> bool:
+        """The run is past its budget (the job limit less a margin): start nothing new."""
+        budget = int(getattr(request, "run_budget_seconds", 0) or 0)
+        return bool(budget and self._run_started and time.monotonic() - self._run_started >= budget)
+
+    def _time_limit_result(
+        self, repo_dir: Path, request: CodingRequest, branch: str, next_step: str, *, log: str, log_path: Path
+    ) -> CodingResult:
+        """Stop before the job limit instead of being cut off: push the work so the retry continues it."""
+        minutes = int((time.monotonic() - self._run_started) // 60) if self._run_started else 0
+        saved = self._checkpoint(repo_dir, request, branch, f"stopped before {next_step}")
+        log_event("coding_run_time_limit", work_order_id=request.work_order_id, minutes=minutes, next_step=next_step)
+        return CodingResult(
+            ok=False,
+            branch=branch,
+            summary=f"Stopped before {next_step}: the run used {minutes} minutes of its time limit",
+            changed_files=list_changed_files(repo_dir, runner=self.runner),
+            log_tail=log,
+            log_path=str(log_path),
+            pr_url=request.pr_url,
+            error=f"{TIME_LIMIT}: stopped before {next_step} after {minutes} minutes" + (f"; {saved}" if saved else ""),
+        )
+
+    def _checkpoint(self, repo_dir: Path, request: CodingRequest, branch: str, label: str) -> str:
+        """Push a snapshot of the working tree to the work branch on GitHub, leaving the local
+        branch, index and files as they are, so a run cut off later is continued from here.
+
+        First runs only (an open PR's branch is what reviewers see), and only after a clean
+        secret scan. Returns a note, or "" when nothing was pushed.
+        """
+        if request.pr_url:
+            return ""
+        changed = list_changed_files(repo_dir, runner=self.runner)
+        if not changed:
+            return ""
+        try:
+            from ts_harness.implementation.security_scan import scan_secrets
+
+            base = str(request.base_branch or "").strip()
+            scan = scan_secrets(repo_dir, f"origin/{base}" if base else None, list(changed), self.runner)
+            if scan.findings:
+                log_event("coding_checkpoint_skipped", work_order_id=request.work_order_id, reason="secret scan", label=label)
+                return "work in progress not pushed: the secret scan found something"
+            sha = self._snapshot_commit(repo_dir, f"WIP checkpoint {request.work_order_id}: {label}")
+            if not sha:
+                return ""
+            git_env = _git_env(request.repo_url)
+            remote = github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", ""))
+            listed = self.runner(
+                ["git", "-C", str(repo_dir), "ls-remote", remote, f"refs/heads/{branch}"],
+                capture_output=True, text=True, check=False, env=git_env,
+            )
+            expected = (str(listed.stdout or "").split() or [""])[0] if listed.returncode == 0 else ""
+            pushed = self.runner(
+                ["git", "-C", str(repo_dir), "push", f"--force-with-lease=refs/heads/{branch}:{expected}",
+                 remote, f"{sha}:refs/heads/{branch}"],
+                capture_output=True, text=True, check=False, env=git_env,
+            )
+            if pushed.returncode != 0:
+                log_event("coding_checkpoint_failed", work_order_id=request.work_order_id, label=label,
+                          error=str(pushed.stderr or pushed.stdout or "")[-300:])
+                return ""
+        except Exception as exc:  # noqa: BLE001 - a checkpoint is a safety net, never a failure
+            log_event("coding_checkpoint_failed", work_order_id=request.work_order_id, label=label, error=str(exc)[:300])
+            return ""
+        log_event("coding_checkpoint_pushed", work_order_id=request.work_order_id, label=label, files=len(changed))
+        return f"work in progress pushed to {branch}"
+
+    def _snapshot_commit(self, repo_dir: Path, message: str) -> str:
+        """A commit of the working tree on top of HEAD, built in a throwaway index (nothing local changes)."""
+        index = Path(repo_dir) / ".git" / "ts-harness-checkpoint-index"
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+        try:
+            for args in (["read-tree", "HEAD"], ["add", "-A", "--", ".", ":(exclude)**/__pycache__/**", ":(exclude)**/*.pyc"]):
+                done = self.runner(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, check=False, env=env)
+                if done.returncode != 0:
+                    return ""
+            tree = self.runner(["git", "-C", str(repo_dir), "write-tree"], capture_output=True, text=True, check=False, env=env)
+            if tree.returncode != 0 or not str(tree.stdout or "").strip():
+                return ""
+            commit = self.runner(
+                ["git", "-C", str(repo_dir), "commit-tree", str(tree.stdout).strip(), "-p", "HEAD", "-m", message],
+                capture_output=True, text=True, check=False,
+            )
+            return str(commit.stdout or "").strip() if commit.returncode == 0 else ""
+        finally:
+            index.unlink(missing_ok=True)
 
     def _ahead_of_base(self, repo_dir: Path, base_branch: str) -> bool:
         base = str(base_branch or "").strip()
@@ -1336,6 +1435,7 @@ class OpenCodeBackend:
         )
         timings: dict[str, float] = {}
         clock = [time.monotonic()]
+        self._run_started = clock[0]
         progress.reset()
         progress.begin("setup")
 
@@ -1512,6 +1612,7 @@ class OpenCodeBackend:
                 )
 
             self._revert_undeclared(repo_dir, request)
+            self._checkpoint(repo_dir, request, branch, "after coding")
             failure, log, fix_passes_used, changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,

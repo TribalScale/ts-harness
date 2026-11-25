@@ -716,7 +716,7 @@ def sweep_stale_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     """
     heartbeat_seconds = int(body.get("heartbeat_seconds") or 300)
     starting_seconds = int(body.get("starting_seconds") or max(300, heartbeat_seconds))
-    max_runtime_seconds = int(body.get("max_runtime_seconds") or 3600)
+    max_runtime_seconds = int(body.get("max_runtime_seconds") or 14400)
     actor = str(body.get("actor") or "coding-watchdog")
     lost: list[dict[str, Any]] = []
     with conn.cursor() as cur:

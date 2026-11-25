@@ -134,8 +134,9 @@ class OpenCodeBackendTests(unittest.TestCase):
                     result.stdout = "https://github.com/example/app/pull/42\n"
                 elif cmd[0] == "git" and "status" in cmd and "--porcelain" in cmd:
                     status_calls["n"] += 1
-                    # First statuses (list_changed / pre-commit): dirty. After commit: clean.
-                    if status_calls["n"] <= 2:
+                    # First statuses (list_changed, the work-in-progress checkpoint, pre-commit):
+                    # dirty. After commit: clean.
+                    if status_calls["n"] <= 3:
                         result.stdout = " M src/app.py\n"
                 return result
 
@@ -467,7 +468,8 @@ class OpenCodeBackendTests(unittest.TestCase):
                         self.assertIn("Planning specs (Refinery, Foundry, Planner) under `docs/`", cmd[body_idx])
                 elif cmd[0] == "git" and "status" in cmd and "--porcelain" in cmd:
                     status_calls["n"] += 1
-                    if status_calls["n"] <= 2:
+                    # list_changed, the work-in-progress checkpoint, pre-commit: dirty.
+                    if status_calls["n"] <= 3:
                         result.stdout = " M docs/planner/work-orders/WO-001-lobby.md\n"
                 elif str(cmd[0]).endswith("/opencode"):
                     repo = repo_holder["repo"]
