@@ -85,6 +85,8 @@ runtime:
   # coding_workers_on_ecs: true
   # Fair-share quotas (defaults 2 per requester, 3 per program, 8 per team; 0 = no limit).
   # coding_quota_per_user: 5
+  # Minutes a coding job may run (default 240). A run stops ~20 minutes before it and pushes its work.
+  # coding_job_max_runtime_minutes: 240
   # coding_quota_per_program: 5
   # coding_launcher: ecs
   embeddings_provider: openai
