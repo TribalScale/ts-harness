@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.8.0
+version: 1.9.0
 ---
 
 # Governed Code Review
@@ -122,6 +122,28 @@ wherever the change touches it:
   not-found, a refused duplicate) returns the stated error and is tested.
 - **Boundaries.** Each limit and example value the work order gives, by hand.
 - **Permissions.** Each endpoint and action checks the roles the work order states.
+
+## API types in a web PR
+
+A web app whose API types are written by hand drifts from the backend: the types say one
+thing, the server sends another, and a fake API built from the same types passes every test.
+On a PR to a web repository that calls a backend (a `src/api/openapi.json`, a
+`contract.openapi` block in `.ts-harness.yml`, or an OpenAPI-generated `schema.d.ts`):
+
+- Request and response types come from the schema generated from the backend's spec
+  (`components['schemas'][...]`, `paths[...]`, `operations[...]` of `src/api/schema.d.ts`),
+  and requests go through the client typed by it. A file that declares API request or
+  response types by hand (an `interface`/`type` describing a payload in `src/api/` or a
+  feature's `*.api.ts`, a `types/api.ts`), or edits the generated `schema.d.ts` by hand, is a
+  `major` `correctness` finding: name the file and say to run
+  `npm run api:pull && npm run api:generate` and use the generated types.
+- A call to a path, method or field the spec does not have (check `src/api/openapi.json` with
+  `read_pr_file`) is a `blocker` `correctness` finding: it fails against the real backend
+  whatever the tests say. Name the call and what the spec has instead.
+- A changed `src/api/openapi.json` without a regenerated `schema.d.ts`, or the reverse, is a
+  `major` `correctness` finding.
+- "Until the backend's spec exists" is not an excuse in the PR: the work order should have
+  been planned contract-first. Raise the finding; the work order's follow-up is the fix.
 
 ## Review Checklist
 

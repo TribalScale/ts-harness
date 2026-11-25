@@ -16,6 +16,8 @@
 | 12 | Consistency | Within one WO, two statements cannot both hold: a requirement, constraint, implementation note or acceptance test asks for X while another asks for not-X (for example "sort the list newest first" and "keep the existing sort order unchanged"); or a WO contradicts a WO it depends on | Settle it from the PRD and FRDs and rewrite both statements to agree. If the PRD does not settle it, pick the reading that keeps the PRD's Must requirements, say which in the WO, and record the choice in `warnings` |
 | 13 | Waves | A chain of work orders that could run in parallel: a dependency that is not needed to build or test, or tightly coupled pieces split into a chain of small WOs | Drop the dependency, or merge the coupled pieces (without breaking gate 6) |
 | 14 | Complexity | A WO lacks a `Complexity: Low/Medium/High` line, or routine work is marked `High` | Add the line; keep `High` for hard-to-get-right work |
+| 15 | Deferred work | A WO leaves part of its job for "later", "for now", "until X exists" or "once Y is ready" without a `Follow-up: WO-NNN` line, or the follow-up is missing from the plan or depends on nothing | Plan the deferred part as its own WO that depends on the WO producing what is missing, and name it as the follow-up |
+| 16 | API contract first | An API WO adds or changes endpoints without updating the committed `openapi.json`; a web WO calls those endpoints without depending on that WO or without generating its types (`npm run api:pull && npm run api:generate`); any WO hand-writes API types | Make the updated spec part of the API WO's acceptance; make the web WO depend on it and generate its types from the spec |
 
 Record unresolved items in `warnings`. Set `planner_complete: true` only when gates pass.
 

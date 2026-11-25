@@ -267,6 +267,166 @@ def work_order_repository_problems(markdown: str, repositories: list[dict[str, A
     return problems
 
 
+
+# API contract rules: deferred work gets its own work order, and the API contract comes first.
+API_ROLES = frozenset({"api", "backend", "server", "service"})
+WEB_ROLES = frozenset({"web", "frontend", "ui", "spa", "app"})
+_DELIVERABLE = (
+    r"(?:backend|api(?!\s+(?:response|request|call)s?\b)|endpoints?|services?|openapi(?:\.json)?|spec|schema"
+    r"|WO-\d+|work order|migration|integration|real data)"
+)
+_ARRIVES = (
+    r"(?:exists?|lands?|ships?|is (?:built|available|merged|implemented|copied(?: in)?|added|in place|live|deployed"
+    r"|published|delivered|ready)|are (?:built|available|merged|implemented|added|in place|delivered|ready))"
+)
+_DEFERRALS = (
+    re.compile(rf"\b(?:until|once)\b[^.\n]{{0,60}}?\b{_DELIVERABLE}\b[^.\n]{{0,40}}?\b{_ARRIVES}\b", re.IGNORECASE),
+    re.compile(r"\bfor now\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:will be|to be|can be|is|are) (?:added|done|handled|implemented|replaced|wired(?: up)?|fixed|built"
+        r"|generated|completed|addressed|regenerated) later\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bin a (?:later|future|follow-up) (?:work order|phase|ticket|iteration|pr)\b", re.IGNORECASE),
+    re.compile(r"\bTODO\b"),
+)
+_FOLLOW_UP = re.compile(r"^\s*(?:[-*]\s+)?\|?\s*\*{0,2}Follow[- ]ups?\*{0,2}\s*(?::|\|)\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+_ENDPOINT = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE)\s+`?(/[A-Za-z0-9_\-/{}:.]*)")
+_HAND_WRITTEN = re.compile(
+    r"\bhand[- ]?(?:written|write|writing|code|coded|craft(?:ed)?)\b[^.\n]{0,40}\b(?:types?|interfaces?|models?|dtos?)\b"
+    r"|\b(?:types?|interfaces?|dtos?)\b[^.\n]{0,40}\bby hand\b"
+    r"|\b(?:define|declare|write)\b[^.\n]{0,30}\b(?:request|response)\s+(?:types?|interfaces?)\b",
+    re.IGNORECASE,
+)
+_NEGATION = re.compile(r"\b(?:never|not|no|don't|do not|instead of|rather than|forbid(?:den|s)?)\b", re.IGNORECASE)
+_GENERATES_TYPES = re.compile(r"api:generate|openapi-typescript|generat\w*[^.\n]{0,40}\b(?:openapi|spec|schema)", re.IGNORECASE)
+
+
+def _sentences(section: str) -> list[str]:
+    return [part for part in re.split(r"(?<=[.!?])\s+|\n", section) if part.strip()]
+
+
+def _endpoints(section: str) -> set[str]:
+    found = set()
+    for method, path in _ENDPOINT.findall(section):
+        normal = re.sub(r"\{[^}]*\}|:[A-Za-z_]\w*", "{}", path.rstrip("/.`") or "/").lower()
+        found.add(f"{method.upper()} {normal}")
+    return found
+
+
+def _reachable(start: str, deps: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    stack = list(deps.get(start, []))
+    while stack:
+        node = stack.pop()
+        if node not in seen:
+            seen.add(node)
+            stack.extend(deps.get(node, []))
+    return seen
+
+
+def deferred_work_problems(markdown: str) -> list[str]:
+    """Work orders that defer part of their job ("until the API exists", "for now") without a follow-up.
+
+    Deferred work that lives only in a sentence is forgotten: nothing tracks it, so the
+    stand-in ships. The work order names its follow-up (``Follow-up: WO-009``) and that
+    follow-up depends on the work order producing what is missing, so it runs once it can.
+    """
+    sections = _sections(markdown)
+    deps = parse_work_order_dependencies(markdown)
+    problems: list[str] = []
+    for wo_id, section in sections.items():
+        body = _FOLLOW_UP.sub("", section)
+        own = set(deps.get(wo_id, []))
+        # "once WO-003 is merged" in a work order that depends on WO-003 is a declared dependency.
+        hit = next(
+            (
+                m.group(0)
+                for pattern in _DEFERRALS
+                for m in pattern.finditer(body)
+                if not own & {ref.upper() for ref in _WO_ID.findall(m.group(0))}
+            ),
+            None,
+        )
+        if hit is None:
+            continue
+        follow_ups = [
+            ref.upper()
+            for line in _FOLLOW_UP.findall(section)
+            for ref in _WO_ID.findall(line)
+            if ref.upper() != wo_id
+        ]
+        if not follow_ups:
+            problems.append(
+                f'{wo_id} defers work ("{hit.strip()}") without a follow-up work order; add one that depends on the '
+                f"work order producing what is missing and name it in a `Follow-up: WO-NNN` line"
+            )
+            continue
+        for ref in follow_ups:
+            if ref not in sections:
+                problems.append(f"{wo_id} names follow-up {ref}, which is not in the plan")
+            elif not deps.get(ref):
+                problems.append(
+                    f"{wo_id}'s follow-up {ref} depends on nothing; it must depend on the work order that produces "
+                    "what it waits for"
+                )
+    return problems
+
+
+def api_contract_problems(markdown: str, repositories: list[dict[str, Any]] | None) -> list[str]:
+    """Where the plan would let a web app's API types drift from the backend's contract.
+
+    An API work order that adds or changes endpoints updates the committed ``openapi.json``.
+    A web work order that calls those endpoints depends on that work order and generates its
+    types from the spec (``npm run api:pull && npm run api:generate``); it never writes them by
+    hand. Roles come from ``repositories``; without them only the hand-written-types rule applies.
+    """
+    sections = _sections(markdown)
+    deps = parse_work_order_dependencies(markdown)
+    named = {k: v.lower() for k, v in parse_work_order_repositories(markdown).items()}
+    roles = {str(r.get("full_name") or "").lower(): str(r.get("role") or "").lower() for r in repositories or []}
+    if len(repositories or []) == 1 and roles:
+        only = next(iter(roles))
+        named = {wo_id: named.get(wo_id, only) for wo_id in sections}
+    role_of = {wo_id: roles.get(named.get(wo_id, ""), "") for wo_id in sections}
+    problems: list[str] = []
+    providers: dict[str, set[str]] = {}
+    for wo_id, section in sections.items():
+        if role_of[wo_id] in API_ROLES:
+            endpoints = _endpoints(section)
+            if endpoints:
+                providers[wo_id] = endpoints
+                if "openapi" not in section.lower():
+                    problems.append(
+                        f"{wo_id} adds or changes endpoints but does not update the committed openapi.json; "
+                        "make the updated spec part of its acceptance"
+                    )
+    for wo_id, section in sections.items():
+        if role_of[wo_id] in API_ROLES:
+            continue
+        for sentence in _sentences(section):
+            if _HAND_WRITTEN.search(sentence) and not _NEGATION.search(sentence):
+                problems.append(
+                    f'{wo_id} hand-writes API types ("{sentence.strip()[:120]}"); generate them from the backend\'s '
+                    "openapi.json with `npm run api:pull && npm run api:generate`"
+                )
+                break
+        if role_of[wo_id] not in WEB_ROLES:
+            continue
+        before = _reachable(wo_id, deps)
+        consumed = _endpoints(section)
+        relied = [p for p, endpoints in providers.items() if p != wo_id and (p in before or consumed & endpoints)]
+        for provider in sorted(p for p in relied if p not in before):
+            calls = ", ".join(sorted(consumed & providers[provider]))
+            problems.append(f"{wo_id} calls {calls}, which {provider} adds; it must depend on {provider}")
+        if relied and not _GENERATES_TYPES.search(section):
+            problems.append(
+                f"{wo_id} uses endpoints from {', '.join(sorted(relied))} but does not generate its API types from the "
+                "updated spec; require `npm run api:pull && npm run api:generate`"
+            )
+    return problems
+
+
 # Delivery plan: how the work orders will run in parallel, and which look too large.
 LARGE_WORK_ORDER_FILES = 15
 LARGE_WORK_ORDER_REQUIREMENTS = 12

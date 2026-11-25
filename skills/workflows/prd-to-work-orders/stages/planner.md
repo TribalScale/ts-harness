@@ -39,6 +39,8 @@ docs/planner/
 - Each Work Order is independently implementable unless dependencies are explicit.
 - A fresh coding agent should be able to execute the Work Order without clarifying questions.
 - Planner never silently edits Blueprints or FRDs. Use `planner-issues.md` for upstream issues.
+- Deferred work ("later", "for now", "until X exists") becomes its own follow-up Work Order that depends on the Work Order producing X, named in the deferring Work Order's **Follow-up** row.
+- API contract first: an API Work Order that adds or changes endpoints updates the committed `openapi.json`; a web Work Order that calls them depends on it and generates its types from the spec (`npm run api:pull && npm run api:generate`), never by hand.
 
 ## Executability Scoring
 
