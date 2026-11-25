@@ -1,6 +1,6 @@
 {
   "name": "node-api",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "TypeScript REST API: Express 5, Postgres (Prisma), Entra ID auth, Zod + OpenAPI, Cucumber BDD, GitHub Actions CI, Docker",
   "roles": ["api", "backend", "server", "service"],
   "required_checks": ["checks", "bdd", "docker"],

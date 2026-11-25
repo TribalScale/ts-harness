@@ -7,3 +7,5 @@ coverage
 *.log
 cucumber-report.html
 .DS_Store
+# start:smoke's generated test issuer key pair
+.smoke

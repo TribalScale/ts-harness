@@ -5,3 +5,4 @@ package-lock.json
 prisma/migrations
 openapi.json
 cucumber-report.html
+.smoke
