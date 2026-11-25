@@ -543,6 +543,8 @@ The Planner runs largely autonomously. Review the execution phases to confirm th
 - Paraphrasing acceptance criteria instead of copying verbatim from the FRD
 - Leaving "Out of Scope" empty — agents need explicit boundaries
 - Orphan Work Orders with no context graph connections
+- Deferring part of a Work Order ("until the backend exists", "for now") without a follow-up Work Order that depends on the producer: the stand-in ships and nobody comes back to it
+- Planning a web Work Order with hand-written API types: the API Work Order updates the committed `openapi.json`, and the web Work Order depends on it and runs `npm run api:pull && npm run api:generate`
 
 ---
 
