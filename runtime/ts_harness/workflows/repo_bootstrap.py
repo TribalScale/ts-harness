@@ -31,12 +31,15 @@ logger = logging.getLogger(__name__)
 
 BRANCH_PREFIX = "ts-harness/bootstrap"
 MARKER_FILE = ".ts-harness.yml"
+SMOKE_WORKFLOW = ".github/workflows/nightly-smoke.yml"
 # What an "empty" repository may already hold: the files GitHub offers when creating one.
 _STARTER_FILES = ("README*", "readme*", "LICENSE*", "LICENCE*", "license*", ".gitignore", ".gitattributes", ".editorconfig", ".github/CODEOWNERS", "CODEOWNERS")
 _TEMPLATE_LINE = re.compile(r"^template:\s*([\w.-]+)\s*$", re.MULTILINE)
 _VERSION_LINE = re.compile(r"^template_version:\s*([\w.+-]+)\s*$", re.MULTILINE)
 # Set by the CI safety net's work order: once its CI merges, require the jobs.
 _REQUIRE_CI_LINE = re.compile(r"^require_ci_checks:\s*true\s*$", re.MULTILINE | re.IGNORECASE)
+# contract: / openapi: / repo: owner/name, as render() writes it.
+_CONTRACT_REPO_LINE = re.compile(r"^contract:\s*\n\s+openapi:\s*\n(?:\s+\w+:.*\n)*?\s+repo:\s*([\w.-]+/[\w.-]+)\s*$", re.MULTILINE)
 
 
 class BootstrapError(Exception):
@@ -156,14 +159,14 @@ def package_name(repo_name: str) -> str:
 
 
 # Build output and dependencies a local run of a template's checks leaves behind.
-_SKIP_DIRS = frozenset({".git", "node_modules", "dist", "coverage", "test-results", "playwright-report", ".features-gen", ".turbo"})
+_SKIP_DIRS = frozenset({".git", "node_modules", "dist", "dist-smoke", "coverage", "test-results", "playwright-report", ".features-gen", ".turbo", ".smoke"})
 
 
 def _template_files(root: Path) -> list[Path]:
     found: list[Path] = []
     for directory, dirs, names in os.walk(root):
         dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
-        found.extend(Path(directory) / name for name in sorted(names) if name not in {".DS_Store", "cucumber-report.html"})
+        found.extend(Path(directory) / name for name in sorted(names) if name not in {".DS_Store", "cucumber-report.html", "smoke-results.json"})
     return sorted(found)
 
 
@@ -192,6 +195,9 @@ def render(template: Template, *, repo_name: str, title: str | None = None, cont
     if contract_repo and "features/support/contract.ts" in files and "contract:" not in files[MARKER_FILE]:
         # The acceptance tests check the fake API against the backend's current openapi.json.
         files[MARKER_FILE] += f"contract:\n  openapi:\n    repo: {contract_repo}\n    path: openapi.json\n"
+    if not contract_repo:
+        # The nightly smoke run tests the app against its API; with no API there is nothing to run.
+        files.pop(SMOKE_WORKFLOW, None)
     return files
 
 
@@ -363,6 +369,10 @@ def ensure_ready(
         )
     if template is None or not is_starter_only(files):
         result = Readiness(repo=name, ready=True)
+        if SMOKE_WORKFLOW in files and name.lower() not in _smoke_access_done:
+            linked = contract_repo_of(_marker(github, owner, repo, base_branch)) or contract_repo
+            if linked:
+                result.notes.extend(_smoke_access(github, name, linked))
         if files and not is_starter_only(files) and wants_ci_required(github, owner, repo, base_branch):
             try:
                 added = require_template_checks(github, owner, repo, base_branch)
@@ -374,7 +384,34 @@ def ensure_ready(
 
     rendered = render(template, repo_name=repo, title=title, contract_repo=contract_repo)
     url, opened, refreshed = open_bootstrap_pr(github, owner, repo, base_branch, template, rendered)
-    return Readiness(repo=name, ready=False, template=template.name, pr_url=url, opened=opened, refreshed=refreshed)
+    result = Readiness(repo=name, ready=False, template=template.name, pr_url=url, opened=opened, refreshed=refreshed)
+    if contract_repo and SMOKE_WORKFLOW in rendered and (opened or refreshed):
+        # Secrets can be set before the PR merges; the workflow finds them on its first night.
+        result.notes.extend(_smoke_access(github, name, contract_repo))
+    return result
+
+
+# Repositories whose smoke access this process has already set up (or tried to): the check
+# costs a few GitHub calls, and readiness runs for every ticket.
+_smoke_access_done: set[str] = set()
+
+
+def contract_repo_of(marker: str) -> str | None:
+    """The API repository a web repository's .ts-harness.yml links it to, if any."""
+    match = _CONTRACT_REPO_LINE.search(marker or "")
+    return match.group(1) if match else None
+
+
+def _smoke_access(github: Any, web_repo: str, api_repo: str) -> list[str]:
+    """Read access to the API and failure reporting for the nightly smoke run (never raises)."""
+    from ts_harness.workflows.smoke_access import ensure_smoke_access
+
+    _smoke_access_done.add(web_repo.lower())
+    try:
+        return ensure_smoke_access(github, web_repo, api_repo)
+    except Exception as exc:  # noqa: BLE001 - advisory, like the required checks above
+        logger.warning("nightly smoke access for %s failed: %s", web_repo, type(exc).__name__)
+        return [f"{web_repo} nightly smoke: setup failed ({type(exc).__name__}); see docs/runbooks/nightly-smoke.md"]
 
 
 def repositories_ready(github: Any, repositories: list[dict[str, Any]], *, title: str | None = None) -> list[Readiness]:
