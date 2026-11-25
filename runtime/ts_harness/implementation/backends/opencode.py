@@ -122,6 +122,17 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
 
 
 PROVIDER_INTERRUPTED = "provider_interrupted"
+STALLED = "stalled"
+DEFAULT_CHECKPOINT_SECONDS = 900
+
+
+def checkpoint_interval_seconds() -> int:
+    """How often a first run pushes a work-in-progress snapshot while OpenCode codes
+    (``CODING_CHECKPOINT_SECONDS``, default 15 minutes; 0 = only at the phase boundaries)."""
+    try:
+        return max(0, int(os.environ.get("CODING_CHECKPOINT_SECONDS") or DEFAULT_CHECKPOINT_SECONDS))
+    except ValueError:
+        return DEFAULT_CHECKPOINT_SECONDS
 BLOCKED = "blocked"
 # OpenCode used to run the whole unit and BDD suites inside every fix, then the host ran them again:
 # about a third of a long run was the same tests twice.
@@ -213,6 +224,55 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
             continue
 
 
+ACTIVITY_PROBE_SECONDS = 60
+
+
+def _latest_mtime(root: str) -> float:
+    """The newest modification time of a file under ``root`` (0.0 when there is none)."""
+    newest = 0.0
+    if not root or not os.path.isdir(root):
+        return newest
+    for directory, _dirs, files in os.walk(root):
+        for name in files:
+            try:
+                newest = max(newest, os.stat(os.path.join(directory, name)).st_mtime)
+            except OSError:
+                continue
+    return newest
+
+
+def _worktree_state(repo_dir: str) -> tuple[str, float]:
+    """The checkout's changed files and their newest modification time."""
+    try:
+        status = subprocess.run(
+            ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, check=False, timeout=60,
+        ).stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return "", 0.0
+    newest = 0.0
+    for line in status.splitlines():
+        path = line[3:].strip().split(" -> ")[-1] if len(line) > 3 else ""
+        try:
+            newest = max(newest, os.stat(os.path.join(repo_dir, path)).st_mtime)
+        except OSError:
+            continue
+    return status, newest
+
+
+def activity_probe(data_dir: str, repo_dir: str) -> Callable[[], bool]:
+    """True when the checkout or OpenCode's session data changed since the last call."""
+    state = {"data": _latest_mtime(data_dir), "tree": _worktree_state(repo_dir)}
+
+    def changed() -> bool:
+        data, tree = _latest_mtime(data_dir), _worktree_state(repo_dir)
+        moved = data > state["data"] or tree != state["tree"]
+        state["data"], state["tree"] = max(data, state["data"]), tree
+        return moved
+
+    return changed
+
+
 def stream_opencode_process(
     cmd: list[str],
     *,
@@ -221,13 +281,20 @@ def stream_opencode_process(
     log_path: Path,
     work_order_id: str,
     stall_seconds: float | None = None,
+    activity: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run OpenCode while streaming output to a tailable log and runtime events.
 
-    A run that prints nothing for ``stall_seconds`` is killed with its whole
-    process group and returns ``OPENCODE_STALLED_RC``.
+    A run with no output and no other sign of work for ``stall_seconds`` is killed with its
+    whole process group and returns ``OPENCODE_STALLED_RC``. Sub-agents print nothing to the
+    main session while they work, so ``activity`` (files changing in the checkout or in
+    OpenCode's own session data) also counts as progress; a run with seven sub-agents busy
+    for a quarter of an hour was once killed as stalled.
     """
     stall = opencode_stall_seconds() if stall_seconds is None else max(0.0, float(stall_seconds))
+    if activity is None:
+        activity = activity_probe(env.get("XDG_DATA_HOME") or "", cwd)
+    last_probe = time.monotonic()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     collected: list[str] = []
     line_count = 0
@@ -271,7 +338,15 @@ def stream_opencode_process(
                 try:
                     line = lines.get(timeout=1.0)
                 except queue.Empty:
-                    if stall and time.monotonic() - last_output >= stall:
+                    now = time.monotonic()
+                    if activity is not None and now - last_probe >= ACTIVITY_PROBE_SECONDS:
+                        last_probe = now
+                        try:
+                            if activity():
+                                last_output = now
+                        except Exception:  # noqa: BLE001 - a broken probe only loses the extra signal
+                            activity = None
+                    if stall and now - last_output >= stall:
                         stalled = True
                         break
                     continue
@@ -758,6 +833,7 @@ class OpenCodeBackend:
         env: dict[str, str],
         log_path: Path,
         work_order_id: str,
+        checkpoint: Callable[[], Any] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         # Injected test runners keep the capture_output contract; production streams.
         if self.runner is not subprocess.run:
@@ -769,13 +845,29 @@ class OpenCodeBackend:
                 check=False,
                 env=env,
             )
-        return stream_opencode_process(
-            cmd,
-            cwd=cwd,
-            env=env,
-            log_path=log_path,
-            work_order_id=work_order_id,
-        )
+        stop = threading.Event()
+        saver = None
+        if checkpoint is not None and checkpoint_interval_seconds():
+            def save_periodically() -> None:
+                # A run cut off mid-coding is continued from its last snapshot, not from scratch.
+                while not stop.wait(checkpoint_interval_seconds()):
+                    try:
+                        checkpoint()
+                    except Exception as exc:  # noqa: BLE001 - a checkpoint is a safety net
+                        log_event("coding_checkpoint_failed", work_order_id=work_order_id, error=str(exc)[:300])
+
+            saver = threading.Thread(target=save_periodically, daemon=True)
+            saver.start()
+        try:
+            return stream_opencode_process(
+                cmd,
+                cwd=cwd,
+                env=env,
+                log_path=log_path,
+                work_order_id=work_order_id,
+            )
+        finally:
+            stop.set()
 
     def _prepare_test_env(
         self, workspace_dir: Path, repo_dir: Path, api_contract: dict[str, Any] | None = None
@@ -1591,6 +1683,7 @@ class OpenCodeBackend:
                 env=env,
                 log_path=log_path,
                 work_order_id=request.work_order_id,
+                checkpoint=lambda: self._checkpoint(repo_dir, request, branch, "during coding"),
             )
             lap("coding", "verification")
             log = "\n".join(
@@ -1608,6 +1701,20 @@ class OpenCodeBackend:
             blocked = self._blocked_result(request, branch, changed, log, log_path)
             if blocked is not None:
                 return blocked
+            if completed.returncode == OPENCODE_STALLED_RC:
+                # No output and no file activity for the stall window: keep the work and queue
+                # the job again, continuing from the branch (at most twice; see the runner).
+                saved = self._save_interrupted_work(repo_dir, request, branch, changed)
+                return CodingResult(
+                    ok=False,
+                    branch=branch,
+                    summary="OpenCode stopped making progress",
+                    changed_files=changed,
+                    log_tail=log,
+                    log_path=str(log_path),
+                    pr_url=request.pr_url,
+                    error=f"{STALLED}: {opencode_exit_error(completed)}" + (f"; {saved}" if saved else ""),
+                )
             if completed.returncode != 0:
                 interrupted = provider_interruption("\n".join([log, _file_tail(log_path)]))
                 if interrupted:

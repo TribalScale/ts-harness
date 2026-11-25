@@ -2466,6 +2466,14 @@ class CodingJobDispatchTests(unittest.TestCase):
         self.assertEqual(len(memory.created_jobs), 1)
         self.assertEqual(memory.consumed, ["job-1"])
 
+    def test_a_stalled_run_requeues_the_job(self):
+        stalled = {"id": "job-1", "task_id": "task-1", "status": "failed",
+                   "result": {"error": "stalled: opencode stalled: no output within the stall window; work in progress pushed to wo/wo-1"}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[stalled])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)
+
     def test_a_third_provider_interruption_blocks_the_step(self):
         def cut(n, status="failed"):
             return {"id": f"job-{n}", "task_id": "task-1", "status": status, "consumed_at": "x" if n < 3 else None,
