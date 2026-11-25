@@ -74,6 +74,7 @@ contract:
     repo: org/api        # or a GitHub URL
     path: openapi.json   # default
     ref: dev             # default: the backend's default branch
+    refresh_on_change: true  # default: a change to the spec starts a refresh run (below)
 ```
 
 A project whose repositories are started from the templates gets this entry in the web
@@ -81,3 +82,49 @@ repository's bootstrap PR. An existing web repository adopts it with one ticket:
 `features/support/contract.ts` and the reply check in `fixtures.ts` from the template, add
 `ajv` and `ajv-formats`, commit the backend's `openapi.json` as `src/api/openapi.json`, and add
 the `contract` entry.
+
+### API types are generated, never written
+
+The fake API is only as good as the types it is built from: a web app whose API types were
+written by hand from planning documents, "until the backend's openapi.json is copied in", passes
+every test against a fake built from the same wrong types and breaks against the real backend.
+Four guards keep the types tied to the spec:
+
+- **Planning.** The planner contract rejects a work order that defers part of its job ("until X
+  exists", "for now", "later") without a `Follow-up: WO-NNN` work order that depends on the
+  producer, an API work order that changes endpoints without updating the committed
+  `openapi.json`, a web work order that calls those endpoints without depending on that work order
+  or without generating its types (`npm run api:pull && npm run api:generate`), and any work order
+  that hand-writes API types. Roles come from the project's repositories; the deferral and
+  hand-written-types rules apply in every project.
+- **Review and QA.** On a web PR, a file that declares API request or response types by hand is a
+  `major` `correctness` code review finding, and a call to a path, method or field the spec does
+  not have is a `blocker`. QA fails the PR for either.
+- **CI** (`react-web` 1.3.0). `npm run check:api`, part of `npm run lint` and its own CI step,
+  fails when `src/api/openapi.json` exists and a file under `src/api/` other than the generated
+  `schema.d.ts` declares an interface or a type not taken from the schema, naming the files. The
+  API client is typed by the generated `paths`, so a call to a path or method the spec does not
+  have does not compile. In a TS Harness coding run, `npm run api:pull` reads the backend's spec
+  from `OPENAPI_CONTRACT`. Repositories started from an older template add
+  `scripts/check-api-types.mjs` and the `check:api` script from the template with one ticket.
+- **Refresh on spec change.** When a PR merges in an API repository and changes its committed
+  spec, the harness starts a refresh run on every web repository that shares a project with it
+  and names it in `contract.openapi.repo` (see below).
+
+### Refresh runs
+
+The GitHub merge webhook (`github.merge`, subscriber `contract_refresh:on_merge`) checks the
+merged PR's changed files. When the web repository's `contract.openapi.path` changed, the merge
+went into the branch the web repository reads the spec from (`ref`, else the API's default
+branch), and `refresh_on_change` is not `false`, it starts a `deliver_work_order` workflow on the
+web repository with the work order `APIREFRESH-1 Refresh API types from org/api@<short sha>`: pull
+the spec (`OPENAPI_SOURCE="$OPENAPI_CONTRACT" npm run api:pull && npm run api:generate`), fix
+every type error against it, and pass lint, unit and acceptance tests. The PR then goes through
+checks, code review, QA and the merge wait like any work order.
+
+There is one refresh per web repository. A newer spec change cancels the refresh still running
+(its coding job too) and starts one that updates the open refresh PR, found by its title, and
+renames it to the new commit. The last run is kept in `runtime_kv` (namespace
+`api-contract-refresh`, key `<owner>__<repo>`). Refresh runs need the webhook: the merge poller
+only resumes waits and does not start them. Set `refresh_on_change: false` to turn them off for
+a web repository.
