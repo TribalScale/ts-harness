@@ -45,9 +45,12 @@ Then:
    requested on this PR, oldest first. They amend the work order: where one
    conflicts with the work order or an earlier request, the latest request
    wins. Never flag code for doing what a human requested.
-4. Read `input.scope_findings`. These are deterministic findings for files
-   outside a declared `## Files` list; they are merged automatically, so do
-   not repeat them.
+4. Read `input.scope_findings`. They list, as `minor` information, the files
+   outside a declared `## Files` list. The coding agent may change files the
+   list does not name, so judge each one: a file the work needs (an importer,
+   a fixture, a type the change requires) is fine and needs no finding; work
+   the order does not ask for, or puts Out of Scope, is a `major` `scope`
+   finding naming the file and why it does not belong.
 5. If `input.refresh` is `true`, the PR was just updated with its base branch.
    Focus on the merge delta and any conflict resolution; do not re-review code
    that was already reviewed unless the merge changed it.

@@ -29,6 +29,10 @@ Write `bug_report` as Markdown in the bug template (`read_skill_reference skill_
 Write exactly one work order from the approved bug report and its diagnosis. Return:
 
 - `work_orders_markdown` — one heading `# WO-001 …` whose body has `## Summary`, `## Requirements`, `## Files`, `## E2E Acceptance Tests`, and `## Out of Scope`. The E2E tests include the bug report's regression test and at least one negative case.
+  - E2E tests describe what a user of the product sees and does: screens, API responses, messages. A negative case is a user-visible one (a rejected input, an error shown), never a test of the tooling.
+  - Checks of the build and test tooling (a type check, a lint rule, a contract checker, a generation script, which file a test reads its config from) are not Gherkin scenarios: list them under `## Requirements` as unit tests of that tooling, with the inputs and the error each case must produce. A scenario whose expected result is "the scenario fails" can never pass in a normal run.
+  - `## Files` lists repository paths or folders only, one per bullet, each in backticks with its full folder (`src/api/hub.d.ts`, not `hub.d.ts`), followed by what happens to it (new, change, delete). The change must touch every file it names, and files it touches beyond the list are flagged to the code reviewer. When the files cannot be listed ("every file that imports the old types"), name the folder (`src/features/`) instead of describing them.
+  - If the work order adds tooling checks, add `Unit: required` under a `## Tests` section beside `BDD: required`.
 - `work_order_ids`: `["WO-001"]`
 - `next_work_order_id`: `"WO-001"`
 

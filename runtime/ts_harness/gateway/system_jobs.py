@@ -14,6 +14,13 @@ from ts_harness.workflows.pr_rejection import REJECTION_REASONS, detect_rejectio
 
 logger = logging.getLogger(__name__)
 
+
+def _coding_job_max_runtime_seconds() -> int:
+    from ts_harness.implementation.coding_job import coding_job_max_runtime_seconds
+
+    return coding_job_max_runtime_seconds()
+
+
 __all__ = [
     "parse_github_pr_url",
     "fetch_pull_request",
@@ -714,7 +721,7 @@ def sweep_coding_jobs() -> dict[str, Any]:
         result = get_memory_client().sweep_stale_coding_jobs(
             heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 90),
             starting_seconds=int(os.environ.get("CODING_JOB_START_TIMEOUT_SECONDS") or 300),
-            max_runtime_seconds=int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or 7200),
+            max_runtime_seconds=_coding_job_max_runtime_seconds(),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("coding job sweep failed: %s", exc)

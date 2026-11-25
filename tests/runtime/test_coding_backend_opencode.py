@@ -134,8 +134,9 @@ class OpenCodeBackendTests(unittest.TestCase):
                     result.stdout = "https://github.com/example/app/pull/42\n"
                 elif cmd[0] == "git" and "status" in cmd and "--porcelain" in cmd:
                     status_calls["n"] += 1
-                    # First statuses (list_changed / pre-commit): dirty. After commit: clean.
-                    if status_calls["n"] <= 2:
+                    # First statuses (list_changed, the work-in-progress checkpoint, pre-commit):
+                    # dirty. After commit: clean.
+                    if status_calls["n"] <= 3:
                         result.stdout = " M src/app.py\n"
                 return result
 
@@ -467,7 +468,8 @@ class OpenCodeBackendTests(unittest.TestCase):
                         self.assertIn("Planning specs (Refinery, Foundry, Planner) under `docs/`", cmd[body_idx])
                 elif cmd[0] == "git" and "status" in cmd and "--porcelain" in cmd:
                     status_calls["n"] += 1
-                    if status_calls["n"] <= 2:
+                    # list_changed, the work-in-progress checkpoint, pre-commit: dirty.
+                    if status_calls["n"] <= 3:
                         result.stdout = " M docs/planner/work-orders/WO-001-lobby.md\n"
                 elif str(cmd[0]).endswith("/opencode"):
                     repo = repo_holder["repo"]
@@ -541,14 +543,14 @@ class OpenCodeBackendTests(unittest.TestCase):
             self.assertEqual(opencode_env["CODING_BACKEND_API_KEY"], "coding-secret")
             self.assertEqual(verify_mock.call_args.kwargs["test_env"].python, str(venv / "bin" / "python"))
 
-    def test_first_delivery_reverts_undeclared_files_before_verification(self):
+    def test_first_delivery_keeps_undeclared_files_and_reverts_only_protected_ones(self):
         commands: list[list[str]] = []
 
         def runner(args, **_kwargs):
             commands.append(list(args))
             completed = MagicMock()
             if args[:3] == ["git", "diff", "--name-only"] and "--cached" not in args:
-                completed.stdout = "app/pricing.py\nrequirements-dev.txt\n"
+                completed.stdout = "app/pricing.py\nrequirements-dev.txt\n.github/workflows/ci.yml\n"
             else:
                 completed.stdout = ""
             completed.returncode = 0
@@ -565,7 +567,7 @@ class OpenCodeBackendTests(unittest.TestCase):
         )
         backend._revert_undeclared(Path("/tmp/repo"), request)
         reverted = [cmd for cmd in commands if cmd[:2] == ["git", "checkout"]]
-        self.assertEqual(reverted, [["git", "checkout", "HEAD", "--", "requirements-dev.txt"]])
+        self.assertEqual(reverted, [["git", "checkout", "HEAD", "--", ".github/workflows/ci.yml"]])
 
     def test_review_revision_does_not_revert_before_verification(self):
         commands: list[list[str]] = []

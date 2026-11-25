@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from ts_harness.implementation.verification import has_gwt_acceptance
@@ -88,9 +89,24 @@ def _excluded(path: str, patterns: list[str]) -> bool:
     return False
 
 
-def declared_paths(work_order_body: str) -> list[str]:
-    """Path globs listed under an optional ``## Files`` / ``## Touches`` heading."""
-    paths: list[str] = []
+_TICK_RE = re.compile(r"`([^`]+)`")
+_KEEP_RE = re.compile(r"\b(keep|leave|unchanged|untouched|read[- ]only|reference only|no change)\b", re.IGNORECASE)
+
+
+def _looks_like_path(token: str) -> bool:
+    token = token.strip()
+    if not token or " " in token or token.startswith(("http://", "https://")):
+        return False
+    return "/" in token or "*" in token or bool(re.search(r"\.[A-Za-z0-9]{1,8}$", token)) or token.startswith(".")
+
+
+def _scope_entries(work_order_body: str) -> list[tuple[list[str], str]]:
+    """Each ``## Files`` / ``## Touches`` bullet as (paths it names, its text).
+
+    Every backticked path counts, not just the first; a bare file name (``hub.d.ts``) after a
+    path with a folder in the same bullet (``src/api/health.d.ts``) is in that folder.
+    """
+    entries: list[tuple[list[str], str]] = []
     in_section = False
     for line in str(work_order_body or "").splitlines():
         if _SCOPE_HEADING_RE.match(line.strip()):
@@ -98,11 +114,53 @@ def declared_paths(work_order_body: str) -> list[str]:
             continue
         if in_section and _HEADING_RE.match(line):
             break
-        if in_section:
-            match = _BULLET_RE.match(line)
-            if match:
-                paths.append(match.group(1).strip())
-    return paths
+        if not in_section or not _BULLET_RE.match(line):
+            continue
+        text = re.sub(r"^\s*[-*+]\s+", "", line).strip()
+        tokens = [t.strip() for t in _TICK_RE.findall(text)]
+        if not tokens:
+            first = text.split()[0].rstrip(":,;") if text.split() else ""
+            tokens = [first] if _looks_like_path(first) else []
+        paths: list[str] = []
+        folder = ""
+        for token in tokens:
+            if not _looks_like_path(token):
+                continue
+            token = token.removeprefix("./")
+            if "/" in token.rstrip("/"):
+                folder = token.rsplit("/", 1)[0] if not token.endswith("/") else token.rstrip("/")
+            elif folder and not token.startswith(".") and "*" not in token:
+                token = f"{folder}/{token}"
+            paths.append(token)
+        entries.append((paths, text))
+    return entries
+
+
+def declared_paths(work_order_body: str) -> list[str]:
+    """Path globs the ``## Files`` / ``## Touches`` list allows, or [] when it constrains nothing.
+
+    When any entry names no path ("every file that imports the old types", "the Day view
+    components"), the files cannot be listed, so the list is not a scope: [] means no limit.
+    A scope built from the paths alone once kept OpenCode from the files the fix needed.
+    """
+    entries = _scope_entries(work_order_body)
+    if not entries or any(not paths for paths, _text in entries):
+        return []
+    return [path for paths, _text in entries for path in paths]
+
+
+def required_paths(work_order_body: str) -> list[str]:
+    """Concrete files the ``## Files`` list says to create, change or delete (not ones to keep)."""
+    required: list[str] = []
+    for paths, text in _scope_entries(work_order_body):
+        if _KEEP_RE.search(text.split(":", 1)[-1] if ":" in text else text):
+            continue
+        for path in paths:
+            if "*" in path or path.endswith("/") or path in required:
+                continue
+            if re.search(r"\.[A-Za-z0-9]{1,8}$", path) or Path(path).name.startswith("."):
+                required.append(path)
+    return required
 
 
 def _in_scope(path: str, declared: list[str]) -> bool:
@@ -189,11 +247,13 @@ def scope_findings(
         declared = [*declared, "features/**"]
     return [
         {
-            "severity": "major",
+            # Information for the reviewer, who judges whether the file belongs: a string match on
+            # the work order's list blocked correct changes (an importer the fix had to touch).
+            "severity": "minor",
             "category": "scope",
             "pr_url": pr_url,
             "file": item["filename"],
-            "message": f"{item['filename']} is outside the work order's declared files",
+            "message": f"{item['filename']} is outside the work order's declared files; the reviewer judges whether it belongs",
         }
         for item in files
         if not _in_scope(item["filename"], declared) and not is_test_path(item["filename"])

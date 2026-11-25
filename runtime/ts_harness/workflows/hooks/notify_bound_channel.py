@@ -32,7 +32,17 @@ def handle(ctx: HookContext) -> dict[str, Any]:
     channel_text = str(ctx.extras.get("channel_text") or "").strip()
     step_name = str(task.get("step_name") or "")
     mapped = _map_event(event)
+    if mapped != "blocked":
+        forget_posted_block(ctx.workflow_id, str(task.get("id") or ""))
     notify_error = str(error) if error else None
+    # Web threads check their own transcript below; other channels remember the last block.
+    if (
+        channel != "web"
+        and mapped == "blocked"
+        and notify_error
+        and _already_posted(ctx.workflow_id, str(task.get("id") or ""), notify_error)
+    ):
+        return {"status": "skipped", "reason": "same block already posted"}
     if mapped == "blocked" and notify_error and "sending it back to OpenCode" not in notify_error:
         if not _is_wait_error(notify_error):
             notify_error = (
@@ -81,6 +91,48 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
+# The last block posted per (workflow, task). A step that is re-checked and blocks again for
+# the same reason is not posted again; a different reason, or a block after it ran again, is.
+_POSTED_BLOCKS: dict[tuple[str, str], str] = {}
+_POSTED_LIMIT = 2000
+_TRANSCRIPT_LOOKBACK = 40
+
+
+def _already_posted(workflow_id: str, task_id: str, error: str) -> bool:
+    key = (str(workflow_id or ""), str(task_id or ""))
+    if not key[1]:
+        return False
+    if _POSTED_BLOCKS.get(key) == error:
+        return True
+    if len(_POSTED_BLOCKS) >= _POSTED_LIMIT:
+        _POSTED_BLOCKS.pop(next(iter(_POSTED_BLOCKS)))
+    _POSTED_BLOCKS[key] = error
+    return False
+
+
+def forget_posted_block(workflow_id: str, task_id: str) -> None:
+    """The step ran again: its next block is news, even with the same reason."""
+    _POSTED_BLOCKS.pop((str(workflow_id or ""), str(task_id or "")), None)
+
+
+def _recently_in_transcript(session_id: str, message: str) -> bool:
+    """The same assistant text was posted since the person last wrote (survives restarts)."""
+    try:
+        from ts_harness.agent.transcript import get_transcript_store
+
+        recent = get_transcript_store().load_messages(session_id, limit=_TRANSCRIPT_LOOKBACK)
+    except Exception:  # noqa: BLE001 - no lookback: post it
+        return False
+    text = message.strip()
+    for item in reversed(recent or []):
+        role = str(item.get("role") or "")
+        if role == "user":
+            return False  # the person spoke since: say it again (they may have asked for a retry)
+        if role == "assistant" and str(item.get("content") or "").strip() == text:
+            return True
+    return False
+
+
 _WAIT_ERROR_PREFIXES = ("awaiting_external:", "awaiting_tool_approval:")
 _WAIT_EVENTS = {"awaiting_external", "awaiting_approval"}
 
@@ -110,6 +162,8 @@ def _append_web_transcript(ctx: HookContext, source_channel: str, message: str) 
     )
     if session is None or not message.strip():
         return False
+    if _recently_in_transcript(session.session_id, message):
+        return True  # posted already; a repeat of the same text adds nothing
     get_transcript_store().append_messages(
         session.session_id,
         [{"role": "assistant", "content": message}],

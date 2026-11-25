@@ -189,7 +189,8 @@ class PrecheckTests(unittest.TestCase):
             TASK, PRECHECK_CONFIG, memory=_memory(body), github=_github(files), program_defaults={}
         )
         self.assertEqual([finding["file"] for finding in output["scope_findings"]], ["src/billing/y.py"])
-        self.assertEqual(output["scope_findings"][0]["severity"], "major")
+        # Information for the reviewer, who judges it; it does not block on its own.
+        self.assertEqual(output["scope_findings"][0]["severity"], "minor")
         output = code_review.review_precheck(TASK, PRECHECK_CONFIG, memory=_memory("# WO-1\n\n## In Scope\n- api"), github=_github(files), program_defaults={})
         self.assertEqual(output["scope_findings"], [])
 

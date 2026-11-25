@@ -237,6 +237,40 @@ def validate_work_order_changeset(
     return reasons
 
 
+def untouched_required_files(repo_dir: Path, work_order_body: str, base_ref: str | None, *, runner=subprocess.run) -> list[str]:
+    """Files the work order's ``## Files`` list says to create, change or delete that the change
+    left as they are on the base (a deletion counts as a change).
+
+    A run once "succeeded" with a pull request that touched none of the files its work order named,
+    because its edit scope kept OpenCode out of them; nothing compared the result with the list.
+    """
+    from ts_harness.workflows.code_review import required_paths
+
+    required = required_paths(work_order_body)
+    if not required:
+        return []
+    touched: set[str] = set()
+    if base_ref:
+        diff = runner(
+            ["git", "-C", str(repo_dir), "diff", "--name-only", base_ref, "--", *required],
+            capture_output=True, text=True, check=False,
+        )
+        if diff.returncode != 0:
+            return []  # the base cannot be compared: do not block on it
+        touched.update(line.strip() for line in (diff.stdout or "").splitlines() if line.strip())
+    status = runner(
+        ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=all", "--", *required],
+        capture_output=True, text=True, check=False,
+    )
+    for line in (status.stdout or "").splitlines():
+        path = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path:
+            touched.add(path)
+    return [path for path in required if path not in touched]
+
+
 def detect_unit_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | None:
     return unit_test_command(Path(repo_dir), python=python)
 
@@ -450,6 +484,11 @@ def verify_implementation(
                 bdd=runs_bdd,
             )
         )
+
+    if changed_files is not None:
+        untouched = untouched_required_files(repo_dir, work_order_body, base_ref, runner=runner)
+        if untouched:
+            reasons.append("work_order_files_untouched:" + ",".join(untouched[:20]))
 
     # Files CI regenerates and checks with `git diff --exit-code` (openapi.json, codegen): regenerate
     # them here, so the change ships with them up to date instead of failing CI.
@@ -670,13 +709,16 @@ def build_verification_fix_prompt(
         "Do not commit, push, or open a PR - the host owns git/gh.",
         skill_line,
         "Fixing runner/deps alone is not enough: deliver the work-order behavior with tests.",
+        "Re-run only the failing tests and the tests of the files you change (`vitest related <files> --run`, "
+        "the one failing feature with `npx playwright test -g \"<scenario>\"`), not the whole unit suite, the "
+        "whole BDD suite or the build: the host runs all of them again right after you.",
     ]
     if reverted_paths:
         lines.append(
-            "These files are outside the work order's ## Files list and were reverted: "
+            "These files are protected (CI workflows, code owners) and the work order is not about them, "
+            "so they were reverted: "
             + ", ".join(reverted_paths)
-            + ". Do not change them again. Make the code and tests work without them, for example "
-            "by importing from the declared module directly."
+            + ". Do not change them again; make the change work without them."
         )
     if "no_test_runner" in verify.reasons:
         lines.append(
@@ -707,6 +749,13 @@ def build_verification_fix_prompt(
                 "its stack (Cucumber.js or playwright-bdd for Node, pytest-bdd or behave for Python, godog "
                 "for Go) with a `test:bdd` script or equivalent, so the host and CI run the features."
             )
+    untouched = [r.split(":", 1)[1] for r in verify.reasons if r.startswith("work_order_files_untouched:")]
+    if untouched:
+        lines.append(
+            "The work order's Files list names files this change has not touched yet: "
+            + untouched[0].replace(",", ", ")
+            + ". Create, change or delete each one as the work order says; the work is not done until they are."
+        )
     if "typecheck_failed" in verify.reasons:
         lines.append(
             "The type check failed. Fix the type errors in the code you changed or added; do not "

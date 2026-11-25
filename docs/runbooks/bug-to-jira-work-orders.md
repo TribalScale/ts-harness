@@ -18,9 +18,17 @@ Live routing sees these signals only after the host runtime YAML (the mounted fi
 
 ## What it does
 
-1. `bug_intake` (`bug_to_plan`) confirms an allowlisted repo, gathers the default-branch tree and up to eight cited files, and has review-agent diagnose from those files only. Unknown cause is a valid diagnosis. The reporter says ready before the bug report is drafted, then approves it.
+1. `bug_intake` (`bug_to_plan`) confirms an allowlisted repo, gathers the default-branch tree and up to twelve cited files (full paths, a bare file name that only one file has, and the files of a named folder listed by name, from the reporter's own messages as well as the proposal summary), and has review-agent diagnose from those files only. Unknown cause is a valid diagnosis. The reporter says ready before the bug report is drafted, then approves it.
 2. `work_order` (`bug_work_order`) drafts one `# WO-001` section (Summary, Requirements, Files, E2E Acceptance Tests, Out of Scope) and waits for approval. No refinery, foundry, or planner.
 3. `file_jira` reuses `file_work_orders_as_jira`. Issue type is Bug unless `issue_type_by_project` says otherwise. The ticket stays unassigned. The description is that work-order section plus the pointer block.
+
+## Talking to it in the chat
+
+- Confirm a proposal with a plain yes ("yes", "yes, start it", "ok go ahead"). A yes with anything else ("yes, but use the other repo") is not a confirmation; the reply says how to confirm.
+- The repo pick, the clarify question, the bug report and the work order are posted in the chat that started the program, even when the browser reuses its thread id for several chats. The inbox and the program page have a repository picker on the repo pick and an answer box on the "ready" gate.
+- Each phase ends by saying what to reply next: **draft the work order** after the bug report, **file these tickets** after the work order.
+- Sending feedback on a draft says the revision is running; the revised draft is posted as "Revised with your feedback", and the program page reads "Revising … with your feedback" meanwhile.
+- Acceptance tests in the work order are user-visible scenarios only; checks of build or test tooling are unit tests under Requirements (`skills/pm/bug-intake.md`).
 
 ## Operator config
 

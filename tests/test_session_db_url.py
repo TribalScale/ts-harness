@@ -67,8 +67,10 @@ class SessionDbUrlTests(unittest.TestCase):
         self.assertEqual(run_common("session_db_url", **placeholder), "")
 
     def test_compose_helper_passes_current_password_on_every_call(self):
+        # sudo gets: -u <user> bash -c <script> _ <env file> <compose args>; the URL is in the file.
         script = """
-sudo() { printf '%s\\n' "$@" | grep '^TS_HARNESS_SESSION_DB_URL='; }
+chown() { :; }
+sudo() { grep '^export TS_HARNESS_SESSION_DB_URL=' "$7"; }
 run_docker_compose_as_admin up -d
 TS_HARNESS_DB_PASSWORD=rotated
 run_docker_compose_as_admin up -d
@@ -76,6 +78,17 @@ run_docker_compose_as_admin up -d
         first, second = run_common(script, **DB_ENV, ADMIN_USER="athena").splitlines()
         self.assertIn("p%40ss%2Fw%3Ard%3F%23%25@", first)
         self.assertIn(":rotated@", second)
+
+    def test_no_secret_is_on_the_compose_command_line(self):
+        script = """
+chown() { :; }
+sudo() { printf '%s\\n' "$@"; }
+run_docker_compose_as_admin up -d
+"""
+        argv = run_common(script, **DB_ENV, ADMIN_USER="athena", OPENAI_API_KEY="sk-visible-test")
+        self.assertNotIn("sk-visible-test", argv)
+        self.assertNotIn("TS_HARNESS_SESSION_DB_URL=", argv)
+        self.assertNotIn("p%40ss", argv)
 
     def test_ops_scripts_export_session_url_before_recreating_runtime(self):
         for name, recreate in (

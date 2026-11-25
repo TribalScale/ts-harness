@@ -56,11 +56,20 @@ def _session_for_workflow(
 
 
 def _find_session(workflow_id: str, tenant_id: str, source_channel: str, program_id: str) -> SessionRecord | None:
+    """The chat linked to the workflow, else to its program, else the newest chat on its binding.
+
+    A browser keeps one binding across chats, so several chats can share it. Matching the
+    binding first sent a new program's posts to an older chat on the same binding, where the
+    person never saw them.
+    """
     raw = str(source_channel or "").strip()
     canonical = binding_key_from_source_channel(raw) or ""
     bindings = {item for item in (raw, canonical) if item}
+    candidate_keys = {key for item in bindings if (key := binding_key_from_source_channel(item))}
     workflow = str(workflow_id or "").strip()
     program = str(program_id or "").strip()
+    by_program: list[SessionRecord] = []
+    by_binding: list[SessionRecord] = []
     for session in get_session_store().list_for_tenant(tenant_id):
         metadata = session.metadata or {}
         linked = {
@@ -69,20 +78,18 @@ def _find_session(workflow_id: str, tenant_id: str, source_channel: str, program
         }
         if workflow and workflow in linked:
             return session
+        if program and str(metadata.get("program_id") or "").strip() == program:
+            by_program.append(session)
+            continue
         stored_binding = str(metadata.get("binding_key") or "").strip()
         stored_key = binding_key_from_source_channel(stored_binding)
-        candidate_keys = {
-            key
-            for item in bindings
-            if (key := binding_key_from_source_channel(item))
-        }
-        if stored_binding and (
-            stored_binding in bindings or (stored_key and stored_key in candidate_keys)
-        ):
-            return session
-        if program and str(metadata.get("program_id") or "").strip() == program:
-            return session
-    return None
+        if stored_binding and (stored_binding in bindings or (stored_key and stored_key in candidate_keys)):
+            by_binding.append(session)
+
+    def newest(sessions: list[SessionRecord]) -> SessionRecord | None:
+        return max(sessions, key=lambda item: str(item.started_at or "")) if sessions else None
+
+    return newest(by_program) or newest(by_binding)
 
 
 def _resolve_share_email(
@@ -467,6 +474,7 @@ def present_workflow_artifact(
     requester_actor_id: str | None = None,
     program_id: str = "",
     program_summary: str = "",
+    revised: bool = False,
 ) -> dict[str, Any]:
     if not artifact:
         return {"status": "skipped", "reason": "empty artifact"}
@@ -510,6 +518,8 @@ def present_workflow_artifact(
         existing_drive_library=existing_drive_library,
     )
     message = str(built.get("message") or "")
+    if revised and message:
+        message = f"**Revised with your feedback.** Here is the new version.\n\n{message}"
     doc_result = built.get("google_doc")
     doc_url = built.get("doc_url")
     library_result = built.get("drive_library")

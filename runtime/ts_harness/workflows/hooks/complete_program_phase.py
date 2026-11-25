@@ -285,17 +285,16 @@ def handle(ctx: HookContext) -> dict[str, Any]:
             return _end_at_may_end_node(
                 ctx, str(program_id), program, snapshot, program_phase, result, complete_channel_text
             )
-        return _with_brief(
-            ctx,
-            program_id,
-            program,
-            program_phase,
-            {
-                "status": "phase_completed",
-                "program_id": str(program_id),
-                "artifacts": result,
-            },
+        completed = {"status": "phase_completed", "program_id": str(program_id), "artifacts": result}
+        # A child program's parent decides what runs next, so it offers nothing itself.
+        offer = (
+            {}
+            if program.get("parent_program_id")
+            else _offer_next_phase(ctx, workflow, snapshot, program_phase, complete_channel_text)
         )
+        if offer:
+            completed.update(offer)
+        return _with_brief(ctx, program_id, program, program_phase, completed)
 
     if program_cfg.get("auto_advance") and program_cfg.get("next_phase"):
         advance = service.advance_program(
@@ -411,6 +410,29 @@ def _end_at_may_end_node(
             "offer_text": text,
         },
     )
+
+
+def _offer_next_phase(
+    ctx: HookContext,
+    workflow: dict[str, Any],
+    snapshot: dict[str, Any],
+    program_phase: str,
+    complete_channel_text: str,
+) -> dict[str, Any]:
+    """The phase is done and the next one starts only when asked: say what to reply.
+
+    A chat approval (``reply_in_chat``) puts the offer in its own reply; otherwise the bound
+    thread gets it, so the person is never left with "I'll continue the workflow".
+    """
+    from ts_harness.workflows.program_materialize import next_phase_offer
+
+    offer = next_phase_offer(snapshot, program_phase)
+    if not offer["text"]:
+        return {}
+    text = "\n\n".join(part for part in (complete_channel_text, offer["text"]) if part)
+    if not (ctx.extras or {}).get("reply_in_chat"):
+        _notify_channel(ctx, workflow, text)
+    return {"next_steps": offer["next_steps"], "offer_text": text}
 
 
 def _mark_program_succeeded(
@@ -743,6 +765,34 @@ def _pool_delivered(ctx: HookContext) -> list[str]:
     return [str(pr.get("work_order_id")) for pr in output.get("prs") or [] if isinstance(pr, dict) and pr.get("work_order_id")]
 
 
+def _pool_done_elsewhere(ctx: HookContext, *, jira: Any = None) -> list[str]:
+    """Queued tickets the pool did not start because they are already Done in Jira.
+
+    Another run delivered them. Left out of the completed list, they looked unfinished and the
+    program started a new wave for tickets that could never start.
+    """
+    from ts_harness.jira.ticket_pool import ready_tickets
+    from ts_harness.workflows.work_order_waves import pinned_children
+
+    _, tasks = load_workflow_payload(ctx.memory_client, ctx.workflow_id)
+    fill = next((task for task in tasks if task.get("step_name") == "fill_pool"), {})
+    join = next((task for task in tasks if task.get("step_name") == "join_pool"), {})
+    queue = [str(key) for key in ((fill.get("output") or {}).get("queue") or []) if key]
+    started = {str(child.get("label") or "") for child in pinned_children(join)} if join else set()
+    remaining = [key for key in queue if key not in started]
+    if not remaining:
+        return []
+    try:
+        if jira is None:
+            from ts_harness.integrations.jira_client import JiraClient
+
+            jira = JiraClient.from_env()
+        _ready, done = ready_tickets(jira, remaining)
+    except Exception:  # noqa: BLE001 - without Jira they stay in the queue
+        return []
+    return [key for key in remaining if key in set(done)]
+
+
 def _advance_list_reentry(
     ctx: HookContext,
     service: Any,
@@ -765,7 +815,7 @@ def _advance_list_reentry(
             completed.append(key)
     # The ticket pool delivered many items in one run: each merged child counts as done.
     if str(workflow.get("workflow_type") or "") == "implement_jira_pool":
-        for key in _pool_delivered(ctx):
+        for key in [*_pool_delivered(ctx), *_pool_done_elsewhere(ctx)]:
             if key not in {reentry_item_key(item) for item in completed}:
                 completed.append(key)
     count, iterations = _bump_iterations(artifacts, program_phase)

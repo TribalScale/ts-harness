@@ -168,6 +168,7 @@ def generate_tfvars(config: Mapping[str, Any], *, cloud: str) -> dict[str, Any]:
             "coding_quota_per_user": runtime.get("coding_quota_per_user"),
             "coding_quota_per_program": runtime.get("coding_quota_per_program"),
             "coding_quota_per_team": runtime.get("coding_quota_per_team"),
+            "coding_job_max_runtime_minutes": runtime.get("coding_job_max_runtime_minutes"),
             "coding_launcher": runtime.get("coding_launcher"),
             "embeddings_provider": runtime.get("embeddings_provider"),
             "embeddings_model": runtime.get("embeddings_model"),

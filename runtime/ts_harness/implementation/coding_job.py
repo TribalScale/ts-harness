@@ -144,6 +144,25 @@ def repo_has_pr_ci(repo_url: str, base_branch: str) -> bool | None:
     return value
 
 
+DEFAULT_MAX_RUNTIME_SECONDS = 14400
+RUN_STOP_MARGIN_SECONDS = 1200
+
+
+def coding_job_max_runtime_seconds() -> int:
+    """How long a coding job may run before the sweep marks it lost (``CODING_JOB_MAX_RUNTIME_SECONDS``,
+    default 4 hours)."""
+    try:
+        return max(1800, int(os.environ.get("CODING_JOB_MAX_RUNTIME_SECONDS") or DEFAULT_MAX_RUNTIME_SECONDS))
+    except ValueError:
+        return DEFAULT_MAX_RUNTIME_SECONDS
+
+
+def run_budget_seconds() -> int:
+    """Time a run may use before it stops starting new fix passes or review rounds: the job limit
+    less a margin, so it can push its work in progress before the sweep cuts it off."""
+    return max(600, coding_job_max_runtime_seconds() - RUN_STOP_MARGIN_SECONDS)
+
+
 def _review_settings(mode: str, provider: str) -> dict[str, Any]:
     """The pre-push reviewer for an implement run, in the backend's model format."""
     if mode != "implement":
@@ -344,6 +363,7 @@ def build_coding_request(
         # A pre-push review fix gets the quick re-check only when CI runs the full suite on the PR.
         "repo_has_pr_ci": repo_has_pr_ci(repo_url, base_branch) if review else None,
         **review,
+        "run_budget_seconds": run_budget_seconds(),
         **({"budget_note": budget_note} if budget_note else {}),
         "record_workflow_id": str(args.get("workflow_id") or "").strip() or None,
         # Workers on Fargate have no runtime config file; carry what the run needs.

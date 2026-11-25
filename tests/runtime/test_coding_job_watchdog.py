@@ -30,7 +30,7 @@ class SweepSystemJobTests(unittest.TestCase):
             heartbeat_seconds=120, max_runtime_seconds=1800, starting_seconds=300
         )
 
-    def test_defaults_are_ninety_seconds_running_five_minutes_starting_and_two_hours_in_all(self):
+    def test_defaults_are_ninety_seconds_running_five_minutes_starting_and_four_hours_in_all(self):
         client = mock.MagicMock()
         client.sweep_stale_coding_jobs.return_value = {}
         env = {k: v for k, v in os.environ.items() if not k.startswith("CODING_JOB_")}
@@ -39,7 +39,7 @@ class SweepSystemJobTests(unittest.TestCase):
         ):
             system_jobs.sweep_coding_jobs()
         client.sweep_stale_coding_jobs.assert_called_once_with(
-            heartbeat_seconds=90, max_runtime_seconds=7200, starting_seconds=300
+            heartbeat_seconds=90, max_runtime_seconds=14400, starting_seconds=300
         )
 
     def test_errors_are_reported_not_raised(self):

@@ -447,8 +447,7 @@ class DependencyAuditBaselineTests(unittest.TestCase):
 class TestFileScopeTests(unittest.TestCase):
     BODY = "# WO-102\n\n## Files\n- src/projects/projects.service.ts\n"
 
-    def test_extra_tests_are_never_reverted_or_flagged(self):
-        from ts_harness.implementation.backends.opencode import opencode_scope_paths
+    def test_extra_tests_are_never_flagged(self):
         from ts_harness.workflows.code_review import undeclared_paths
 
         changed = [
@@ -458,6 +457,3 @@ class TestFileScopeTests(unittest.TestCase):
             "src/projects/projects.controller.ts",
         ]
         self.assertEqual(undeclared_paths(changed, self.BODY), ["src/projects/projects.controller.ts"])
-        allowed = opencode_scope_paths(self.BODY)
-        self.assertIn("**/*.spec.*", allowed)
-        self.assertIn("test/**", allowed)

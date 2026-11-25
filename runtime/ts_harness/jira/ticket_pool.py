@@ -183,9 +183,12 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
     busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), {workflow_id})
     ready = [item for item in ready if item["key"] not in busy]
     chosen = _choose(ready, [], limit)
-    if not chosen and busy:
+    queued_busy = sorted(key for key in busy if key in set(queue))
+    if not chosen and len(done) == len(queue):
+        raise ValueError("every ticket in the queue is already done in Jira: nothing to deliver")
+    if not chosen and queued_busy:
         raise ValueError(
-            "no ticket can start yet: " + ", ".join(sorted(busy)) + " is already being built by another run, "
+            "no ticket can start yet: " + ", ".join(queued_busy) + " is already being built by another run, "
             "and the rest wait on blockers"
         )
     if not chosen:
@@ -415,6 +418,18 @@ def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workf
         try:
             _, tasks = load_workflow_payload(memory, workflow_id)
             join = next((t for t in tasks if str(t.get("id")) == str(pool.get("join_task_id"))), None)
+            if join is not None and _stale_child_wait(memory, join):
+                # It waits for a child to finish, but every child already has: the event that
+                # would wake it was lost (a restart between the last child ending and the join).
+                from ts_harness.workflows.engine import get_workflow_engine
+
+                get_workflow_engine().resume_external(
+                    workflow_id, event_type=CHILD_EVENT, payload={"reopened": "every child had already finished"},
+                    actor=actor, tenant_id=tenant_id,
+                )
+                reopened.append(workflow_id)
+                logger.info("ticket pool %s woken: every child had already finished", workflow_id)
+                continue
             if join is None or not str(join.get("error") or "").startswith(GAVE_UP_PREFIX):
                 continue
             states = []
@@ -423,6 +438,8 @@ def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workf
                 states.append(child_state(child_workflow, child_tasks))
             if any(state in {"failed", "cancelled"} for state in states):
                 continue  # still a failed ticket: the person's decision is pending
+            if not _worth_reopening(str(join.get("error") or ""), pool, join):
+                continue  # nothing changed since it gave up: reopening would only block again
             memory.block_task_api(str(join["id"]), f"awaiting_external:{CHILD_EVENT}", actor=actor)
             from ts_harness.workflows.engine import get_workflow_engine
 
@@ -437,6 +454,93 @@ def reopen_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workf
     return reopened
 
 
-def left_behind(queue: list[str], children: list[dict[str, str]]) -> list[str]:
+STALE_WAIT_SECONDS = 300
+
+
+def _stale_child_wait(memory: Any, join: dict[str, Any], *, now: float | None = None) -> bool:
+    """The join has waited for a child event for a while, and no child is still running."""
+    from datetime import datetime, timezone
+
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT, child_state, pinned_children
+
+    if str(join.get("error") or "") != f"awaiting_external:{CHILD_EVENT}":
+        return False
+    try:
+        since = datetime.fromisoformat(str(join.get("updated_at") or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return False
+    current = now if now is not None else datetime.now(timezone.utc).timestamp()
+    if current - since < STALE_WAIT_SECONDS:
+        return False
+    children = pinned_children(join)
+    if not children:
+        return False
+    for child in children:
+        child_workflow, child_tasks = load_workflow_payload(memory, child["workflow_id"])
+        if child_state(child_workflow, child_tasks) is None:
+            return False
+    return True
+
+
+_NOT_STARTED_MARK = "tickets not started because a blocker was not delivered: "
+_FAILED_MARK = "stopped or failed: "
+
+
+def _worth_reopening(error: str, pool: dict[str, Any], join: dict[str, Any], *, jira: Any = None) -> bool:
+    """Reopen when a failed ticket recovered, or when a ticket it left behind is no longer open
+    (another run delivered it, or its blocker is done). A pool that gave up only because tickets
+    were not started, with the same tickets still open, would block again on every poll."""
+    if _FAILED_MARK in error or " failed: " in error:
+        return True
+    if _NOT_STARTED_MARK not in error:
+        return True
+    recorded = error.split(_NOT_STARTED_MARK, 1)[1].split(";", 1)[0]
+    before = {key.strip() for key in recorded.split(",") if key.strip()}
+    from ts_harness.workflows.work_order_waves import pinned_children
+
+    queue = [str(key) for key in pool.get("queue") or []]
+    now = set(open_left_behind(queue, pinned_children(join), jira=jira)) if queue else before
+    if now != before:
+        return True
+    if not now:
+        return False
+    # Still open: worth another look only when one of them is ready to start now.
+    if jira is None:
+        try:
+            from ts_harness.integrations.jira_client import JiraClient
+
+            jira = JiraClient.from_env()
+        except Exception:  # noqa: BLE001
+            return False
+    ready, _done = ready_tickets(jira, sorted(now))
+    return bool(ready)
+
+
+def left_behind(queue: list[str], children: list[dict[str, str]], *, jira: Any = None) -> list[str]:
+    """Queued tickets the pool never started that are still open in Jira.
+
+    A ticket another run delivered (Done in Jira) is not left behind: the pool skipped it on
+    purpose. Without a Jira client every unstarted ticket counts.
+    """
     started = {child.get("label") for child in children}
-    return [key for key in queue if key not in started]
+    remaining = [key for key in queue if key not in started]
+    if not remaining or jira is None:
+        return remaining
+    _ready, done = ready_tickets(jira, remaining)
+    return [key for key in remaining if key not in done]
+
+
+def open_left_behind(queue: list[str], children: list[dict[str, str]], *, jira: Any = None) -> list[str]:
+    """``left_behind`` with the configured Jira client; unstarted tickets all count if Jira cannot be reached."""
+    started = {child.get("label") for child in children}
+    if all(key in started for key in queue):
+        return []
+    if jira is None:
+        try:
+            from ts_harness.integrations.jira_client import JiraClient
+
+            jira = JiraClient.from_env()
+        except Exception as exc:  # noqa: BLE001 - no Jira: report every unstarted ticket
+            logger.warning("ticket pool: Jira not available to check left-behind tickets: %s", exc)
+            jira = None
+    return left_behind(queue, children, jira=jira)

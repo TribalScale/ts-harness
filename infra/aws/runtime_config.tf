@@ -18,6 +18,7 @@ locals {
     CODING_QUOTA_PER_USER                 = var.coding_quota_per_user == null ? "" : tostring(var.coding_quota_per_user)
     CODING_QUOTA_PER_PROGRAM              = var.coding_quota_per_program == null ? "" : tostring(var.coding_quota_per_program)
     CODING_QUOTA_PER_TEAM                 = var.coding_quota_per_team == null ? "" : tostring(var.coding_quota_per_team)
+    CODING_JOB_MAX_RUNTIME_SECONDS        = var.coding_job_max_runtime_minutes == null ? "" : tostring(var.coding_job_max_runtime_minutes * 60)
     LLM_PROXY_ENABLED                     = tostring(var.llm_proxy_enabled)
     MULTI_AGENT_ENABLED                   = tostring(var.multi_agent_enabled)
     EMBEDDINGS_PROVIDER                   = var.embeddings_provider

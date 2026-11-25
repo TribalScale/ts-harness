@@ -191,7 +191,8 @@ def build_fix_prompt(work_order_id: str, findings: list[dict[str, Any]], *, skil
     lines = [
         f"A code review of your change for {work_order_id} found problems that would block the pull request.",
         "Fix every one of them in this pass, with a test that proves each fix. Keep the rest of the change as it is,",
-        "stay inside the work order's scope, and run the tests for the code you touch before finishing.",
+        "stay inside the work order's scope, and run only the tests for the code you touch before finishing",
+        "(`vitest related <files> --run`, or the one feature): the host re-checks the rest after you.",
         "",
         "Blocking findings:",
         *[finding_line(item) for item in findings],

@@ -2446,6 +2446,51 @@ class CodingJobDispatchTests(unittest.TestCase):
         self.assertEqual(memory.consumed, ["job-1"])
         self.assertEqual(memory.blocked, [("task-1", "awaiting_external:coding.finished")])
 
+    def test_a_provider_interruption_requeues_the_job(self):
+        cut = {"id": "job-1", "task_id": "task-1", "status": "failed",
+               "result": {"error": "provider_interrupted: Error: The response was blocked by the provider's content filter; "
+                                   "work in progress pushed to wo/wo-1"}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[cut])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)
+        self.assertEqual(memory.consumed, ["job-1"])
+        self.assertEqual(memory.blocked, [("task-1", "awaiting_external:coding.finished")])
+
+    def test_a_run_stopped_at_its_time_limit_requeues_the_job(self):
+        stopped = {"id": "job-1", "task_id": "task-1", "status": "failed",
+                   "result": {"error": "time_limit: stopped before fix pass 3 after 220 minutes; work in progress pushed to wo/wo-1"}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[stopped])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_a_stalled_run_requeues_the_job(self):
+        stalled = {"id": "job-1", "task_id": "task-1", "status": "failed",
+                   "result": {"error": "stalled: opencode stalled: no output within the stall window; work in progress pushed to wo/wo-1"}}
+        memory = CodingJobMemoryClient(ready=[self.task()], jobs=[stalled])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)
+
+    def test_a_third_provider_interruption_blocks_the_step(self):
+        def cut(n, status="failed"):
+            return {"id": f"job-{n}", "task_id": "task-1", "status": status, "consumed_at": "x" if n < 3 else None,
+                    "result": {"error": "provider_interrupted: Error: overloaded"}}
+
+        class History(CodingJobMemoryClient):
+            def list_coding_jobs(self, *, task_id=None, unconsumed=False, **kwargs):
+                if unconsumed:
+                    return super().list_coding_jobs(task_id=task_id, unconsumed=unconsumed, **kwargs)
+                return [cut(1), cut(2), cut(3)]
+
+        memory = History(ready=[self.task()], jobs=[cut(3)])
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.consumed, ["job-3"])
+
     def test_a_repo_that_needed_more_memory_starts_there(self):
         class Remembering(CodingJobMemoryClient):
             def list_coding_jobs(self, *, task_id=None, repo_url=None, **kwargs):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -320,3 +321,111 @@ class ReopenPoolTests(unittest.TestCase):
         reopened, memory, _ = self._run("awaiting_external:workflow.child_terminal", None)
         self.assertEqual(reopened, [])
         memory.block_task_api.assert_not_called()
+
+
+class LeftBehindTests(unittest.TestCase):
+    """A ticket another run delivered is not left behind (the pool skipped it on purpose)."""
+
+    def test_tickets_done_in_jira_are_not_left_behind(self):
+        pinned = [{"workflow_id": "c3", "label": "P-3"}]
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True), _issue("P-5")])
+        self.assertEqual(tp.left_behind(["P-3", "P-4", "P-5"], pinned, jira=jira), ["P-5"])
+
+    def test_every_ticket_delivered_elsewhere_leaves_nothing_behind(self):
+        pinned = [{"workflow_id": "c3", "label": "P-3"}]
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True)])
+        self.assertEqual(tp.open_left_behind(["P-3", "P-4"], pinned, jira=jira), [])
+
+    def test_without_jira_every_unstarted_ticket_counts(self):
+        self.assertEqual(tp.left_behind(["P-3", "P-4"], [{"label": "P-3"}]), ["P-4"])
+
+
+class WorthReopeningTests(unittest.TestCase):
+    """A pool that gave up only for unstarted tickets is reopened when something changed, not every poll."""
+
+    ERROR = "external_blocked:workflow.child_terminal tickets not started because a blocker was not delivered: P-4, P-5"
+
+    def _join(self):
+        return {"input": {"_wait_options": {"children": [{"workflow_id": "c3", "label": "P-3"}]}}}
+
+    def test_same_open_tickets_still_waiting_is_not_reopened(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", blocked_by=["X-1"]), _issue("P-5", blocked_by=["X-1"])])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertFalse(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_tickets_delivered_elsewhere_reopen_it(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True), _issue("P-5", done=True)])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertTrue(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_a_left_behind_ticket_that_became_ready_reopens_it(self):
+        jira = Jira([_issue("P-3", done=True), _issue("P-4"), _issue("P-5", blocked_by=["X-1"])])
+        pool = {"queue": ["P-3", "P-4", "P-5"]}
+        self.assertTrue(tp._worth_reopening(self.ERROR, pool, self._join(), jira=jira))
+
+    def test_a_failed_ticket_block_still_reopens_on_recovery(self):
+        self.assertTrue(tp._worth_reopening(self.ERROR + "; stopped or failed: P-3", {"queue": []}, self._join()))
+
+
+class StaleChildWaitTests(unittest.TestCase):
+    """A pool waiting for a child event that can no longer come (every child finished) is woken."""
+
+    def _run(self, *, updated_at, state):
+        memory = MagicMock()
+        memory.running_ticket_work.return_value = {"pools": [
+            {"workflow_id": "pool", "join_task_id": "join", "join_status": "blocked", "queue": ["P-1"]}]}
+        join = {"id": "join", "step_name": "join_pool", "status": "blocked", "updated_at": updated_at,
+                "error": "awaiting_external:workflow.child_terminal",
+                "input": {"_wait_options": {"children": [{"workflow_id": "c1", "label": "P-1"}]}}}
+        engine = MagicMock()
+        with patch("ts_harness.jira.ticket_pool.load_workflow_payload",
+                   side_effect=lambda m, wid: ({}, [join]) if wid == "pool" else ({"id": wid}, [])), \
+                patch("ts_harness.workflows.work_order_waves.child_state", return_value=state), \
+                patch("ts_harness.workflows.engine.get_workflow_engine", return_value=engine):
+            return tp.reopen_pools(memory), engine
+
+    def test_every_child_finished_long_ago_wakes_it(self):
+        reopened, engine = self._run(updated_at="2026-01-01T00:00:00+00:00", state="succeeded")
+        self.assertEqual(reopened, ["pool"])
+        self.assertEqual(engine.resume_external.call_args.kwargs["event_type"], "workflow.child_terminal")
+
+    def test_a_running_child_or_a_fresh_wait_is_left_alone(self):
+        self.assertEqual(self._run(updated_at="2026-01-01T00:00:00+00:00", state=None)[0], [])
+        fresh = datetime.now(timezone.utc).isoformat()
+        self.assertEqual(self._run(updated_at=fresh, state="succeeded")[0], [])
+
+
+class DeliveredElsewhereTests(unittest.TestCase):
+    """Tickets another run delivered do not start a new wave or a misleading block."""
+
+    def _memory(self, tasks, busy=()):
+        memory = MagicMock()
+        memory.get_workflow.return_value = {"workflow": {"id": "pool"}, "tasks": tasks}
+        memory.running_ticket_work.return_value = {"tickets": [{"key": k, "workflow_id": "other"} for k in busy], "pools": []}
+        return memory
+
+    def test_a_queue_of_done_tickets_says_so(self):
+        task = {"id": "fill", "workflow_id": "pool", "tenant_id": "default", "step_name": "fill_pool",
+                "input": {"summary": "s", "jira_issue_keys": ["P-3", "P-4"]}}
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", done=True)])
+        with self.assertRaisesRegex(ValueError, "every ticket in the queue is already done"):
+            tp.fill(task, {}, memory=self._memory([task], busy=["X-9"]), jira=jira)
+
+    def test_a_busy_ticket_outside_the_queue_is_not_named(self):
+        task = {"id": "fill", "workflow_id": "pool", "tenant_id": "default", "step_name": "fill_pool",
+                "input": {"summary": "s", "jira_issue_keys": ["P-3", "P-4"]}}
+        jira = Jira([_issue("P-3", done=True), _issue("P-4", blocked_by=["P-9"])])
+        with self.assertRaisesRegex(ValueError, "every remaining ticket waits on an open blocker"):
+            tp.fill(task, {}, memory=self._memory([task], busy=["X-9"]), jira=jira)
+
+    def test_the_finished_wave_counts_tickets_done_elsewhere(self):
+        from types import SimpleNamespace
+
+        from ts_harness.workflows.hooks.complete_program_phase import _pool_done_elsewhere
+
+        fill = {"step_name": "fill_pool", "output": {"queue": ["P-3", "P-4", "P-5"]}}
+        join = {"step_name": "join_pool", "input": {"_wait_options": {"children": [{"label": "P-3", "workflow_id": "c3"}]}}}
+        ctx = SimpleNamespace(memory_client=MagicMock(), workflow_id="pool")
+        jira = Jira([_issue("P-4", done=True), _issue("P-5")])
+        with patch("ts_harness.workflows.hooks.complete_program_phase.load_workflow_payload", return_value=({}, [fill, join])):
+            self.assertEqual(_pool_done_elsewhere(ctx, jira=jira), ["P-4"])

@@ -126,6 +126,7 @@ def pr_body(
     docs_written: bool = False,
     repo_dir: Path | None = None,
     screenshots: bool = False,
+    out_of_scope_files: list[str] | None = None,
 ) -> str:
     sections = _sections(_work_order(request))
     parts: list[str] = []
@@ -133,7 +134,17 @@ def pr_body(
     summary = _section(sections, "summary", "goal", "overview", "description") or _first_paragraph(_work_order(request))
     parts += ["## Summary", "", summary or f"Implements work order `{request.work_order_id}`.", ""]
 
+    beyond = [f for f in out_of_scope_files or [] if f]
     files = [f for f in changed_files if f]
+    if beyond:
+        parts += [
+            "## Beyond the work order's files",
+            "",
+            "These changed files are not in the work order's Files list. The code review gate judges whether they belong.",
+            "",
+            *[f"- `{name}`" for name in beyond[:MAX_FILES]],
+            "",
+        ]
     if files:
         parts += [f"## Changes ({len(files)} files)", ""]
         parts += [f"- `{name}`" for name in files[:MAX_FILES]]

@@ -178,6 +178,9 @@ def build_inbox(
         checks = _gate_draft_checks(memory, str(status.get("active_workflow_id") or ""))
         if checks is not None:
             meta["prd_checks"] = checks
+        reply = gate_reply_kind(step, program_id)
+        if reply:
+            meta["reply"] = reply
         items.append(
             {
                 "type": "workflow_gate",
@@ -195,6 +198,27 @@ def build_inbox(
     items.extend(_proposal_items(auth))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+# Gates whose approval carries an answer, not only a yes: the console shows a reply box
+# (and, for a repo pick, the allowlisted repos), sent as the approval's comments.
+_ANSWER_GATES = {"await_ready": "answer"}
+
+
+def gate_reply_kind(step_name: str, program_id: str) -> dict[str, Any] | None:
+    if step_name == "pick_repo":
+        try:
+            from ts_harness.workflows.repo_pick import allowlisted_repos
+
+            repos = allowlisted_repos(program_id)
+        except Exception:  # noqa: BLE001 - free text still works
+            repos = []
+        return {
+            "kind": "repo",
+            "options": [{"id": str(r["id"]), "default_branch": str(r.get("default_branch") or "")} for r in repos],
+        }
+    kind = _ANSWER_GATES.get(step_name)
+    return {"kind": kind} if kind else None
 
 
 def _child_gate_items(memory: Any, program: dict[str, Any], status: dict[str, Any], approvable: Any) -> list[dict[str, Any]]:

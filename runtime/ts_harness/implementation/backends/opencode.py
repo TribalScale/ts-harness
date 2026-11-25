@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import os
 import queue
@@ -120,6 +121,117 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
     return f"opencode exit {completed.returncode}"
 
 
+PROVIDER_INTERRUPTED = "provider_interrupted"
+STALLED = "stalled"
+DEFAULT_CHECKPOINT_SECONDS = 900
+
+
+def checkpoint_interval_seconds() -> int:
+    """How often a first run pushes a work-in-progress snapshot while OpenCode codes
+    (``CODING_CHECKPOINT_SECONDS``, default 15 minutes; 0 = only at the phase boundaries)."""
+    try:
+        return max(0, int(os.environ.get("CODING_CHECKPOINT_SECONDS") or DEFAULT_CHECKPOINT_SECONDS))
+    except ValueError:
+        return DEFAULT_CHECKPOINT_SECONDS
+BLOCKED = "blocked"
+# OpenCode used to run the whole unit and BDD suites inside every fix, then the host ran them again:
+# about a third of a long run was the same tests twice.
+TEST_SCOPE_RULE = (
+    "While you work, run only the tests for what you changed: the unit tests of the files you touched "
+    "(`vitest related <files> --run`, `jest --findRelatedTests <files>`, or the one test file) and the one "
+    "feature you added or changed (`npx playwright test -g \"<scenario>\"` or `ts-harness-integration "
+    "<file>`). Do not run the whole unit suite, the whole BDD suite or the production build: the host runs "
+    "all of them right after you finish, each takes minutes, and it sends any failure back to you.\n"
+)
+
+
+DEFAULT_MAX_SUBAGENTS = 4
+
+
+def max_subagents() -> int:
+    """Sub-agents OpenCode may run at once (``CODING_MAX_SUBAGENTS``, default 4)."""
+    try:
+        return max(1, int(os.environ.get("CODING_MAX_SUBAGENTS") or DEFAULT_MAX_SUBAGENTS))
+    except ValueError:
+        return DEFAULT_MAX_SUBAGENTS
+
+
+def subagent_rule() -> str:
+    # Seven sub-agents at once, each running its own type checks, starved a 2 vCPU worker until its
+    # heartbeat stopped and the job was lost.
+    limit = max_subagents()
+    return (
+        f"If you delegate to sub-agents, run at most {limit} at the same time; start the next one when one "
+        "finishes. The worker is small, and too many at once stall it.\n"
+    )
+
+
+def blocked_rule(path: str) -> str:
+    return (
+        "If something outside your control stops you from doing the whole work order (you cannot read a "
+        "repository or file it needs, the edit permissions refuse a file it requires, or information it "
+        "depends on is missing), do not deliver part of it and do not build stand-ins. Write "
+        f'{{"reason": "what stopped you", "needs": "what would unblock it"}} as JSON to {path} '
+        "(outside the repository) and stop.\n"
+    )
+
+
+def read_blocked_report(path: Path) -> str:
+    """The blocked report OpenCode wrote, as one line, or ""."""
+    try:
+        text = Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text[:500]
+    if not isinstance(data, dict):
+        return text[:500]
+    reason = str(data.get("reason") or "").strip()
+    needs = str(data.get("needs") or "").strip()
+    return (reason + (f"; needs: {needs}" if needs else ""))[:800] or text[:500]
+TIME_LIMIT = "time_limit"
+RESUME_NOTE = (
+    "Note: a previous run of this work order was interrupted by the model provider. Its work in "
+    "progress is already committed on this branch. Review what is there, keep what is right, and "
+    "finish the work order; do not start over."
+)
+_INTERRUPTION_MARKERS = (
+    "content filter", "content_filter", "blocked by the provider", "overloaded", "rate limit",
+    "rate_limit", "too many requests", "service unavailable", "bad gateway", "gateway timeout",
+    "internal server error", "529", "503", "502", "504",
+)
+_ERROR_LINE = re.compile(r"^\s*(?:error|apierror|providererror)\b[:\s]", re.IGNORECASE)
+
+
+def provider_interruption(text: str, *, last_lines: int = 60) -> str:
+    """The provider error that ended OpenCode ("Error: The response was blocked by the provider's
+    content filter", an overload, a rate limit, a 5xx), or "" when the run ended for another reason.
+
+    Only OpenCode's own error lines near the end count, so a failing test that prints "503" does not.
+    """
+    for line in reversed(str(text or "").splitlines()[-last_lines:]):
+        if _ERROR_LINE.match(line):
+            lowered = line.lower()
+            if any(marker in lowered for marker in _INTERRUPTION_MARKERS):
+                return line.strip()[:300]
+    return ""
+
+
+def _file_tail(path: Path, limit: int = 20000) -> str:
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
         try:
@@ -133,6 +245,76 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
             continue
 
 
+ACTIVITY_PROBE_SECONDS = 60
+
+
+def _latest_mtime(root: str) -> float:
+    """The newest modification time of a file under ``root`` (0.0 when there is none)."""
+    newest = 0.0
+    if not root or not os.path.isdir(root):
+        return newest
+    for directory, _dirs, files in os.walk(root):
+        for name in files:
+            try:
+                newest = max(newest, os.stat(os.path.join(directory, name)).st_mtime)
+            except OSError:
+                continue
+    return newest
+
+
+def _worktree_state(repo_dir: str) -> tuple[str, float]:
+    """The checkout's changed files and their newest modification time."""
+    try:
+        status = subprocess.run(
+            ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, check=False, timeout=60,
+        ).stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return "", 0.0
+    newest = 0.0
+    for line in status.splitlines():
+        path = line[3:].strip().split(" -> ")[-1] if len(line) > 3 else ""
+        try:
+            newest = max(newest, os.stat(os.path.join(repo_dir, path)).st_mtime)
+        except OSError:
+            continue
+    return status, newest
+
+
+def activity_probe(data_dir: str, repo_dir: str) -> Callable[[], str]:
+    """What changed since the last call ("checkout", "session data", both), or "" when nothing did."""
+    state = {"data": _latest_mtime(data_dir), "tree": _worktree_state(repo_dir)}
+
+    def changed() -> str:
+        data, tree = _latest_mtime(data_dir), _worktree_state(repo_dir)
+        kinds = [kind for kind, moved in (("checkout", tree != state["tree"]), ("session data", data > state["data"])) if moved]
+        state["data"], state["tree"] = max(data, state["data"]), tree
+        return " and ".join(kinds)
+
+    return changed
+
+
+_SECRET_RE = re.compile(r"(gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|sk-[A-Za-z0-9_-]{10,}|"
+                        r"(?i:token|secret|password|api[_-]?key)=\S+)")
+
+
+def running_processes(pgid: int, limit: int = 15) -> list[str]:
+    """``<seconds>s <command>`` for the processes in OpenCode's process group, longest-running first."""
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "etimes=,args=", "-g", str(pgid)], capture_output=True, text=True, check=False, timeout=15
+        ).stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            rows.append((int(parts[0]), _SECRET_RE.sub("<redacted>", parts[1])[:200]))
+    rows.sort(key=lambda row: -row[0])
+    return [f"{seconds}s {command}" for seconds, command in rows[:limit]]
+
+
 def stream_opencode_process(
     cmd: list[str],
     *,
@@ -141,13 +323,21 @@ def stream_opencode_process(
     log_path: Path,
     work_order_id: str,
     stall_seconds: float | None = None,
+    activity: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run OpenCode while streaming output to a tailable log and runtime events.
 
-    A run that prints nothing for ``stall_seconds`` is killed with its whole
-    process group and returns ``OPENCODE_STALLED_RC``.
+    A run with no output and no other sign of work for ``stall_seconds`` is killed with its
+    whole process group and returns ``OPENCODE_STALLED_RC``. Sub-agents print nothing to the
+    main session while they work, so ``activity`` (files changing in the checkout or in
+    OpenCode's own session data) also counts as progress; a run with seven sub-agents busy
+    for a quarter of an hour was once killed as stalled.
     """
     stall = opencode_stall_seconds() if stall_seconds is None else max(0.0, float(stall_seconds))
+    if activity is None:
+        activity = activity_probe(env.get("XDG_DATA_HOME") or "", cwd)
+    last_probe = time.monotonic()
+    probe = {"enabled": activity is not None, "error": "", "last_at": 0.0, "last_kind": ""}
     log_path.parent.mkdir(parents=True, exist_ok=True)
     collected: list[str] = []
     line_count = 0
@@ -155,6 +345,7 @@ def stream_opencode_process(
     last_output = last_progress
     last_line = ""
     stalled = False
+    stall_processes: list[str] = []
     with log_path.open("a", encoding="utf-8") as log_fh:
         log_fh.write(f"\n--- opencode start work_order_id={work_order_id} ---\n")
         log_fh.flush()
@@ -191,7 +382,18 @@ def stream_opencode_process(
                 try:
                     line = lines.get(timeout=1.0)
                 except queue.Empty:
-                    if stall and time.monotonic() - last_output >= stall:
+                    now = time.monotonic()
+                    if activity is not None and now - last_probe >= ACTIVITY_PROBE_SECONDS:
+                        last_probe = now
+                        try:
+                            kind = activity()
+                            if kind:
+                                last_output = now
+                                probe["last_at"], probe["last_kind"] = now, str(kind) if isinstance(kind, str) else "activity"
+                        except Exception as exc:  # noqa: BLE001 - a broken probe only loses the extra signal
+                            activity = None
+                            probe["enabled"], probe["error"] = False, f"{type(exc).__name__}: {exc}"[:200]
+                    if stall and now - last_output >= stall:
                         stalled = True
                         break
                     continue
@@ -222,13 +424,29 @@ def stream_opencode_process(
                     proc.wait(timeout=_OPENCODE_EXIT_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
                     pass
+            if stalled:
+                stall_processes = running_processes(proc.pid)
             if stalled or proc.poll() is None:
                 _kill_process_group(proc)
             reader.join(timeout=5)
             proc.stdout.close()
         returncode = OPENCODE_STALLED_RC if stalled else proc.wait()
+        diagnosis = ""
         if stalled:
-            note = f"--- opencode stalled: no output for {stall:g}s; killed ---\n"
+            ended = time.monotonic()
+            if not probe["enabled"]:
+                check = f"activity check off ({probe['error'] or 'no probe'})"
+            elif probe["last_at"]:
+                check = f"activity check on, last activity ({probe['last_kind']}) {int(ended - probe['last_at'])}s before the kill"
+            else:
+                check = "activity check on, no activity seen"
+            running = "; ".join(stall_processes[:6]) or "no process list"
+            diagnosis = f"{check}; running: {running}"
+            note = (
+                f"--- opencode stalled: no output for {stall:g}s; killed ---\n"
+                f"--- stall diagnosis: {check} ---\n"
+                + "".join(f"--- running: {row} ---\n" for row in stall_processes)
+            )
             log_fh.write(note)
             collected.append(note)
             log_event(
@@ -238,6 +456,8 @@ def stream_opencode_process(
                 lines=line_count,
                 last_line=last_line[-300:],
                 log_path=str(log_path),
+                activity_check=check,
+                running=stall_processes,
             )
         log_fh.write(f"--- opencode end rc={returncode} lines={line_count} ---\n")
         log_fh.flush()
@@ -250,7 +470,9 @@ def stream_opencode_process(
         log_path=str(log_path),
     )
     output = "".join(collected)
-    return subprocess.CompletedProcess(cmd, returncode, stdout=output, stderr="")
+    completed = subprocess.CompletedProcess(cmd, returncode, stdout=output, stderr="")
+    completed.stall_diagnosis = diagnosis  # type: ignore[attr-defined]
+    return completed
 
 
 def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -> str:
@@ -293,44 +515,6 @@ def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
     path = Path(tempfile.gettempdir()) / "ts-harness-opencode-data" / key
     path.mkdir(parents=True, exist_ok=True)
     return {"XDG_DATA_HOME": str(path)}
-
-
-def opencode_scope_paths(work_order_body: str, revision_files: list[str] | None = None) -> list[str] | None:
-    """Paths OpenCode may edit for this work order, or None when the work order names none.
-
-    The ``## Files`` / ``## Touches`` list, ``features/**`` when the work order has
-    Given/When/Then acceptance tests, the paths the pipeline writes itself (planning docs,
-    ``.opencode``), and the files a review revision cites.
-    """
-    from ts_harness.implementation.verification import has_gwt_acceptance
-    from ts_harness.workflows.code_review import PIPELINE_WRITTEN, TEST_PATHS, declared_paths
-
-    declared = declared_paths(work_order_body)
-    if not declared:
-        return None
-    allowed: list[str] = []
-    for raw in [*declared, *(revision_files or [])]:
-        path = str(raw).strip().removeprefix("./")
-        if not path:
-            continue
-        if path.endswith("/"):
-            allowed.append(path + "**")
-        else:
-            allowed.append(path)
-            if "*" not in path and "." not in Path(path).name:
-                allowed.append(path.rstrip("/") + "/**")  # a bare directory name
-    if has_gwt_acceptance(work_order_body):
-        allowed.append("features/**")
-    allowed.extend(PIPELINE_WRITTEN)
-    # Extra tests are always in scope (code_review.TEST_PATHS); OpenCode needs ** for nesting.
-    for pattern in TEST_PATHS:
-        glob = "**/" + pattern[2:] if pattern.startswith("*/") else pattern
-        if glob.endswith("/*"):
-            glob += "*"  # a directory: everything under it, nested too
-        elif "/" not in glob:
-            glob = "**/" + glob  # a file name pattern: at any depth
-        allowed.append(glob)
-    return list(dict.fromkeys(allowed))
 
 
 DEFAULT_MODEL_LIMIT = {"context": 200000, "output": 64000}
@@ -398,34 +582,6 @@ def opencode_models_env(env: dict[str, str], config_dir: Any, provider: str, mod
     directory = Path(config_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "opencode-models.json"
-    path.write_text(json.dumps(config, indent=2))
-    return {"OPENCODE_CONFIG": str(path)}
-
-
-def opencode_scope_env(env: dict[str, str], config_dir: Any, allowed: list[str]) -> dict[str, str]:
-    """An ``OPENCODE_CONFIG`` that denies edits outside ``allowed``, kept outside the repository.
-
-    OpenCode refuses the edit tool call with a message naming the rule, so the run adapts
-    at once instead of having its out-of-scope files reverted afterwards (which broke tests
-    that imported from them). A config already set for the LLM proxy is kept and extended.
-    Rules apply last match wins: deny everything, then allow each path.
-    """
-    import json
-
-    base: dict[str, Any] = {}
-    existing = str(env.get("OPENCODE_CONFIG") or "")
-    if existing and Path(existing).is_file():
-        try:
-            loaded = json.loads(Path(existing).read_text())
-            base = loaded if isinstance(loaded, dict) else {}
-        except ValueError:
-            base = {}
-    permission = dict(base.get("permission") or {}) if isinstance(base.get("permission"), dict) else {}
-    permission["edit"] = {"*": "deny", **{path: "allow" for path in allowed}}
-    config = {"$schema": "https://opencode.ai/config.json", **base, "permission": permission}
-    directory = Path(config_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "opencode-scope.json"
     path.write_text(json.dumps(config, indent=2))
     return {"OPENCODE_CONFIG": str(path)}
 
@@ -523,6 +679,7 @@ def build_implement_prompt(
     knowledge_notes: list[dict] | None = None,
     test_environment_note: str = "",
     design_files: list[dict] | None = None,
+    blocked_report_path: str = "",
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -542,6 +699,9 @@ def build_implement_prompt(
         "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
         "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
         "report. The host runs them as well as the tests.\n"
+        + TEST_SCOPE_RULE
+        + subagent_rule()
+        + (blocked_rule(blocked_report_path) if blocked_report_path else "")
         + (
             test_environment_note.strip()
             + " Run the integration or e2e tests you added or changed with `ts-harness-integration <test files>` "
@@ -741,6 +901,7 @@ class OpenCodeBackend:
         env: dict[str, str],
         log_path: Path,
         work_order_id: str,
+        checkpoint: Callable[[], Any] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         # Injected test runners keep the capture_output contract; production streams.
         if self.runner is not subprocess.run:
@@ -752,15 +913,33 @@ class OpenCodeBackend:
                 check=False,
                 env=env,
             )
-        return stream_opencode_process(
-            cmd,
-            cwd=cwd,
-            env=env,
-            log_path=log_path,
-            work_order_id=work_order_id,
-        )
+        stop = threading.Event()
+        saver = None
+        if checkpoint is not None and checkpoint_interval_seconds():
+            def save_periodically() -> None:
+                # A run cut off mid-coding is continued from its last snapshot, not from scratch.
+                while not stop.wait(checkpoint_interval_seconds()):
+                    try:
+                        checkpoint()
+                    except Exception as exc:  # noqa: BLE001 - a checkpoint is a safety net
+                        log_event("coding_checkpoint_failed", work_order_id=work_order_id, error=str(exc)[:300])
 
-    def _prepare_test_env(self, workspace_dir: Path, repo_dir: Path) -> tuple[TestEnvironment, str]:
+            saver = threading.Thread(target=save_periodically, daemon=True)
+            saver.start()
+        try:
+            return stream_opencode_process(
+                cmd,
+                cwd=cwd,
+                env=env,
+                log_path=log_path,
+                work_order_id=work_order_id,
+            )
+        finally:
+            stop.set()
+
+    def _prepare_test_env(
+        self, workspace_dir: Path, repo_dir: Path, api_contract: dict[str, Any] | None = None
+    ) -> tuple[TestEnvironment, str]:
         """Venv with real runners plus the repo's declared deps, before OpenCode and verify run."""
         test_env, prep_log = prepare_test_environment(workspace_dir, repo_dir, runner=self.runner)
         deps_log = install_declared_dependencies(test_env, repo_dir, runner=self.runner)
@@ -769,7 +948,17 @@ class OpenCodeBackend:
         test_env.services_note = services.note()
         test_env.services_running = bool(services.services)
         contract_log = ""
-        if test_env.state_dir is not None:
+        contract_hint = ""
+        if test_env.state_dir is not None and isinstance(api_contract, dict) and api_contract.get("text"):
+            from ts_harness.implementation.backend_contract import contract_note
+
+            target = Path(test_env.state_dir) / "contract-openapi.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(api_contract["text"]), encoding="utf-8")
+            test_env.env.update({"OPENAPI_CONTRACT": str(target), "OPENAPI_SOURCE": str(target)})
+            contract_hint = contract_note(api_contract, str(target))
+            contract_log = f"contract: the backend spec {api_contract.get('repo')}:{api_contract.get('path')}@{api_contract.get('ref')} was supplied by the harness"
+        elif test_env.state_dir is not None:
             from ts_harness.implementation.api_contract import fetch_contract
 
             contract_env, contract_log = fetch_contract(repo_dir, test_env.state_dir)
@@ -782,6 +971,8 @@ class OpenCodeBackend:
                 + ". Add or update e2e tests for user-visible changes and run only those before finishing "
                 "(`ts-harness-integration <spec files>`); the host runs the whole suite afterwards."
             )
+        if contract_hint:
+            test_env.services_note = "\n\n".join(part for part in [test_env.services_note, contract_hint] if part)
         return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log, contract_log] if part)
 
     def _verify_with_fixes(
@@ -887,6 +1078,12 @@ class OpenCodeBackend:
                     verify.security,
                     verification_evidence(verify),
                 )
+            if self._out_of_time(request):
+                stopped = self._time_limit_result(
+                    repo_dir, request, branch, f"fix pass {fix_passes_used + 1}",
+                    log="\n".join([log, *verify_logs])[-8000:], log_path=log_path,
+                )
+                return stopped, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
             progress.detail(f"fixing test failures (pass {fix_passes_used + 1})")
             fix_prompt = build_verification_fix_prompt(
                 request.work_order_id,
@@ -910,6 +1107,11 @@ class OpenCodeBackend:
                 work_order_id=request.work_order_id,
             )
             fix_passes_used += 1
+            blocked = self._blocked_result(request, branch, list_changed_files(repo_dir, runner=self.runner), log, log_path)
+            if blocked is not None:
+                return blocked, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
+            if fix_completed.returncode == 0:
+                self._checkpoint(repo_dir, request, branch, f"after fix pass {fix_passes_used}")
             fix_log = "\n".join(
                 part
                 for part in [
@@ -984,25 +1186,16 @@ class OpenCodeBackend:
         return sorted(set(names))
 
     def _revert_undeclared(self, repo_dir: Path, request: CodingRequest) -> list[str]:
-        """Drop files the work order did not name before verification and return them.
+        """Drop protected files (CI workflows, code owners) the work order is not about, and return them.
 
-        The edit tool already refuses them (``opencode_scope_env``); this catches files written
-        another way, such as from the shell. Review revisions keep the reject path.
+        Files beyond the work order's Files list are no longer reverted: they stay in the change, are
+        reported, and the code review gate decides whether they belong.
         """
-        from ts_harness.implementation.generated_artifacts import generator_steps
-        from ts_harness.workflows.code_review import undeclared_paths
-
         changed = self._working_tree_names(repo_dir)
         # CI workflows and code owners decide what checks and who reviews: a change to them is
         # dropped unless the work order is about them, whatever the work order's file list says.
         protected = [path for path in changed if protected_path(path) and not _work_order_mentions(request.work_order_body, path)]
-        if request.revision_files:
-            reverted = protected
-        else:
-            # Files CI regenerates are kept: the harness regenerates them on purpose.
-            generated = {path for step in generator_steps(repo_dir) for path in step.files}
-            reverted = sorted({*protected, *(path for path in undeclared_paths(changed, request.work_order_body)
-                                             if path not in generated)})
+        reverted = sorted(protected)
         for path in reverted:
             self.runner(
                 ["git", "checkout", "HEAD", "--", path],
@@ -1019,6 +1212,164 @@ class OpenCodeBackend:
                 check=False,
             )
         return reverted
+
+    _run_started: float = 0.0
+
+    def _blocked_path(self, request: CodingRequest) -> Path:
+        return Path(request.workspace_dir) / ".ts-harness" / f"blocked-{request.work_order_id or 'wo'}.json"
+
+    def _blocked_result(
+        self, request: CodingRequest, branch: str, changed: list[str], log: str, log_path: Path
+    ) -> CodingResult | None:
+        """OpenCode said it cannot do the work order: stop with its reason instead of pushing part of it."""
+        reason = read_blocked_report(self._blocked_path(request))
+        if not reason:
+            return None
+        log_event("coding_run_blocked", work_order_id=request.work_order_id, reason=reason[:300])
+        return CodingResult(
+            ok=False,
+            branch=branch,
+            summary=f"OpenCode could not do the work order: {reason}",
+            changed_files=changed,
+            log_tail=log,
+            log_path=str(log_path),
+            pr_url=request.pr_url,
+            error=f"{BLOCKED}: {reason}",
+        )
+
+    def _out_of_time(self, request: CodingRequest) -> bool:
+        """The run is past its budget (the job limit less a margin): start nothing new."""
+        budget = int(getattr(request, "run_budget_seconds", 0) or 0)
+        return bool(budget and self._run_started and time.monotonic() - self._run_started >= budget)
+
+    def _time_limit_result(
+        self, repo_dir: Path, request: CodingRequest, branch: str, next_step: str, *, log: str, log_path: Path
+    ) -> CodingResult:
+        """Stop before the job limit instead of being cut off: push the work so the retry continues it."""
+        minutes = int((time.monotonic() - self._run_started) // 60) if self._run_started else 0
+        saved = self._checkpoint(repo_dir, request, branch, f"stopped before {next_step}")
+        log_event("coding_run_time_limit", work_order_id=request.work_order_id, minutes=minutes, next_step=next_step)
+        return CodingResult(
+            ok=False,
+            branch=branch,
+            summary=f"Stopped before {next_step}: the run used {minutes} minutes of its time limit",
+            changed_files=list_changed_files(repo_dir, runner=self.runner),
+            log_tail=log,
+            log_path=str(log_path),
+            pr_url=request.pr_url,
+            error=f"{TIME_LIMIT}: stopped before {next_step} after {minutes} minutes" + (f"; {saved}" if saved else ""),
+        )
+
+    def _checkpoint(self, repo_dir: Path, request: CodingRequest, branch: str, label: str) -> str:
+        """Push a snapshot of the working tree to the work branch on GitHub, leaving the local
+        branch, index and files as they are, so a run cut off later is continued from here.
+
+        First runs only (an open PR's branch is what reviewers see), and only after a clean
+        secret scan. Returns a note, or "" when nothing was pushed.
+        """
+        if request.pr_url:
+            return ""
+        changed = list_changed_files(repo_dir, runner=self.runner)
+        if not changed:
+            return ""
+        try:
+            from ts_harness.implementation.security_scan import scan_secrets
+
+            base = str(request.base_branch or "").strip()
+            scan = scan_secrets(repo_dir, f"origin/{base}" if base else None, list(changed), self.runner)
+            if scan.findings:
+                log_event("coding_checkpoint_skipped", work_order_id=request.work_order_id, reason="secret scan", label=label)
+                return "work in progress not pushed: the secret scan found something"
+            sha = self._snapshot_commit(repo_dir, f"WIP checkpoint {request.work_order_id}: {label}")
+            if not sha:
+                return ""
+            git_env = _git_env(request.repo_url)
+            remote = github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", ""))
+            listed = self.runner(
+                ["git", "-C", str(repo_dir), "ls-remote", remote, f"refs/heads/{branch}"],
+                capture_output=True, text=True, check=False, env=git_env,
+            )
+            expected = (str(listed.stdout or "").split() or [""])[0] if listed.returncode == 0 else ""
+            pushed = self.runner(
+                ["git", "-C", str(repo_dir), "push", f"--force-with-lease=refs/heads/{branch}:{expected}",
+                 remote, f"{sha}:refs/heads/{branch}"],
+                capture_output=True, text=True, check=False, env=git_env,
+            )
+            if pushed.returncode != 0:
+                log_event("coding_checkpoint_failed", work_order_id=request.work_order_id, label=label,
+                          error=str(pushed.stderr or pushed.stdout or "")[-300:])
+                return ""
+        except Exception as exc:  # noqa: BLE001 - a checkpoint is a safety net, never a failure
+            log_event("coding_checkpoint_failed", work_order_id=request.work_order_id, label=label, error=str(exc)[:300])
+            return ""
+        log_event("coding_checkpoint_pushed", work_order_id=request.work_order_id, label=label, files=len(changed))
+        return f"work in progress pushed to {branch}"
+
+    def _snapshot_commit(self, repo_dir: Path, message: str) -> str:
+        """A commit of the working tree on top of HEAD, built in a throwaway index (nothing local changes)."""
+        index = Path(repo_dir) / ".git" / "ts-harness-checkpoint-index"
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+        try:
+            for args in (["read-tree", "HEAD"], ["add", "-A", "--", ".", ":(exclude)**/__pycache__/**", ":(exclude)**/*.pyc"]):
+                done = self.runner(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, check=False, env=env)
+                if done.returncode != 0:
+                    return ""
+            tree = self.runner(["git", "-C", str(repo_dir), "write-tree"], capture_output=True, text=True, check=False, env=env)
+            if tree.returncode != 0 or not str(tree.stdout or "").strip():
+                return ""
+            commit = self.runner(
+                ["git", "-C", str(repo_dir), "commit-tree", str(tree.stdout).strip(), "-p", "HEAD", "-m", message],
+                capture_output=True, text=True, check=False,
+            )
+            return str(commit.stdout or "").strip() if commit.returncode == 0 else ""
+        finally:
+            index.unlink(missing_ok=True)
+
+    def _ahead_of_base(self, repo_dir: Path, base_branch: str) -> bool:
+        base = str(base_branch or "").strip()
+        if not base:
+            return False
+        ahead = self._git(repo_dir, "rev-list", "--count", f"origin/{base}..HEAD")
+        return ahead.returncode == 0 and str(ahead.stdout or "").strip() not in {"", "0"}
+
+    def _save_interrupted_work(
+        self, repo_dir: Path, request: CodingRequest, branch: str, changed: list[str], *, reason: str = "interrupted by the model provider"
+    ) -> str:
+        """Commit and push a first run's work when the provider cut it off, so the retry continues it.
+
+        Never onto an open PR (its branch is what reviewers see), never without changes, and never
+        when the secret scan finds anything. Returns a note for the error, or "".
+        """
+        if request.pr_url or not changed:
+            return ""
+        try:
+            from ts_harness.implementation.repo import commit_all_changes
+            from ts_harness.implementation.security_scan import scan_secrets
+
+            base = str(request.base_branch or "").strip()
+            scan = scan_secrets(repo_dir, f"origin/{base}" if base else None, list(changed), self.runner)
+            if scan.findings:
+                log_event("coding_interrupted_work_not_pushed", work_order_id=request.work_order_id, reason="secret scan")
+                return "work in progress not pushed: the secret scan found something"
+            if not commit_all_changes(
+                repo_dir,
+                message=f"WIP {request.work_order_id}: {reason}; the next run continues it",
+                runner=self.runner,
+            ):
+                return ""
+            git_env = _git_env(request.repo_url)
+            push_branch(
+                repo_dir,
+                branch=branch,
+                runner=self.runner,
+                env=git_env,
+                remote_url=github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", "")),
+            )
+        except Exception as exc:  # noqa: BLE001 - the retry starts over instead
+            log_event("coding_interrupted_work_not_pushed", work_order_id=request.work_order_id, error=str(exc)[:300])
+            return ""
+        log_event("coding_interrupted_work_pushed", work_order_id=request.work_order_id, branch=branch, files=len(changed))
+        return f"work in progress pushed to {branch}"
 
     def _with_scanned_sha(self, repo_dir: Path, security: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(security, dict):
@@ -1064,7 +1415,17 @@ class OpenCodeBackend:
         decides whether they belong.
         """
         cited = [path for path in (request.revision_files or []) if str(path).strip()]
-        if not cited or not baseline:
+        if not cited:
+            # A first run: files beyond the work order's Files list (when it is a list of paths).
+            from ts_harness.workflows.code_review import undeclared_paths
+
+            base = str(request.base_branch or "").strip()
+            names = self._names_since(repo_dir, f"origin/{base}") if base else []
+            extra = undeclared_paths(names, request.work_order_body) if names else []
+            if extra:
+                log_event("coding_out_of_scope", work_order_id=request.work_order_id, files=extra[:50])
+            return extra
+        if not baseline:
             return []
         from ts_harness.implementation.revision_scope import (
             allowed_revision_paths,
@@ -1253,6 +1614,7 @@ class OpenCodeBackend:
         )
         timings: dict[str, float] = {}
         clock = [time.monotonic()]
+        self._run_started = clock[0]
         progress.reset()
         progress.begin("setup")
 
@@ -1274,6 +1636,7 @@ class OpenCodeBackend:
                 drafted = set_pull_request_draft(request.pr_url, True, runner=self.runner, env=_git_env(request.repo_url))
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
             claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
+            self._blocked_path(request).unlink(missing_ok=True)  # a reused workspace's old report
             reused = (Path(request.workspace_dir) / "repo" / ".git").is_dir()
             repo_dir = ensure_repo_clone(
                 repo_url=request.repo_url,
@@ -1294,8 +1657,13 @@ class OpenCodeBackend:
                 branch=branch,
                 base_branch=request.base_branch,
                 runner=self.runner,
-                from_remote=bool(pr_head),
+                # A first run also starts from the branch on GitHub when one exists: a run the
+                # model provider interrupted pushed its work there, and this run finishes it.
+                from_remote=bool(pr_head) or not request.pr_url,
             )
+            if not pr_head and not request.pr_url and self._ahead_of_base(repo_dir, request.base_branch):
+                log_event("coding_resumed_interrupted_work", work_order_id=request.work_order_id, branch=branch)
+                request = dataclasses.replace(request, work_order_body=RESUME_NOTE + "\n\n" + str(request.work_order_body or ""))
             # The head the gates reviewed: a revision must change it.
             review_head = self._head_sha(repo_dir) if request.pr_url else ""
             if pr_head:
@@ -1336,7 +1704,7 @@ class OpenCodeBackend:
                 )
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
-            test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir, request.api_contract)
             # A review revision may also edit the module glue beside the flagged files and what
             # they import (revision_scope.allowed_revision_paths); say so and let the editor do it.
             revision_scope = (
@@ -1359,6 +1727,7 @@ class OpenCodeBackend:
                 knowledge_notes=request.knowledge_notes,
                 test_environment_note=test_env.services_note,
                 design_files=design_files,
+                blocked_report_path=str(self._blocked_path(request)),
             )
             cmd = build_opencode_command(
                 binary=binary,
@@ -1373,11 +1742,10 @@ class OpenCodeBackend:
             env.update(coding_child_env(provider, api_key, config_dir=request.workspace_dir))
             env.update(opencode_data_env(request.workspace_dir))
             env.update(opencode_models_env(env, request.workspace_dir, provider, [request.model, request.review_model]))
-            # The reviewer writes its findings outside the repository, so it runs without the edit scope.
+            # No edit fence: files beyond the work order's list stay and are reported (out_of_scope_files,
+            # the PR body), and the code review gate judges them. A fence parsed from the work order's
+            # wording kept OpenCode out of files the work needed, five times over.
             review_env = dict(env)
-            allowed = opencode_scope_paths(request.work_order_body, revision_scope)
-            if allowed:
-                env.update(opencode_scope_env(env, request.workspace_dir, allowed))
             _note_opencode_run(binary, env, repo_dir)
             completed = self._run_opencode(
                 cmd,
@@ -1385,6 +1753,7 @@ class OpenCodeBackend:
                 env=env,
                 log_path=log_path,
                 work_order_id=request.work_order_id,
+                checkpoint=lambda: self._checkpoint(repo_dir, request, branch, "during coding"),
             )
             lap("coding", "verification")
             log = "\n".join(
@@ -1399,7 +1768,40 @@ class OpenCodeBackend:
             if len(log) > _OPENCODE_LOG_TAIL_CHARS:
                 log = log[-_OPENCODE_LOG_TAIL_CHARS:]
             changed = list_changed_files(repo_dir, runner=self.runner)
+            blocked = self._blocked_result(request, branch, changed, log, log_path)
+            if blocked is not None:
+                return blocked
+            if completed.returncode == OPENCODE_STALLED_RC:
+                # No output and no file activity for the stall window: keep the work and queue
+                # the job again, continuing from the branch (at most twice; see the runner).
+                saved = self._save_interrupted_work(repo_dir, request, branch, changed, reason="stopped making progress")
+                diagnosis = str(getattr(completed, "stall_diagnosis", "") or "")
+                return CodingResult(
+                    ok=False,
+                    branch=branch,
+                    summary="OpenCode stopped making progress" + (f" ({diagnosis})" if diagnosis else ""),
+                    changed_files=changed,
+                    log_tail=log,
+                    log_path=str(log_path),
+                    pr_url=request.pr_url,
+                    error=f"{STALLED}: {opencode_exit_error(completed)}"
+                    + (f"; {diagnosis}" if diagnosis else "")
+                    + (f"; {saved}" if saved else ""),
+                )
             if completed.returncode != 0:
+                interrupted = provider_interruption("\n".join([log, _file_tail(log_path)]))
+                if interrupted:
+                    saved = self._save_interrupted_work(repo_dir, request, branch, changed)
+                    return CodingResult(
+                        ok=False,
+                        branch=branch,
+                        summary="The model provider interrupted OpenCode",
+                        changed_files=changed,
+                        log_tail=log,
+                        log_path=str(log_path),
+                        pr_url=request.pr_url,
+                        error=f"{PROVIDER_INTERRUPTED}: {interrupted}" + (f"; {saved}" if saved else ""),
+                    )
                 return CodingResult(
                     ok=False,
                     branch=branch,
@@ -1411,6 +1813,7 @@ class OpenCodeBackend:
                 )
 
             self._revert_undeclared(repo_dir, request)
+            self._checkpoint(repo_dir, request, branch, "after coding")
             failure, log, fix_passes_used, changed, security, verification = self._verify_with_fixes(
                 repo_dir,
                 request,
@@ -1520,6 +1923,7 @@ class OpenCodeBackend:
                     docs_written=bool(docs_written),
                     repo_dir=repo_dir,
                     screenshots=bool((verification or {}).get("screenshots")),
+                    out_of_scope_files=out_of_scope,
                 ),
                 base_branch=request.base_branch,
                 head_branch=branch,
@@ -1704,7 +2108,7 @@ class OpenCodeBackend:
             provider, api_key = resolve_coding_backend_credentials(
                 provider=request.provider, scope=coding_usage_scope(request)
             )
-            test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir, request.api_contract)
             env = os.environ.copy()
             env.update(test_env.env)
             if provider and api_key:

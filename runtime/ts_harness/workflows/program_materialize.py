@@ -135,6 +135,29 @@ def may_end_offer(snapshot: dict[str, Any], node_id: str) -> dict[str, Any]:
     return {"ended_at_phase": node_id, "next_steps": steps, "text": "\n".join(lines)}
 
 
+def next_phase_offer(snapshot: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """What to say when ``node_id`` finished and the next phase starts only when asked.
+
+    Each manual edge to another phase with signals is one option; its first signal is what
+    the requester says. Self-edges (refile) are not offered here.
+    """
+    steps: list[dict[str, str]] = []
+    for edge in snapshot_edges_from(snapshot, node_id):
+        target = str(edge.get("target") or "").strip()
+        signals = [str(item).strip() for item in list(edge.get("signals") or []) if str(item).strip()]
+        if target and target != node_id and signals and str(edge.get("mode") or "manual") != "automatic":
+            steps.append({"target_node": target, "label": _phase_label(target), "say": signals[0]})
+    if not steps:
+        return {"next_steps": [], "text": ""}
+    done = f"The {_phase_label(node_id)} step is done."
+    if len(steps) == 1:
+        text = f'{done} Reply **{steps[0]["say"]}** to start {steps[0]["label"]}.'
+    else:
+        options = "\n".join(f'• **{step["say"]}** for {step["label"]}' for step in steps)
+        text = f"{done} To continue, reply with one of:\n{options}"
+    return {"next_steps": steps, "text": text}
+
+
 def node_may_end(snapshot: dict[str, Any], node_id: str) -> bool:
     """True when the program may stop after ``node_id`` (succeeded, next steps offered)."""
     try:

@@ -17,6 +17,8 @@ export interface WorkflowStep {
   approval_pending: boolean;
   error: string;
   updated_at: string;
+  /** A gate whose approval carries an answer: a repo pick (with the allowlisted repos) or intake answers. */
+  reply?: { kind?: string; options?: { id: string; default_branch?: string }[] };
 }
 
 export interface CodingRunProgress {
