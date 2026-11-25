@@ -14,6 +14,8 @@ Both come with an `AGENTS.md` (the conventions coding agents follow), a referenc
 unit and BDD tests, unit-test coverage thresholds in `npm test` (80% of lines of the code that
 holds logic), GitHub Actions CI with the jobs `checks`, `bdd` and `docker`, and the app roles
 `Admin` and `User`. See [testing-policy.md](testing-policy.md) for how tickets are tested.
+A `react-web` repository linked to its API also runs the app against the real API each night;
+see [nightly-smoke.md](nightly-smoke.md).
 
 ## How it works
 

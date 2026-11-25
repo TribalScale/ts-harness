@@ -102,6 +102,8 @@ fi
 if is_blank_or_placeholder "$CODING_JOB_SECRET"; then CODING_JOB_SECRET=""; fi
 LLM_PROXY_SECRET="$(fetch_secret "llm-proxy-secret" true 2>/dev/null || true)"
 if is_blank_or_placeholder "$LLM_PROXY_SECRET"; then LLM_PROXY_SECRET=""; fi
+# Nightly smoke failure reports (POST /webhooks/smoke): optional; per-repository tokens derive from it.
+SMOKE_REPORT_SECRET="$(fetch_optional_secret "smoke-report-secret")"
 
 # Jira: a service account OAuth credential (client id/secret) or an email and API token.
 ATLASSIAN_SITE_URL="$(fetch_optional_secret "jira-url")"
@@ -196,6 +198,7 @@ mkdir -p "$DATA_DIR/.setup"
     write_env_var SANDBOX_WORKER_TOKEN "$SANDBOX_WORKER_TOKEN"
     write_env_var CODING_JOB_SECRET "$CODING_JOB_SECRET"
     write_env_var LLM_PROXY_SECRET "$LLM_PROXY_SECRET"
+    write_env_var SMOKE_REPORT_SECRET "$SMOKE_REPORT_SECRET"
     write_env_var GITHUB_APP_WEBHOOK_SECRET "$GITHUB_APP_WEBHOOK_SECRET"
     write_env_var FIGMA_TOKEN "$FIGMA_TOKEN"
     write_env_var SLACK_OPS_WEBHOOK_URL "$SLACK_OPS_WEBHOOK_URL"
