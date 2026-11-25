@@ -2,7 +2,9 @@
 
 Each delivery is normalized into one event with a ``kind``:
 
-* ``github.merge`` resumes the merge wait matched on ``pr_url``.
+* ``github.merge`` resumes the merge wait matched on ``pr_url``; a merge that changed an API's
+  ``openapi.json`` also starts a refresh run on the web repositories that read it
+  (``contract_refresh``).
 * ``github.pr_checks`` resumes a checks wait matched on ``head_sha`` once the
   checks on that SHA are terminal.
 * ``github.deployment_status`` resumes a deployment wait matched on ``sha`` and
@@ -86,7 +88,7 @@ TERMINAL_CHECK_STATES = frozenset({"success", "failure"})
 EVENT_SUBSCRIBERS: dict[str, list[str]] = {
     "github.pr_opened": ["ts_harness.workflows.independent_review:on_github_event"],
     "github.pr_review": ["ts_harness.workflows.independent_review:on_github_event"],
-    "github.merge": ["ts_harness.workflows.merge_readiness:on_merge"],
+    "github.merge": ["ts_harness.workflows.merge_readiness:on_merge", "ts_harness.workflows.contract_refresh:on_merge"],
 }
 INSTALLATION_ACTIONS = frozenset({"created", "deleted", "suspend", "unsuspend", "new_permissions_accepted"})
 
