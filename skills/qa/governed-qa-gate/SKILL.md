@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.8.0
+version: 1.9.0
 ---
 
 # Governed QA Gate
@@ -91,6 +91,15 @@ Then:
    citing the command and its output; a repository with a unit test runner whose
    tests did not run at all is a defect too. A repository with no unit test
    runner is noted, not failed.
+   **API types come from the backend's spec.** On a PR to a web repository that calls a
+   backend (it has `src/api/openapi.json`, or its `.ts-harness.yml` names a
+   `contract.openapi` repository), request and response types must come from the schema
+   generated from that spec (`src/api/schema.d.ts`), and requests must go through the client
+   typed by it. Each of these is a defect, and the PR is `failed`: a file in the patch that
+   declares API request or response types by hand (or edits `schema.d.ts` by hand); a call to
+   a path, method or field that `src/api/openapi.json` does not have (read it with
+   `read_pr_file`); a changed `openapi.json` without a regenerated `schema.d.ts`. A web app
+   that passes its tests with hand-written types still breaks against the real backend.
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that
