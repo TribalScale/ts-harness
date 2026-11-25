@@ -1,0 +1,2 @@
+# tests/runtime/test_smoke_access.py (nightly smoke, PR #152): a fake GitHub Actions public key in a test double, not a credential.
+c7b09e9b6792a69ac3794da5966533b293304815:tests/runtime/test_smoke_access.py:generic-api-key:37
