@@ -260,17 +260,38 @@ def _worktree_state(repo_dir: str) -> tuple[str, float]:
     return status, newest
 
 
-def activity_probe(data_dir: str, repo_dir: str) -> Callable[[], bool]:
-    """True when the checkout or OpenCode's session data changed since the last call."""
+def activity_probe(data_dir: str, repo_dir: str) -> Callable[[], str]:
+    """What changed since the last call ("checkout", "session data", both), or "" when nothing did."""
     state = {"data": _latest_mtime(data_dir), "tree": _worktree_state(repo_dir)}
 
-    def changed() -> bool:
+    def changed() -> str:
         data, tree = _latest_mtime(data_dir), _worktree_state(repo_dir)
-        moved = data > state["data"] or tree != state["tree"]
+        kinds = [kind for kind, moved in (("checkout", tree != state["tree"]), ("session data", data > state["data"])) if moved]
         state["data"], state["tree"] = max(data, state["data"]), tree
-        return moved
+        return " and ".join(kinds)
 
     return changed
+
+
+_SECRET_RE = re.compile(r"(gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|sk-[A-Za-z0-9_-]{10,}|"
+                        r"(?i:token|secret|password|api[_-]?key)=\S+)")
+
+
+def running_processes(pgid: int, limit: int = 15) -> list[str]:
+    """``<seconds>s <command>`` for the processes in OpenCode's process group, longest-running first."""
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "etimes=,args=", "-g", str(pgid)], capture_output=True, text=True, check=False, timeout=15
+        ).stdout or ""
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            rows.append((int(parts[0]), _SECRET_RE.sub("<redacted>", parts[1])[:200]))
+    rows.sort(key=lambda row: -row[0])
+    return [f"{seconds}s {command}" for seconds, command in rows[:limit]]
 
 
 def stream_opencode_process(
@@ -295,6 +316,7 @@ def stream_opencode_process(
     if activity is None:
         activity = activity_probe(env.get("XDG_DATA_HOME") or "", cwd)
     last_probe = time.monotonic()
+    probe = {"enabled": activity is not None, "error": "", "last_at": 0.0, "last_kind": ""}
     log_path.parent.mkdir(parents=True, exist_ok=True)
     collected: list[str] = []
     line_count = 0
@@ -302,6 +324,7 @@ def stream_opencode_process(
     last_output = last_progress
     last_line = ""
     stalled = False
+    stall_processes: list[str] = []
     with log_path.open("a", encoding="utf-8") as log_fh:
         log_fh.write(f"\n--- opencode start work_order_id={work_order_id} ---\n")
         log_fh.flush()
@@ -342,10 +365,13 @@ def stream_opencode_process(
                     if activity is not None and now - last_probe >= ACTIVITY_PROBE_SECONDS:
                         last_probe = now
                         try:
-                            if activity():
+                            kind = activity()
+                            if kind:
                                 last_output = now
-                        except Exception:  # noqa: BLE001 - a broken probe only loses the extra signal
+                                probe["last_at"], probe["last_kind"] = now, str(kind) if isinstance(kind, str) else "activity"
+                        except Exception as exc:  # noqa: BLE001 - a broken probe only loses the extra signal
                             activity = None
+                            probe["enabled"], probe["error"] = False, f"{type(exc).__name__}: {exc}"[:200]
                     if stall and now - last_output >= stall:
                         stalled = True
                         break
@@ -377,13 +403,29 @@ def stream_opencode_process(
                     proc.wait(timeout=_OPENCODE_EXIT_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
                     pass
+            if stalled:
+                stall_processes = running_processes(proc.pid)
             if stalled or proc.poll() is None:
                 _kill_process_group(proc)
             reader.join(timeout=5)
             proc.stdout.close()
         returncode = OPENCODE_STALLED_RC if stalled else proc.wait()
+        diagnosis = ""
         if stalled:
-            note = f"--- opencode stalled: no output for {stall:g}s; killed ---\n"
+            ended = time.monotonic()
+            if not probe["enabled"]:
+                check = f"activity check off ({probe['error'] or 'no probe'})"
+            elif probe["last_at"]:
+                check = f"activity check on, last activity ({probe['last_kind']}) {int(ended - probe['last_at'])}s before the kill"
+            else:
+                check = "activity check on, no activity seen"
+            running = "; ".join(stall_processes[:6]) or "no process list"
+            diagnosis = f"{check}; running: {running}"
+            note = (
+                f"--- opencode stalled: no output for {stall:g}s; killed ---\n"
+                f"--- stall diagnosis: {check} ---\n"
+                + "".join(f"--- running: {row} ---\n" for row in stall_processes)
+            )
             log_fh.write(note)
             collected.append(note)
             log_event(
@@ -393,6 +435,8 @@ def stream_opencode_process(
                 lines=line_count,
                 last_line=last_line[-300:],
                 log_path=str(log_path),
+                activity_check=check,
+                running=stall_processes,
             )
         log_fh.write(f"--- opencode end rc={returncode} lines={line_count} ---\n")
         log_fh.flush()
@@ -405,7 +449,9 @@ def stream_opencode_process(
         log_path=str(log_path),
     )
     output = "".join(collected)
-    return subprocess.CompletedProcess(cmd, returncode, stdout=output, stderr="")
+    completed = subprocess.CompletedProcess(cmd, returncode, stdout=output, stderr="")
+    completed.stall_diagnosis = diagnosis  # type: ignore[attr-defined]
+    return completed
 
 
 def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -> str:
@@ -1264,7 +1310,9 @@ class OpenCodeBackend:
         ahead = self._git(repo_dir, "rev-list", "--count", f"origin/{base}..HEAD")
         return ahead.returncode == 0 and str(ahead.stdout or "").strip() not in {"", "0"}
 
-    def _save_interrupted_work(self, repo_dir: Path, request: CodingRequest, branch: str, changed: list[str]) -> str:
+    def _save_interrupted_work(
+        self, repo_dir: Path, request: CodingRequest, branch: str, changed: list[str], *, reason: str = "interrupted by the model provider"
+    ) -> str:
         """Commit and push a first run's work when the provider cut it off, so the retry continues it.
 
         Never onto an open PR (its branch is what reviewers see), never without changes, and never
@@ -1283,7 +1331,7 @@ class OpenCodeBackend:
                 return "work in progress not pushed: the secret scan found something"
             if not commit_all_changes(
                 repo_dir,
-                message=f"WIP {request.work_order_id}: interrupted by the model provider; the next run continues it",
+                message=f"WIP {request.work_order_id}: {reason}; the next run continues it",
                 runner=self.runner,
             ):
                 return ""
@@ -1704,16 +1752,19 @@ class OpenCodeBackend:
             if completed.returncode == OPENCODE_STALLED_RC:
                 # No output and no file activity for the stall window: keep the work and queue
                 # the job again, continuing from the branch (at most twice; see the runner).
-                saved = self._save_interrupted_work(repo_dir, request, branch, changed)
+                saved = self._save_interrupted_work(repo_dir, request, branch, changed, reason="stopped making progress")
+                diagnosis = str(getattr(completed, "stall_diagnosis", "") or "")
                 return CodingResult(
                     ok=False,
                     branch=branch,
-                    summary="OpenCode stopped making progress",
+                    summary="OpenCode stopped making progress" + (f" ({diagnosis})" if diagnosis else ""),
                     changed_files=changed,
                     log_tail=log,
                     log_path=str(log_path),
                     pr_url=request.pr_url,
-                    error=f"{STALLED}: {opencode_exit_error(completed)}" + (f"; {saved}" if saved else ""),
+                    error=f"{STALLED}: {opencode_exit_error(completed)}"
+                    + (f"; {diagnosis}" if diagnosis else "")
+                    + (f"; {saved}" if saved else ""),
                 )
             if completed.returncode != 0:
                 interrupted = provider_interruption("\n".join([log, _file_tail(log_path)]))

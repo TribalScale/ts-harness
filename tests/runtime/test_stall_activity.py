@@ -54,6 +54,31 @@ class StallTests(unittest.TestCase):
         self.assertEqual(self.run_silent(lambda: True).returncode, 0)
 
 
+class StallDiagnosisTests(unittest.TestCase):
+    def stall(self, activity):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(oc, "ACTIVITY_PROBE_SECONDS", 0):
+            completed = oc.stream_opencode_process(
+                ["sleep", "3"], cwd=tmp, env=dict(os.environ), log_path=Path(tmp) / "log",
+                work_order_id="WO-1", stall_seconds=1.5, activity=activity,
+            )
+            return completed, (Path(tmp) / "log").read_text()
+
+    def test_a_stall_says_the_check_saw_nothing(self):
+        completed, log = self.stall(lambda: "")
+        self.assertEqual(completed.returncode, oc.OPENCODE_STALLED_RC)
+        self.assertIn("activity check on, no activity seen", completed.stall_diagnosis)
+        self.assertIn("--- stall diagnosis:", log)
+
+    def test_a_check_that_broke_says_why(self):
+        def broken():
+            raise RuntimeError("git missing")
+        completed, _log = self.stall(broken)
+        self.assertIn("activity check off (RuntimeError: git missing)", completed.stall_diagnosis)
+
+    def test_secrets_in_running_commands_are_redacted(self):
+        self.assertEqual(oc._SECRET_RE.sub("<redacted>", "gh api -H token=abc123 ghs_ABCDEFGHIJKLMNOP"), "gh api -H <redacted> <redacted>")
+
+
 class PeriodicCheckpointTests(unittest.TestCase):
     def test_snapshots_are_pushed_while_opencode_runs(self):
         backend = oc.OpenCodeBackend.__new__(oc.OpenCodeBackend)
