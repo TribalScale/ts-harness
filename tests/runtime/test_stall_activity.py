@@ -23,7 +23,8 @@ class ActivityProbeTests(unittest.TestCase):
     def test_changes_in_the_checkout_or_session_data_count_as_activity(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, data = Path(tmp) / "repo", Path(tmp) / "data"
-            repo.mkdir(); data.mkdir()
+            repo.mkdir()
+            data.mkdir()
             _git(repo, "init", "-q")
             probe = oc.activity_probe(str(data), str(repo))
             self.assertFalse(probe())
