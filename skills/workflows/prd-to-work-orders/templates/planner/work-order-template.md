@@ -15,6 +15,7 @@
 | **Depends on** | [WO-NNN or None] |
 | **Depended on by** | [WO-NNN or None] |
 | **Shares contract with** | [WO-NNN or None] |
+| **Follow-up** | [WO-NNN that finishes work this WO defers, or None] |
 | **Related blueprints** | [Blueprint names] |
 | **Related FRDs** | [FRD-NNN] |
 
@@ -71,3 +72,5 @@
 - Every Work Order includes a local verification path.
 - The Files list names repository paths or folders only, with full folders, followed by what happens to each (new, change, delete). The change must touch every file it names, and files beyond it are flagged to the code reviewer; use a folder when the files cannot be listed.
 - E2E acceptance tests cover user-visible behaviour only. Checks of build or test tooling (type checks, lint, contract checkers, generation scripts) are unit tests listed under Requirements, never E2E scenarios.
+- Deferred work gets its own Work Order. "Later", "for now", "until X exists" or "once Y is ready" in a Work Order means a follow-up Work Order that depends on the Work Order producing X, named in the **Follow-up** row. The governed planner contract rejects a deferral without one.
+- API contract first. An API Work Order that adds or changes endpoints updates the committed `openapi.json` as part of its acceptance. A web Work Order that calls those endpoints depends on it and generates its types from the spec (`npm run api:pull && npm run api:generate`); it never hand-writes API types.

@@ -193,8 +193,11 @@ def render(template: Template, *, repo_name: str, title: str | None = None, cont
         f"template: {template.name}\ntemplate_version: {template.version}\n" + marker.lstrip("\n")
     )
     if contract_repo and "features/support/contract.ts" in files and "contract:" not in files[MARKER_FILE]:
-        # The acceptance tests check the fake API against the backend's current openapi.json.
-        files[MARKER_FILE] += f"contract:\n  openapi:\n    repo: {contract_repo}\n    path: openapi.json\n"
+        # The acceptance tests check the fake API against the backend's current openapi.json, and a
+        # change to that spec starts a run that regenerates this repository's API types.
+        files[MARKER_FILE] += (
+            f"contract:\n  openapi:\n    repo: {contract_repo}\n    path: openapi.json\n    refresh_on_change: true\n"
+        )
     if not contract_repo:
         # The nightly smoke run tests the app against its API; with no API there is nothing to run.
         files.pop(SMOKE_WORKFLOW, None)
