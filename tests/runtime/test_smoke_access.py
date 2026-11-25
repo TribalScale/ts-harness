@@ -34,7 +34,7 @@ class FakeGitHub:
             self.variables[name] = body["value"]
             return {}
         if path == "/repos/org/web/actions/secrets/public-key":
-            return {"key_id": "kid-1", "key": "cmVwby1wdWJsaWMta2V5"}
+            return {"key_id": "kid-1", "key": "cmVwby1wdWJsaWMta2V5"}  # gitleaks:allow (fake GitHub Actions public key)
         if path.startswith("/repos/org/web/actions/secrets/"):
             name = path.rsplit("/", 1)[1]
             if method == "GET":
