@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { Given, PERSONAS, Then, When } from '../support/fixtures';
+import { smokeMode, smokeToken } from '../support/smoke';
 
 /**
  * Generic UI steps every feature can use. They find elements the way people do (role, label,
@@ -10,9 +11,14 @@ Given('I am signed in as a/an {word}', async ({ page }, persona: string) => {
   const user = PERSONAS[persona];
   if (!user)
     throw new Error(`Unknown persona "${persona}". Add it to features/support/fixtures.ts`);
+  // The smoke run signs in for real: a token the real API accepts, from its test issuer.
+  const token = smokeMode ? smokeToken(user) : null;
   await page.addInitScript(
-    (value) => localStorage.setItem('test-auth-user', value),
-    JSON.stringify(user),
+    ([value, realToken]) => {
+      localStorage.setItem('test-auth-user', value);
+      if (realToken) localStorage.setItem('test-auth-token', realToken);
+    },
+    [JSON.stringify(user), token] as const,
   );
 });
 
@@ -23,6 +29,9 @@ Given('I am not signed in', async ({ page }) => {
 Given(
   'the API has {word}:',
   async ({ fakeApi }, table: string, rows: { hashes(): Record<string, string>[] }) => {
+    if (smokeMode) {
+      throw new Error('The smoke run uses the real API: seed data in its scripts/smoke-seed.ts');
+    }
     fakeApi.seed(table, rows.hashes());
   },
 );

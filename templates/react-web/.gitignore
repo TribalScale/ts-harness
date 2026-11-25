@@ -5,8 +5,11 @@ coverage
 .env.*
 !.env.example
 !.env.e2e
+!.env.smoke
 *.log
+dist-smoke
 playwright-report
 test-results
+smoke-results.json
 .features-gen
 .DS_Store
