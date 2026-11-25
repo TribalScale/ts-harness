@@ -119,6 +119,86 @@ Write your review as JSON to {output_path} (this file is outside the repository;
 """
 
 
+# Trial (2026-11): the pre-push review reviews with the code review gate's own rubric, so what it
+# fixes before the push is what the gate would block. ``legacy`` keeps the prompt above.
+VARIANT_GATE = "gate_rubric"
+VARIANT_LEGACY = "legacy"
+GATE_SKILL = Path("review") / "governed-code-review" / "SKILL.md"
+# The parts of the gate's skill that say how to judge a change; the rest is about its PR inputs and
+# its JSON envelope, which the local review replaces.
+GATE_SECTIONS = (
+    "Untrusted input",
+    "Review depth",
+    "Deep checks",
+    "Review Checklist",
+    "Severity",
+    "Not In Scope",
+    "Reading beyond the diff",
+)
+
+GATE_PROMPT = """You are the code review gate for work order {work_order_id}, run before the pull request
+is opened instead of after. The change is committed on the current branch and its tests pass. Review it
+exactly as the gate below will review the pull request: the same checks, the same severities, the same
+blocking rule. Do not edit, create or delete any file in the repository, and do not commit.
+
+See the change with `git diff {base_ref}...HEAD` (and `git diff --stat {base_ref}...HEAD`). Read whole
+files where you need the code around a hunk. Do not run the full test suite; it already passed. You may
+run a single test to check a doubt.
+
+Work order:
+{work_order_body}
+{extra}
+The gate's instructions (where they mention PR inputs such as `input.files`, use the local diff instead):
+
+{rubric}
+
+Write your review as JSON to {output_path} (this file is outside the repository; write nothing else):
+{{"summary": "one or two sentences",
+  "findings": [{{"severity": "blocker|major|minor|nit",
+                 "category": "correctness|security|scope|tests|maintainability",
+                 "file": "path/in/repo", "line": 0, "message": "what is wrong and the fix you expect"}}]}}
+"""
+
+
+def review_variant() -> str:
+    """``TS_HARNESS_PRE_PUSH_REVIEW_VARIANT``: ``gate_rubric`` (the trial, default) or ``legacy``."""
+    value = (os.environ.get("TS_HARNESS_PRE_PUSH_REVIEW_VARIANT") or VARIANT_GATE).strip().lower()
+    return VARIANT_LEGACY if value == VARIANT_LEGACY else VARIANT_GATE
+
+
+def _skills_roots() -> list[Path]:
+    roots = [Path(os.environ["TS_HARNESS_SKILLS_DIR"])] if os.environ.get("TS_HARNESS_SKILLS_DIR") else []
+    here = Path(__file__).resolve()
+    roots += [parent / "skills" for parent in here.parents[:5]]
+    roots.append(Path("/app/skills"))
+    return roots
+
+
+def gate_rubric() -> str:
+    """The judging sections of the gate's skill, or "" when the skill cannot be read."""
+    for root in _skills_roots():
+        path = root / GATE_SKILL
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        return extract_sections(text, GATE_SECTIONS)
+    return ""
+
+
+def extract_sections(markdown: str, titles: tuple[str, ...]) -> str:
+    """The ``## <title>`` sections of a skill, in the skill's order, headings included."""
+    wanted = {title.lower() for title in titles}
+    kept: list[str] = []
+    keep = False
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            keep = line[3:].strip().lower() in wanted
+        if keep:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
 def build_review_prompt(
     *,
     work_order_id: str,
@@ -127,6 +207,7 @@ def build_review_prompt(
     output_path: Path,
     review_feedback: str | None = None,
     human_change_requests: list[str] | None = None,
+    rubric: str | None = None,
 ) -> str:
     extra: list[str] = []
     if human_change_requests:
@@ -138,6 +219,15 @@ def build_review_prompt(
         extra.append(
             "\nThis is a revision. The PR's code review raised the findings below; check each one is fully "
             "fixed, including the code around it, as well as reviewing the whole diff:\n" + review_feedback.strip()[:6000]
+        )
+    if rubric:
+        return GATE_PROMPT.format(
+            work_order_id=work_order_id,
+            work_order_body=(work_order_body or "").strip()[:20000],
+            base_ref=base_ref,
+            output_path=str(output_path),
+            extra="\n".join(extra) + ("\n" if extra else ""),
+            rubric=rubric.strip(),
         )
     return REVIEW_PROMPT.format(
         work_order_id=work_order_id,
@@ -202,7 +292,7 @@ def build_fix_prompt(work_order_id: str, findings: list[dict[str, Any]], *, skil
     return "\n".join(lines)
 
 
-def summary_record(rounds: list[dict[str, Any]], *, model: str | None) -> dict[str, Any]:
+def summary_record(rounds: list[dict[str, Any]], *, model: str | None, variant: str = "") -> dict[str, Any]:
     """What the pre-push review did, for the coding result and the live view.
 
     Each round is ``{"status", "summary", "findings"}``; the status is ``fixed`` (its blocking
@@ -215,6 +305,7 @@ def summary_record(rounds: list[dict[str, Any]], *, model: str | None) -> dict[s
     ]
     return {
         "model": model or "",
+        "variant": variant or VARIANT_LEGACY,
         "reviews": len([r for r in rounds if r.get("status") != "no_review"]),
         "fixed": sum(len([f for f in r.get("findings") or [] if is_blocking(f)]) for r in rounds if r.get("status") == "fixed"),
         "open_blocking": open_blocking,

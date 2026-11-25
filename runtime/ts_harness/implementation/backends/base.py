@@ -39,6 +39,10 @@ class CodingRequest:
     review_model: str | None = None
     review_rounds: int = 0
     review_budget_seconds: int = 0
+    # The code review gate's rubric for the pre-push review (the gate_rubric trial), and which
+    # variant ran, recorded on the result so the trial can be measured.
+    review_rubric: str | None = None
+    review_variant: str = ""
     # Time the run may use before it stops starting fix passes or review rounds, pushes its work in
     # progress and ends as time_limit (0 = no limit); the job limit less a margin.
     run_budget_seconds: int = 0

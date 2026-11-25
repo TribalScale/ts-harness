@@ -350,6 +350,8 @@ First public release.
 
 ### Changed
 
+- The pre-push review reviews with the code review gate's own rubric (the judging sections of `governed-code-review`, passed in by the workflow runner) instead of a hand-written approximation, as a trial: over 25 tickets the old review never got a first push past the gate. `TS_HARNESS_PRE_PUSH_REVIEW_VARIANT=legacy` restores the old prompt; results record the variant, and `scripts/ops/pre-push-review-trial.py` measures first-try gate passes against the agreed rule (fewer than 3 in 10 turns the review off).
+
 - Admin UI on `@astryxdesign` 0.7.13. Disabled buttons are now `aria-disabled` (focusable; clicks, Enter and Space blocked) instead of natively `disabled`. Tests use a `toBeDisabledControl()` matcher that accepts either. A new screen-reader live region with `role="alert"` is skipped by `getAlert()`/`findAlert()`. The project, new-project, registry and note forms also refuse submits their disabled button would refuse, and tests press Enter in each invalid form. `AGENTS.md` refreshed by `astryx upgrade`.
 
 - Dependency updates from Dependabot #51–#53, applied on dev: Go 1.27.4 for the tools build; starlette 1.10, OpenTelemetry 1.45.2, pytest 9.2, ruff 0.17.4, google-auth 2.62.2, inspect-ai 0.3.289 and others; React 19.3.1, @assistant-ui/react 0.15.35, @xyflow/react 12.12.1 and lint/test tooling. `@astryxdesign/*` stays at 0.7.0: 0.7.13 renders disabled buttons with `aria-disabled` instead of `disabled`, which fails 21 admin UI tests and needs its own review. Dependabot now targets dev, and `@astryxdesign/*` updates arrive in their own PR.
