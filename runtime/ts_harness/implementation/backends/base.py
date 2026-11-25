@@ -42,6 +42,9 @@ class CodingRequest:
     # Time the run may use before it stops starting fix passes or review rounds, pushes its work in
     # progress and ends as time_limit (0 = no limit); the job limit less a margin.
     run_budget_seconds: int = 0
+    # The backend's openapi.json, read by the harness for a web job ({repo, ref, path, text}): the
+    # worker's token cannot read the backend repository.
+    api_contract: dict[str, Any] | None = None
     # Whether the repository runs CI on pull requests into the base branch (None: unknown). The
     # quick re-check after a pre-push review fix relies on CI running the full suite.
     repo_has_pr_ci: bool | None = None

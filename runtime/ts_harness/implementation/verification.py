@@ -709,6 +709,9 @@ def build_verification_fix_prompt(
         "Do not commit, push, or open a PR - the host owns git/gh.",
         skill_line,
         "Fixing runner/deps alone is not enough: deliver the work-order behavior with tests.",
+        "Re-run only the failing tests and the tests of the files you change (`vitest related <files> --run`, "
+        "the one failing feature with `npx playwright test -g \"<scenario>\"`), not the whole unit suite, the "
+        "whole BDD suite or the build: the host runs all of them again right after you.",
     ]
     if reverted_paths:
         lines.append(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import os
 import queue
@@ -121,6 +122,45 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
 
 
 PROVIDER_INTERRUPTED = "provider_interrupted"
+BLOCKED = "blocked"
+# OpenCode used to run the whole unit and BDD suites inside every fix, then the host ran them again:
+# about a third of a long run was the same tests twice.
+TEST_SCOPE_RULE = (
+    "While you work, run only the tests for what you changed: the unit tests of the files you touched "
+    "(`vitest related <files> --run`, `jest --findRelatedTests <files>`, or the one test file) and the one "
+    "feature you added or changed (`npx playwright test -g \"<scenario>\"` or `ts-harness-integration "
+    "<file>`). Do not run the whole unit suite, the whole BDD suite or the production build: the host runs "
+    "all of them right after you finish, each takes minutes, and it sends any failure back to you.\n"
+)
+
+
+def blocked_rule(path: str) -> str:
+    return (
+        "If something outside your control stops you from doing the whole work order (you cannot read a "
+        "repository or file it needs, the edit permissions refuse a file it requires, or information it "
+        "depends on is missing), do not deliver part of it and do not build stand-ins. Write "
+        f'{{"reason": "what stopped you", "needs": "what would unblock it"}} as JSON to {path} '
+        "(outside the repository) and stop.\n"
+    )
+
+
+def read_blocked_report(path: Path) -> str:
+    """The blocked report OpenCode wrote, as one line, or ""."""
+    try:
+        text = Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text[:500]
+    if not isinstance(data, dict):
+        return text[:500]
+    reason = str(data.get("reason") or "").strip()
+    needs = str(data.get("needs") or "").strip()
+    return (reason + (f"; needs: {needs}" if needs else ""))[:800] or text[:500]
 TIME_LIMIT = "time_limit"
 RESUME_NOTE = (
     "Note: a previous run of this work order was interrupted by the model provider. Its work in "
@@ -563,6 +603,7 @@ def build_implement_prompt(
     knowledge_notes: list[dict] | None = None,
     test_environment_note: str = "",
     design_files: list[dict] | None = None,
+    blocked_report_path: str = "",
 ) -> str:
     hard_rules = (
         "This is a non-interactive host run: implement immediately.\n"
@@ -582,6 +623,8 @@ def build_implement_prompt(
         "Before finishing, run the repo's type check and linter on what you changed (for a TypeScript "
         "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
         "report. The host runs them as well as the tests.\n"
+        + TEST_SCOPE_RULE
+        + (blocked_rule(blocked_report_path) if blocked_report_path else "")
         + (
             test_environment_note.strip()
             + " Run the integration or e2e tests you added or changed with `ts-harness-integration <test files>` "
@@ -800,7 +843,9 @@ class OpenCodeBackend:
             work_order_id=work_order_id,
         )
 
-    def _prepare_test_env(self, workspace_dir: Path, repo_dir: Path) -> tuple[TestEnvironment, str]:
+    def _prepare_test_env(
+        self, workspace_dir: Path, repo_dir: Path, api_contract: dict[str, Any] | None = None
+    ) -> tuple[TestEnvironment, str]:
         """Venv with real runners plus the repo's declared deps, before OpenCode and verify run."""
         test_env, prep_log = prepare_test_environment(workspace_dir, repo_dir, runner=self.runner)
         deps_log = install_declared_dependencies(test_env, repo_dir, runner=self.runner)
@@ -809,7 +854,17 @@ class OpenCodeBackend:
         test_env.services_note = services.note()
         test_env.services_running = bool(services.services)
         contract_log = ""
-        if test_env.state_dir is not None:
+        contract_hint = ""
+        if test_env.state_dir is not None and isinstance(api_contract, dict) and api_contract.get("text"):
+            from ts_harness.implementation.backend_contract import contract_note
+
+            target = Path(test_env.state_dir) / "contract-openapi.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(api_contract["text"]), encoding="utf-8")
+            test_env.env.update({"OPENAPI_CONTRACT": str(target), "OPENAPI_SOURCE": str(target)})
+            contract_hint = contract_note(api_contract, str(target))
+            contract_log = f"contract: the backend spec {api_contract.get('repo')}:{api_contract.get('path')}@{api_contract.get('ref')} was supplied by the harness"
+        elif test_env.state_dir is not None:
             from ts_harness.implementation.api_contract import fetch_contract
 
             contract_env, contract_log = fetch_contract(repo_dir, test_env.state_dir)
@@ -822,6 +877,8 @@ class OpenCodeBackend:
                 + ". Add or update e2e tests for user-visible changes and run only those before finishing "
                 "(`ts-harness-integration <spec files>`); the host runs the whole suite afterwards."
             )
+        if contract_hint:
+            test_env.services_note = "\n\n".join(part for part in [test_env.services_note, contract_hint] if part)
         return test_env, "\n".join(part for part in [prep_log, deps_log, *services.log, contract_log] if part)
 
     def _verify_with_fixes(
@@ -956,6 +1013,9 @@ class OpenCodeBackend:
                 work_order_id=request.work_order_id,
             )
             fix_passes_used += 1
+            blocked = self._blocked_result(request, branch, list_changed_files(repo_dir, runner=self.runner), log, log_path)
+            if blocked is not None:
+                return blocked, log, fix_passes_used, changed, verify.security, verification_evidence(verify)
             if fix_completed.returncode == 0:
                 self._checkpoint(repo_dir, request, branch, f"after fix pass {fix_passes_used}")
             fix_log = "\n".join(
@@ -1069,6 +1129,28 @@ class OpenCodeBackend:
         return reverted
 
     _run_started: float = 0.0
+
+    def _blocked_path(self, request: CodingRequest) -> Path:
+        return Path(request.workspace_dir) / ".ts-harness" / f"blocked-{request.work_order_id or 'wo'}.json"
+
+    def _blocked_result(
+        self, request: CodingRequest, branch: str, changed: list[str], log: str, log_path: Path
+    ) -> CodingResult | None:
+        """OpenCode said it cannot do the work order: stop with its reason instead of pushing part of it."""
+        reason = read_blocked_report(self._blocked_path(request))
+        if not reason:
+            return None
+        log_event("coding_run_blocked", work_order_id=request.work_order_id, reason=reason[:300])
+        return CodingResult(
+            ok=False,
+            branch=branch,
+            summary=f"OpenCode could not do the work order: {reason}",
+            changed_files=changed,
+            log_tail=log,
+            log_path=str(log_path),
+            pr_url=request.pr_url,
+            error=f"{BLOCKED}: {reason}",
+        )
 
     def _out_of_time(self, request: CodingRequest) -> bool:
         """The run is past its budget (the job limit less a margin): start nothing new."""
@@ -1457,6 +1539,7 @@ class OpenCodeBackend:
                 drafted = set_pull_request_draft(request.pr_url, True, runner=self.runner, env=_git_env(request.repo_url))
             binary = resolve_opencode_binary(tools_root=self.tools_root, binary_name=self.binary_name)
             claim_workspace(request.workspace_dir, request.delivery_workflow_id or "")
+            self._blocked_path(request).unlink(missing_ok=True)  # a reused workspace's old report
             reused = (Path(request.workspace_dir) / "repo" / ".git").is_dir()
             repo_dir = ensure_repo_clone(
                 repo_url=request.repo_url,
@@ -1524,7 +1607,7 @@ class OpenCodeBackend:
                 )
                 docs_written = materialize_planning_docs(repo_dir, files)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
-            test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir, request.api_contract)
             # A review revision may also edit the module glue beside the flagged files and what
             # they import (revision_scope.allowed_revision_paths); say so and let the editor do it.
             revision_scope = (
@@ -1547,6 +1630,7 @@ class OpenCodeBackend:
                 knowledge_notes=request.knowledge_notes,
                 test_environment_note=test_env.services_note,
                 design_files=design_files,
+                blocked_report_path=str(self._blocked_path(request)),
             )
             cmd = build_opencode_command(
                 binary=binary,
@@ -1587,6 +1671,9 @@ class OpenCodeBackend:
             if len(log) > _OPENCODE_LOG_TAIL_CHARS:
                 log = log[-_OPENCODE_LOG_TAIL_CHARS:]
             changed = list_changed_files(repo_dir, runner=self.runner)
+            blocked = self._blocked_result(request, branch, changed, log, log_path)
+            if blocked is not None:
+                return blocked
             if completed.returncode != 0:
                 interrupted = provider_interruption("\n".join([log, _file_tail(log_path)]))
                 if interrupted:
@@ -1906,7 +1993,7 @@ class OpenCodeBackend:
             provider, api_key = resolve_coding_backend_credentials(
                 provider=request.provider, scope=coding_usage_scope(request)
             )
-            test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir)
+            test_env, log = self._prepare_test_env(request.workspace_dir, repo_dir, request.api_contract)
             env = os.environ.copy()
             env.update(test_env.env)
             if provider and api_key:

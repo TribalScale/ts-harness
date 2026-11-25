@@ -38,7 +38,7 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         "mode": "refresh" if bound.get("refresh") else "implement",
         "workflow_id": workflow_id,
     }
-    return build_coding_request(
+    spec = build_coding_request(
         args,
         delivery_workflow_id=workflow_id,
         program_id=program_id,
@@ -47,6 +47,16 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         agent_id=str(task.get("agent_id") or "dev-agent"),
         tenant_id=str(task.get("tenant_id") or "").strip() or None,
     )
+    if not spec.get("api_contract"):
+        # The worker's token covers only its own repository: the harness reads the backend spec.
+        from ts_harness.implementation.backend_contract import backend_contract
+
+        contract = backend_contract(
+            str(spec.get("repo_url") or ""), str(spec.get("base_branch") or ""), program_id=program_id
+        )
+        if contract:
+            spec = {**spec, "api_contract": contract}
+    return spec
 
 
 def _synthetic_tool_audit(run: dict[str, Any]) -> list[dict[str, Any]]:
