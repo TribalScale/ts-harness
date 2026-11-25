@@ -29,7 +29,8 @@ if (!parsed.success) {
 if (
   parsed.data.VITE_AUTH_MODE === 'test' &&
   import.meta.env.PROD &&
-  import.meta.env.MODE !== 'e2e'
+  import.meta.env.MODE !== 'e2e' &&
+  import.meta.env.MODE !== 'smoke'
 ) {
   throw new Error('VITE_AUTH_MODE=test is not allowed in a production build');
 }

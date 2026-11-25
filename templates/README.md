@@ -13,6 +13,10 @@ the harness opens a bootstrap PR with the template; feature work starts once it 
 Each template is a complete, working repository: its own CI (`checks`, `bdd`, `docker`) runs in
 this repo's CI too, so a template that stops passing fails the harness build.
 
+A `react-web` repository linked to its API also gets a nightly smoke run
+(`.github/workflows/nightly-smoke.yml`): the built app against the API's `npm run start:smoke`
+and a real Postgres. See [docs/runbooks/nightly-smoke.md](../docs/runbooks/nightly-smoke.md).
+
 `template.json` describes it: the roles it serves, the CI jobs to require once merged, and the
 text replaced when it is applied (`{package_name}` is the repository name, `{display_name}` the
 project's name). Change a template like any code here: run its checks (`npm ci`, `npm run lint`,

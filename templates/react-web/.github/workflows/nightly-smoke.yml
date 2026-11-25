@@ -1,0 +1,137 @@
+# Nightly smoke run: this app, built as users get it, against the real API (from its repository,
+# started with `npm run start:smoke`) and a real Postgres. Runs the features tagged @smoke: sign
+# in through the API's CI-only test issuer, open every page, one write. It catches what the
+# acceptance suite's fake API cannot: the app's types drifting from what the API really sends.
+#
+# On failure it uploads screenshots and traces and sends TS Harness a report; the harness proposes
+# one bug (a person approves it before anything reaches Jira).
+#
+# Needs (TS Harness sets them up when it links this repository to its API; see the harness's
+# docs/runbooks/nightly-smoke.md for doing it by hand):
+#   vars.API_REPO                 owner/name of the API repository
+#   secrets.API_REPO_DEPLOY_KEY   private half of a read-only deploy key on the API repository
+#   secrets.HARNESS_SMOKE_URL     the harness's /webhooks/smoke address (optional)
+#   secrets.HARNESS_SMOKE_TOKEN   this repository's report token (optional)
+name: Nightly smoke
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      api_ref:
+        description: API branch, tag or commit to test against
+        required: false
+        default: dev
+
+concurrency:
+  group: nightly-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke
+    # Skipped (not failed) until the repository is linked to its API.
+    if: vars.API_REPO != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      API_REPO: ${{ vars.API_REPO }}
+      API_REF: ${{ inputs.api_ref || 'dev' }}
+      API_PORT: '3000'
+      SMOKE_API_URL: http://127.0.0.1:3000
+      SMOKE_API_DIR: ${{ github.workspace }}/api
+      VITE_API_URL: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: web
+
+      - name: Check out the API
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.API_REPO }}
+          ref: ${{ env.API_REF }}
+          ssh-key: ${{ secrets.API_REPO_DEPLOY_KEY }}
+          path: api
+
+      - name: Commits under test
+        id: shas
+        run: |
+          echo "web=$(git -C web rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "api=$(git -C api rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Start the API (migrate, seed, test issuer on)
+        working-directory: api
+        env:
+          NODE_ENV: development
+          DATABASE_URL: postgresql://app:app@localhost:5432/app
+          PORT: ${{ env.API_PORT }}
+          CORS_ORIGINS: http://127.0.0.1:4173
+          LOG_LEVEL: warn
+        run: |
+          npm ci
+          nohup npm run start:smoke > ../api.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -fsS "http://127.0.0.1:${API_PORT}/ready" > /dev/null; then echo "API ready"; exit 0; fi
+            sleep 2
+          done
+          echo "::error::The API did not become ready; its log follows"
+          cat ../api.log
+          exit 1
+
+      - name: Install the web app
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Smoke features against the real API
+        working-directory: web
+        env:
+          CI: 'true'
+          PLAYWRIGHT_JSON_OUTPUT_NAME: smoke-results.json
+        # serve:smoke (started by Playwright) builds with --mode smoke, pointed at the API above.
+        run: npm run test:smoke -- --reporter=line,json,html
+
+      - name: Upload screenshots and traces
+        id: artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-smoke
+          path: |
+            web/playwright-report
+            web/test-results
+            web/smoke-results.json
+            api.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report the failure to TS Harness
+        if: failure()
+        working-directory: web
+        env:
+          HARNESS_SMOKE_URL: ${{ secrets.HARNESS_SMOKE_URL }}
+          HARNESS_SMOKE_TOKEN: ${{ secrets.HARNESS_SMOKE_TOKEN }}
+          WEB_SHA: ${{ steps.shas.outputs.web }}
+          API_SHA: ${{ steps.shas.outputs.api }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: node scripts/smoke-report.mjs smoke-results.json
