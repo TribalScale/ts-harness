@@ -153,3 +153,14 @@ class TicketProjectTests(unittest.TestCase):
         contract = bc.backend_contract("https://github.com/org/web", "dev", program_id="p1", work_order_id="PROJ-32",
                                        memory=memory, github_factory=lambda url: github)
         self.assertEqual(contract["repo"], "org/api")
+
+
+class SubagentLimitTests(unittest.TestCase):
+    def test_the_prompt_caps_parallel_subagents_at_four_by_default(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os as _os
+
+            _os.environ.pop("CODING_MAX_SUBAGENTS", None)
+            self.assertIn("run at most 4 at the same time", build_implement_prompt("WO-1", "Do X"))
+        with patch.dict("os.environ", {"CODING_MAX_SUBAGENTS": "2"}):
+            self.assertIn("run at most 2 at the same time", build_implement_prompt("WO-1", "Do X"))

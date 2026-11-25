@@ -145,6 +145,27 @@ TEST_SCOPE_RULE = (
 )
 
 
+DEFAULT_MAX_SUBAGENTS = 4
+
+
+def max_subagents() -> int:
+    """Sub-agents OpenCode may run at once (``CODING_MAX_SUBAGENTS``, default 4)."""
+    try:
+        return max(1, int(os.environ.get("CODING_MAX_SUBAGENTS") or DEFAULT_MAX_SUBAGENTS))
+    except ValueError:
+        return DEFAULT_MAX_SUBAGENTS
+
+
+def subagent_rule() -> str:
+    # Seven sub-agents at once, each running its own type checks, starved a 2 vCPU worker until its
+    # heartbeat stopped and the job was lost.
+    limit = max_subagents()
+    return (
+        f"If you delegate to sub-agents, run at most {limit} at the same time; start the next one when one "
+        "finishes. The worker is small, and too many at once stall it.\n"
+    )
+
+
 def blocked_rule(path: str) -> str:
     return (
         "If something outside your control stops you from doing the whole work order (you cannot read a "
@@ -679,6 +700,7 @@ def build_implement_prompt(
         "repo: its typecheck script or `tsc --noEmit`, and eslint on the changed files) and fix what they "
         "report. The host runs them as well as the tests.\n"
         + TEST_SCOPE_RULE
+        + subagent_rule()
         + (blocked_rule(blocked_report_path) if blocked_report_path else "")
         + (
             test_environment_note.strip()
