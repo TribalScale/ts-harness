@@ -2,7 +2,8 @@
 # Expose the GitHub webhook through Tailscale Funnel and point the GitHub App at it.
 #
 # Runs when GITHUB_WEBHOOK_FUNNEL=true (install YAML github_app.webhook_funnel). Funnel serves
-# only /webhooks/github, on port 8443; the admin console on 443 stays tailnet-only. The App's
+# only /webhooks/github and /webhooks/smoke (nightly smoke failure reports from GitHub Actions,
+# docs/runbooks/nightly-smoke.md), on port 8443; the admin console on 443 stays tailnet-only. The App's
 # webhook URL follows the host's Tailscale name, so a rebuilt host re-points it here.
 # Never fails the bootstrap: problems are logged with what to do. See docs/runbooks/github-app.md.
 set -euo pipefail
@@ -46,6 +47,10 @@ if ! tailscale funnel --bg --https="$FUNNEL_PORT" --set-path=/webhooks/github ht
     exit 0
 fi
 echo "[phase:${PHASE_NAME}] Funnel serving ${URL}"
+# Smoke reports authenticate with per-repository tokens; without SMOKE_REPORT_SECRET they get 503.
+if ! tailscale funnel --bg --https="$FUNNEL_PORT" --set-path=/webhooks/smoke http://localhost:8080/webhooks/smoke; then
+    echo "[phase:${PHASE_NAME}] WARNING: tailscale funnel for /webhooks/smoke failed; nightly smoke failures will not reach the harness."
+fi
 
 RUNTIME="$(docker ps -q --filter label=com.docker.compose.service=agent-runtime | head -1)"
 if [[ -z "$RUNTIME" ]]; then
