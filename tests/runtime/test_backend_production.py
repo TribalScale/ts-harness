@@ -518,3 +518,100 @@ class CarriedSecurityTests(unittest.TestCase):
 
     def test_a_head_that_is_not_ahead_of_the_scan_is_not_carried(self):
         self.assertIsNone(self._carry(self.GitHub([], status="diverged")))
+
+
+class SameSuiteAsBddTests(unittest.TestCase):
+    """The integration run is skipped when it would only run the Gherkin suite the bdd check passed."""
+
+    def _repo(self, scripts):
+        import json
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name)
+        (repo / "package.json").write_text(json.dumps({"scripts": scripts}))
+        return repo
+
+    def test_declared_bdd_script_and_playwright_fallback_are_the_same_suite(self):
+        from ts_harness.implementation import test_services as ts
+        from ts_harness.implementation.verification import same_suite_as_bdd
+
+        repo = self._repo({"test:bdd": "bddgen && playwright test", "test": "vitest run"})
+        bdd = ["npm", "run", "test:bdd"]
+        self.assertTrue(same_suite_as_bdd(repo, ts.IntegrationPlan(command="npm run test:bdd -- --reporter=line"), bdd))
+        self.assertTrue(same_suite_as_bdd(repo, ts.IntegrationPlan(command="node_modules/.bin/playwright test --reporter=line",
+                                                                   blocking=False, source="playwright"), bdd))
+
+    def test_a_different_suite_still_runs(self):
+        from ts_harness.implementation import test_services as ts
+        from ts_harness.implementation.verification import same_suite_as_bdd
+
+        repo = self._repo({"test:bdd": "cucumber-js", "test:integration": "vitest run -c vitest.integration.ts"})
+        bdd = ["npm", "run", "test:bdd"]
+        self.assertFalse(same_suite_as_bdd(repo, ts.IntegrationPlan(command="npm run test:integration"), bdd))
+        self.assertFalse(same_suite_as_bdd(repo, ts.IntegrationPlan(command="npx playwright test", source="playwright"), bdd))
+
+
+class BddScreenshotTests(unittest.TestCase):
+    """playwright-bdd features are Playwright tests: the change's own scenarios get screenshots."""
+
+    def _repo(self):
+        import json
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name)
+        (repo / "package.json").write_text(json.dumps({"devDependencies": {"playwright-bdd": "^9.2.1", "@playwright/test": "1.59.1"}}))
+        (repo / "playwright.config.ts").write_text("export default {}")
+        (repo / "features").mkdir()
+        (repo / "features" / "PROJ-30-station.feature").write_text("Feature: x")
+        return repo
+
+    def test_changed_features_and_their_generated_specs(self):
+        from ts_harness.implementation import test_services as ts
+
+        repo = self._repo()
+        gen = repo / ".features-gen" / "features"
+        gen.mkdir(parents=True)
+        (gen / "PROJ-30-station.feature.spec.js").write_text("")
+        (gen / "PROJ-22-hub.feature.spec.js").write_text("")
+        self.assertTrue(ts.uses_playwright_bdd(repo))
+        features = ts.changed_features(["src/a.ts", "features/PROJ-30-station.feature", "features/steps/x.steps.ts"])
+        self.assertEqual(features, ["features/PROJ-30-station.feature"])
+        self.assertEqual(ts.generated_bdd_specs(repo, features), [".features-gen/features/PROJ-30-station.feature.spec.js"])
+
+    def test_capture_runs_bddgen_then_the_generated_specs_with_screenshots_on(self):
+        from unittest.mock import patch
+
+        from ts_harness.implementation import test_services as ts
+
+        repo = self._repo()
+        shells = []
+
+        def shell(command, **kwargs):
+            shells.append(command)
+            gen = repo / ".features-gen" / "features"
+            gen.mkdir(parents=True, exist_ok=True)
+            (gen / "PROJ-30-station.feature.spec.js").write_text("")
+            return 0, "generated"
+
+        with patch.object(ts, "_shell", side_effect=shell), \
+                patch("ts_harness.implementation.workspaces.find_bin", side_effect=lambda *a: Path("/bin") / a[-1]), \
+                patch.object(ts, "capture_screenshots", return_value="screenshots: 2 captured") as capture:
+            note = ts.capture_bdd_screenshots(repo, ["features/PROJ-30-station.feature"], repo / "shots", {})
+        self.assertEqual(note, "screenshots: 2 captured")
+        self.assertEqual(shells, ["/bin/bddgen"])
+        self.assertEqual(capture.call_args.args[1], [".features-gen/features/PROJ-30-station.feature.spec.js"])
+
+    def test_bddgen_failure_is_reported_not_raised(self):
+        from unittest.mock import patch
+
+        from ts_harness.implementation import test_services as ts
+
+        repo = self._repo()
+        with patch.object(ts, "_shell", return_value=(1, "missing steps")), \
+                patch("ts_harness.implementation.workspaces.find_bin", side_effect=lambda *a: Path("/bin") / a[-1]):
+            note = ts.capture_bdd_screenshots(repo, ["features/PROJ-30-station.feature"], repo / "shots", {})
+        self.assertIn("bddgen failed", note)

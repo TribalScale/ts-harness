@@ -326,6 +326,26 @@ def related_tests_command(repo_dir: Path, changed_files: list[str] | None, *, fo
     return None
 
 
+def same_suite_as_bdd(repo_dir: Path, plan: Any, bdd_command: list[str]) -> bool:
+    """The integration plan runs the same tests as the BDD command."""
+    import shlex
+
+    from ts_harness.implementation.test_env import package_scripts
+
+    integration = str(getattr(plan, "command", "") or "")
+    bdd_text = shlex.join(bdd_command)
+    if integration.strip() == bdd_text.strip() or integration.startswith(bdd_text + " "):
+        return True
+    scripts = package_scripts(repo_dir)
+    bdd_script = next((name for name in ("test:bdd", "bdd", "test:acceptance") if name in bdd_text.split()), "")
+    if bdd_script and f"run {bdd_script}" in integration:
+        return True
+    # Playwright with nothing declared runs every spec; in a playwright-bdd repo those are the features.
+    if getattr(plan, "source", "") == "playwright" and "playwright" in str(scripts.get(bdd_script, "")):
+        return True
+    return False
+
+
 def _touches_bdd(changed_files: list[str] | None) -> bool:
     """A feature file or a step definition changed, so a quick re-check still runs BDD."""
     for path in changed_files or []:
@@ -473,6 +493,7 @@ def verify_implementation(
     else:
         skipped_unit = True
 
+    bdd_passed_command: list[str] | None = None
     if bdd_required and quick and not _touches_bdd(changed_files):
         bdd_required = False
         warnings.append("quick re-check: BDD not re-run (no feature or step file changed)")
@@ -497,6 +518,8 @@ def verify_implementation(
                 bdd_result = _run_command(runner, bdd_command, repo_dir, env=env)
                 logs.append(_format_command_log("bdd", bdd_command, bdd_result))
                 checks.append(_check_record("bdd", bdd_command, bdd_result))
+                if bdd_result.returncode == 0:
+                    bdd_passed_command = list(bdd_command)
                 if bdd_result.returncode != 0:
                     failed_logs.add(len(logs) - 1)
                     reasons.append("bdd_tests_failed")
@@ -529,6 +552,11 @@ def verify_implementation(
     plan = None
     if test_env is not None and changed_files is not None and not quick:
         plan = integration_plan(repo_dir, services_running=test_env.services_running, changed_files=changed_files)
+    if plan is not None and bdd_passed_command and same_suite_as_bdd(repo_dir, plan, bdd_passed_command):
+        # The integration suite is the Gherkin suite the bdd check just passed (a playwright-bdd
+        # repo declares `npm run test:bdd`, or Playwright runs the generated specs): not twice.
+        checks.append({"check": "integration", "command": plan.command, "skipped": "same suite as the bdd check, which passed"})
+        plan = None
     if plan is not None:
         command = ["sh", "-c", plan.command]
         if plan.blocking and reasons:
@@ -551,6 +579,23 @@ def verify_implementation(
                     reasons.append("integration_tests_failed")
                 else:
                     warnings.append(f"integration suite ({plan.source}) failed; advisory until declared in .ts-harness.yml")
+
+    if (
+        not screenshots and not reasons and not quick and bdd_passed_command
+        and test_env is not None and test_env.state_dir is not None and changed_files is not None
+    ):
+        from ts_harness.implementation.test_services import (
+            capture_bdd_screenshots,
+            changed_features,
+            uses_playwright_bdd,
+        )
+
+        features = changed_features(changed_files)
+        if features and uses_playwright_bdd(repo_dir):
+            # The features run in Playwright: capture the change's own scenarios like plain specs.
+            note = capture_bdd_screenshots(repo_dir, features, screenshots_dir(test_env), test_env.merged_env())
+            logs.append(note)
+            screenshots = [screenshot_name(path) for path in screenshot_files(screenshots_dir(test_env))]
 
     coverage: dict[str, Any] = {}
     if not reasons and changed_files is not None and not quick and coverage_wanted(work_order_body):

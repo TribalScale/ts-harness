@@ -55,3 +55,29 @@ repository has, and `require_ci_checks: true` in `.ts-harness.yml`. Once it merg
 ticket or queue for the repository makes those jobs required checks on the base branch (as
 `scripts/repo-governance.py --apply` does). Empty repositories get CI from their template
 instead ([repo-templates.md](repo-templates.md)).
+
+## API contract (web repositories)
+
+A web repository started from the `react-web` template checks its fake API against the
+backend's contract on every acceptance scenario (`features/support/contract.ts`): a path or
+method the backend does not have, a request body it would reject, or a fake response it would
+never send fails the scenario with the reason. The contract is `OPENAPI_CONTRACT` when set, else
+the committed copy `src/api/openapi.json` (`npm run api:pull`).
+
+The web repository names its backend in `.ts-harness.yml`, and the coding job fetches the
+backend's current `openapi.json` from its default branch and sets `OPENAPI_CONTRACT`, so a
+backend change the web repository has not caught up with fails its next change:
+
+```yaml
+contract:
+  openapi:
+    repo: org/api        # or a GitHub URL
+    path: openapi.json   # default
+    ref: dev             # default: the backend's default branch
+```
+
+A project whose repositories are started from the templates gets this entry in the web
+repository's bootstrap PR. An existing web repository adopts it with one ticket: copy
+`features/support/contract.ts` and the reply check in `fixtures.ts` from the template, add
+`ajv` and `ajv-formats`, commit the backend's `openapi.json` as `src/api/openapi.json`, and add
+the `contract` entry.

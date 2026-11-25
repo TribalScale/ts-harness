@@ -140,3 +140,18 @@ class JobApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LastLogLineColourTests(unittest.TestCase):
+    def test_colour_codes_are_stripped_and_colour_only_lines_skipped(self):
+        import tempfile
+        from pathlib import Path
+
+        from ts_harness.coding.worker import last_log_line
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "run.log"
+            log.write_text("\x1b[91m\x1b[1mError: \x1b[0mModel not found\n\x1b[0m\n   \n")
+            self.assertEqual(last_log_line(log), "Error: Model not found")
+            log.write_text("\x1b[0m\n")
+            self.assertIsNone(last_log_line(log))
