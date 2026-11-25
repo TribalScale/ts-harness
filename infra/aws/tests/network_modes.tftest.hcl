@@ -291,7 +291,7 @@ run "scale_out_with_llm_proxy" {
   }
 
   assert {
-    condition     = contains(keys(local.all_secrets), "llm-proxy-secret")
+    condition     = contains(keys(local.all_secrets), "llm-proxy-secret") && contains(keys(local.all_secrets), "smoke-report-secret")
     error_message = "the proxy token signing secret is provisioned"
   }
 }

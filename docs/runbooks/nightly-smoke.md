@@ -62,7 +62,7 @@ the private key.
 
 | Name | Where | What |
 |---|---|---|
-| `SMOKE_REPORT_SECRET` | secret `smoke-report-secret` (fetched by phase 10) | Every repository's report token is derived from it (HMAC of the repository name). Unset: `/webhooks/smoke` answers 503. |
+| `SMOKE_REPORT_SECRET` | secret `smoke-report-secret`, created with a random value by Terraform (`infra/aws/secrets.tf`), which also lets the instance role read it; fetched by phase 10 | Every repository's report token is derived from it (HMAC of the repository name). Unset or unreadable: `/webhooks/smoke` answers 503 and phase 10 warns. |
 | `SMOKE_REPORT_URL` | instance env | The public address of `/webhooks/smoke`, stored in each linked web repository. |
 
 `scripts/phases/12b-github-webhook.sh` exposes `/webhooks/smoke` through Tailscale Funnel next
