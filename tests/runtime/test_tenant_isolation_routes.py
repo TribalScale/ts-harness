@@ -306,6 +306,7 @@ _OPEN_ROUTES = {
     "/scim/v2/ServiceProviderConfig": "SCIM bearer token (_scim_denied)",
     "/scim/v2/{resource:str}": "SCIM bearer token (_scim_denied)",
     "/scim/v2/{resource:str}/{id:str}": "SCIM bearer token (_scim_denied)",
+    "/webhooks/smoke": "per-repository report token (HMAC of SMOKE_REPORT_SECRET), checked in nightly_smoke",
 }
 # Routes any authenticated caller may use: chat and dispatch go through tool policy.
 _AUTH_ONLY_ROUTES = {

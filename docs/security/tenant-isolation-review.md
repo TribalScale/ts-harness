@@ -147,6 +147,7 @@ Legend:
 |---|---|---|---|---|---|
 | POST /webhooks/github (signed) | HMAC-SHA256, constant time, delivery id required | n/a | always the default tenant | n/a | Accepted (D3) |
 | POST /webhooks/github (no secret for the host) | bearer | **Fixed**: was none, now edit_config | auth | n/a | Fixed (F6) |
+| POST /webhooks/smoke | per-repository report token (HMAC-SHA256 of `SMOKE_REPORT_SECRET` and the repository name), constant-time compare, checked before the body is validated; 503 without the secret | n/a: it can only start a `bug_to_jira_work_orders` program at `bug_intake`, whose gates wait for a person | always the default tenant | n/a | Accepted (nightly smoke, docs/runbooks/nightly-smoke.md) |
 | PR comments `/retry` `/revise` `/accept` `/stop` | signed webhook, plus a GitHub login mapped to a person | approve_gate, plus P(approve) under OIDC | only the stuck tasks whose `pr_url` is this PR | P(approve) | OK |
 | POST /channels/{channel}[/...] | platform signature (Slack, Telegram, Discord) or bearer | none (chat) | session within the tenant | channel checks | OK; D3 |
 | POST /channels/{channel}/send-test | bearer | **Fixed**: was none, now edit_config | auth | n/a | Fixed (F7) |
