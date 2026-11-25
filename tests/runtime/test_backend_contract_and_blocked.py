@@ -139,3 +139,17 @@ class TestScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TicketProjectTests(unittest.TestCase):
+    def test_a_program_without_a_project_finds_the_backend_through_the_ticket_key(self):
+        github = FakeGitHub({("org/api", "openapi.json"): SPEC})
+        memory = SimpleNamespace(
+            get_program=lambda pid: {"program": {"metadata": {"artifacts": {}}}},
+            list_projects=lambda tenant_id, key: {"projects": [{"id": "proj-1", "bdd_mode": "auto"}]} if key == "PROJ" else {"projects": []},
+            list_project_repositories=lambda pid: {"repositories": [
+                {"full_name": "org/web", "role": "web"}, {"full_name": "org/api", "role": "api", "default_branch": "dev"}]},
+        )
+        contract = bc.backend_contract("https://github.com/org/web", "dev", program_id="p1", work_order_id="PROJ-32",
+                                       memory=memory, github_factory=lambda url: github)
+        self.assertEqual(contract["repo"], "org/api")

@@ -8,7 +8,8 @@ worker writes it to a file, points ``OPENAPI_CONTRACT`` and ``OPENAPI_SOURCE`` a
 OpenCode where it is.
 
 The backend is the one the web repository names in ``.ts-harness.yml`` (``contract.openapi``),
-else the one API repository in the program's project.
+else the one API repository in the program's project, else in the project whose Jira key the
+ticket carries.
 """
 
 from __future__ import annotations
@@ -92,11 +93,29 @@ def _program_repositories(program_id: str | None, memory: Any) -> list[dict[str,
     return [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
 
 
+def _ticket_project_repositories(work_order_id: str, tenant_id: str, memory: Any) -> list[dict[str, Any]]:
+    """The repositories of the project whose Jira key starts the ticket key (``PROJ-12`` -> PROJ).
+
+    A delivery started from a Jira ticket may belong to a program with no project; the ticket key
+    still names it.
+    """
+    import re
+
+    match = re.match(r"^([A-Z][A-Z0-9]+)-\d+$", str(work_order_id or "").strip())
+    if not match:
+        return []
+    from ts_harness.workflows.project_repos import project_repositories
+
+    return project_repositories(memory, tenant_id=tenant_id or "default", project_key=match.group(1))
+
+
 def backend_contract(
     repo_url: str,
     base_branch: str,
     *,
     program_id: str | None = None,
+    work_order_id: str = "",
+    tenant_id: str = "default",
     memory: Any = None,
     github_factory: Any = None,
 ) -> dict[str, str] | None:
@@ -120,7 +139,10 @@ def backend_contract(
                 from ts_harness.memory.client import get_memory_client
 
                 memory = get_memory_client()
-            source = project_source(_program_repositories(program_id, memory), f"{owner}/{name}")
+            repositories = _program_repositories(program_id, memory) or _ticket_project_repositories(
+                work_order_id, tenant_id, memory
+            )
+            source = project_source(repositories, f"{owner}/{name}")
         if source is None:
             return None
         api_owner, _, api_name = source["repo"].partition("/")

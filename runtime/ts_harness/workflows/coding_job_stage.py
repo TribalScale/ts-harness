@@ -52,7 +52,11 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         from ts_harness.implementation.backend_contract import backend_contract
 
         contract = backend_contract(
-            str(spec.get("repo_url") or ""), str(spec.get("base_branch") or ""), program_id=program_id
+            str(spec.get("repo_url") or ""),
+            str(spec.get("base_branch") or ""),
+            program_id=program_id,
+            work_order_id=str(spec.get("work_order_id") or ""),
+            tenant_id=str(task.get("tenant_id") or "").strip() or "default",
         )
         if contract:
             spec = {**spec, "api_contract": contract}
