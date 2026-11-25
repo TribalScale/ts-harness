@@ -20,6 +20,8 @@ COPY scripts/program_legacy_compat.py ./scripts/program_legacy_compat.py
 # also mount live skeletons at WORKFLOW_DEFINITIONS_DIR (/config/workflows).
 # Repository templates for empty project repositories (workflows/repo_bootstrap.py).
 COPY templates /app/templates
+# The pre-push review reviews with the code review gate's rubric (skills/review/governed-code-review).
+COPY skills/review /app/skills/review
 COPY config/workflows /app/config/workflows
 COPY config/workflows /config/workflows
 COPY config/programs /app/config/programs
