@@ -5,9 +5,9 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
-from ts_harness.implementation.backends.opencode import opencode_scope_paths
 from ts_harness.implementation.verification import untouched_required_files
 from ts_harness.workflows.code_review import declared_paths, required_paths
 
@@ -31,13 +31,11 @@ PATHS_ONLY = """## Files
 
 
 class ScopeTests(unittest.TestCase):
-    def test_a_list_with_a_prose_entry_does_not_limit_opencode(self):
+    def test_a_list_with_a_prose_entry_declares_nothing(self):
         self.assertEqual(declared_paths(MIXED), [])
-        self.assertIsNone(opencode_scope_paths(MIXED))
 
     def test_a_list_of_paths_is_still_a_scope(self):
         self.assertEqual(declared_paths(PATHS_ONLY), ["src/a.ts", "src/b/", "docs/x.md"])
-        self.assertIn("src/b/**", opencode_scope_paths(PATHS_ONLY))
 
     def test_bare_names_take_the_folder_of_the_path_before_them(self):
         self.assertIn("src/api/hub.d.ts", required_paths(MIXED))
@@ -80,3 +78,17 @@ class UntouchedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BeyondTheListTests(unittest.TestCase):
+    def test_the_pr_body_lists_files_beyond_the_work_order(self):
+        from ts_harness.implementation.backends.base import CodingRequest
+        from ts_harness.implementation.pr_description import pr_body
+
+        request = CodingRequest(
+            repo_url="https://github.com/org/web", base_branch="dev", work_order_id="WO-1",
+            work_order_body="# WO-1\n\n## Summary\nDo X.\n", workspace_dir=Path("/tmp/ws"), provider="anthropic",
+        )
+        body = pr_body(request, changed_files=["src/a.ts", "src/b.ts"], out_of_scope_files=["src/b.ts"])
+        self.assertIn("## Beyond the work order's files", body)
+        self.assertIn("- `src/b.ts`", body)

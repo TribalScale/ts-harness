@@ -69,5 +69,5 @@
 - In Scope and Out of Scope are mandatory.
 - Every Work Order has context graph links.
 - Every Work Order includes a local verification path.
-- The Files list names repository paths or folders only, with full folders, followed by what happens to each (new, change, delete). The coding agent may edit only what it names and must touch every file it names; use a folder when the files cannot be listed.
+- The Files list names repository paths or folders only, with full folders, followed by what happens to each (new, change, delete). The change must touch every file it names, and files beyond it are flagged to the code reviewer; use a folder when the files cannot be listed.
 - E2E acceptance tests cover user-visible behaviour only. Checks of build or test tooling (type checks, lint, contract checkers, generation scripts) are unit tests listed under Requirements, never E2E scenarios.

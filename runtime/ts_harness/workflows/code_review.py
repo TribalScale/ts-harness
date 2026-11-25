@@ -247,11 +247,13 @@ def scope_findings(
         declared = [*declared, "features/**"]
     return [
         {
-            "severity": "major",
+            # Information for the reviewer, who judges whether the file belongs: a string match on
+            # the work order's list blocked correct changes (an importer the fix had to touch).
+            "severity": "minor",
             "category": "scope",
             "pr_url": pr_url,
             "file": item["filename"],
-            "message": f"{item['filename']} is outside the work order's declared files",
+            "message": f"{item['filename']} is outside the work order's declared files; the reviewer judges whether it belongs",
         }
         for item in files
         if not _in_scope(item["filename"], declared) and not is_test_path(item["filename"])

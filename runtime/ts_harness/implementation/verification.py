@@ -715,10 +715,10 @@ def build_verification_fix_prompt(
     ]
     if reverted_paths:
         lines.append(
-            "These files are outside the work order's ## Files list and were reverted: "
+            "These files are protected (CI workflows, code owners) and the work order is not about them, "
+            "so they were reverted: "
             + ", ".join(reverted_paths)
-            + ". Do not change them again. Make the code and tests work without them, for example "
-            "by importing from the declared module directly."
+            + ". Do not change them again; make the change work without them."
         )
     if "no_test_runner" in verify.reasons:
         lines.append(

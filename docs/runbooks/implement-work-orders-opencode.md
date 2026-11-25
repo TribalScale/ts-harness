@@ -81,14 +81,12 @@ Each delivery workflow gets its own workspace and branch: `coding-backend/<WO>-<
 
 ## File scope
 
-When a work order lists its files under `## Files` (or `## Touches`), each OpenCode run gets an `OPENCODE_CONFIG` in the job workspace, outside the repository, with `permission.edit` set to deny everything except:
+OpenCode may edit any file in the repository. A work order's `## Files` list is not an edit fence: a fence parsed from the work order's wording kept OpenCode out of files the work needed (tests, module glue, importers, and once almost every file of a type migration), and each fix only widened it for the case that had just broken. Instead:
 
-- the listed files (a path ending in `/` covers its directory);
-- `features/**` when the work order has Given/When/Then acceptance tests;
-- the paths the pipeline writes (`.opencode/**`, `docs/planner/**` and the other planning docs);
-- the files a review revision cites.
-
-OpenCode refuses an edit outside the list with a message naming the rule, and works within it. After the run, files changed outside the list some other way (for example from the shell) are still reverted before verification, and the fix pass is told which ones. A work order without a `## Files` list is not restricted.
+- files the change touches beyond the list (when the list is all paths) stay in the change, are recorded as `out_of_scope_files` on the result and listed in the PR under "Beyond the work order's files";
+- the code review gate's precheck passes them to the reviewer as `minor` scope information, and the reviewer decides: a file the work needs is fine, work the order does not ask for or puts Out of Scope is a `major` `scope` finding;
+- verification fails when a file the list says to create, change or delete is untouched (`work_order_files_untouched`);
+- protected files (CI workflows, code owners) are still reverted unless the work order is about them.
 
 ## Coding jobs (OpenCode outside agent-runtime)
 

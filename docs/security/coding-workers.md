@@ -12,7 +12,7 @@ repository itself) are untrusted text. These controls limit what such a job can 
 
 ## What the job may change
 
-- Files outside the work order's `## Files` list are reverted before verification (except tests and files CI regenerates).
+- CI workflows and code-owner files the work order is not about are reverted before verification. Other files outside the work order's `## Files` list stay, are listed on the PR, and the code review gate judges them.
 - **CI workflows and code owners** (`.github/workflows/**`, `CODEOWNERS`) are reverted on every run, revisions included, unless the work order is about them. They decide which checks run and who must review, so a ticket cannot quietly weaken them.
 
 ## Prompt injection

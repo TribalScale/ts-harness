@@ -543,14 +543,14 @@ class OpenCodeBackendTests(unittest.TestCase):
             self.assertEqual(opencode_env["CODING_BACKEND_API_KEY"], "coding-secret")
             self.assertEqual(verify_mock.call_args.kwargs["test_env"].python, str(venv / "bin" / "python"))
 
-    def test_first_delivery_reverts_undeclared_files_before_verification(self):
+    def test_first_delivery_keeps_undeclared_files_and_reverts_only_protected_ones(self):
         commands: list[list[str]] = []
 
         def runner(args, **_kwargs):
             commands.append(list(args))
             completed = MagicMock()
             if args[:3] == ["git", "diff", "--name-only"] and "--cached" not in args:
-                completed.stdout = "app/pricing.py\nrequirements-dev.txt\n"
+                completed.stdout = "app/pricing.py\nrequirements-dev.txt\n.github/workflows/ci.yml\n"
             else:
                 completed.stdout = ""
             completed.returncode = 0
@@ -567,7 +567,7 @@ class OpenCodeBackendTests(unittest.TestCase):
         )
         backend._revert_undeclared(Path("/tmp/repo"), request)
         reverted = [cmd for cmd in commands if cmd[:2] == ["git", "checkout"]]
-        self.assertEqual(reverted, [["git", "checkout", "HEAD", "--", "requirements-dev.txt"]])
+        self.assertEqual(reverted, [["git", "checkout", "HEAD", "--", ".github/workflows/ci.yml"]])
 
     def test_review_revision_does_not_revert_before_verification(self):
         commands: list[list[str]] = []
