@@ -310,12 +310,12 @@ def resolve_opencode_binary(*, tools_root: str, binary_name: str = "opencode") -
 _USAGE_RUN = threading.local()
 
 
-def summary_record_or_empty(review_rounds: list[dict[str, Any]], model: str | None) -> dict[str, Any]:
+def summary_record_or_empty(review_rounds: list[dict[str, Any]], model: str | None, variant: str = "") -> dict[str, Any]:
     if not review_rounds:
         return {}
     from ts_harness.implementation.pre_push_review import summary_record
 
-    return summary_record(review_rounds, model=model)
+    return summary_record(review_rounds, model=model, variant=variant)
 
 
 def opencode_data_env(workspace_dir: Any) -> dict[str, str]:
@@ -1311,6 +1311,7 @@ class OpenCodeBackend:
                 output_path=output_path,
                 review_feedback=request.review_feedback,
                 human_change_requests=request.human_change_requests,
+                rubric=request.review_rubric,
             )
             cmd = build_opencode_command(
                 binary=binary, repo_dir=repo_dir, prompt=prompt, run_args=self.run_args,
@@ -1678,13 +1679,16 @@ class OpenCodeBackend:
                     log_tail=log,
                     log_path=str(log_path),
                     pr_url=request.pr_url,
-                    pre_push_review=summary_record_or_empty(review_rounds, request.review_model),
+                    pre_push_review=summary_record_or_empty(review_rounds, request.review_model, request.review_variant),
                     timings=timings,
                     error="revision produced no changes: the branch is identical to the reviewed head",
                 )
             from ts_harness.implementation.pre_push_review import summary_record
 
-            review_record = summary_record(review_rounds, model=request.review_model) if review_rounds else {}
+            review_record = (
+                summary_record(review_rounds, model=request.review_model, variant=request.review_variant)
+                if review_rounds else {}
+            )
 
             progress.detail("scanning for secrets")
             security = self._with_scanned_sha(repo_dir, security)
