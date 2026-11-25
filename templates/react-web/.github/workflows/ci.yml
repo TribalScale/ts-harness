@@ -22,6 +22,8 @@ jobs:
       - run: npm ci
       - run: npm run format:check
       - run: npm run lint
+      - name: API types come from the backend's spec
+        run: npm run check:api
       - run: npm run typecheck
       - run: npm test
       - name: Build

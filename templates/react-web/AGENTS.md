@@ -18,7 +18,7 @@ src/
   router.tsx             every page; one route per feature
   config/env.ts          every VITE_* setting, validated at startup
   auth/                  useAuth(), <RequireAuth roles>, MSAL and test sign-in
-  api/client.ts          typed API client (openapi-fetch) + ApiError
+  api/client.ts          API client typed by the generated paths (openapi-fetch) + ApiError
   api/openapi.json       the backend's contract, copied by `npm run api:pull`
   api/schema.d.ts        GENERATED from the backend's openapi.json: never edit by hand
   components/            shared UI (Button, Field, AppLayout...)
@@ -42,8 +42,17 @@ features/                Gherkin acceptance tests and their steps
   Every acceptance scenario checks the fake API against it (`features/support/contract.ts`): a path
   the backend does not have, a request body it would reject or a fake response it would never send
   fails the scenario with the reason. Fix the fake (or the app), never the check. TS Harness points
-  `OPENAPI_CONTRACT` at the backend's current `openapi.json` when it verifies a change. Fix the type errors that follow; they are
-  the places the change affects.
+  `OPENAPI_CONTRACT` at the backend's current `openapi.json` when it verifies a change (and
+  `npm run api:pull` reads it from there when `OPENAPI_SOURCE` is unset). Fix the type errors that
+  follow; they are the places the change affects.
+- **API types are generated, never written (CI).** Every request and response type comes from
+  `src/api/schema.d.ts` (`components['schemas']['Note']`, `paths[...]`), and every request goes
+  through `api`, which is typed by the generated `paths`: a path or method the spec does not have
+  does not compile. `npm run check:api` (run by `npm run lint` and CI) fails when a file under
+  `src/api/` other than `schema.d.ts` declares an interface or a type that is not taken from the
+  schema. Never write API types "until the backend's openapi.json is copied in": pull the spec
+  first (`npm run api:pull && npm run api:generate`). When the backend has not built an endpoint
+  yet, the ticket waits for it.
 - **Errors.** API failures arrive as `ApiError` (status, code, message). Show the message near
   what failed; never leave a rejected promise unhandled (use `mutate` with callbacks, or catch).
 - **Auth.** Pages sit under `AppLayout` (signed in). Use `<RequireAuth roles={['Admin']}>` or
@@ -93,4 +102,5 @@ and this section. Role names must match the API's and Entra ID's.
 | `npm run test:bdd`                                            | Gherkin acceptance tests in Chromium                                  |
 | `npm run lint` / `npm run typecheck` / `npm run format:check` | static checks                                                         |
 | `npm run api:generate`                                        | regenerate `src/api/schema.d.ts` from the backend's `openapi.json`    |
+| `npm run check:api`                                           | fail on API types written by hand under `src/api/`                    |
 | `npm run build`                                               | production build into `dist/`                                         |

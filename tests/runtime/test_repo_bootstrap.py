@@ -291,9 +291,13 @@ class ContractMarkerTests(unittest.TestCase):
 
         templates = rb.load_templates()
         web = rb.render(templates["react-web"], repo_name="acme-web", contract_repo="acme/acme-api")
-        self.assertIn("contract:\n  openapi:\n    repo: acme/acme-api\n    path: openapi.json\n", web[rb.MARKER_FILE])
+        self.assertIn(
+            "contract:\n  openapi:\n    repo: acme/acme-api\n    path: openapi.json\n    refresh_on_change: true\n",
+            web[rb.MARKER_FILE],
+        )
         self.assertIn("features/support/contract.ts", web)
         self.assertIn("src/api/openapi.json", web)
+        self.assertIn("scripts/check-api-types.mjs", web)
         api = rb.render(templates["node-api"], repo_name="acme-api", contract_repo="acme/acme-api")
         self.assertNotIn("contract:", api[rb.MARKER_FILE])
         self.assertNotIn("contract:", rb.render(templates["react-web"], repo_name="acme-web")[rb.MARKER_FILE])
