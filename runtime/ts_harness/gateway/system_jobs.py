@@ -719,7 +719,9 @@ def sweep_coding_jobs() -> dict[str, Any]:
 
     try:
         result = get_memory_client().sweep_stale_coding_jobs(
-            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 90),
+            # 5 minutes: a worker busy with parallel type checks once went 90 seconds without a beat
+            # while still working, and was stopped as lost.
+            heartbeat_seconds=int(os.environ.get("CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS") or 300),
             starting_seconds=int(os.environ.get("CODING_JOB_START_TIMEOUT_SECONDS") or 300),
             max_runtime_seconds=_coding_job_max_runtime_seconds(),
         )
