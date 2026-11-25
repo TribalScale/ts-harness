@@ -24,6 +24,8 @@ chromium` once).
 3. Register the SPA in Entra ID (redirect URI = the app's origin) with permission to the API's
    scope. Set `VITE_AUTH_CLIENT_ID`, `VITE_AUTH_TENANT_ID`, `VITE_API_SCOPE`, `VITE_API_URL`.
 4. Generate the API client from your backend: `OPENAPI_SOURCE=<path or URL> npm run api:generate`.
+   Every API type comes from the generated `src/api/schema.d.ts`; `npm run check:api` (part of
+   `npm run lint` and CI) fails on API types written by hand under `src/api/`.
 5. Put the Figma design tokens in `src/index.css` (`@theme`).
 6. Replace the `notes` reference feature with your first real one once it exists.
 7. Protect the base branch and require the CI jobs `checks`, `bdd` and `docker`.
