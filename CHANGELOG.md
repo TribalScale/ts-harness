@@ -405,6 +405,8 @@ First public release.
 
 ### Fixed
 
+- Terraform creates the nightly smoke report secret (`smoke-report-secret`, a random value) with the other harness secrets, so the instance role can read it; before, phase 10 was refused (AccessDenied) and smoke reports stayed off. An optional secret that cannot be read is now a warning in the deploy log, not an "ERROR" (AWS and GCP adapters).
+- CI's secret scan checks a pull request's own commits; pushes to `dev` and `main` still scan the whole history. The full-history scan on a PR read every open branch, so one branch's fake test value failed every other PR.
 - A coding job is marked lost after 5 minutes without a heartbeat (`CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS`, was 90 seconds): a worker busy with parallel type checks missed 90 seconds of beats while still working and was stopped.
 - The coding prompt caps parallel OpenCode sub-agents at 4 (`CODING_MAX_SUBAGENTS`): seven at once, each running type checks, starved a 2 vCPU worker until its heartbeat stopped.
 - A stall records why: whether the activity check was on (and its error if it turned itself off), when it last saw activity and of which kind, and the commands OpenCode was running with how long each had run (secrets redacted), in the log, the `opencode_stalled` event and the job's error. The work-in-progress commit says why the run stopped instead of always blaming the model provider.

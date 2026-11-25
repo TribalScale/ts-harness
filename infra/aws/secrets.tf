@@ -11,6 +11,7 @@ locals {
     "sandbox-worker-token"                = { consumers = ["gateway"] }
     "coding-job-secret"                   = { consumers = ["gateway"] }
     "llm-proxy-secret"                    = { consumers = ["gateway"] }
+    "smoke-report-secret"                 = { consumers = ["gateway"] }
     "tailscale-authkey"                   = { consumers = ["gateway"] }
     "github-token"                        = { consumers = ["dev-agent"] }
     "github-app-private-key"              = { consumers = ["gateway"] }
@@ -74,6 +75,7 @@ locals {
       "sandbox-worker-token"         = random_password.sandbox_worker_token.result
       "coding-job-secret"            = random_password.coding_job_secret.result
       "llm-proxy-secret"             = random_password.llm_proxy_secret.result
+      "smoke-report-secret"          = random_password.smoke_report_secret.result
     }
   )
 }
@@ -94,6 +96,13 @@ resource "random_password" "coding_job_secret" {
 }
 
 resource "random_password" "llm_proxy_secret" {
+  length  = 48
+  special = false
+}
+
+# Signs each web repository's nightly smoke report token (POST /webhooks/smoke). Created here so the
+# instance role can read it; without it phase 10 could not read the secret and smoke stayed off.
+resource "random_password" "smoke_report_secret" {
   length  = 48
   special = false
 }

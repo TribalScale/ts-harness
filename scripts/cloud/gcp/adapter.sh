@@ -101,7 +101,12 @@ cloud_fetch_secret() {
         echo "ERROR: Required secret not found: ${secret_id}" >&2
         return 1
     fi
-    echo "ERROR: Secret Manager failed for ${secret_id}: ${result}" >&2
+    if [[ "$mode" == "optional" ]]; then
+        # The caller treats an unreadable optional secret as unset and carries on (fetch_optional_secret).
+        echo "WARNING: optional secret ${secret_id} could not be read: ${result}" >&2
+    else
+        echo "ERROR: Secret Manager failed for ${secret_id}: ${result}" >&2
+    fi
     return 1
 }
 
