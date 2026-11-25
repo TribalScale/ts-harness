@@ -9,6 +9,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
+      'dist-smoke',
       'coverage',
       'playwright-report',
       'test-results',

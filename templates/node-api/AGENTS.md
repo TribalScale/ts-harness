@@ -81,6 +81,10 @@ as them, and this section. Role names must match the app roles defined in Entra 
   80% line coverage of `src/modules/**/*.service.ts` (75% of branches); a change that adds
   logic without tests fails it. BDD covers routes, controllers and repositories end to end;
   unit tests cover the rules and edge cases that would be slow to reach through the API.
+- **Smoke data.** The web app's nightly smoke run starts this API with `npm run start:smoke`
+  (migrations, `scripts/smoke-seed.ts`, the CI-only test issuer) and opens every page against it.
+  When a module adds a model, add a few deterministic rows (fixed ids) to `smoke-seed.ts`. Never
+  set `AUTH_TEST_ISSUER` outside that run; the API refuses to start with it in production.
 - Run locally: `docker compose up -d db`, `cp .env.example .env`, then `npm test` and
   `npm run test:bdd`.
 
@@ -95,3 +99,5 @@ as them, and this section. Role names must match the app roles defined in Entra 
 | `npm run db:migrate -- --name <change>`                       | create and apply a migration                             |
 | `npm run openapi`                                             | regenerate `openapi.json`                                |
 | `npm run build` / `npm start`                                 | production build and run                                 |
+| `npm run start:smoke`                                         | migrate, seed, serve with the CI-only test issuer        |
+| `npm run --silent token:test -- --roles Admin`                | print a test issuer token for a `start:smoke` API        |

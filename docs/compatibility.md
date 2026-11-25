@@ -29,6 +29,7 @@ are shared. See [`runbooks/install.md`](runbooks/install.md).
 | `GET /healthz` | Provider, memory-api, MCP, channels, slack_socket, sandbox, scheduler readiness |
 | `POST /channels/{channel}` | Inbound HTTP Events API webhook (optional; public ingress) |
 | `POST /webhooks/github` | GitHub `pull_request` merged → resume `github.merge` waits (`GITHUB_WEBHOOK_SECRET`) |
+| `POST /webhooks/smoke` | Nightly smoke failure from a web repository → proposed `bug_to_jira_work_orders` program (per-repository token from `SMOKE_REPORT_SECRET`) |
 | `GET /mcp/tools` | MCP tool discovery gate |
 | `GET /admin/skills/drafts` | List agent-created skill drafts (`admin`/`owner`) |
 | `GET /admin/skills/drafts/{skill_id}` | Inspect draft body + scan diagnostics |

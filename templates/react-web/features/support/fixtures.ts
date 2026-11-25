@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test as base, createBdd } from 'playwright-bdd';
 import { contractProblems } from './contract';
+import { failWith, RealApiMonitor, SMOKE_API_URL, smokeMode } from './smoke';
 
 /** Who a scenario signs in as ("Given I am signed in as an admin"). */
 export const PERSONAS: Record<string, { id: string; name: string; roles: string[] }> = {
@@ -114,12 +115,17 @@ export class FakeApi {
   }
 }
 
-export const test = base.extend<{ fakeApi: FakeApi }>({
-  // auto: every scenario gets the fake API, also those that never seed data.
+export const test = base.extend<{
+  fakeApi: FakeApi;
+  realApi: RealApiMonitor | null;
+  unique: Record<string, string>;
+}>({
+  // auto: every scenario gets the fake API, also those that never seed data. Not in the smoke
+  // run, which talks to the real API.
   fakeApi: [
     async ({ page }, use) => {
       const api = new FakeApi();
-      await api.attach(page);
+      if (!smokeMode) await api.attach(page);
       await use(api);
       if (api.contractViolations.length) {
         throw new Error(
@@ -130,6 +136,24 @@ export const test = base.extend<{ fakeApi: FakeApi }>({
     },
     { auto: true },
   ],
+  // The smoke run only (features/support/smoke.ts): checks every real API call.
+  realApi: [
+    async ({ page }, use, testInfo) => {
+      if (!smokeMode) return use(null);
+      const monitor = new RealApiMonitor(SMOKE_API_URL);
+      monitor.attach(page);
+      await use(monitor);
+      const left = await monitor.take();
+      if (left.length) await failWith(testInfo, 'The app failed against the real API', left);
+    },
+    { auto: true },
+  ],
+  // Values made unique per run ("a unique \"Smoke note\""), so a write can run again
+  // against a database that keeps its rows.
+  // eslint-disable-next-line no-empty-pattern -- Playwright fixtures destructure their first argument
+  unique: async ({}, use) => {
+    await use({});
+  },
 });
 
 export const { Given, When, Then } = createBdd(test);

@@ -18,6 +18,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run --coverage",
     "test:bdd": "bddgen && playwright test",
+    "test:smoke": "node -e \"if (!process.env.SMOKE_API_URL) { console.error('Set SMOKE_API_URL and SMOKE_API_DIR: see features/support/smoke.ts'); process.exit(1) }\" && bddgen && playwright test",
+    "build:smoke": "tsc -b && vite build --mode smoke --outDir dist-smoke",
+    "serve:smoke": "npm run build:smoke && vite preview --mode smoke --outDir dist-smoke --host 127.0.0.1 --port 4173 --strictPort",
     "api:generate": "npm run api:pull && openapi-typescript src/api/openapi.json -o src/api/schema.d.ts && prettier --write src/api/schema.d.ts",
     "api:pull": "node scripts/pull-openapi.mjs"
   },

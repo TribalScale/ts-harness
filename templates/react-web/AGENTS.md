@@ -91,16 +91,25 @@ and this section. Role names must match the API's and Entra ID's.
   `npm test` enforces at least 80% line coverage of `src/features` and `src/components` (75% of
   branches); a change that adds UI logic without tests fails it. The Gherkin suite covers whole
   journeys in a browser; unit tests cover the states and edge cases.
+- **Smoke (nightly).** `features/smoke/` holds the few features tagged `@smoke` that
+  `.github/workflows/nightly-smoke.yml` runs each night against the real API and database
+  (never in the normal suite): sign in through the API's CI-only test issuer, open every static
+  route in `src/router.tsx`, one write. Every real API call is checked: a failed call, a
+  response the contract does not allow or a page error fails the run, and TS Harness proposes a
+  bug. A new page is covered automatically once it is in the router; give it seed data in the
+  API's `scripts/smoke-seed.ts` so it has something to show. Do not add `@smoke` to ticket
+  features.
 - Run locally: `npm test`, and `npx playwright install chromium` once, then `npm run test:bdd`.
 
 ## Commands
 
-| Command                                                       | What it does                                                          |
-| ------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `npm run dev`                                                 | app on http://localhost:5173 (needs `.env.local`, see `.env.example`) |
-| `npm test`                                                    | unit tests                                                            |
-| `npm run test:bdd`                                            | Gherkin acceptance tests in Chromium                                  |
-| `npm run lint` / `npm run typecheck` / `npm run format:check` | static checks                                                         |
-| `npm run api:generate`                                        | regenerate `src/api/schema.d.ts` from the backend's `openapi.json`    |
-| `npm run check:api`                                           | fail on API types written by hand under `src/api/`                    |
-| `npm run build`                                               | production build into `dist/`                                         |
+| Command                                                       | What it does                                                            |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `npm run dev`                                                 | app on http://localhost:5173 (needs `.env.local`, see `.env.example`)   |
+| `npm test`                                                    | unit tests                                                              |
+| `npm run test:bdd`                                            | Gherkin acceptance tests in Chromium                                    |
+| `npm run lint` / `npm run typecheck` / `npm run format:check` | static checks                                                           |
+| `npm run api:generate`                                        | regenerate `src/api/schema.d.ts` from the backend's `openapi.json`      |
+| `npm run check:api`                                           | fail on API types written by hand under `src/api/`                      |
+| `npm run build`                                               | production build into `dist/`                                           |
+| `npm run test:smoke`                                          | `@smoke` features against a real API (`SMOKE_API_URL`, `SMOKE_API_DIR`) |
