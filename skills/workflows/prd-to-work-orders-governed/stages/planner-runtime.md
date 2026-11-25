@@ -61,6 +61,7 @@ Given ... When ... Then ...
 
 ## Context Graph
 - Depends on: WO-002
+- Follow-up: WO-009 (only when this WO defers part of its job)
 - Design: D1, D3
 - Blueprints: FB-001
 - FRDs: FRD-001
@@ -152,6 +153,23 @@ Given ... When ... Then ...
   text in `input.design_refs_text`, including every state the WO builds (empty,
   loading, error, open/closed variants). Write ids only; the harness adds each
   frame's title and Figma link to the work order (`## Design frames`).
+
+- **Deferred work gets its own work order.** A WO may not leave part of its job for "later",
+  "for now", "until X exists" or "once Y is ready" in a sentence: nothing tracks that
+  sentence, so the stand-in ships. Plan the deferred part as its own follow-up WO that
+  depends on the WO producing X, and name it in the deferring WO's Context Graph as
+  `- Follow-up: WO-009`. A follow-up may say "once WO-003 is merged" for a WO it depends on.
+  The planner contract rejects a deferral without a follow-up, a follow-up that is not in
+  the plan, and a follow-up that depends on nothing.
+
+- **API contract first.** An API WO that adds or changes endpoints names them
+  (`POST /notes`, `GET /notes/{id}`) and updates the repository's committed `openapi.json`
+  as part of its acceptance. A web WO that calls those endpoints depends on that API WO and
+  generates its types from the spec: its Requirements say `npm run api:pull && npm run
+  api:generate` and use the generated types and typed client. Never plan hand-written API
+  types, and never plan "types from the planning docs until the backend's openapi.json is
+  copied in": order the WOs so the spec exists first. The planner contract checks each of
+  these when the repositories carry roles.
 
 - Before returning, reread each WO as the coding agent, the code reviewer and QA will:
   every one of them checks the code against every statement in the WO. If two

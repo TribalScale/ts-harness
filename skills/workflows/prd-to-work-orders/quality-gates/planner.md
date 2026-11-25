@@ -25,6 +25,8 @@ Run these gates after Work Orders, context graph, and execution phases are writt
 | 19 | Executability review complete | `docs/prd-to-work-orders/reviews/planner-review.md` is missing when Planner is run. | Run Planner executability review. |
 | 20 | Agent Executability Score present | Any Work Order lacks `## Agent Executability Score`. | Add the score table and roll-up. |
 | 21 | No unresolved blocking review findings | Executability review contains unresolved Blocking findings. | Split or revise Work Orders. |
+| 22 | Deferred work tracked | A Work Order defers part of its job ("later", "for now", "until X exists") without a **Follow-up** Work Order that depends on the producer. | Add the follow-up Work Order and its dependency. |
+| 23 | API contract first | An API Work Order changes endpoints without updating `openapi.json`, or a web Work Order calls them without depending on it and generating its types from the spec. | Update the spec in the API Work Order; make the web Work Order depend on it and run `npm run api:pull && npm run api:generate`. |
 
 ## Execution Phase Rules
 

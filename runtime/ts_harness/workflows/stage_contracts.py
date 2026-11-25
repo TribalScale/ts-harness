@@ -271,15 +271,20 @@ def validate_work_order_artifacts(
         return [ContractViolation("/artifacts", reason)]
     repositories = stage_input.get("project_repositories")
     if stage == "planner" and isinstance(artifacts, dict):
-        from ts_harness.implementation.work_order_context import work_order_repository_problems
+        from ts_harness.implementation.work_order_context import (
+            api_contract_problems,
+            deferred_work_problems,
+            work_order_repository_problems,
+        )
 
         markdown = str(artifacts.get("work_orders_markdown") or "")
-        return [
-            ContractViolation("/artifacts/work_orders_markdown", problem)
-            for problem in work_order_repository_problems(
-                markdown, repositories if isinstance(repositories, list) else None
-            )
+        listed = repositories if isinstance(repositories, list) else None
+        problems = [
+            *work_order_repository_problems(markdown, listed),
+            *deferred_work_problems(markdown),
+            *api_contract_problems(markdown, listed),
         ]
+        return [ContractViolation("/artifacts/work_orders_markdown", problem) for problem in problems]
     return []
 
 

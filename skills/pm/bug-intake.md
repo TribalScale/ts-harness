@@ -32,6 +32,8 @@ Write exactly one work order from the approved bug report and its diagnosis. Ret
   - E2E tests describe what a user of the product sees and does: screens, API responses, messages. A negative case is a user-visible one (a rejected input, an error shown), never a test of the tooling.
   - Checks of the build and test tooling (a type check, a lint rule, a contract checker, a generation script, which file a test reads its config from) are not Gherkin scenarios: list them under `## Requirements` as unit tests of that tooling, with the inputs and the error each case must produce. A scenario whose expected result is "the scenario fails" can never pass in a normal run.
   - If the work order adds tooling checks, add `Unit: required` under a `## Tests` section beside `BDD: required`.
+  - The work order fixes the whole bug. Do not leave part of the fix "for now" or "until X exists": if the fix needs work that does not exist yet, say so in the bug report's Notes, keep the work order to what can be fixed now, and list the rest under `## Out of Scope` as a separate bug to file, naming what it waits for.
+  - On a web repository that calls a backend, the fix uses the API types generated from the backend's `openapi.json` (`npm run api:pull && npm run api:generate`). A bug caused by hand-written or stale API types is fixed by regenerating them, never by editing them by hand.
 - `work_order_ids`: `["WO-001"]`
 - `next_work_order_id`: `"WO-001"`
 
