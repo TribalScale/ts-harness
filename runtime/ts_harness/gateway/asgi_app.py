@@ -4306,6 +4306,53 @@ async def github_webhook(request: Request) -> Response:
         return _json({"error": str(exc)}, 500)
 
 
+# ── POST /webhooks/smoke ──────────────────────────────────────────────────────
+
+# A smoke report lists at most 50 failures of a few KB each.
+_SMOKE_REPORT_MAX_BYTES = 256 * 1024
+
+
+async def smoke_report_webhook(request: Request) -> Response:
+    """A web repository's nightly smoke run failed: propose one bug for what is new.
+
+    Authenticated with the repository's own report token (Bearer), not a console session, so
+    GitHub Actions can call it. See ts_harness.workflows.nightly_smoke.
+    """
+    raw = await request.body()
+    if len(raw) > _SMOKE_REPORT_MAX_BYTES:
+        return _json({"error": "report too large"}, 413)
+    try:
+        body: Any = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        return _json({"error": "invalid json"}, 400)
+
+    from ts_harness.workflows.nightly_smoke import SmokeReportError, bearer, handle_smoke_report
+
+    runtime = get_runtime()
+    tenant_id = str(runtime.config.gateway.default_tenant_id)
+    try:
+        result = await asyncio.to_thread(
+            handle_smoke_report,
+            body,
+            bearer(request.headers.get("authorization")),
+            tenant_id=tenant_id,
+        )
+    except SmokeReportError as exc:
+        if exc.status == 401:
+            log_event("smoke_report_unauthorized")
+        return _json({"error": str(exc)}, exc.status)
+    except Exception as exc:  # noqa: BLE001
+        log_event("smoke_report_error", error=str(exc))
+        return _json({"error": "the smoke report could not be handled"}, 500)
+    runtime.audit.append(
+        tenant_id=tenant_id,
+        action_type="smoke_report",
+        actor_id="nightly-smoke",
+        payload={k: result.get(k) for k in ("status", "repo", "program_id", "new_failures", "known_failures")},
+    )
+    return _json(result, 202 if result.get("status") == "proposed" else 200)
+
+
 # ── POST /channels/{channel} and /channels/{channel}/{path:path} ──────────────
 
 
@@ -4851,6 +4898,8 @@ routes = [
     Route("/scim/v2/{resource:str}/{id:str}", endpoint=scim_resource, methods=["GET", "PUT", "PATCH", "DELETE"]),
     # GitHub merge webhook bridge
     Route("/webhooks/github", endpoint=github_webhook, methods=["POST"]),
+    # Nightly smoke failures from web repositories (per-repository token)
+    Route("/webhooks/smoke", endpoint=smoke_report_webhook, methods=["POST"]),
     # Channel webhooks — specific sub-paths before the bare channel route
     Mount(
         "/channels",
