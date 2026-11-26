@@ -104,6 +104,26 @@ it("exposes alternate nodes and edges in an expandable topology view", async () 
   expect(onSelect).toHaveBeenCalledWith("plan_b");
 });
 
+it("labels phases before the first one that ran as skipped", () => {
+  renderPage(
+    <PhaseStrip
+      phases={{
+        pick: { state: "not_started" },
+        implement: { state: "cancelled" },
+        release: { state: "not_started" },
+      }}
+      phaseOrder={["pick", "implement", "release"]}
+      currentPhase="implement"
+      onSelect={() => undefined}
+    />,
+  );
+
+  const pick = screen.getByRole("button", { name: /pick/i });
+  expect(within(pick).getByText("skipped")).toBeInTheDocument();
+  const release = screen.getByRole("button", { name: /release/i });
+  expect(within(release).getByText("not started")).toBeInTheDocument();
+});
+
 it("draws a finished current phase as complete", () => {
   renderPage(
     <PhaseStrip
