@@ -21,6 +21,7 @@ approves the plan and `file_jira` runs. Write every issue body in the house form
 - `input.jira_project_key`: the project the runtime resolved from the request and tenant config. `input.jira_allowed_projects`: every project the tenant may file in.
 - `input.default_issue_type`, `input.issue_type_by_project`: issue types from tenant config.
 - `input.design_refs`: design references (`D1`, `D2`, ...) from the PRD request, with their images. Optional.
+- `input.screen_specs`: the screen specs drafted from those frames at intake (purpose, layout, components, data, actions, states). Optional; use them for each story's frame checklist.
 - On revision: `input.prior_artifact` is the last plan and `input.comments` the reviewer's feedback. Change what was asked; keep numbering stable unless the change requires a renumber, and say so.
 
 ## 1. Find the epic and the project
@@ -55,8 +56,15 @@ A coding agent sees only its ticket. Before writing acceptance criteria, pin:
 - **Inputs and dependencies**: the capability it consumes, named as a capability, never as another story.
 - **Design**: when `input.design_refs` is present, a story that builds or changes UI ends its
   description with a line `Design: D1, D3` naming the frames it must match (ids from
-  `input.design_refs` only). The coding agent and QA receive exactly those images. Describe in the
-  body what each image shows that matters (layout, copy, states); never write "see the design" alone.
+  `input.design_refs` only). The coding agent and QA receive exactly those images, at most 6 per
+  story, so one story covers one screen (split by state when it needs more). Before that line, add
+  a `## Frame checklist` with one entry per frame: `### D7 · <frame title>`, then `- Route:` (the
+  app path that shows it), `- State:` (the role, data and clicks that reach it) and `- Shows:` with
+  sub-bullets listing, region by region, everything the frame requires (panels, controls and labels,
+  each card's content, selected and dimmed states, background and text colours, type). Data in a
+  frame is an example; write the rule. Add one scenario per frame ("Then it matches D7"). The
+  coding agent writes a frame scenario per entry, the harness captures it at the frame's size, and
+  QA checks every Shows item against the capture.
 
 Collect every unresolved product question into one `open_questions` list, each with the answer you
 would pick. A question the PRD lists as open and that blocks a story is never settled silently.

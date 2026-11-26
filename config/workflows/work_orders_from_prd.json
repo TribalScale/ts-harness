@@ -257,7 +257,8 @@
         "refinery_reviewer_notes": "$prior.approve_refinery.output.reviewer_notes",
         "foundry_reviewer_notes": "$prior.approve_foundry.output.reviewer_notes",
         "project_repositories": "$workflow.project_repositories",
-        "knowledge_notes": "$workflow.knowledge_notes"
+        "knowledge_notes": "$workflow.knowledge_notes",
+        "screen_specs": "$workflow.screen_specs_text"
       },
       "retry": { "max_retries": 2, "timeout_seconds": 3600 }
     },

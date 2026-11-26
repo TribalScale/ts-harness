@@ -133,6 +133,20 @@ def refs_named_by_work_order(refs: list[dict[str, Any]], work_order_body: str) -
     return wanted
 
 
+_FRAME_SIZE = re.compile(r"^Frame:.*\((\d{2,5})\s*[x×]\s*(\d{2,5})\)\s*$", re.MULTILINE)
+
+
+def frame_size(ref: dict[str, Any]) -> tuple[int, int] | None:
+    """A frame's width and height: its ``width``/``height`` fields, else its summary's ``Frame: name (WxH)``."""
+    try:
+        if ref.get("width") and ref.get("height"):
+            return int(ref["width"]), int(ref["height"])
+    except (TypeError, ValueError):
+        pass
+    match = _FRAME_SIZE.search(str(ref.get("summary") or ""))
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def public_ref(ref: dict[str, Any]) -> dict[str, Any]:
     """A reference without storage details, for prompts."""
     return {k: ref.get(k) for k in ("id", "title", "source", "url", "summary") if ref.get(k)}
@@ -213,9 +227,12 @@ def _with_frames_section(section: str, refs: list[dict[str, Any]]) -> str:
     lines = ["", "", FRAMES_HEADING, "", "Design: " + ", ".join(str(r["id"]) for r in named), ""]
     for ref in named:
         title = str(ref.get("title") or "design").replace("[", "(").replace("]", ")")
+        size = frame_size(ref)
+        # The size is what the harness captures the frame's scenario at, for QA.
+        at = f" · {size[0]}×{size[1]}" if size else ""
         if ref.get("url"):
-            lines.append(f"- {ref['id']} — [{title}]({ref['url']})")
+            lines.append(f"- {ref['id']} — [{title}]({ref['url']}){at}")
         else:
-            lines.append(f"- {ref['id']} — {title} (attached image)")
+            lines.append(f"- {ref['id']} — {title} (attached image){at}")
     return body + "\n".join(lines) + (trailing if trailing.count("\n") > 1 else "\n\n")
 

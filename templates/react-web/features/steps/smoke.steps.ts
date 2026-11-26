@@ -62,3 +62,34 @@ Then('no API call failed', async ({ realApi, $testInfo }) => {
   const problems = realApi ? await realApi.take() : [];
   if (problems.length) await failWith($testInfo, 'API calls failed', problems);
 });
+
+/**
+ * Design frames (nightly, against the real API). TS Harness lists the design frames each
+ * delivered screen was built to (route, size), and the run writes `FRAMES_MANIFEST`. Each frame's
+ * route is opened at the frame's own size and screenshotted into `frames-out/`, which
+ * scripts/frames-report.mjs sends back; the harness compares them with the frames. A route that
+ * can't be captured is recorded, never a smoke failure: the comparison reports it.
+ */
+Then('every design frame is captured', async ({ page }) => {
+  const manifestPath = process.env.FRAMES_MANIFEST ?? '';
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import('node:fs');
+  if (!manifestPath || !existsSync(manifestPath)) return;
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    frames?: { key: string; route: string; width: number; height: number }[];
+  };
+  mkdirSync('frames-out', { recursive: true });
+  const results: { key: string; file?: string; error?: string; route: string }[] = [];
+  for (const frame of manifest.frames ?? []) {
+    try {
+      await page.setViewportSize({ width: frame.width, height: frame.height });
+      await page.goto(frame.route);
+      await page.waitForLoadState('networkidle');
+      const file = `${frame.key}.png`;
+      await page.screenshot({ path: `frames-out/${file}` });
+      results.push({ key: frame.key, file, route: frame.route });
+    } catch (error) {
+      results.push({ key: frame.key, route: frame.route, error: String(error).slice(0, 300) });
+    }
+  }
+  writeFileSync('frames-out/manifest.json', JSON.stringify({ frames: results }, null, 2));
+});

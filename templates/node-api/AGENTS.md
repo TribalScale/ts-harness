@@ -82,9 +82,18 @@ as them, and this section. Role names must match the app roles defined in Entra 
   logic without tests fails it. BDD covers routes, controllers and repositories end to end;
   unit tests cover the rules and edge cases that would be slow to reach through the API.
 - **Smoke data.** The web app's nightly smoke run starts this API with `npm run start:smoke`
-  (migrations, `scripts/smoke-seed.ts`, the CI-only test issuer) and opens every page against it.
-  When a module adds a model, add a few deterministic rows (fixed ids) to `smoke-seed.ts`. Never
-  set `AUTH_TEST_ISSUER` outside that run; the API refuses to start with it in production.
+  (migrations, `scripts/dev-seed.ts`, `scripts/smoke-seed.ts`, the CI-only test issuer) and opens
+  every page against it. When a module adds a model, add a few deterministic rows (fixed ids) to
+  `smoke-seed.ts`, enough for each screen and each state the design draws (a late order, an empty
+  list, a blocked item). Never set `AUTH_TEST_ISSUER` outside that run; the API refuses to start
+  with it in production.
+- **Reference data.** A feature that needs configuration data before it does anything (rules,
+  calendars, standards, lookup tables) adds a sample to `scripts/dev-seed.ts` in the same change.
+  `npm run seed:dev` loads it into a dev database; production gets the real data through the app.
+- **Dates in data.** Fixtures, seeds, adapters' sample data and test data build dates with
+  `src/lib/relativeDates.ts` (`weekDay(0, 2)` is this Wednesday), never a fixed calendar day:
+  pinned dates age until every record is overdue and the current week is empty. A unit test that
+  needs a fixed day passes its own `now`.
 - Run locally: `docker compose up -d db`, `cp .env.example .env`, then `npm test` and
   `npm run test:bdd`.
 
@@ -100,4 +109,5 @@ as them, and this section. Role names must match the app roles defined in Entra 
 | `npm run openapi`                                             | regenerate `openapi.json`                                |
 | `npm run build` / `npm start`                                 | production build and run                                 |
 | `npm run start:smoke`                                         | migrate, seed, serve with the CI-only test issuer        |
+| `npm run seed:dev`                                            | load sample reference data into a dev database           |
 | `npm run --silent token:test -- --roles Admin`                | print a test issuer token for a `start:smoke` API        |

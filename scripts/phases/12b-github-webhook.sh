@@ -3,7 +3,8 @@
 #
 # Runs when GITHUB_WEBHOOK_FUNNEL=true (install YAML github_app.webhook_funnel). Funnel serves
 # only /webhooks/github and /webhooks/smoke (nightly smoke failure reports from GitHub Actions,
-# docs/runbooks/nightly-smoke.md), on port 8443; the admin console on 443 stays tailnet-only. The App's
+# docs/runbooks/nightly-smoke.md; the path is a prefix, so /webhooks/smoke/frames, the nightly
+# design check, goes through too), on port 8443; the admin console on 443 stays tailnet-only. The App's
 # webhook URL follows the host's Tailscale name, so a rebuilt host re-points it here.
 # Never fails the bootstrap: problems are logged with what to do. See docs/runbooks/github-app.md.
 set -euo pipefail

@@ -83,6 +83,8 @@ class VerifyResult:
     coverage: dict[str, Any] = field(default_factory=dict)
     # Names of the screenshots the change's Playwright specs produced (files under screenshots_dir).
     screenshots: list[str] = field(default_factory=list)
+    # One per design frame the work order names: its scenario's last state at the frame's size.
+    frame_captures: list[dict[str, Any]] = field(default_factory=list)
 
 
 _EVIDENCE_TAIL = 700
@@ -109,6 +111,10 @@ def verification_evidence(verify: "VerifyResult") -> dict[str, Any]:
         "skipped": [name for name, skipped in (("unit", verify.skipped_unit), ("bdd", verify.skipped_bdd)) if skipped],
         "coverage": dict(verify.coverage),
         "screenshots": list(verify.screenshots),
+        "frame_captures": [
+            {k: v for k, v in capture.items() if k != "file"} | {"captured": bool(capture.get("file"))}
+            for capture in verify.frame_captures
+        ],
         "warnings": list(verify.warnings),
     }
 
@@ -131,6 +137,17 @@ def verification_summary(evidence: dict[str, Any] | None) -> str:
             f"Screenshots: {len(evidence['screenshots'])} from the Playwright tests this change added or edited "
             "(attached to QA and linked on the PR)."
         )
+    captures = evidence.get("frame_captures") or []
+    if captures:
+        done = [c["id"] for c in captures if c.get("status") == "captured"]
+        lines.append(
+            f"Frame captures: {len(done)} of {len(captures)} design frames captured at their own size"
+            + (f" ({', '.join(done)})" if done else "")
+            + "."
+        )
+        for capture in captures:
+            if capture.get("status") != "captured":
+                lines.append(f"- {capture.get('id')}: {capture.get('status')} ({capture.get('note') or 'no detail'})")
     for warning in evidence.get("warnings") or []:
         lines.append(f"Note: {warning}")
     return "\n".join(lines)
@@ -393,6 +410,10 @@ def screenshots_dir(test_env: TestEnvironment) -> Path:
     return Path(test_env.state_dir or ".") / "screenshots"
 
 
+def frames_dir(test_env: TestEnvironment) -> Path:
+    return Path(test_env.state_dir or ".") / "frames"
+
+
 def prepare_test_dependencies(
     repo_dir: Path,
     *,
@@ -636,6 +657,17 @@ def verify_implementation(
             logs.append(note)
             screenshots = [screenshot_name(path) for path in screenshot_files(screenshots_dir(test_env))]
 
+    frame_captures: list[dict[str, Any]] = []
+    if not reasons and not quick and test_env is not None and test_env.state_dir is not None:
+        from ts_harness.implementation.frame_checklist import frames_to_capture
+
+        frames = frames_to_capture(work_order_body)
+        if frames:
+            from ts_harness.implementation.test_services import capture_frames
+
+            frame_captures, note = capture_frames(repo_dir, frames, frames_dir(test_env), test_env.merged_env())
+            logs.append(note)
+
     coverage: dict[str, Any] = {}
     if not reasons and changed_files is not None and not quick and coverage_wanted(work_order_body):
         out_dir = (test_env.state_dir if test_env is not None and test_env.state_dir else Path(repo_dir).parent) / "coverage"
@@ -686,6 +718,7 @@ def verify_implementation(
         checks=checks,
         coverage=coverage,
         screenshots=screenshots,
+        frame_captures=frame_captures,
     )
 
 

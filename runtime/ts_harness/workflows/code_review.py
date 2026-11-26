@@ -514,6 +514,10 @@ def review_precheck(
         generated = generated_files_on_github(github, owner, repo, head_sha) if head_sha and declared_paths(work_order_body) else set()
         findings.extend(scope_findings(pr_url, counted, work_order_body, generated))
         findings.extend(boundary_findings(pr_url, counted, work_order_body))
+    from ts_harness.workflows.test_changes import test_changes
+
+    # Read before the patch budget trims patches: a flipped assertion in a big test file counts.
+    changed_tests = test_changes(files)
     fit_patch_budget(files)
     prs = review_context(task, tasks, prs, files, github=github)
     if over:
@@ -526,6 +530,7 @@ def review_precheck(
         "files": files,
         "diff_stats": totals,
         "scope_findings": findings,
+        "test_changes": changed_tests,
         "refresh": refresh,
         "diff_fingerprint": diff_fingerprint(content),
     }

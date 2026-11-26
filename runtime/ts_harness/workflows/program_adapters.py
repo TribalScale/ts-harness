@@ -19,7 +19,7 @@ ExtractOutputsFn = Callable[..., dict[str, Any]]
 # unconfirmed when they come from adapters rather than workflow contracts.
 # extract_declared_outputs trusts the node's produces_artifacts list (None).
 ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
-    "extract_prd_outputs": frozenset({"approved_prd", "design_refs"}),
+    "extract_prd_outputs": frozenset({"approved_prd", "design_refs", "screen_specs_text"}),
     "extract_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "planning_track"}),
     "extract_work_orders_outputs": frozenset(
         {
@@ -141,6 +141,11 @@ def _extract_prd_outputs(
     refs = merged.get("design_refs")
     if isinstance(refs, list) and refs:
         patch["design_refs"] = [ref for ref in refs if isinstance(ref, dict)]
+    # The screen specs drafted from the frames (what each screen does, its states) follow too, so
+    # planning can write each UI work order's frame checklist from them.
+    specs = merged.get("screen_specs_text")
+    if isinstance(specs, str) and specs.strip():
+        patch["screen_specs_text"] = specs
     return patch
 
 
@@ -182,6 +187,8 @@ def _build_jira_inputs(
     if artifacts.get("design_refs"):
         # plan_stories sees the images and names them per story (`Design: D1`).
         intake["design_refs"] = artifacts["design_refs"]
+    if artifacts.get("screen_specs_text"):
+        intake["screen_specs_text"] = artifacts["screen_specs_text"]
     return intake
 
 
@@ -230,6 +237,8 @@ def _build_work_orders_inputs(
         intake["project_repositories"] = artifacts["project_repositories"]
     if artifacts.get("design_refs"):
         intake["design_refs"] = artifacts["design_refs"]
+    if artifacts.get("screen_specs_text"):
+        intake["screen_specs_text"] = artifacts["screen_specs_text"]
     return intake
 
 

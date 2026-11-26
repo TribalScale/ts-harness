@@ -10,6 +10,7 @@ Transform Foundry JSON artifacts into implementation-ready Work Orders.
 - `input.stage` — must be `planner`
 - `input.project_repositories` — the project's repositories (`full_name`, `role`, `default_branch`); absent for single-repository projects
 - `input.design_refs` / `input.design_refs_text` — design references (Figma frames, attached images) with ids `D1`, `D2`…; the images follow the task message
+- `input.screen_specs` — the screen specs drafted from the frames at intake (each screen's purpose, layout, components, data, actions and states, with the requester's answers); write each frame checklist from them and the frames
 
 ## Outputs (JSON artifacts)
 
@@ -146,13 +147,67 @@ Given ... When ... Then ...
   the design references it implements in its Context Graph as
   `- Design: D1, D3` (ids from `input.design_refs`, nothing else). The coding
   agent and QA receive exactly those images, so name every frame the WO's UI
-  must match and no others. Backend-only WOs omit the line. Describe in the
-  Requirements what each image shows that matters (layout, copy, states);
-  never write "see the design" alone. A page can bring a hundred frames and only
-  the first few images are attached here: choose frames by their titles and
-  text in `input.design_refs_text`, including every state the WO builds (empty,
-  loading, error, open/closed variants). Write ids only; the harness adds each
-  frame's title and Figma link to the work order (`## Design frames`).
+  must match and no others. Backend-only WOs omit the line. A page can bring a
+  hundred frames and only the first few images are attached here: choose frames
+  by their titles and text in `input.design_refs_text`, including every state
+  the WO builds (empty, loading, error, open/closed variants, a selected chip,
+  an open panel). Write ids only; the harness adds each frame's title and Figma
+  link to the work order (`## Design frames`).
+
+- **One UI work order per screen, at most 6 frames.** An agent call carries at
+  most 6 images, so a WO naming more is built and checked against only some of
+  them. Plan one WO per screen (Week, Day, an order panel, a list page), each
+  naming the frames of that screen's states. Plan the shared pieces first, in a
+  WO the screens depend on: the app shell (sidebar, top bar, page backgrounds),
+  shared components (a schedule grid, cards, badges) and the colour and type
+  tokens. A screen WO that is still too big splits by state (the base view, then
+  the panels and selected states). The planner contract rejects a WO naming
+  more than 6 frames.
+
+- **A frame checklist for every UI work order.** A frame shows more than the
+  prose says: a panel that opens when a chip is selected, blocks that dim
+  instead of disappearing, the status line and progress bar on a card, which
+  rows are grey and which page areas are white. Whatever a frame shows that the
+  WO does not list is not built and not checked. So each WO that names frames
+  has a `## Frame checklist` section with one entry per frame:
+
+  ```markdown
+  ## Frame checklist
+
+  ### D7 · 02 Week · Sources · Carry-over
+  - Route: /hub/week?source=carryOver
+  - State: the Carry-over chip is selected; test data has placed and unplaced carry-over orders
+  - Shows:
+    - a Carry-over panel on the right: "{n} orders · {p} placed · {u} not placed. Oldest week first."
+    - Not placed and Placed sections; each entry has the order, material, days behind and the week it came from
+    - blocks that are not carry-over are dimmed; carry-over blocks stay at full strength
+    - content area white (#FFFFFF); Carry-over lane beige (#F8F5EE); area header rows grey (#F3F4F6)
+  ```
+
+  - `Route` is the app path that shows the frame. `State` is what the test
+    sets up and does to reach it (the role, the data, the clicks). The coding
+    agent writes a frame scenario for each entry and the harness captures it
+    at the frame's size for QA.
+  - `Shows` lists, region by region, everything the frame requires: panels,
+    sections, controls and their labels, the content of each card or row
+    (status, time left, progress bar, icons, badges), selected and dimmed
+    states, and the background, text colours and type the frame uses (read
+    the colours and fonts from the frame's text in `input.design_refs_text`).
+    Use `input.screen_specs` (and the approved PRD) for behaviour the frame implies.
+  - Data, dates and order numbers in a frame are examples; write the rule
+    ("days behind in brown"), not the example value.
+  - Each entry is also an acceptance test: add a Given/When/Then line per
+    frame ("Given the Carry-over chip is selected, Then it matches D7").
+  - The planner contract rejects a WO whose frames have no checklist entry, or
+    an entry without a Route, a State or a Shows list.
+
+- **Realistic data from day one.** A screen that shows nothing on a fresh environment can't be
+  checked by anyone. When a feature needs configuration data before it does anything (rules,
+  calendars, standards, lookup tables), the API WO that adds it also adds a sample to the API's
+  `scripts/dev-seed.ts` (`npm run seed:dev`), and enough rows to `scripts/smoke-seed.ts` for each
+  state the design draws. Test data, fixtures and seeds use dates relative to today (the
+  templates' relative-date helpers), never a fixed calendar day, so the current week is never
+  empty and nothing is overdue just because time passed.
 
 - **Deferred work gets its own work order.** A WO may not leave part of its job for "later",
   "for now", "until X exists" or "once Y is ready" in a sentence: nothing tracks that

@@ -58,6 +58,46 @@ Without any designs, nothing changes.
 `design/` is kept for a year (bucket lifecycle rule), unlike `intake/` (14 days), so references
 outlive the request.
 
+## UI work orders are checked frame by frame
+
+A frame shows more than a work order's prose repeats: a panel that opens when a chip is selected,
+blocks that dim instead of disappearing, the status line and progress bar on a card, which rows
+are grey and which page areas are white. Each of these steps makes sure what a frame shows is
+built and checked.
+
+1. **Planning.** One UI work order per screen, naming at most 6 frames (an agent call carries 6
+   images; `TS_HARNESS_MAX_FRAMES_PER_WO`). Each work order that names frames has a
+   `## Frame checklist`: per frame a `### D7 · <title>` entry with `Route:` (the app path),
+   `State:` (role, data, clicks) and `Shows:` (everything the frame requires, region by region,
+   colours included). The planner gets the screen specs drafted at intake (`screen_specs`) to
+   write it. The planner contract rejects a work order with more frames, or a frame without an
+   entry, route, state or Shows list (`runtime/ts_harness/implementation/frame_checklist.py`).
+   On the Jira path `plan_stories` writes the same checklist into each story.
+2. **Coding.** The prompt lists the checklist and asks for one Gherkin scenario per frame, tagged
+   `@frame-D7`, ending in the frame's state. Each frame's size is written into the work order's
+   `## Design frames` section (`- D7 — [title](link) · 1440×900`).
+3. **Capture.** After the checks pass, verification runs every `@frame-*` scenario at its frame's
+   size (a Playwright config wrapping the repository's, viewport set, screenshot of the last
+   state, JSON report) and saves `frame-D7.png` per frame. The captures go to the evidence branch
+   with the screenshots (`frame_captures` in the coding output: `captured`, `failed` with where the
+   scenario stopped, `missing` with no scenario, or `unavailable` without Playwright).
+4. **QA.** Each frame is laid next to its capture in one labelled image (design left, app right),
+   and both are sampled on a grid: where both are a flat colour, the colours are compared and
+   pairs that differ are listed in `design_checks` (`runtime/ts_harness/workflows/frame_review.py`).
+   QA (`governed-qa-gate` 1.10.0) judges every listed frame as its own criterion: a missing panel,
+   state or card content is a defect, a different colour token (a beige page behind a white
+   design, white rows where the design is grey) is a defect, and a frame with no capture fails
+   instead of passing as unverified. Rendering noise, 1 px shifts and different example data do
+   not count.
+5. **Tests rewritten to fit.** `review_precheck` lists what the patch changed in existing tests
+   (`test_changes`: removed and added test names and assertions, and reversals such as "pick up
+   any block and Carry-over card" becoming "…but not a Carry-over card"). Code review (1.10.0)
+   blocks a reversal the work order did not ask for; QA treats it as a defect.
+6. **Every night.** When QA passes a work order with frames, the frames are recorded for its web
+   repository. The nightly smoke run captures each frame's route at its size against the real
+   API and the harness proposes one bug for what drifted. See
+   [nightly-smoke.md](nightly-smoke.md#design-frames-every-night).
+
 ## Screen specs (PRD requests)
 
 A design shows layout, copy and the states someone drew. It does not show what an action does,

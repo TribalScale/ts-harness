@@ -724,6 +724,11 @@ def build_implement_prompt(
     design = render_design_prompt(list(design_files or []))
     if design:
         hard_rules += "\n" + design
+    from ts_harness.implementation.frame_checklist import frame_scenario_rule, work_order_frames
+
+    frames_rule = frame_scenario_rule(work_order_frames(work_order_body or ""))
+    if frames_rule:
+        hard_rules += "\n" + frames_rule
     cited = [path for path in (revision_files or []) if str(path).strip()]
     if cited:
         hard_rules += (
@@ -2237,12 +2242,17 @@ class OpenCodeBackend:
         """Screenshots from the final verification, on an evidence branch and the PR. Best effort."""
         if test_env is None or not str(pr_url or "").startswith("https://"):
             return {}
+        from ts_harness.implementation.verification import frames_dir
+
         shots = screenshots_dir(test_env)
-        if not shots.is_dir():
+        frames = frames_dir(test_env)
+        if not shots.is_dir() and not frames.is_dir():
             return {}
         try:
             github = self.github or github_for(pr_url)
-            published = publish_screenshots(repo_dir, shots, work_branch=branch, pr_url=pr_url, github=github, runner=self.runner, env=env)
+            published = publish_screenshots(
+                repo_dir, shots, work_branch=branch, pr_url=pr_url, github=github, runner=self.runner, env=env, frames_dir=frames
+            )
         except Exception as exc:  # noqa: BLE001 - screenshots never fail a delivery
             published = {"error": str(exc)[:300]}
         if published.get("error"):

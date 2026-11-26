@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.9.0
+version: 1.10.0
 ---
 
 # Governed Code Review
@@ -144,6 +144,28 @@ On a PR to a web repository that calls a backend (a `src/api/openapi.json`, a
   `major` `correctness` finding.
 - "Until the backend's spec exists" is not an excuse in the PR: the work order should have
   been planned contract-first. Raise the finding; the work order's follow-up is the fix.
+
+## Tests that change meaning
+
+A test that already exists records behaviour someone asked for. When a change makes it fail,
+the fix is usually the code, not the test. An agent that rewrites the test to match what it
+built hides a regression. For example, "a planner can pick up any block and Carry-over
+card" became "…but not a Carry-over card", and dragging from Carry-over was gone with every
+check green.
+
+`input.test_changes` lists, per test file in the patch, the test names removed, added and
+renamed, and the assertion lines removed and added (`expect(...)`, `assert ...`,
+`Then ...` steps). Read it before the rest of the diff:
+
+- A renamed or edited test, or a removed assertion, that now expects the **opposite** of what
+  it expected before (allowed becomes refused, shown becomes hidden, `toBe(true)` becomes
+  `toBe(false)`, `toBeInTheDocument()` becomes `toBeNull()`) is a `blocker` `correctness`
+  finding. That holds unless the work order (or `input.human_change_requests`) asks for the
+  new behaviour. Quote the old and new lines and name the requirement the old test covered.
+- A removed test or scenario with no replacement covering the same behaviour is a `major`
+  `tests` finding, unless the work order removes that behaviour.
+- Expected values updated to new data (a renamed field, a reformatted date, fixtures that
+  changed with the API) are fine when the behaviour they check stays the same.
 
 ## Review Checklist
 

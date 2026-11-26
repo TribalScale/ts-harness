@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.9.0
+version: 1.10.0
 ---
 
 # Governed QA Gate
@@ -73,13 +73,36 @@ Then:
    screenshot shows one moment; judge behaviour over time (debounce, live
    updates) from the tests. No screenshots for a UI criterion is
    `unverified`, not a defect.
-   **Compare against the design.** When `input.design_refs` is present, the
-   design images (labelled `Design D1: …`) follow the screenshots. For each,
-   check the matching screenshot for layout, copy, components and states the
-   design shows. A clear mismatch the work order asked for (wrong or missing
-   text, a missing element or state, a broken layout) is a defect citing both
-   images by name; small spacing, font-rendering or color differences are not.
-   Without a screenshot of that screen, the design check is `unverified`.
+   **Compare against the design: every listed frame.** When `input.design_refs`
+   is present, the design images (labelled `Design D1: …`) follow the
+   screenshots. Each design reference the work order lists is its own
+   criterion, `Design D1: <frame title>`, judged against its capture:
+   - `input.frame_captures` holds, per frame, a screenshot the harness took at
+     the frame's own size in the state the work order's frame checklist names
+     (labelled `Capture D1: …`), or why it could not be taken. Compare each
+     frame with its capture, region by region: the panels, lanes, rows, cards,
+     badges, controls and copy the frame shows, and the states it draws
+     (selected chip, open panel, dimmed blocks, expanded rows). A missing
+     element, panel or state, missing card content (a status line, a time
+     left, a progress bar), or a broken layout is a defect citing both images.
+   - `input.design_checks` lists, per frame and region, values read from the
+     design (background and text colours, font family, size and weight) next
+     to the values sampled at the same place in the capture. A different
+     **token** is a defect: another named colour (a beige surface where the
+     design is white, grey header rows that render white), another font
+     family or weight, or a size more than 2 px off. Anti-aliasing, a 1 px
+     shift, spacing within 4 px, and text or numbers that differ because the
+     test data differs are not defects.
+   - A listed frame with **no capture** is a `fail`, not `unverified`, when
+     `input.frame_captures` is present: the dev agent declares the state in the
+     work order's frame checklist and the harness captures it, so the evidence
+     is within its reach. Name the frame and say the capture is missing.
+     Without `input.frame_captures` (a repository the harness cannot run),
+     fall back to the screenshots, and a frame no screenshot shows is
+     `unverified`.
+   - What a frame shows is required even when the work order's prose doesn't
+     repeat it: the frames are part of the work order. Data, dates and order
+     numbers in the frame are examples, not requirements.
    **Check the base branch before calling something missing.** The patch shows
    only what changed. When a criterion names something the patch does not add
    (a translation key, a config entry, a helper), call `read_pr_file` with the
@@ -100,6 +123,11 @@ Then:
    a path, method or field that `src/api/openapi.json` does not have (read it with
    `read_pr_file`); a changed `openapi.json` without a regenerated `schema.d.ts`. A web app
    that passes its tests with hand-written types still breaks against the real backend.
+   **A test rewritten to fit is a defect.** `input.test_changes` lists the test
+   names and assertions the patch removed, added or renamed. An existing test
+   that now expects the opposite (allowed becomes refused, shown becomes
+   hidden) without the work order asking for it is a defect: the behaviour the
+   old test covered is a requirement the PR broke. Quote both lines.
    **Unverifiable is not failed.** When a criterion cannot be judged from what
    you were given (a patch marked `patch_truncated`, or a measurement such as
    a coverage percentage that neither CI nor host verify reports), mark that

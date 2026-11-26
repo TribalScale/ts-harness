@@ -1420,6 +1420,8 @@ class WorkflowRunner:
         log_event("dispatched", workflow_id=payload["workflow_id"], task_id=payload["task_id"])
         if is_qa:
             self._publish_qa_status(task, "qa_finished", task_input, result)
+            if str((result or {}).get("status") or "") == "succeeded":
+                self._record_delivered_frames(task, task_input)
         self._apply_dispatch_result(task, stage, result, dispatch_started)
 
     def _add_design_input(self, task: dict[str, Any], task_input: dict[str, Any]) -> None:
@@ -1984,6 +1986,18 @@ class WorkflowRunner:
             return
 
         self._complete_succeeded(task, dict(agg.get("output") or {}), event="barrier_completed")
+
+    def _record_delivered_frames(self, task: dict[str, Any], task_input: dict[str, Any]) -> None:
+        """QA passed a UI work order: its frames join the repository's nightly design check."""
+        try:
+            from ts_harness.workflows.design_conformance import record_passed_work_order
+
+            record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
+            recorded = record_passed_work_order(task, list(record.get("tasks") or []), task_input, memory=self.memory)
+            if recorded:
+                log_event("design_frames_recorded", task_id=task.get("id"), frames=recorded)
+        except Exception as exc:  # noqa: BLE001 - the nightly check is a bonus, never a blocker
+            log_event("design_frames_record_error", task_id=task.get("id"), error=str(exc))
 
     def _publish_qa_status(self, task: dict[str, Any], action: str, *args: Any) -> None:
         from ts_harness.workflows import qa_status
