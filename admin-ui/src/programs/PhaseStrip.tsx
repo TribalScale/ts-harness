@@ -102,11 +102,21 @@ export function PhaseStrip({
   const edges = topologyEdges(topology);
   const showTopology = alternateIds.length > 0 || edges.length > 0;
 
+  // A program can start at a later phase (a ticket key starts at implement): the phases before
+  // the first one that ran never will, so they read "skipped", not "not started".
+  const firstStarted = visible.findIndex(
+    (id) => (phases[id]?.state || "not_started") !== "not_started",
+  );
+
   return (
     <div className="phase-strip-wrap">
       <ol className="phase-strip" aria-label="Program phases">
         {visible.map((phase, index) => {
-          const info = phases[phase] || { state: "not_started" };
+          const recorded = phases[phase] || { state: "not_started" };
+          const info =
+            recorded.state === "not_started" && firstStarted > index
+              ? { ...recorded, state: "skipped" }
+              : recorded;
           const active =
             selectedPhase === phase ||
             (!selectedPhase && currentPhase === phase);
