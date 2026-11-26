@@ -314,6 +314,38 @@ def _endpoints(section: str) -> set[str]:
     return found
 
 
+_TEST_HEADING = re.compile(r"^#{2,4}\s+.*\b(?:acceptance|tests?|scenarios?|verification)\b.*$", re.IGNORECASE)
+_ANY_HEADING = re.compile(r"^#{1,4}\s+\S")
+_GHERKIN_LINE = re.compile(r"^\s*(?:[-*]\s+|\d+\.\s+)?(?:\*\*)?(?:Given|When|Then|And|But)\b", re.IGNORECASE)
+_NO_ENDPOINT_CHANGES = re.compile(
+    r"\bendpoints?\s*:\s*none\b|\bno\s+(?:new\s+or\s+changed\s+|api\s+)?endpoints?\s+(?:are\s+)?(?:added|changed)\b"
+    r"|\bdoes(?:n't| not)\s+(?:add|change)\s+(?:any\s+)?endpoints?\b",
+    re.IGNORECASE,
+)
+
+
+def _changed_endpoints(section: str) -> set[str]:
+    """Endpoints an API work order adds or changes: those named outside its tests.
+
+    A work order's acceptance tests call endpoints that already exist (a template adoption proves
+    smoke mode with `GET /me`); those calls don't change the contract. So endpoints in a test
+    section (a heading with "acceptance", "test" or "scenario") or on a Given/When/Then line don't
+    count, and a work order that states it changes no endpoint ("Endpoints: none") has none.
+    """
+    if _NO_ENDPOINT_CHANGES.search(section or ""):
+        return set()
+    kept: list[str] = []
+    in_tests = False
+    for line in (section or "").splitlines():
+        if _ANY_HEADING.match(line):
+            in_tests = bool(_TEST_HEADING.match(line))
+            continue
+        if in_tests or _GHERKIN_LINE.match(line):
+            continue
+        kept.append(line)
+    return _endpoints("\n".join(kept))
+
+
 def _reachable(start: str, deps: dict[str, list[str]]) -> set[str]:
     seen: set[str] = set()
     stack = list(deps.get(start, []))
@@ -393,7 +425,7 @@ def api_contract_problems(markdown: str, repositories: list[dict[str, Any]] | No
     providers: dict[str, set[str]] = {}
     for wo_id, section in sections.items():
         if role_of[wo_id] in API_ROLES:
-            endpoints = _endpoints(section)
+            endpoints = _changed_endpoints(section)
             if endpoints:
                 providers[wo_id] = endpoints
                 if "openapi" not in section.lower():

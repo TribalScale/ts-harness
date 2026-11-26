@@ -19,7 +19,7 @@ ExtractOutputsFn = Callable[..., dict[str, Any]]
 # unconfirmed when they come from adapters rather than workflow contracts.
 # extract_declared_outputs trusts the node's produces_artifacts list (None).
 ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
-    "extract_prd_outputs": frozenset({"approved_prd", "design_refs", "screen_specs_text"}),
+    "extract_prd_outputs": frozenset({"approved_prd", "design_refs", "screen_specs_text", "prd_approval_notes"}),
     "extract_jira_outputs": frozenset({"jira_epic_key", "jira_story_keys", "planning_track"}),
     "extract_work_orders_outputs": frozenset(
         {
@@ -54,6 +54,36 @@ ADAPTER_DECLARED_OUTPUT_KEYS: dict[str, frozenset[str] | None] = {
     ),
     "extract_declared_outputs": None,
 }
+
+
+def _approval_notes(tasks: list[dict[str, Any]]) -> str:
+    """The notes a person left when approving the plan or PRD (the latest approval with notes).
+
+    "Approve with these changes: …" records the changes as notes and passes the gate without a
+    revision, so the next phase must be told to apply them; otherwise they are silently lost.
+    """
+    notes = [
+        (str(task.get("created_at") or ""), str(task["output"].get("reviewer_notes") or "").strip())
+        for task in tasks
+        if task.get("status") == "succeeded"
+        and isinstance(task.get("output"), dict)
+        and (task.get("approval_required") or str(task.get("step_name") or "").startswith("approve_"))
+        and str(task["output"].get("reviewer_notes") or "").strip()
+    ]
+    return sorted(notes)[-1][1] if notes else ""
+
+
+def _carry_design_inputs(merged: dict[str, Any], patch: dict[str, Any], tasks: list[dict[str, Any]]) -> None:
+    """Design references, screen specs and approval notes follow an approved plan into the next phase."""
+    refs = merged.get("design_refs")
+    if isinstance(refs, list) and refs:
+        patch["design_refs"] = [ref for ref in refs if isinstance(ref, dict)]
+    specs = merged.get("screen_specs_text")
+    if isinstance(specs, str) and specs.strip():
+        patch["screen_specs_text"] = specs
+    notes = _approval_notes(tasks)
+    if notes:
+        patch["prd_approval_notes"] = notes
 
 
 def _merge_task_outputs(tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -137,15 +167,9 @@ def _extract_prd_outputs(
         approved = _approved_draft(tasks)
         if approved is not None:
             patch["approved_prd"] = approved
-    # Design references (Figma frames, attached images) follow the PRD into planning and delivery.
-    refs = merged.get("design_refs")
-    if isinstance(refs, list) and refs:
-        patch["design_refs"] = [ref for ref in refs if isinstance(ref, dict)]
-    # The screen specs drafted from the frames (what each screen does, its states) follow too, so
-    # planning can write each UI work order's frame checklist from them.
-    specs = merged.get("screen_specs_text")
-    if isinstance(specs, str) and specs.strip():
-        patch["screen_specs_text"] = specs
+    # Design references (Figma frames, attached images) follow the PRD into planning and delivery,
+    # with the screen specs drafted from them and any notes left when the PRD was approved.
+    _carry_design_inputs(merged, patch, tasks)
     return patch
 
 
@@ -189,6 +213,8 @@ def _build_jira_inputs(
         intake["design_refs"] = artifacts["design_refs"]
     if artifacts.get("screen_specs_text"):
         intake["screen_specs_text"] = artifacts["screen_specs_text"]
+    if artifacts.get("prd_approval_notes"):
+        intake["prd_approval_notes"] = artifacts["prd_approval_notes"]
     return intake
 
 
@@ -239,6 +265,8 @@ def _build_work_orders_inputs(
         intake["design_refs"] = artifacts["design_refs"]
     if artifacts.get("screen_specs_text"):
         intake["screen_specs_text"] = artifacts["screen_specs_text"]
+    if artifacts.get("prd_approval_notes"):
+        intake["prd_approval_notes"] = artifacts["prd_approval_notes"]
     return intake
 
 
@@ -676,9 +704,14 @@ def _extract_declared_outputs(
         patch.setdefault(first, approved)
     if "approved_prd" in produces and "approved_prd" not in patch:
         result = merged.get("result") if isinstance(merged.get("result"), dict) else {}
-        markdown = merged.get("prd_markdown") or result.get("prd_markdown")
+        nested = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
+        # An agent that returns the plan under `artifacts` (or a person accepting that output)
+        # still produced a plan: without this the next phase has no approved PRD and can't start.
+        markdown = merged.get("prd_markdown") or result.get("prd_markdown") or nested.get("prd_markdown")
         if isinstance(markdown, str) and markdown.strip():
             patch["approved_prd"] = markdown
+    if "approved_prd" in produces:
+        _carry_design_inputs(merged, patch, tasks)
     return patch
 
 

@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from ts_harness.jira.identity import UNMAPPED, jira_account_for_email
 from ts_harness.jira.ticket_query import DEFAULT_TICKET_STATUSES, build_assigned_ticket_jql, format_ticket_list, projects_from_assigned_issues
-from ts_harness.jira.ticket_queue import named_ticket_key, order_ticket_queue, wants_ticket_queue
+from ts_harness.jira.ticket_queue import named_ticket_key, order_ticket_queue, ticket_request, wants_explicit_queue, wants_ticket_queue
 
 _PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9_]{1,10}$")
 _PROJECT_TOKEN = re.compile(r"\b([A-Z][A-Z0-9_]{1,10})\b")
@@ -29,6 +29,85 @@ def format_queue_summary(ordered: list[str], excluded: list[dict[str, str]]) -> 
     lines.append("")
     lines.append("Approve the next step to run these tickets in this order.")
     return "\n".join(lines)
+
+
+EPIC_TYPE = "epic"
+_EXPLICIT_FIELDS = ["summary", "status", "issuelinks", "parent", "project", "issuetype"]
+
+
+def _fields(issue: dict[str, Any]) -> dict[str, Any]:
+    return issue.get("fields") if isinstance(issue.get("fields"), dict) else issue
+
+
+def is_epic(issue: dict[str, Any]) -> bool:
+    """The issue is an Epic: a container of tickets, never something to code."""
+    kind = _fields(issue).get("issuetype")
+    name = kind.get("name") if isinstance(kind, dict) else kind
+    return str(name or "").strip().lower() == EPIC_TYPE
+
+
+def _is_done(issue: dict[str, Any]) -> bool:
+    status = _fields(issue).get("status")
+    category = (status.get("statusCategory") or {}) if isinstance(status, dict) else {}
+    return str(category.get("key") or "").lower() == "done"
+
+
+def _epic_children(search: Search, epic: str) -> list[dict[str, Any]]:
+    """An epic's tickets: ``parent = EPIC`` (team-managed and current projects), else ``"Epic Link"``."""
+    for jql in (f"parent = {epic} ORDER BY rank", f'"Epic Link" = {epic} ORDER BY rank'):
+        try:
+            found = list(search(jql, max_results=100, fields=_EXPLICIT_FIELDS) or [])
+        except Exception:  # noqa: BLE001 - a site without "Epic Link" rejects that JQL
+            found = []
+        if found:
+            return found
+    return []
+
+
+def explicit_ticket_queue(text: str, search: Search) -> dict[str, Any]:
+    """A queue of exactly the tickets a message names, with its epics expanded into their tickets.
+
+    "Implement the tickets in epic PROJ-33 except PROJ-45, and PROJ-47": PROJ-33's tickets minus
+    PROJ-45, then PROJ-47's. Epics themselves are never queued; excluded and done tickets are listed
+    with why; the rest are ordered so blockers come first (``order_ticket_queue``).
+    """
+    request = ticket_request(text)
+    wanted, excluded = list(request["included"]), set(request["excluded"])
+    named = {str(i.get("key") or "").upper(): i for i in search(
+        "key in (" + ", ".join(wanted) + ") ORDER BY key", max_results=100, fields=_EXPLICIT_FIELDS
+    ) or []} if wanted else {}
+    candidates: dict[str, dict[str, Any]] = {}
+    exclusions: list[dict[str, str]] = []
+    for key in wanted:
+        issue = named.get(key)
+        if issue is None:
+            exclusions.append({"key": key, "reason": "not found in Jira"})
+            continue
+        if is_epic(issue):
+            children = _epic_children(search, key)
+            if not children:
+                exclusions.append({"key": key, "reason": "epic with no tickets"})
+            for child in children:
+                child_key = str(child.get("key") or "").upper()
+                if child_key and not is_epic(child):
+                    candidates.setdefault(child_key, child)
+            continue
+        candidates.setdefault(key, issue)
+    queue: list[dict[str, Any]] = []
+    for key, issue in candidates.items():
+        if key in excluded:
+            exclusions.append({"key": key, "reason": "excluded in the request"})
+        elif _is_done(issue):
+            exclusions.append({"key": key, "reason": "already done"})
+        else:
+            queue.append(issue)
+    ordered = order_ticket_queue(queue)
+    projects = sorted({key.split("-", 1)[0] for key in ordered["ordered"]})
+    return {
+        "keys": list(ordered["ordered"]),
+        "exclusions": exclusions + list(ordered["excluded"]),
+        "projects": projects,
+    }
 
 
 def _summary(task: dict[str, Any], tasks: list[dict[str, Any]]) -> str:
@@ -248,9 +327,21 @@ def prepare_ticket_queue(
     workflow = record.get("workflow") if isinstance(record.get("workflow"), dict) else {}
     tasks = list(record.get("tasks") or [])
     summary = _summary(task, tasks)
-    named = named_ticket_key(summary)
+    explicit = wants_explicit_queue(summary)
+    named = "" if explicit else named_ticket_key(summary)
+
     if named:
-        return {"queue": False, "jira_issue_key": named, "summary": f"Ticket {named}."}
+        try:
+            if search is None and jira is None:
+                from ts_harness.integrations.jira_client import JiraClient
+
+                jira = JiraClient.from_env()
+            found = list((search or jira.search)(f"key = {named}", max_results=1, fields=_EXPLICIT_FIELDS) or [])
+        except Exception:  # noqa: BLE001 - without Jira here, the delivery step still refuses an epic
+            found = []
+        if not (found and is_epic(found[0])):
+            return {"queue": False, "jira_issue_key": named, "summary": f"Ticket {named}."}
+        explicit = True  # "implement PROJ-33" where PROJ-33 is an epic: its tickets, not the epic
 
     if runtime is None:
         from ts_harness.implementation.config import load_active_runtime_config
@@ -261,6 +352,39 @@ def prepare_ticket_queue(
 
         jira = JiraClient.from_env()
     search = search or jira.search
+
+    if explicit:
+        built = explicit_ticket_queue(summary if not named else f"implement epic {named}", search)
+        keys, exclusions = built["keys"], built["exclusions"]
+        if not keys:
+            detail = "; ".join(f"{item['key']}: {item['reason']}" for item in exclusions)
+            raise StepBlocked(
+                "None of the tickets you named can run." + (f" {detail}" if detail else ""),
+                output={"queue": True, "queue_exclusions": exclusions, "jira_issue_keys": []},
+            )
+        if len(built["projects"]) > 1:
+            raise StepBlocked(
+                "These tickets are in more than one project (" + ", ".join(built["projects"]) + "). "
+                "Start one queue per project.",
+                output={"queue": True, "queue_exclusions": exclusions, "jira_issue_keys": []},
+            )
+        project = built["projects"][0]
+        _ensure_project_ready(memory, workflow, project, ready)
+        limit = _ticket_limit(memory, str(workflow.get("tenant_id") or "default"), project)
+        summary_text = format_queue_summary(keys, exclusions)
+        if limit > 1 and len(keys) > 1:
+            summary_text += f"\nTickets whose blockers are done run in parallel, up to {limit} at a time."
+        return {
+            "title": f"Confirm the {project} ticket queue",
+            "queue": True,
+            "jira_project_key": project,
+            "jira_issue_key": keys[0],
+            "jira_issue_keys": keys,
+            "queue_exclusions": exclusions,
+            "ticket_pool": limit > 1 and len(keys) > 1,
+            "max_parallel_tickets": limit,
+            "summary": summary_text,
+        }
     email = _requester_email(workflow, runtime, memory)
     account = _account_id(email, runtime, jira)
     if account == UNMAPPED:

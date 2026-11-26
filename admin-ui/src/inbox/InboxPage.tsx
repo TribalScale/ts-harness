@@ -508,7 +508,7 @@ export function InboxPage({
           workflow_id: workflowId,
           task_id: taskId,
           action,
-          ...(action === "revise" ? { guidance: guidance.trim() } : {}),
+          ...(action === "revise" || action === "retry" ? { guidance: guidance.trim() } : {}),
         }),
       });
       await load();
@@ -532,20 +532,31 @@ export function InboxPage({
     const prUrl = typeof meta.pr_url === "string" ? meta.pr_url : "";
     const programId =
       typeof meta.program_id === "string" ? meta.program_id : "";
-    const feedback = String(
-      meta.feedback || meta.error || "No feedback recorded.",
-    );
+    // The error is what stopped the step; the feedback is the last attempt's own summary or QA's
+    // findings. Showing the feedback as the reason sent people after the wrong problem.
+    const error = String(meta.error || "").trim();
+    const feedback = String(meta.feedback || "").trim();
+    const reason = error || feedback || "No reason recorded.";
     const decisions = stuckDecisions(meta);
+    const codingRun = decisions.includes("revise");
     return (
       <div className="detail-sections">
         <section className="detail-card">
           <h3>Summary</h3>
-          <p>
-            {workOrder} stopped at <span className="mono">{step}</span> after
-            using all automatic revisions. Revise again gives OpenCode a fresh
-            set of revisions, accept continues the delivery as it is, and stop
-            ends the work order.
-          </p>
+          {codingRun ? (
+            <p>
+              {workOrder} stopped at <span className="mono">{step}</span> after
+              using all automatic revisions. Revise again gives OpenCode a fresh
+              set of revisions, accept continues the delivery as it is, and stop
+              ends the work order.
+            </p>
+          ) : (
+            <p>
+              <span className="mono">{step}</span> stopped after its automatic
+              retries. Retry runs it again, with your guidance if you add some;
+              accept continues with its last output as it is; stop ends it.
+            </p>
+          )}
         </section>
         {prUrl && (
           <section className="detail-card">
@@ -559,12 +570,22 @@ export function InboxPage({
         )}
         <section className="detail-card">
           <h3>Why it is stuck</h3>
-          <p>{feedback}</p>
+          <p>{reason}</p>
         </section>
-        {decisions.includes("revise") && (
+        {error && feedback && feedback !== error && (
+          <section className="detail-card">
+            <h3>Last attempt</h3>
+            <p>{feedback}</p>
+          </section>
+        )}
+        {(decisions.includes("revise") || decisions.includes("retry")) && (
           <section className="detail-card">
             <label className="stuck-guidance">
-              <h3>Guidance for OpenCode (optional)</h3>
+              <h3>
+                {codingRun
+                  ? "Guidance for OpenCode (optional)"
+                  : "Guidance for the next attempt (optional)"}
+              </h3>
               <textarea
                 rows={4}
                 value={guidance}

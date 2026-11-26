@@ -1592,7 +1592,7 @@ def execute_stuck_step_command(
             chosen["task_id"],
             action,
             actor=str(actor_email or actor_id or "human"),
-            guidance=guidance if action == "revise" else "",
+            guidance=guidance if action in {"revise", "retry"} else "",
             tenant_id=session.tenant_id,
         )
     except ValueError as exc:

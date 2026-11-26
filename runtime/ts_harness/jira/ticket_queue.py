@@ -17,15 +17,83 @@ _IMPLEMENT_ALL = re.compile(r"\bimplement all\b", re.IGNORECASE)
 _IMPLEMENT_REST = re.compile(r"\bimplement the rest\b", re.IGNORECASE)
 
 
+_KEY = re.compile(r"\b([A-Za-z][A-Za-z0-9]+)-(\d+)\b")
+# More numbers of the same project after a key: "PROJ-34, 35, 36 and 37".
+_MORE_NUMBERS = re.compile(r"\s*(?:,|\band\b|&)\s*(\d+)\b(?!-)")
+_NEGATION = re.compile(
+    r"\b(?:except(?:\s+for)?|excluding|exclude|but\s+not|not|skip(?:ping)?|without|other\s+than|apart\s+from|"
+    r"don'?t|do\s+not|never|leave\s+out|minus)\b",
+    re.IGNORECASE,
+)
+# Where a negation's reach ends: a new sentence or a new "and ..." part of the request.
+_CLAUSE_BREAK = re.compile(r"[.;:\n()]|,\s*(?:and|then|plus|also)\b|\band\s+(?:the|also|then)\b", re.IGNORECASE)
+_EPIC_WORD = re.compile(r"\bepics?\b", re.IGNORECASE)
+
+
+def _keys_in(clause: str) -> list[tuple[int, str]]:
+    """``(position, KEY)`` for each issue key in ``clause``, with "PROJ-34, 35" read as PROJ-34 and PROJ-35."""
+    found: list[tuple[int, str]] = []
+    for match in _KEY.finditer(clause):
+        project = match.group(1).upper()
+        found.append((match.start(), f"{project}-{match.group(2)}"))
+        end = match.end()
+        while True:
+            more = _MORE_NUMBERS.match(clause, end)
+            if not more:
+                break
+            found.append((more.start(1), f"{project}-{more.group(1)}"))
+            end = more.end()
+    return found
+
+
+def ticket_request(text: str) -> dict[str, Any]:
+    """The tickets a message asks for: ``{included, excluded, epic}``.
+
+    Keys after a negation in the same part of the message ("except PROJ-45", "do not implement
+    the epic PROJ-33") are excluded; every other key is included, in the order written. ``epic`` is
+    true when the message talks about an epic, so its keys may need expanding into their children.
+    """
+    included: list[str] = []
+    excluded: list[str] = []
+    start = 0
+    text = text or ""
+    for brk in [*_CLAUSE_BREAK.finditer(text), None]:
+        end = brk.start() if brk else len(text)
+        clause = text[start:end]
+        negation = _NEGATION.search(clause)
+        for position, key in _keys_in(clause):
+            target = excluded if negation and position > negation.start() else included
+            if key not in target:
+                target.append(key)
+        start = brk.end() if brk else len(text)
+    included = [key for key in included if key not in excluded]
+    return {"included": included, "excluded": excluded, "epic": bool(_EPIC_WORD.search(text))}
+
+
+def wants_explicit_queue(text: str) -> bool:
+    """The message names several tickets, or an epic: a queue of exactly those, not one ticket."""
+    request = ticket_request(text)
+    return len(request["included"]) > 1 or (bool(request["included"]) and request["epic"])
+
+
 def named_ticket_key(summary: str) -> str:
-    """The single issue key in ``implement PROJ-184``. Empty when the text names none."""
+    """The single issue key in ``implement PROJ-184``. Empty when the text names none.
+
+    A key the message excludes ("do not implement PROJ-9") is never the one, and a message that
+    names several tickets or an epic is a queue, not one ticket.
+    """
+    if wants_explicit_queue(summary):
+        return ""
     match = _NAMED_KEY.search(summary or "")
-    return match.group(1).upper() if match else ""
+    if not match:
+        return ""
+    key = match.group(1).upper()
+    return "" if key in ticket_request(summary)["excluded"] else key
 
 
 def wants_ticket_queue(summary: str) -> bool:
     """True for ``implement all`` and ``implement the rest``. A named key is one ticket."""
-    if named_ticket_key(summary):
+    if named_ticket_key(summary) or wants_explicit_queue(summary):
         return False
     text = summary or ""
     return bool(_IMPLEMENT_ALL.search(text) or _IMPLEMENT_REST.search(text))

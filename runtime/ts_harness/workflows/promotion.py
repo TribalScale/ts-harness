@@ -61,4 +61,17 @@ class WorkflowPromotionService:
 
 
 def build_binding_key(channel: str, channel_id: str, thread_id: str) -> str:
-    return f"{channel}:{channel_id}:{thread_id}"
+    """``channel:channel_id:thread``, built once.
+
+    A program started from a chat that already belongs to one receives that chat's binding key as
+    its thread id (admin chat sends `web:web:<id>`), and composing it again stacked the prefix:
+    `web:web:web:web:…`. A thread id that already carries the channel prefix is used as it is.
+    """
+    thread = str(thread_id or "")
+    prefix = f"{channel}:{channel_id}:"
+    while thread.startswith(prefix):
+        thread = thread[len(prefix) :]
+    if channel == "web":
+        while thread.startswith("web:"):
+            thread = thread[len("web:") :]
+    return f"{channel}:{channel_id}:{thread}"

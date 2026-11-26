@@ -1,6 +1,6 @@
 {
   "program_type": "content_to_jira_work_orders",
-  "definition_version": "1.1.0",
+  "definition_version": "1.2.0",
   "display_name": "Content to Jira work orders",
   "startable_nodes": ["intake", "file_jira"],
   "config": {
@@ -16,7 +16,7 @@
       "default_workflow_type": "content_to_plan",
       "workflow_variants": [],
       "required_artifacts": [],
-      "produces_artifacts": ["approved_prd", "repo", "default_branch"],
+      "produces_artifacts": ["approved_prd", "repo", "default_branch", "design_refs", "screen_specs_text", "prd_approval_notes"],
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
         { "kind": "transcript_context", "target": "context", "limit": 20 }
@@ -42,7 +42,10 @@
       ],
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
-        { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" }
+        { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" },
+        { "kind": "artifact", "name": "design_refs", "target": "design_refs" },
+        { "kind": "artifact", "name": "screen_specs_text", "target": "screen_specs_text" },
+        { "kind": "artifact", "name": "prd_approval_notes", "target": "prd_approval_notes" }
       ],
       "completion_adapter": "extract_work_orders_outputs",
       "terminal": false
@@ -56,6 +59,7 @@
       "input_bindings": [
         { "kind": "program_summary", "target": "summary" },
         { "kind": "artifact", "name": "approved_prd", "target": "approved_prd" },
+        { "kind": "artifact", "name": "design_refs", "target": "design_refs" },
         { "kind": "artifact", "name": "work_order_ids", "target": "work_order_ids" },
         { "kind": "artifact", "name": "work_orders_markdown", "target": "work_orders_markdown" },
         { "kind": "artifact", "name": "jira_epic_key", "target": "jira_epic_key" },

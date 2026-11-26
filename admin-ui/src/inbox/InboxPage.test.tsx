@@ -172,6 +172,54 @@ it("decides a stuck step: revise again with guidance", async () => {
   });
 });
 
+it("a stuck planning step shows its error and retries with guidance", async () => {
+  const planItem: InboxItem = {
+    type: "stuck_step",
+    id: "plan-9",
+    title: "this work order · plan_work_orders",
+    subtitle: "Blocked · waiting for your decision",
+    created_at: "2026-11-26T02:34:49Z",
+    meta: {
+      workflow_id: "wf-p",
+      task_id: "plan-9",
+      step_name: "plan_work_orders",
+      decisions: ["retry", "accept", "stop"],
+      feedback: "What changed from the rejected output: the numbered list is now a table.",
+      error: "WO-001 adds or changes endpoints but does not update the committed openapi.json",
+      status: "blocked",
+    },
+  };
+  const posts: Record<string, unknown>[] = [];
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: posts.length ? [] : [planItem] });
+    if (url === "/admin/workflows/decide") {
+      posts.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ status: "retried" });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="stuck_step" initialId="plan-9" />);
+
+  const detail = await screen.findByRole("region", { name: /Stuck step detail/i });
+  const why = within(detail).getByRole("heading", { name: "Why it is stuck" }).closest("section");
+  expect(within(why as HTMLElement).getByText(/does not update the committed openapi.json/)).toBeInTheDocument();
+  expect(within(detail).getByText(/the numbered list is now a table/, { selector: "p" })).toBeInTheDocument();
+  expect(within(detail).queryByText(/gives OpenCode a fresh/)).not.toBeInTheDocument();
+  expect(within(detail).getByText(/stopped after its automatic/)).toBeInTheDocument();
+
+  await userEvent.type(within(detail).getByLabelText(/Guidance for the next attempt/), "WO-001 changes no endpoint.");
+  await userEvent.click(within(detail).getByRole("button", { name: "Retry" }));
+
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({
+    workflow_id: "wf-p",
+    task_id: "plan-9",
+    action: "retry",
+    guidance: "WO-001 changes no endpoint.",
+  });
+});
+
 it("shows what the automatic PRD checks found on a PRD gate", async () => {
   const prdGate: InboxItem = {
     type: "workflow_gate",

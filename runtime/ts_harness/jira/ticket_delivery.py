@@ -376,6 +376,15 @@ def prepare_ticket_delivery(
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"could not read {key} from Jira: {exc}") from exc
     fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    from ts_harness.jira.prepare_ticket_queue import is_epic
+
+    if is_epic(issue):
+        # An epic is a container: coding it would build every ticket in one PR, ignoring the
+        # split, the order and anything held. Its tickets are implemented one by one instead.
+        raise ValueError(
+            f"{key} is an epic, not a ticket. Ask to implement its tickets instead: "
+            f"`implement the tickets in epic {key}` queues them, blockers first."
+        )
     summary = str(fields.get("summary") or "").strip()
     raw = fields.get("description")
     description = (adf_to_text(raw) if isinstance(raw, dict) else str(raw or "")).strip()
