@@ -22,6 +22,7 @@ approves the plan and `file_jira` runs. Write every issue body in the house form
 - `input.default_issue_type`, `input.issue_type_by_project`: issue types from tenant config.
 - `input.design_refs`: design references (`D1`, `D2`, ...) from the PRD request, with their images. Optional.
 - `input.screen_specs`: the screen specs drafted from those frames at intake (purpose, layout, components, data, actions, states). Optional; use them for each story's frame checklist.
+- `input.prd_approval_notes`: what the person wrote when approving the PRD with notes. Changes it asks for and answers to open questions are part of the approval: apply every one in the stories. Optional.
 - On revision: `input.prior_artifact` is the last plan and `input.comments` the reviewer's feedback. Change what was asked; keep numbering stable unless the change requires a renumber, and say so.
 
 ## 1. Find the epic and the project

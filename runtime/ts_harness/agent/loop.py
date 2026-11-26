@@ -34,6 +34,9 @@ from ts_harness.workflows.artifacts import (
 from ts_harness.workflows import stage_contracts
 from ts_harness.workflows.prd_checks import check_prd
 
+# Input key for what a person said when retrying a stopped step (see human_decisions.decide).
+HUMAN_GUIDANCE_KEY = "human_guidance"
+
 # Cap in-loop repairs so a bad model response can self-correct before the
 # runner marks the task blocked / retries the whole dispatch.
 _MAX_WORKFLOW_OUTPUT_REPAIRS = 2
@@ -1052,9 +1055,18 @@ class EnterpriseAgent:
 
         task_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
         block = render_knowledge_notes(task_input.get("knowledge_notes"))
-        if not block:
-            return prompt
-        return prompt.rstrip() + "\n\n" + block
+        if block:
+            prompt = prompt.rstrip() + "\n\n" + block
+        guidance = str(task_input.get(HUMAN_GUIDANCE_KEY) or "").strip()
+        if guidance:
+            # A person retried this step after it stopped and said what to change.
+            prompt = (
+                prompt.rstrip()
+                + "\n\nThis step stopped earlier and a person retried it with guidance. Follow it; where it "
+                "conflicts with your earlier output or other instructions for this step, the guidance wins:\n"
+                + guidance
+            )
+        return prompt
 
     def _build_channel_system_prompt(
         self,

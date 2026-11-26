@@ -19,6 +19,8 @@ from ts_harness.workflows.work_order_waves import (
 ACCEPT_KEY = "_human_accept"
 STOPPED_PREFIX = "stopped_by_human:"
 DECISIONS = ("retry", "revise", "accept", "stop")
+# Input key a retry with guidance sets; the agent loop shows it in the step's prompt.
+HUMAN_GUIDANCE_KEY = "human_guidance"
 
 
 def _now() -> str:
@@ -202,6 +204,23 @@ def stuck_summary(engine: Any, workflow_id: str, task_id: str) -> dict[str, Any]
     }
 
 
+def output_shape_problem(task: dict[str, Any] | None, output: dict[str, Any] | None) -> str:
+    """The first way ``output`` breaks the step's output schema, or "" (no schema, or it fits)."""
+    contract = (task or {}).get("contract")
+    schema = contract.get("output_schema") if isinstance(contract, dict) else None
+    if not isinstance(schema, dict) or not schema:
+        return ""
+    try:
+        from jsonschema import Draft7Validator
+    except ImportError:  # pragma: no cover - jsonschema ships with the runtime
+        return ""
+    errors = sorted(Draft7Validator(schema).iter_errors(output or {}), key=str)
+    if not errors:
+        return ""
+    where = "/" + "/".join(str(part) for part in errors[0].absolute_path)
+    return f"{where}: {errors[0].message}"[:300]
+
+
 def accepted(task: dict[str, Any]) -> dict[str, Any] | None:
     accept = _input(task).get(ACCEPT_KEY)
     return dict(accept) if isinstance(accept, dict) and accept else None
@@ -310,13 +329,23 @@ def decide(
         return {**result, **base, "status": "revising"}
 
     if action == "retry":
+        patch: dict[str, Any] = {HUMAN_DECISION_KEY: None}
+        if guidance.strip():
+            # The rerun's agent sees why the step stopped and what the person wants changed.
+            author = "an admin" if who == "An admin" else who
+            patch[HUMAN_GUIDANCE_KEY] = (
+                (f"The previous run stopped: {error}"[:2000] + "\n\n" if error else "")
+                + f"Guidance from {author}:\n{guidance.strip()}"
+            )
         engine.client.resume_blocked_task(
             str(task_id),
             actor=actor,
-            input_patch={HUMAN_DECISION_KEY: None},
-            reason=f"retried by {actor}",
+            input_patch=patch,
+            reason=f"retried by {actor}" + (" with guidance" if guidance.strip() else ""),
         )
-        ctx.extras["channel_text"] = f"{who} retried {label} at `{step}`; running it again."
+        ctx.extras["channel_text"] = f"{who} retried {label} at `{step}`" + (
+            " with guidance; running it again." if guidance.strip() else "; running it again."
+        )
         ctx.runner_event = "retried"
         try:
             from ts_harness.workflows.hooks.notify_bound_channel import handle as notify_bound
@@ -326,6 +355,16 @@ def decide(
             pass
         return {**base, "status": "retried"}
     if action == "accept":
+        shape = output_shape_problem(task, output)
+        if shape:
+            # Accepting keeps the output as it is; with the wrong shape the next steps can't find
+            # what they need (a plan nested under `artifacts` left the program with no approved
+            # plan). A check that judged the content (an endpoint rule, a size limit) can still be
+            # overridden; the shape can't.
+            raise ValueError(
+                f"Accept isn't possible here: the last output of {step} doesn't have the shape the next steps "
+                f"need ({shape}). Retry it instead, with guidance if it keeps failing."
+            )
         engine.client.resume_blocked_task(
             str(task_id),
             actor=actor,

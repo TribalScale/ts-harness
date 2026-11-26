@@ -65,8 +65,13 @@ def _exclude_match(text: str, rule: RoutingIntentRule) -> bool:
 def _with_named_ticket(rule: RoutingIntentRule, intent: ChannelIntent, text: str) -> ChannelIntent:
     if rule.program_type != "jira_to_pr" and rule.id != "jira_to_pr":
         return intent
-    from ts_harness.jira.ticket_queue import named_ticket_key
+    from ts_harness.jira.ticket_queue import named_ticket_key, wants_explicit_queue
 
+    if wants_explicit_queue(text):
+        # Several tickets or an epic: the queue step lists exactly those for confirmation.
+        intent.entry_phase = "pick"
+        intent.artifacts = {}
+        return intent
     key = named_ticket_key(text)
     if not key:
         return intent

@@ -8,6 +8,11 @@ returned as JSON markdown artifacts.
 - `input.design_refs` / `input.design_refs_text` — design references (`D1`, `D2`…; images follow the task message) when the request had Figma links or images; derive UI requirements from what they show and cite their ids
 
 - `input.approved_prd` — PRD object (`summary`, `prd_markdown`, or equivalent)
+- `input.prd_approval_notes` — what the person wrote when approving the PRD or plan, when they
+  approved it with notes. Notes that ask for changes ("approve with these changes", answers to the
+  PRD's open questions) are part of the approval: apply every one of them in the requirements, as
+  if the PRD said so, and list each in a "PRD approval notes applied" section. A note that
+  conflicts with the PRD wins. Never leave an open question open when a note answers it.
 - `input.stage` — must be `refinery`
 
 Do not read manifest or filesystem paths.

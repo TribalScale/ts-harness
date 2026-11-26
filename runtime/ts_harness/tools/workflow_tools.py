@@ -949,6 +949,23 @@ def search_sessions_handler(
     return {"hits": [asdict(hit) for hit in hits]}
 
 
+def _jira_entry(program_type: str, entry_phase: str, artifacts: dict[str, Any] | None, summary: str) -> tuple[str, dict[str, Any]]:
+    """A Jira request naming several tickets or an epic starts the queue, never one ticket.
+
+    The model sometimes picks ``implement`` with one key from such a request (once the very key
+    the person excluded, once the epic itself). The queue step reads the summary instead, expands
+    epics, drops what was excluded and asks for confirmation of the list.
+    """
+    if program_type != "jira_to_pr":
+        return entry_phase, dict(artifacts or {})
+    from ts_harness.jira.ticket_queue import wants_explicit_queue
+
+    if wants_explicit_queue(summary):
+        rest = {k: v for k, v in (artifacts or {}).items() if k not in {"jira_issue_key", "jira_issue_keys"}}
+        return "pick", rest
+    return entry_phase, dict(artifacts or {})
+
+
 def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) -> dict[str, Any]:
     session, err = _session_or_error(ctx)
     if err:
@@ -962,6 +979,7 @@ def propose_start_program_handler(args: dict[str, Any], ctx: ToolPolicyContext) 
     program_type = _default_program_type(args.get("program_type"))
     input_data = args.get("input") if isinstance(args.get("input"), dict) else {}
     artifacts = args.get("artifacts") if isinstance(args.get("artifacts"), dict) else input_data
+    entry_phase, artifacts = _jira_entry(program_type, entry_phase, artifacts, summary)
     from ts_harness.workflows.program_materialize import validate_entry_against_snapshot
 
     snapshot = _load_program_snapshot(program_type=program_type)

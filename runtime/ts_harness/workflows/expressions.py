@@ -176,6 +176,8 @@ def resolve_token(
         "workflow.design_refs",
         # The screen specs drafted from the frames, for each UI work order's frame checklist.
         "workflow.screen_specs_text",
+        # Notes left when the plan or PRD was approved: changes the next phase must apply.
+        "workflow.prd_approval_notes",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):
