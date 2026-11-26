@@ -13,3 +13,5 @@ test-results
 smoke-results.json
 .features-gen
 .DS_Store
+frames-out/
+frames-manifest.json

@@ -52,16 +52,27 @@ def publish_screenshots(
     github: Any,
     runner=subprocess.run,
     env: dict[str, str] | None = None,
+    frames_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Push the screenshots and add or update the PR comment. ``{}`` when there are none."""
-    files = [path for path in screenshot_files(shots_dir) if path.stat().st_size <= MAX_BYTES]
+    """Push the screenshots and add or update the PR comment. ``{}`` when there are none.
+
+    Frame captures (``frames_dir/frame-D7.png``, one per design frame) go in the same commit
+    under their own names, listed in ``frames``.
+    """
+    files = [path for path in screenshot_files(shots_dir) if path.stat().st_size <= MAX_BYTES] if Path(shots_dir).is_dir() else []
+    frame_files = (
+        sorted(p for p in Path(frames_dir).glob("frame-D*.png") if p.stat().st_size <= MAX_BYTES)
+        if frames_dir is not None and Path(frames_dir).is_dir()
+        else []
+    )
     parsed = parse_github_pr_url(pr_url)
-    if not files or parsed is None:
+    if not (files or frame_files) or parsed is None:
         return {}
     owner, repo, number = parsed
-    entries, names = [], []
-    for path in files:
-        name = screenshot_name(path)
+    entries, names, frames = [], [], []
+    for path in [*frame_files, *files]:
+        is_frame = path in frame_files
+        name = path.name if is_frame else screenshot_name(path)
         if name in names:
             name = f"{len(names)}-{name}"
         blob = _git(repo_dir, "hash-object", "-w", str(path), runner=runner)
@@ -69,6 +80,8 @@ def publish_screenshots(
             return {"error": f"hash-object failed: {blob.stderr[-300:]}"}
         entries.append(f"100644 blob {blob.stdout.strip()}\t{name}")
         names.append(name)
+        if is_frame:
+            frames.append(name)
     tree = _git(repo_dir, "mktree", runner=runner, stdin="\n".join(entries) + "\n")
     head = _git(repo_dir, "rev-parse", "HEAD", runner=runner).stdout.strip()
     commit = _git(
@@ -91,5 +104,11 @@ def publish_screenshots(
         reply = github.update_comment(owner, repo, existing["id"], body) if existing else github.comment(owner, repo, number, body)
         comment_url = str((reply or {}).get("html_url") or "")
     except Exception as exc:  # noqa: BLE001 - the images are still on the branch and in QA's input
-        return {"repo": f"{owner}/{repo}", "branch": ref, "commit": sha, "files": names, "error": f"comment failed: {exc}"}
-    return {"repo": f"{owner}/{repo}", "branch": ref, "commit": sha, "files": names, "head_sha": head, "comment_url": comment_url}
+        return {
+            "repo": f"{owner}/{repo}", "branch": ref, "commit": sha, "files": names, "frames": frames,
+            "error": f"comment failed: {exc}",
+        }
+    return {
+        "repo": f"{owner}/{repo}", "branch": ref, "commit": sha, "files": names, "frames": frames,
+        "head_sha": head, "comment_url": comment_url,
+    }

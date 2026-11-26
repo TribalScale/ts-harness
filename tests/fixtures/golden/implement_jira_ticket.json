@@ -1,6 +1,6 @@
 {
   "workflow_type": "implement_jira_ticket",
-  "definition_version": "2.1.0",
+  "definition_version": "2.2.0",
   "display_name": "Implement one Jira ticket",
   "contracts": {
     "deliver_work_order": {
@@ -547,6 +547,7 @@
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",
         "scope_findings": "$prior.review_precheck.output.scope_findings",
+        "test_changes": "$prior.review_precheck.output.test_changes",
         "refresh": "$prior.review_precheck.output.refresh",
         "human_change_requests": "$runtime.human_requests:deliver_work_order"
       },
@@ -702,6 +703,8 @@
         "checks": "$prior.await_pr_checks.output.checks",
         "failed_checks": "$prior.await_pr_checks.output.failed_checks",
         "host_security": "$prior.deliver_work_order.output.security",
+        "test_changes": "$prior.review_precheck.output.test_changes",
+        "frame_captures": "$prior.deliver_work_order.output.frame_captures",
         "human_change_requests": "$runtime.human_requests:deliver_work_order"
       },
       "on_reject": {},

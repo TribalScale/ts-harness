@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test as base, createBdd } from 'playwright-bdd';
 import { contractProblems } from './contract';
 import { failWith, RealApiMonitor, SMOKE_API_URL, smokeMode } from './smoke';
+import { withRelativeDates } from '../../src/test/relativeDates';
 
 /** Who a scenario signs in as ("Given I am signed in as an admin"). */
 export const PERSONAS: Record<string, { id: string; name: string; roles: string[] }> = {
@@ -23,15 +24,18 @@ export class FakeApi {
   contractViolations: string[] = [];
 
   seed(table: string, rows: Record<string, unknown>[]) {
-    this.tables[table] = rows.map((row) => ({
-      id: crypto.randomUUID(),
-      // The same defaults as a row the fake creates (POST below), so seeded rows match the contract.
-      createdBy: 'user-1',
-      body: '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...row,
-    }));
+    // `{today+3}`, `{monday+4}` and the like become real dates (src/test/relativeDates.ts).
+    this.tables[table] = rows
+      .map((raw) => withRelativeDates(raw))
+      .map((row) => ({
+        id: crypto.randomUUID(),
+        // The same defaults as a row the fake creates (POST below), so seeded rows match the contract.
+        createdBy: 'user-1',
+        body: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        ...row,
+      }));
   }
 
   async attach(page: Page) {

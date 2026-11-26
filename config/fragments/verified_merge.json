@@ -1,6 +1,6 @@
 {
   "fragment_id": "verified_merge",
-  "definition_version": "1.7.0",
+  "definition_version": "1.8.0",
   "display_name": "PR checks, code review, QA gate, freshness, human merge",
   "description": "Publish the host security scan, wait for PR checks (failing checks go back to the implement stage with the end of each failed job's log), run an independent automated code review and the QA gate, each with a revise loop back to the implement stage, confirm each PR contains its base branch head (refreshing it when the base moved), then wait for the human merge. A \"Request changes\" review or /revise comment sends the PR back to the implement stage; closing it stops the work order.",
   "params": {
@@ -362,6 +362,7 @@
         "files": "$prior.review_precheck.output.files",
         "diff_stats": "$prior.review_precheck.output.diff_stats",
         "scope_findings": "$prior.review_precheck.output.scope_findings",
+        "test_changes": "$prior.review_precheck.output.test_changes",
         "refresh": "$prior.review_precheck.output.refresh",
         "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
       },
@@ -488,6 +489,8 @@
         "checks": "$prior.await_pr_checks.output.checks",
         "failed_checks": "$prior.await_pr_checks.output.failed_checks",
         "host_security": "$prior.{{param.implement_stage}}.output.security",
+        "test_changes": "$prior.review_precheck.output.test_changes",
+        "frame_captures": "$prior.{{param.implement_stage}}.output.frame_captures",
         "human_change_requests": "$runtime.human_requests:{{param.implement_stage}}"
       },
       "on_block": {

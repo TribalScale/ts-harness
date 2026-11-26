@@ -116,7 +116,8 @@
         "issue_type_by_project": "$workflow.issue_type_by_project",
         "jira_project_key": "$input.jira_project_key",
         "jira_allowed_projects": "$input.jira_allowed_projects",
-        "design_refs": "$workflow.design_refs"
+        "design_refs": "$workflow.design_refs",
+        "screen_specs": "$workflow.screen_specs_text"
       },
       "retry": {
         "max_retries": 1,

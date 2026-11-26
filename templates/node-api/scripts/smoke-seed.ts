@@ -5,7 +5,9 @@ import type { PrismaClient } from '@prisma/client';
  * so a page that lists or opens a record has something real to render. Upserts only: running
  * it twice, or against a database that already has data, never deletes anything.
  *
- * Add a few rows per model as modules are added, enough for every page to show content.
+ * Add a few rows per model as modules are added, enough for every page to show content. Dates
+ * come from `src/lib/relativeDates.ts` (this week, next week), never a fixed calendar day, so the
+ * data looks current on every run.
  */
 export const SMOKE_NOTES = [
   {

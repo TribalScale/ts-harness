@@ -4353,6 +4353,67 @@ async def smoke_report_webhook(request: Request) -> Response:
     return _json(result, 202 if result.get("status") == "proposed" else 200)
 
 
+# ── GET/POST /webhooks/smoke/frames ───────────────────────────────────────────
+
+
+async def smoke_frames_list(request: Request) -> Response:
+    """The design frames a web repository's nightly run should capture (route and size).
+
+    Same per-repository token as the smoke report. See ts_harness.workflows.design_conformance.
+    """
+    from ts_harness.memory.client import get_memory_client
+    from ts_harness.workflows.design_conformance import frames_manifest
+    from ts_harness.workflows.nightly_smoke import SECRET_ENV, bearer, report_secret, token_matches
+
+    repo = str(request.query_params.get("repo") or "")[:200]
+    if not report_secret():
+        return _json({"error": f"smoke reports are off: {SECRET_ENV} is not set"}, 503)
+    if not repo or not token_matches(repo, bearer(request.headers.get("authorization"))):
+        log_event("smoke_frames_unauthorized")
+        return _json({"error": "invalid smoke report token for this repository"}, 401)
+    try:
+        manifest = await asyncio.to_thread(frames_manifest, repo, memory=get_memory_client())
+    except Exception as exc:  # noqa: BLE001
+        log_event("smoke_frames_error", error=str(exc))
+        return _json({"error": "the frame list could not be read"}, 500)
+    return _json(manifest)
+
+
+async def smoke_frames_report(request: Request) -> Response:
+    """A nightly run captured the frames: compare them with the design, propose one bug for what's new."""
+    raw = await request.body()
+    if len(raw) > _SMOKE_REPORT_MAX_BYTES:
+        return _json({"error": "report too large"}, 413)
+    try:
+        body: Any = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        return _json({"error": "invalid json"}, 400)
+
+    from ts_harness.workflows.design_conformance import handle_frames_report
+    from ts_harness.workflows.nightly_smoke import SmokeReportError, bearer
+
+    runtime = get_runtime()
+    tenant_id = str(runtime.config.gateway.default_tenant_id)
+    try:
+        result = await asyncio.to_thread(
+            handle_frames_report, body, bearer(request.headers.get("authorization")), tenant_id=tenant_id
+        )
+    except SmokeReportError as exc:
+        if exc.status == 401:
+            log_event("smoke_frames_unauthorized")
+        return _json({"error": str(exc)}, exc.status)
+    except Exception as exc:  # noqa: BLE001
+        log_event("smoke_frames_error", error=str(exc))
+        return _json({"error": "the frame captures could not be compared"}, 500)
+    runtime.audit.append(
+        tenant_id=tenant_id,
+        action_type="design_conformance_report",
+        actor_id="nightly-smoke",
+        payload={k: result.get(k) for k in ("status", "repo", "program_id", "findings", "new_findings")},
+    )
+    return _json(result, 202 if result.get("status") == "proposed" else 200)
+
+
 # ── POST /channels/{channel} and /channels/{channel}/{path:path} ──────────────
 
 
@@ -4900,6 +4961,8 @@ routes = [
     Route("/webhooks/github", endpoint=github_webhook, methods=["POST"]),
     # Nightly smoke failures from web repositories (per-repository token)
     Route("/webhooks/smoke", endpoint=smoke_report_webhook, methods=["POST"]),
+    Route("/webhooks/smoke/frames", endpoint=smoke_frames_list, methods=["GET"]),
+    Route("/webhooks/smoke/frames", endpoint=smoke_frames_report, methods=["POST"]),
     # Channel webhooks — specific sub-paths before the bare channel route
     Mount(
         "/channels",

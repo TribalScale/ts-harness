@@ -128,8 +128,22 @@ def design_input(
     if store is None:
         return out
     if step in QA_STEPS:
-        images = load_images(refs, store, limit=QA_IMAGE_LIMIT, max_bytes=QA_IMAGE_BYTES)
+        from ts_harness.workflows.frame_review import frame_review_input
+
         existing = list(task_input.get("_images") or [])
+        framed = frame_review_input(refs, task_input.get("frame_captures"), store)
+        if framed.get("_images"):
+            # Each frame next to its capture replaces the separate design images; two test
+            # screenshots stay for behaviour the frames don't show.
+            out.update({k: v for k, v in framed.items() if k != "_images"})
+            out["_images"] = framed["_images"] + existing[:2]
+            out["design_refs_text"] = render_design_refs(
+                refs, heading="## Design references (each image shows the frame left and its capture right)"
+            )
+            return out
+        if framed:
+            out.update({k: v for k, v in framed.items() if k != "_images"})
+        images = load_images(refs, store, limit=QA_IMAGE_LIMIT, max_bytes=QA_IMAGE_BYTES)
         out["_images"] = existing + images
         out["design_refs_text"] = render_design_refs(
             refs, heading="## Design references (compare the screenshots against these)"

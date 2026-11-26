@@ -277,12 +277,15 @@ def validate_work_order_artifacts(
             work_order_repository_problems,
         )
 
+        from ts_harness.implementation.frame_checklist import frame_checklist_problems
+
         markdown = str(artifacts.get("work_orders_markdown") or "")
         listed = repositories if isinstance(repositories, list) else None
         problems = [
             *work_order_repository_problems(markdown, listed),
             *deferred_work_problems(markdown),
             *api_contract_problems(markdown, listed),
+            *frame_checklist_problems(markdown),
         ]
         return [ContractViolation("/artifacts/work_orders_markdown", problem) for problem in problems]
     return []

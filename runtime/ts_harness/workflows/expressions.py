@@ -174,6 +174,8 @@ def resolve_token(
         "workflow.root_program_id",
         "workflow.assignee_account_id",
         "workflow.design_refs",
+        # The screen specs drafted from the frames, for each UI work order's frame checklist.
+        "workflow.screen_specs_text",
     }:
         return _workflow_handoff_value(tasks, extras, (path[len("workflow.") :],))
     if path.startswith("input."):

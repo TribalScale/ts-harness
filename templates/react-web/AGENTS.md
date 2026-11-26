@@ -61,8 +61,11 @@ features/                Gherkin acceptance tests and their steps
   order, status messages use `role="alert"` when they need attention. Tests find elements by
   role and label, so this is also what keeps tests working.
 - **Styling.** Tailwind utilities; design tokens (colors, type, spacing) in `src/index.css`
-  under `@theme`, taken from Figma. Match the Figma frame the ticket links: layout at 1440 px
-  wide, copy, states (empty, loading, error).
+  under `@theme`, taken from Figma. Match each Figma frame the ticket lists, everything its
+  frame checklist's **Shows** names: layout at the frame's size, copy, every panel and state
+  (selected, dimmed, open, empty, loading, error), each card's content, and which colour each
+  page area, row and card uses. Use the tokens; a page background or row colour that differs
+  from the frame fails QA.
 - **Configuration.** Only `VITE_*` variables, read through `env`. They are public: never put
   secrets in them. A new one goes in `src/config/env.ts` and `.env.example`.
 - **Formatting and lint (CI).** `npm run format` and `npm run lint` before committing.
@@ -86,6 +89,18 @@ and this section. Role names must match the API's and Entra ID's.
   see). Seed data with `Given the API has <table>:` and a data table. When a page calls an
   endpoint the fake API does not know, extend `FakeApi` in `features/support/fixtures.ts` with
   the backend's real paths, bodies and error shape.
+- **Frame scenarios (CI evidence).** A ticket that lists design frames has a `## Frame
+checklist`. For each frame, add one scenario to the ticket's feature file tagged with the
+  frame's tag (`@frame-D7`): sign in as the State's role, seed the State's data, open the Route,
+  do the State's clicks, and end on that state with no steps after it. TS Harness runs every
+  `@frame-*` scenario at the frame's own size and screenshots its last state; QA lays it next to
+  the frame. A frame with no scenario, or one that ends somewhere else, fails QA. Put state in
+  the URL where the app allows it (`/week?source=carryOver`): the nightly run opens frames by
+  route against the real API.
+- **Dates in test data.** Seed dates relative to today, never a calendar day: a cell
+  `{today+3}`, `{today-7}`, `{monday}` (this week's Monday) or `{monday+4}` (this Friday) becomes
+  a real date (`src/test/relativeDates.ts`); `{monday+1T14:00}` adds a time. Fixed dates age
+  until every record is overdue and the current week is empty.
 - **Unit (CI).** Pages and components with logic get Testing Library tests with MSW handlers
   for the API (`server.use(http.get(...))`): the normal case, loading, empty and error states.
   `npm test` enforces at least 80% line coverage of `src/features` and `src/components` (75% of
@@ -98,7 +113,9 @@ and this section. Role names must match the API's and Entra ID's.
   response the contract does not allow or a page error fails the run, and TS Harness proposes a
   bug. A new page is covered automatically once it is in the router; give it seed data in the
   API's `scripts/smoke-seed.ts` so it has something to show. Do not add `@smoke` to ticket
-  features.
+  features. The same run also opens each design frame TS Harness lists (route and size) and
+  sends the screenshots back; the harness compares them with the design and proposes one bug
+  for what drifted (`features/smoke/frames.feature`, `scripts/frames-report.mjs`).
 - Run locally: `npm test`, and `npx playwright install chromium` once, then `npm run test:bdd`.
 
 ## Commands

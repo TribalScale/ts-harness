@@ -164,6 +164,38 @@ checkout `SMOKE_API_URL=http://127.0.0.1:3000 SMOKE_API_DIR=../api npm run test:
 
 Every report is audited as `smoke_report` with its outcome.
 
+## Design frames every night
+
+Each UI work order is compared with its frames before merge. What that can't see: a later
+ticket changing a screen an earlier one built, the shell or a shared component drifting, a screen
+that only looks right with the fake API's data. So the same nightly run checks every delivered
+screen against its design (`ts_harness.workflows.design_conformance`).
+
+1. **What to capture.** When QA passes a work order whose frame checklist gives a route, its
+   frames are recorded for the web repository (`runtime_kv` namespace `design-frames`, newest 60
+   per repository): key, route, size, the design image and the work order. The run fetches the
+   list from `GET /webhooks/smoke/frames?repo=<owner/name>` with the report token.
+2. **Capture.** `features/smoke/frames.feature` (react-web 1.5.0) signs in as an admin, opens each
+   route at the frame's size against the real API, and saves `frames-out/<key>.png` plus a
+   `manifest.json` noting routes it could not capture. A capture never fails the run.
+3. **Send.** `scripts/frames-report.mjs` commits `frames-out/` to the branch
+   `ts-harness-evidence/design-conformance` (one parentless commit, the work branch untouched;
+   the workflow has `contents: write` for it) and posts `{repo, commit, run_url}` to
+   `POST /webhooks/smoke/frames`.
+4. **Compare.** The harness reads each capture from that commit and its design image from the
+   intake bucket, and samples both: where both are a flat colour, colour pairs that differ at
+   4 or more of the sampled points are findings, as are routes that could not be captured.
+5. **Propose.** New findings (keyed by frame and colour pairs, known for 7 days in namespace
+   `design-conformance`) go into one `bug_to_jira_work_orders` program per night, listing each
+   frame with its Figma link, its capture and what differs. Its gates wait for a person, like a
+   smoke failure. Answers: `proposed` (202), `duplicate`, or `conforms`.
+
+Layout and missing panels need judgement, not sampling: the bug links both images so the
+investigation, and the person approving it, can look. Funnel serves `/webhooks/smoke/frames`
+through the `/webhooks/smoke` mount. Repositories created before react-web 1.5.0 need
+`features/smoke/frames.feature`, the step in `features/steps/smoke.steps.ts`,
+`scripts/frames-report.mjs` and the workflow changes copied from the template.
+
 ## Rotate the deploy key
 
 Remove the old key and run the setup again, automatic or manual:

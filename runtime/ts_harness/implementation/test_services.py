@@ -1297,3 +1297,143 @@ def screenshot_name(path: Path) -> str:
 # Last, so every helper above (and below main) is defined when this runs as a module.
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+
+
+# --- frame captures -------------------------------------------------------------------------------
+
+FRAME_CONFIG = "playwright.ts-harness-frames.config.ts"
+FRAMES_DIRNAME = "frames"
+
+
+def _frames_config_text(base: Path, out_dir: Path, report: Path, width: int, height: int) -> str:
+    """The repo's own config at one frame size, with a screenshot of each test's last state."""
+    shot = (
+        "{ screenshot: 'on' as const, video: 'off' as const, trace: 'off' as const, "
+        f"viewport: {{ width: {int(width)}, height: {int(height)} }}, deviceScaleFactor: 1 }}"
+    )
+    return (
+        "// Written by TS Harness for one run; not part of the repository.\n"
+        f"import base from './{base.stem}';\n"
+        f"const shot = {shot};\n"
+        "export default {\n"
+        "  ...base,\n"
+        f"  outputDir: {json.dumps(str(out_dir))},\n"
+        f"  reporter: [['json', {{ outputFile: {json.dumps(str(report))} }}]],\n"
+        "  retries: 0,\n"
+        "  use: { ...(base.use ?? {}), ...shot },\n"
+        "  projects: (base.projects ?? []).map((project: any) => ({ ...project, use: { ...(project.use ?? {}), ...shot } })),\n"
+        "};\n"
+    )
+
+
+def _report_tests(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every test in a Playwright JSON report: ``{title, tags, status, screenshot}``."""
+    found: list[dict[str, Any]] = []
+
+    def walk(suite: dict[str, Any], titles: list[str]) -> None:
+        here = [*titles, str(suite.get("title") or "")]
+        for spec in suite.get("specs") or []:
+            title = " ".join([*here, str(spec.get("title") or "")])
+            tags = [str(tag) for tag in spec.get("tags") or []]
+            for test in spec.get("tests") or []:
+                tags += [str(a.get("description") or "") for a in test.get("annotations") or [] if a.get("type") == "tag"]
+                for result in test.get("results") or []:
+                    shots = [
+                        str(a.get("path"))
+                        for a in result.get("attachments") or []
+                        if a.get("path") and str(a.get("contentType") or "").startswith("image/")
+                    ]
+                    found.append(
+                        {"title": title, "tags": tags, "status": str(result.get("status") or ""), "screenshot": shots[-1] if shots else ""}
+                    )
+        for child in suite.get("suites") or []:
+            walk(child, here)
+
+    for suite in report.get("suites") or []:
+        walk(suite, [])
+    return found
+
+
+def _frame_of(test: dict[str, Any], ids: list[str]) -> str | None:
+    from ts_harness.implementation.frame_checklist import FRAME_TAG_PREFIX
+
+    labels = [*test.get("tags", []), test.get("title", "")]
+    for ref in ids:
+        tag = f"{FRAME_TAG_PREFIX}{ref}".lower()
+        for label in labels:
+            if re.search(rf"(?<![\w-]){re.escape(tag)}(?![\w-])", str(label).lower()) or str(label).lower() == tag[1:]:
+                return ref
+    return None
+
+
+def capture_frames(
+    repo_dir: Path,
+    frames: list[dict[str, Any]],
+    out_dir: Path,
+    env: dict[str, str],
+    *,
+    timeout: int = 900,
+) -> tuple[list[dict[str, Any]], str]:
+    """Run each frame's ``@frame-D<n>`` scenario at the frame's size; screenshot its last state.
+
+    ``frames`` are ``{id, title, width, height}``. Returns one capture per frame, ``status``
+    ``captured`` (``file`` is ``<out_dir>/frame-D7.png``), ``failed`` (the scenario failed; a
+    screenshot of where it stopped when there is one) or ``missing`` (no scenario carries the
+    tag), and a log line. Never fails verification: QA judges the captures.
+    """
+    from ts_harness.implementation.workspaces import find_bin
+
+    repo_dir, out_dir = Path(repo_dir), Path(out_dir)
+    captures = {f["id"]: {**f, "status": "missing", "file": "", "note": "no scenario tagged @frame-" + f["id"]} for f in frames}
+    base = playwright_config(repo_dir)
+    binary = find_bin(repo_dir, base.parent, "playwright") if base is not None else None
+    if base is None or binary is None:
+        for capture in captures.values():
+            capture.update(status="unavailable", note="no Playwright config or binary in the repository")
+        return list(captures.values()), "frames: no Playwright config or binary"
+    if uses_playwright_bdd(repo_dir):
+        bddgen = find_bin(repo_dir, base.parent, "bddgen")
+        if bddgen is not None:
+            code, text = _shell(shlex.join([str(bddgen)]), cwd=base.parent, env=env, timeout=300)
+            if code != 0:
+                return list(captures.values()), f"frames: bddgen failed (exit {code})\n{text[-800:]}"
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sizes: dict[tuple[int, int], list[str]] = {}
+    for frame in frames:
+        sizes.setdefault((int(frame.get("width") or 1440), int(frame.get("height") or 900)), []).append(frame["id"])
+    notes: list[str] = []
+    for (width, height), ids in sizes.items():
+        run_dir = out_dir / f"run-{width}x{height}"
+        report = out_dir / f"report-{width}x{height}.json"
+        wrapper = base.parent / FRAME_CONFIG
+        wrapper.write_text(_frames_config_text(base, run_dir, report, width, height), encoding="utf-8")
+        grep = "|".join(re.escape(f"@frame-{ref}") + "(?![0-9])" for ref in ids)
+        try:
+            code, text = _shell(
+                shlex.join([str(binary), "test", "--config", str(wrapper), "--grep", grep]), cwd=base.parent, env=env, timeout=timeout
+            )
+        finally:
+            wrapper.unlink(missing_ok=True)
+        try:
+            tests = _report_tests(json.loads(report.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            tests = []
+            notes.append(f"frames {width}x{height}: no report (exit {code})\n{text[-800:]}")
+        for test in tests:
+            ref = _frame_of(test, ids)
+            if ref is None or captures[ref]["status"] == "captured":
+                continue
+            shot = Path(test["screenshot"]) if test["screenshot"] else None
+            target = out_dir / f"frame-{ref}.png"
+            if shot is not None and shot.is_file():
+                shutil.copyfile(shot, target)
+            passed = test["status"] in {"passed", "expected"}
+            captures[ref].update(
+                status="captured" if passed and target.is_file() else "failed",
+                file=str(target) if target.is_file() else "",
+                note="" if passed else f"the scenario {test['status']}: {test['title'][:160]}",
+                scenario=test["title"][:200],
+            )
+        notes.append(f"frames {width}x{height}: {', '.join(ids)} (exit {code})")
+    return list(captures.values()), "; ".join(notes)

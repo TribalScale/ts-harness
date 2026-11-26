@@ -3,7 +3,7 @@ import { ensureTestIssuerKeys } from './test-issuer.js';
 
 /**
  * `npm run start:smoke`: the API as the nightly smoke run uses it. Applies migrations, seeds
- * deterministic data (scripts/smoke-seed.ts), then serves with the CI-only test issuer on, so
+ * reference data (scripts/dev-seed.ts) and deterministic data (scripts/smoke-seed.ts), then serves with the CI-only test issuer on, so
  * the web app's smoke features can sign in without Entra ID. Fixture adapters only: anything
  * that would reach an external system (S3, queues, SAP...) gets a fixture in `createDeps` below.
  *
@@ -26,6 +26,8 @@ execFileSync('npx', ['prisma', 'migrate', 'deploy'], { stdio: 'inherit' });
 
 const { env } = await import('../src/config/env.js');
 const { prisma } = await import('../src/db/prisma.js');
+const { seedDev } = await import('./dev-seed.js');
+await seedDev(prisma);
 const { seedSmoke } = await import('./smoke-seed.js');
 await seedSmoke(prisma);
 

@@ -582,6 +582,28 @@ STAGE_OUTPUT_KEYS = (
 )
 
 
+def frame_capture_output(verification: dict[str, Any], screenshots: Any) -> list[dict[str, Any]]:
+    """One entry per design frame: how its capture went and, when published, where it is.
+
+    ``file`` names the image in the evidence commit (``screenshots.commit`` of ``repo``), which
+    the QA step fetches and lays next to the frame.
+    """
+    published = screenshots if isinstance(screenshots, dict) else {}
+    names = set(published.get("frames") or [])
+    out: list[dict[str, Any]] = []
+    for capture in verification.get("frame_captures") or []:
+        if not isinstance(capture, dict) or not capture.get("id"):
+            continue
+        entry = {k: capture.get(k) for k in ("id", "title", "width", "height", "status", "note", "scenario") if capture.get(k)}
+        name = f"frame-{capture['id']}.png"
+        if name in names:
+            entry.update(file=name, repo=published.get("repo"), commit=published.get("commit"))
+        elif entry.get("status") == "captured":
+            entry.update(status="unpublished", note="captured but not published (too large or the push failed)")
+        out.append(entry)
+    return out
+
+
 def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
     """The ``deliver_work_order`` stage output for a coding run result."""
     output = {key: result[key] for key in STAGE_OUTPUT_KEYS if result.get(key) is not None}
@@ -593,6 +615,9 @@ def coding_stage_output(result: dict[str, Any]) -> dict[str, Any]:
         output["verify_summary"] = verification_summary(verification)
     if isinstance(result.get("screenshots"), dict) and result["screenshots"].get("files"):
         output["screenshots"] = result["screenshots"]
+    captures = frame_capture_output(verification, result.get("screenshots"))
+    if captures:
+        output["frame_captures"] = captures
     for key in ("pre_push_review", "timings"):
         if isinstance(result.get(key), dict) and result[key]:
             output[key] = result[key]
