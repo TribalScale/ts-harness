@@ -13,7 +13,13 @@ and in aggregate:
   that the code review gate then blocked;
 * cost per ticket (coding job usage), median and total, and the share spent on the stronger
   model;
-* lost coding jobs.
+* lost coding jobs;
+* autonomy (the self-improvement target): the share of finished tickets that merged with no person
+  stepping in, and which interventions the others had (see ts_harness.improvement.guard);
+* the guard: problems after merge within ``guard_days`` (reverts, Jira bugs, nightly smoke
+  failures) and arbiter overrules, with "unknown" where GitHub or Jira could not be read;
+* the versions each ticket ran with (``_versions``, see ts_harness.improvement.versions), so every
+  number can be grouped by any versions key (``group_by=variants.pre_push``).
 
 Each ticket is read once: its workflow record (shared with History via
 :func:`live_view.period_runs`) and its coding jobs (one query, inside :func:`ticket_story`).
@@ -25,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
+from ts_harness.improvement import guard as gd
+from ts_harness.improvement import versions as vs
 from ts_harness.workflows import live_view as lv
 from ts_harness.workflows import ticket_story as ts
 
@@ -99,6 +107,7 @@ def ticket_metrics(story: dict[str, Any], tasks: list[dict[str, Any]], outcome: 
     cost = round(sum(float(e.get("cost_usd") or 0) for e in runs), 2)
     strong_cost = round(sum(float(e.get("cost_usd") or 0) for e in runs if strong(e)), 2)
     totals = {t["category"]: int(t["seconds"]) for t in story.get("totals") or []}
+    stepped_in = gd.interventions(tasks)
     return {
         "revisions": revisions,
         "revisions_by_trigger": by_trigger,
@@ -117,6 +126,9 @@ def ticket_metrics(story: dict[str, Any], tasks: list[dict[str, Any]], outcome: 
         "cost_usd": cost,
         "strong_cost_usd": strong_cost,
         "lost_jobs": sum(1 for e in runs if e.get("job_status") == "lost"),
+        "merged_at": lv._iso(merged_at) if outcome == "merged" else "",
+        "interventions": stepped_in,
+        "autonomous": outcome == "merged" and not stepped_in,
     }
 
 
@@ -143,6 +155,11 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     you = sum(r["you_seconds"] for r in rows)
     agent = sum(r["agent_seconds"] for r in rows)
     first_try = sum(1 for r in finished if r["first_try"])
+    autonomous = sum(1 for r in finished if r.get("autonomous"))
+    by_kind: dict[str, int] = {}
+    for row in finished:
+        for kind in row.get("interventions") or []:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
     return {
         "tickets": len(rows),
         "finished": len(finished),
@@ -165,6 +182,16 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cost_usd": {"median": round(median(costs), 2) if costs else None, "total": total_cost},
         "strong_cost_share": _share(sum(r["strong_cost_usd"] for r in rows), total_cost),
         "lost_jobs": sum(r["lost_jobs"] for r in rows),
+        "autonomy": {
+            "autonomous": autonomous,
+            "rate": _share(autonomous, len(finished)),
+            "merged_share": _share(autonomous, len(merged)),
+            "intervened": sum(1 for r in finished if r.get("interventions")),
+            "by_kind": {k: by_kind[k] for k in gd.INTERVENTION_KINDS if by_kind.get(k)},
+        },
+        "guard": gd.summarize(rows, next((int(r["guard"]["window_days"]) for r in rows
+                                           if isinstance(r.get("guard"), dict) and r["guard"].get("window_days")),
+                                          gd.DEFAULT_DAYS)),
     }
 
 
@@ -178,6 +205,7 @@ def weekly(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {"week": week, "tickets": len(items),
          "first_try_rate": _share(sum(1 for r in items if r["first_try"]), len(items)),
+         "autonomy_rate": _share(sum(1 for r in items if r.get("autonomous")), len(items)),
          "revisions_mean": round(mean(r["revisions"] for r in items), 2)}
         for week, items in sorted(weeks.items())
     ]
@@ -193,7 +221,17 @@ def delivery_metrics(
     repo: str = "",
     include_running: bool = False,
     now: datetime | None = None,
+    group_by: str = "",
+    guard: bool = True,
+    guard_days: int = gd.DEFAULT_DAYS,
+    guard_context: gd.GuardContext | None = None,
 ) -> dict[str, Any]:
+    """Delivery metrics for the period; see the module docstring.
+
+    ``group_by`` is a dotted versions key (``variants.pre_push``, ``skills.governed-code-review``,
+    ``models.coding``): the response then has ``groups``, one aggregate per value (tickets with no
+    value are ``(none)``). ``guard=False`` skips the external post-merge lookups.
+    """
     now = now or datetime.now(timezone.utc)
     collected: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]] = []
     projects: set[str] = set()
@@ -220,15 +258,58 @@ def delivery_metrics(
         ts.model_label(str(_input(t).get("coding_model")))
         for _, _, tasks, _ in collected for t in tasks if str(_input(t).get("coding_model") or "").strip()
     }
-    rows = [{**base, **ticket_metrics(story, tasks, ended["outcome"], strong_labels)}
+    rows = [{**base, **ticket_metrics(story, tasks, ended["outcome"], strong_labels), "versions": vs.ticket_versions(tasks)}
             for base, story, tasks, ended in collected]
+    days_window = max(1, min(int(guard_days or gd.DEFAULT_DAYS), 90))
+    # Without the guard no lookup runs: the post-merge signals are "unknown", arbiter overrules still count.
+    ctx = guard_context or gd.GuardContext(days=days_window, now=now, memory=memory,
+                                           max_lookups=gd.GuardContext.max_lookups if guard else 0)
+    tasks_by_row = {id(row): tasks for row, (_, _, tasks, _) in zip(rows, collected)}
+    # The most recent merges first: they are the ones a change being tried would affect.
+    for row in sorted(rows, key=lambda r: r.get("merged_at") or "", reverse=True):
+        row["guard"] = {**gd.post_merge(ctx, row, tasks_by_row[id(row)], lv._parse(row.get("merged_at"))),
+                        "window_days": ctx.days}
     rows.sort(key=lambda r: (-r["cost_usd"], -r["revisions"]))
-    return {
+    result = {
         "generated_at": lv._iso(now),
         "days": int(days or 14),
         "include_running": include_running,
         "summary": aggregate(rows),
         "weekly": weekly(rows),
         "tickets": rows,
-        "facets": {"projects": sorted(projects), "repos": sorted(repos)},
+        "facets": {"projects": sorted(projects), "repos": sorted(repos), "group_keys": group_keys(rows)},
     }
+    if group_by.strip():
+        result["group_by"] = group_by.strip()
+        result["groups"] = groups(rows, group_by.strip())
+    return result
+
+
+NO_VALUE = "(none)"
+
+
+def _leaves(versions: dict[str, Any], prefix: str = "") -> list[str]:
+    keys: list[str] = []
+    for key, value in versions.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict):
+            keys.extend(_leaves(value, f"{path}."))
+        elif key != "schema" and value not in (None, ""):
+            keys.append(path)
+    return keys
+
+
+def group_keys(rows: list[dict[str, Any]]) -> list[str]:
+    """Every versions key some ticket in the period has, for the group-by choice."""
+    return sorted({key for row in rows for key in _leaves(row.get("versions") or {})})
+
+
+def groups(rows: list[dict[str, Any]], path: str) -> list[dict[str, Any]]:
+    """One aggregate per value of the versions key ``path``, largest group first."""
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        buckets.setdefault(vs.lookup(row.get("versions"), path) or NO_VALUE, []).append(row)
+    return [
+        {"value": value, "tickets": len(items), "summary": aggregate(items)}
+        for value, items in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0]))
+    ]

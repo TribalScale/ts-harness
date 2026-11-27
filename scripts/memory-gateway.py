@@ -4923,6 +4923,10 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     result = budget_routes.claim_budget_alerts(conn, body)
                 elif parts == ["program-alerts"] and method == "POST":
                     result = budget_routes.claim_program_budget_alerts(conn, body)
+                elif parts == ["improvement"] and method == "GET":
+                    result = budget_routes.improvement_spend(conn, query)
+                elif parts == ["improvement", "charges"] and method == "POST":
+                    result = budget_routes.charge_improvement(conn, body)
                 elif len(parts) == 2 and parts[0] == "programs" and method == "GET":
                     result = budget_routes.program_team_budget(conn, parts[1], query)
                 elif len(parts) == 2 and parts[0] == "programs" and method == "PUT":

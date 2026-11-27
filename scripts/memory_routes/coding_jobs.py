@@ -94,6 +94,9 @@ def _public(row: dict[str, Any], *, spec: bool = False) -> dict[str, Any]:
     row_spec = row.get("spec") if isinstance(row.get("spec"), dict) else {}
     if row_spec.get("model"):
         job["model"] = str(row_spec["model"])
+    if isinstance(row_spec.get("versions"), dict):
+        # Run tagging (ts_harness.improvement.versions): what the job ran with, for metrics.
+        job["versions"] = row_spec["versions"]
     sized = _spec_sizing(row)
     if sized:
         job["spec_memory_mb"] = sized["worker_memory_mb"]

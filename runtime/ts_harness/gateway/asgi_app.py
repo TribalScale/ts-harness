@@ -1395,14 +1395,29 @@ async def admin_metrics(request: Request) -> Response:
     except ValueError:
         days = 14
     try:
-        return _json(delivery_metrics.delivery_metrics(
-            memory, tenant_id=str(auth.tenant_id or "default"), allowed=allowed, days=days,
+        guard_days = max(1, min(90, int(params.get("guard_days") or 14)))
+    except ValueError:
+        guard_days = 14
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        # The guard reads GitHub and Jira (bounded and cached): off the event loop.
+        result = await asyncio.to_thread(
+            delivery_metrics.delivery_metrics,
+            memory, tenant_id=tenant_id, allowed=allowed, days=days,
             project=str(params.get("project") or ""), repo=str(params.get("repo") or ""),
             include_running=str(params.get("running") or "").lower() in {"1", "true", "yes"},
-        ))
+            group_by=str(params.get("group_by") or "")[:200],
+            guard=str(params.get("guard") or "1").lower() not in {"0", "false", "no", "off"},
+            guard_days=guard_days,
+        )
     except Exception as exc:  # noqa: BLE001
         log_event("admin_metrics_error", error=str(exc))
         return _json({"error": "could not compute the delivery metrics"}, 500)
+    from ts_harness.improvement.budget import ImprovementBudget
+
+    # Never breaks the page: an unreadable ledger is reported as unavailable.
+    result["improvement_budget"] = await asyncio.to_thread(ImprovementBudget(tenant_id=tenant_id, memory=memory).status)
+    return _json(result)
 
 
 async def admin_ticket_story(request: Request) -> Response:

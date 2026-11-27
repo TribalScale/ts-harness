@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { MetricsResponse, MetricsTicket } from "../api/types";
+import type { ImprovementBudgetStatus, MetricsGuardSummary, MetricsResponse, MetricsSummary, MetricsTicket } from "../api/types";
 import { OUTCOME_LABELS } from "./HistoryView";
 import { TicketStory } from "./TicketStory";
 import { formatDuration } from "./Timeline";
@@ -15,6 +15,58 @@ export const TRIGGER_LABELS: Record<string, string> = {
   rerun: "re-run",
   other: "other",
 };
+
+/** How a person stepped in on a ticket (see ts_harness.improvement.guard). */
+export const INTERVENTION_LABELS: Record<string, string> = {
+  decision_retry: "retry",
+  decision_revise: "revise",
+  decision_accept: "accept",
+  decision_stop: "stop",
+  jira_reply: "Jira reply",
+  revise_grant: "/revise",
+  pr_changes_requested: "PR changes requested",
+  pr_closed: "PR closed",
+  human_change_requests: "change requests",
+  accepted_by_person: "accepted as is",
+  stopped_by_person: "stopped",
+};
+
+const GUARD_LABELS: [keyof MetricsGuardSummary["signals"], string][] = [
+  ["reverts", "reverts"],
+  ["jira_bugs", "Jira bugs"],
+  ["smoke_failures", "smoke failures"],
+  ["arbiter_overruled", "arbiter overruled"],
+];
+
+function count(value: number | null | undefined): string {
+  return value === null || value === undefined ? "unknown" : String(value);
+}
+
+function guardTile(guard: MetricsGuardSummary): { value: string; detail: string } {
+  const signals = GUARD_LABELS.map(([key, label]) => {
+    const signal = guard.signals[key];
+    const partly = signal.count !== null && signal.unknown > 0 ? ` (${signal.unknown} unknown)` : "";
+    return `${label} ${count(signal.count)}${partly}`;
+  }).join(" · ");
+  // Nothing could be checked (GitHub, Jira and the smoke record all unreadable): say so, not 0%.
+  const nothingKnown = guard.merged > 0 && GUARD_LABELS.slice(0, 3).every(([key]) => guard.signals[key].count === null);
+  return {
+    value: nothingKnown ? "unknown" : percent(guard.problem_rate),
+    detail: `${guard.tickets_with_problems} of ${guard.merged} merged within ${guard.window_days} days · ${signals}`,
+  };
+}
+
+function budgetTile(budget: ImprovementBudgetStatus): { value: string; detail: string } {
+  if (!budget.available || budget.spent_usd === null) {
+    return { value: "unknown", detail: `cap ${dollars(budget.cap_usd)} for ${budget.month}` };
+  }
+  return {
+    value: `${dollars(budget.spent_usd)} of ${dollars(budget.cap_usd)}`,
+    detail: budget.paused
+      ? `${budget.month} · cap reached: improvement work paused until next month`
+      : `${budget.month} · ${dollars(budget.remaining_usd)} left · delivery budgets are separate`,
+  };
+}
 
 function percent(value: number | null | undefined): string {
   return value === null || value === undefined ? "–" : `${Math.round(value * 100)}%`;
@@ -63,6 +115,13 @@ function TicketRow({ ticket }: { ticket: MetricsTicket }) {
         <td>{duration(ticket.time_to_merge_seconds)}</td>
         <td>{formatDuration(ticket.you_seconds)}</td>
         <td>
+          {ticket.interventions && ticket.interventions.length > 0
+            ? ticket.interventions.map((kind) => INTERVENTION_LABELS[kind] || kind).join(", ")
+            : ticket.outcome === "merged"
+              ? "No"
+              : "–"}
+        </td>
+        <td>
           {ticket.program_id && (
             <button type="button" className="link-button" aria-expanded={open} onClick={() => setOpen(!open)}>
               {open ? "Hide story" : "Story"}
@@ -72,12 +131,46 @@ function TicketRow({ ticket }: { ticket: MetricsTicket }) {
       </tr>
       {open && (
         <tr>
-          <td colSpan={7}>
+          <td colSpan={8}>
             <TicketStory programId={ticket.program_id} workflowId={ticket.workflow_id} />
           </td>
         </tr>
       )}
     </Fragment>
+  );
+}
+
+function GroupsTable({ groupBy, groups }: { groupBy: string; groups: { value: string; tickets: number; summary: MetricsSummary }[] }) {
+  return (
+    <section className="metrics-trend" aria-label="By version">
+      <h3>By {groupBy}</h3>
+      <table className="metrics-table">
+        <thead>
+          <tr>
+            <th>Value</th>
+            <th>Tickets</th>
+            <th>Merged without a person</th>
+            <th>First-try pass</th>
+            <th>Problems after merge</th>
+            <th>Cost per ticket</th>
+            <th>Time to merge</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <tr key={g.value}>
+              <td>{g.value}</td>
+              <td>{g.tickets}</td>
+              <td>{percent(g.summary.autonomy?.rate)}</td>
+              <td>{percent(g.summary.first_try_rate)}</td>
+              <td>{g.summary.guard ? guardTile(g.summary.guard).value : "–"}</td>
+              <td>{dollars(g.summary.cost_usd.median)}</td>
+              <td>{duration(g.summary.time_to_merge_seconds.median)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -87,6 +180,7 @@ export function MetricsView() {
   const [project, setProject] = useState("");
   const [repo, setRepo] = useState("");
   const [running, setRunning] = useState(false);
+  const [groupBy, setGroupBy] = useState("");
   const [data, setData] = useState<MetricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,19 +189,21 @@ export function MetricsView() {
     if (project) params.set("project", project);
     if (repo) params.set("repo", repo);
     if (running) params.set("running", "1");
+    if (groupBy) params.set("group_by", groupBy);
     try {
       setData(await apiFetch<MetricsResponse>(`/admin/metrics?${params.toString()}`));
       setError(null);
     } catch (e: any) {
       setError(String(e?.message || e));
     }
-  }, [days, project, repo, running]);
+  }, [days, project, repo, running, groupBy]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const facets = data?.facets || { projects: [], repos: [] };
+  const groupKeys = facets.group_keys || [];
   const s = data?.summary;
   const triggers = s
     ? Object.entries(s.revisions.by_trigger)
@@ -150,6 +246,17 @@ export function MetricsView() {
             ))}
           </select>
         </label>
+        <label>
+          <span>Group by</span>
+          <select aria-label="Group by" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+            <option value="">Nothing</option>
+            {groupKeys.map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="metrics-running">
           <input type="checkbox" checked={running} onChange={(e) => setRunning(e.target.checked)} />
           <span>Include running tickets</span>
@@ -158,6 +265,20 @@ export function MetricsView() {
       {error && <div className="error-banner" role="alert">{error}</div>}
       {s && (
         <ul className="metrics-tiles" aria-label="Headline numbers">
+          {s.autonomy && (
+            <Tile
+              label="Merged without a person"
+              value={percent(s.autonomy.rate)}
+              detail={`${s.autonomy.autonomous} of ${s.finished} finished · ${s.autonomy.intervened} needed a person${
+                Object.keys(s.autonomy.by_kind).length
+                  ? ` (${Object.entries(s.autonomy.by_kind)
+                      .map(([kind, n]) => `${n} ${INTERVENTION_LABELS[kind] || kind}`)
+                      .join(", ")})`
+                  : ""
+              }`}
+            />
+          )}
+          {s.guard && <Tile label="Problems after merge" {...guardTile(s.guard)} />}
           <Tile
             label="First-try pass"
             value={percent(s.first_try_rate)}
@@ -189,8 +310,10 @@ export function MetricsView() {
             detail={`median · ${dollars(s.cost_usd.total)} total · ${percent(s.strong_cost_share)} on the stronger model`}
           />
           <Tile label="Lost coding jobs" value={String(s.lost_jobs)} detail={`of ${s.coding_runs} coding runs`} />
+          {data?.improvement_budget && <Tile label="Improvement budget" {...budgetTile(data.improvement_budget)} />}
         </ul>
       )}
+      {data?.groups && data.groups.length > 0 && <GroupsTable groupBy={data.group_by || groupBy} groups={data.groups} />}
       {weeks.length > 1 && (
         <section className="metrics-trend" aria-label="Weekly trend">
           <h3>By week</h3>
@@ -201,6 +324,7 @@ export function MetricsView() {
                 <th>Tickets</th>
                 <th>First-try pass</th>
                 <th>Revisions per ticket (mean)</th>
+                <th>Merged without a person</th>
               </tr>
             </thead>
             <tbody>
@@ -216,6 +340,7 @@ export function MetricsView() {
                     <span className="metrics-bar metrics-bar-revisions" style={{ width: `${((w.revisions_mean / maxRevisions) * 6).toFixed(2)}rem` }} />
                     {w.revisions_mean}
                   </td>
+                  <td>{percent(w.autonomy_rate)}</td>
                 </tr>
               ))}
             </tbody>
@@ -233,6 +358,7 @@ export function MetricsView() {
               <th>Cost</th>
               <th>Time to merge</th>
               <th>Waiting for you</th>
+              <th>Person stepped in</th>
               <th />
             </tr>
           </thead>
