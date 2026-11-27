@@ -20,8 +20,16 @@ branch protection:
 | Dismiss stale approvals when new commits are pushed | On |
 | Require status checks to pass | On |
 | Required checks | The repo's CI checks, plus `harness/code-review` and `harness/security-scan` |
-| Require branches to be up to date | Recommended |
+| Require branches to be up to date | Recommended (or a merge queue) |
 | Allow bypass | Nobody, or break-glass admins only |
+
+TS Harness reads these settings to decide how a PR is kept up to date at merge time: a merge
+queue or "up to date" makes GitHub enforce it; without either (including plans that have no
+branch protection) the harness updates an approved PR and posts `harness/up-to-date`, which
+GitHub does not enforce. Don't make `harness/up-to-date` a required check: it is only posted in
+that last mode. See [Merge-time freshness per repo](governed-delivery-flow.md#merge-time-freshness-per-repo).
+With "Dismiss stale approvals" on, an update dismisses the approval, so the harness updates the
+branch once per approval.
 
 List the same CI check names in Settings under
 `merge_readiness.required_checks` for the repo (see

@@ -23,6 +23,7 @@ from ts_harness.integrations.github_client import GitHubClient, parse_github_pr_
 from ts_harness.workflows import merge_policy
 from ts_harness.workflows.expressions import resolve_value
 from ts_harness.workflows.hooks._helpers import load_workflow_payload
+from ts_harness.workflows.merge_modes import change_identity
 from ts_harness.workflows.merge_readiness import _live_program_defaults, _resolve_pr_urls
 from ts_harness.workflows.system_steps import StepBlocked
 
@@ -478,7 +479,10 @@ def review_precheck(
     work_order_body = str(
         resolve_value(config.get("work_order_body"), tasks=tasks, workflow=workflow, extras=_input_extras(task, tasks)) or ""
     )
-    refresh = bool(resolve_value(config.get("refresh"), tasks=tasks, workflow=workflow)) if config.get("refresh") else False
+    raw_refresh = resolve_value(config.get("refresh"), tasks=tasks, workflow=workflow) if config.get("refresh") else None
+    refresh = bool(raw_refresh)
+    # server_merge (GitHub merged the base cleanly) or conflict_resolution (an agent resolved it).
+    refresh_method = raw_refresh if isinstance(raw_refresh, str) else ""
     defaults = program_defaults if program_defaults is not None else _live_program_defaults()
     limits = dict(merge_policy.policy_block(defaults).get("diff_limits") or {})
     exclude = [str(item) for item in limits.get("exclude") or []]
@@ -490,6 +494,7 @@ def review_precheck(
     over: list[str] = []
     totals = {"files": 0, "additions": 0, "deletions": 0, "excluded_files": 0, "pipeline_files": 0}
     content: list[tuple[str, ...]] = []
+    identities: list[list[str]] = []
     for pr_url in pr_urls:
         parsed = parse_github_pr_url(pr_url)
         if parsed is None:
@@ -501,6 +506,7 @@ def review_precheck(
         counted = []
         for item in github.list_pull_files(owner, repo, number):
             content.append(_file_identity(pr_url, item))
+            identities.extend(change_identity([item], pr_url))
             entry = {**_file_entry(item), "pr_url": pr_url}
             if not entry["patch"] and entry["status"] == "added" and entry["additions"] and head_sha:
                 entry["patch"] = _added_file_patch(github, owner, repo, entry["filename"], head_sha)[:PATCH_LIMIT]
@@ -542,8 +548,27 @@ def review_precheck(
         "scope_findings": findings,
         "test_changes": changed_tests,
         "refresh": refresh,
+        "refresh_method": refresh_method,
         "diff_fingerprint": diff_fingerprint(content),
+        "file_identities": [list(item) for item in sorted(content)],
+        "review_scope": _review_scope(task, tasks, refresh_method, content),
+        # What the PR itself changes, whatever its base: harness statuses carry over a base-only update.
+        "change_identity": sorted(identities),
     }
+
+
+def _review_scope(
+    task: dict[str, Any], tasks: list[dict[str, Any]], refresh_method: str, content: list[tuple[str, ...]]
+) -> dict[str, Any] | None:
+    """After a conflict resolution, the files to review: those that differ from the last passing review."""
+    if refresh_method != "conflict_resolution":
+        return None
+    from ts_harness.workflows.carry_forward import resolution_scope
+
+    try:
+        return resolution_scope(task, tasks, [list(item) for item in content])
+    except Exception:  # noqa: BLE001 - without a scope the reviewer reads the whole diff
+        return None
 
 
 def is_blocking(finding: dict[str, Any]) -> bool:

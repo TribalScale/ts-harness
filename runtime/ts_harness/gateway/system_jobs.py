@@ -199,6 +199,69 @@ def send_back_conflicting_checks(*, tenant_id: str = "default", github: GitHubCl
     return {"checked": checked, "sent_back": sent_back, "errors": errors}
 
 
+def send_back_conflicting_merges(
+    *, tenant_id: str = "default", github: GitHubClient | None = None, program_defaults: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A PR waiting for a person to merge it that now conflicts with its base: bring it up to date.
+
+    Merges into the base no longer refresh every waiting PR, only those that conflict, and GitHub
+    computes that after the merge, so this runs with every poll. The merge wait blocks with
+    ``base_advanced`` (the same as the merge fan-out), which starts the stage's refresh.
+    """
+    from ts_harness.workflows.merge_readiness import (
+        BASE_ADVANCED_REASON,
+        _live_program_defaults,
+        _wait_pr_urls,
+        needs_refresh,
+        pr_base_state,
+        refresh_policy,
+    )
+
+    github = github or _github_or_none()
+    if github is None:
+        return {"checked": 0, "sent_back": 0}
+    policy = refresh_policy(program_defaults if program_defaults is not None else _live_program_defaults())
+    memory = get_memory_client()
+    engine = get_workflow_engine()
+    waits = list((memory.find_external_waits(event_type="github.merge", tenant_id=tenant_id) or {}).get("waits") or [])
+    checked = sent_back = errors = 0
+    for wait in waits:
+        workflow_id, task_id = str(wait.get("workflow_id") or ""), str(wait.get("task_id") or "")
+        urls = _wait_pr_urls(wait)
+        if not workflow_id or not task_id or not urls:
+            continue
+        checked += 1
+        try:
+            stale = []
+            for url in urls:
+                parsed = parse_github_pr_url(url)
+                # One read per PR each minute: compare only those GitHub reports as conflicting.
+                if policy != "always" and (parsed is None or github.get_pull(*parsed).get("mergeable") is not False):
+                    continue
+                state = pr_base_state(github, url)
+                if needs_refresh(state, policy):
+                    stale.append({key: state[key] for key in ("pr_url", "base_ref", "head_sha", "behind_by", "status")})
+            if not stale:
+                continue
+            engine.block_wait(workflow_id, task_id, BASE_ADVANCED_REASON, output={"stale": stale}, actor="github-merge-poller")
+            sent_back += 1
+            logger.info("merge wait sent back to update its PR workflow_id=%s prs=%s", workflow_id, stale)
+        except Exception as exc:  # noqa: BLE001 - one wait must not stop the others
+            errors += 1
+            logger.warning("merge-wait conflict check failed workflow_id=%s error=%s", workflow_id, exc)
+    return {"checked": checked, "sent_back": sent_back, "errors": errors}
+
+
+def _keep_approved_current(tenant_id: str) -> dict[str, Any]:
+    from ts_harness.workflows.merge_modes import keep_approved_current
+
+    try:
+        return keep_approved_current(tenant_id=tenant_id, github=_github_or_none())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("keeping approved PRs up to date failed: %s", exc)
+        return {"checked": 0, "updated": 0, "error": str(exc)[:200]}
+
+
 def _reopen_pools(tenant_id: str) -> dict[str, Any]:
     from ts_harness.jira.ticket_pool import reopen_pools
 
@@ -215,6 +278,8 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         "joins": poll_wave_joins(tenant_id=tenant_id),
         "upstreams": poll_release_upstreams(tenant_id=tenant_id),
         "conflicts": send_back_conflicting_checks(tenant_id=tenant_id),
+        "merge_conflicts": send_back_conflicting_merges(tenant_id=tenant_id),
+        "kept_current": _keep_approved_current(tenant_id),
         "pools": _reopen_pools(tenant_id),
     }
     if not force and not reconcile_due():

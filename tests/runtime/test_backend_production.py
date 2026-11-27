@@ -93,6 +93,28 @@ class CarryForwardTests(unittest.TestCase):
         qa = _task("q2", "qa_gate", "ready", "08", ["f2"])
         self.assertIsNone(carry_forward.carried_output(qa, {}, [*tasks, qa]))
 
+    def test_after_a_conflict_resolution_only_files_that_changed_since_the_passing_review_are_in_scope(self):
+        reviewed = [[PR, "src/a.ts", "", "modified", "s1"], [PR, "src/b.ts", "", "modified", "s2"], [PR, "src/old.ts", "", "added", "s3"]]
+        tasks = _first_round()
+        tasks[0]["output"]["file_identities"] = reviewed
+        now = [[PR, "src/a.ts", "", "modified", "s1"], [PR, "src/b.ts", "", "modified", "s2b"], [PR, "src/new.ts", "", "added", "s4"]]
+        precheck = _task("p2", "review_precheck", "running", "05", ["c2"])
+        scope = carry_forward.resolution_scope(precheck, [*tasks, precheck], now)
+        self.assertEqual(scope["mode"], "conflict_resolution")
+        self.assertEqual(scope["from_task_id"], "r1")
+        self.assertEqual(
+            [(f["filename"], f["removed"]) for f in scope["files"]],
+            [("src/b.ts", False), ("src/new.ts", False), ("src/old.ts", True)],
+        )
+
+    def test_no_scope_without_a_passing_review_or_recorded_identities(self):
+        precheck = _task("p2", "review_precheck", "running", "05")
+        self.assertIsNone(carry_forward.resolution_scope(precheck, [*_first_round(), precheck], []))
+        blocked = [_precheck("p1", "01", "fp1"), _task("r1", "code_review", "succeeded", "02", ["p1"], REVIEW_OUT),
+                   _task("f1", "finalize_code_review", "blocked", "03", ["r1"])]
+        blocked[0]["output"]["file_identities"] = []
+        self.assertIsNone(carry_forward.resolution_scope(precheck, [*blocked, precheck], []))
+
     def test_human_change_requests_always_run_the_agent(self):
         tasks = [*_first_round(), _precheck("p2", "05", "fp1")]
         review = _task("r2", "code_review", "ready", "06", ["p2"])

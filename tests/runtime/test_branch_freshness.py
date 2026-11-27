@@ -1,4 +1,4 @@
-"""ensure_fresh blocks PRs whose base branch moved."""
+"""ensure_fresh and the merge fan-out send back PRs that conflict with their base (or, under refresh: always, fell behind)."""
 
 from __future__ import annotations
 
@@ -52,13 +52,41 @@ class EnsureFreshTests(unittest.TestCase):
         self.assertEqual([pr["status"] for pr in output["prs"]], ["fresh", "fresh"])
         github.compare.assert_any_call("acme", "app", "main", "a")
 
-    def test_behind_pr_blocks_with_stale_list(self):
-        github = _github({1: _pull("a"), 2: _pull("b")}, {"a": 0, "b": 3})
+    def test_conflicting_pr_blocks_with_stale_list(self):
+        github = _github({1: _pull("a"), 2: _pull("b", mergeable=False)}, {"a": 0, "b": 3})
         with self.assertRaises(StepBlocked) as ctx:
-            ensure_fresh(TASK, CONFIG, memory=_memory(), github=github)
+            ensure_fresh(TASK, CONFIG, memory=_memory(), github=github, program_defaults={})
         self.assertIn("stale_base:", str(ctx.exception))
-        self.assertIn(f"{PR_B} behind_by=3", str(ctx.exception))
+        self.assertIn(f"{PR_B} behind_by=3 conflict", str(ctx.exception))
         self.assertEqual([pr["pr_url"] for pr in ctx.exception.output["stale"]], [PR_B])
+
+    def test_behind_but_clean_pr_goes_on_to_the_merge_wait(self):
+        github = _github({1: _pull("a"), 2: _pull("b", mergeable=True)}, {"a": 0, "b": 3})
+        output = ensure_fresh(TASK, CONFIG, memory=_memory(), github=github, program_defaults={})
+        self.assertEqual([pr["status"] for pr in output["prs"]], ["fresh", "behind"])
+        self.assertEqual(output["behind_clean"], [PR_B])
+        self.assertFalse(output["fresh"])
+
+    def test_waits_for_github_to_compute_mergeability(self):
+        reads = iter([_pull("b"), _pull("b"), _pull("b", mergeable=False)])
+        github = _github({1: _pull("a")}, {"a": 0, "b": 2})
+        github.get_pull.side_effect = lambda _o, _r, number: _pull("a") if number == 1 else next(reads)
+        sleeps: list[float] = []
+        with self.assertRaises(StepBlocked):
+            ensure_fresh(TASK, CONFIG, memory=_memory(), github=github, program_defaults={}, sleep=sleeps.append)
+        self.assertEqual(len(sleeps), 2)
+
+    def test_still_unknown_mergeability_passes(self):
+        github = _github({1: _pull("a"), 2: _pull("b")}, {"a": 0, "b": 2})
+        output = ensure_fresh(TASK, CONFIG, memory=_memory(), github=github, program_defaults={}, sleep=lambda _s: None)
+        self.assertEqual(output["prs"][1]["status"], "behind_unknown")
+
+    def test_refresh_always_blocks_a_behind_pr(self):
+        github = _github({1: _pull("a"), 2: _pull("b", mergeable=True)}, {"a": 0, "b": 3})
+        with self.assertRaises(StepBlocked) as ctx:
+            ensure_fresh(TASK, CONFIG, memory=_memory(), github=github,
+                         program_defaults={"merge_readiness": {"refresh": "always"}})
+        self.assertEqual(ctx.exception.output["refresh_policy"], "always")
 
     def test_merged_and_closed_prs_are_skipped(self):
         github = _github({1: _pull("a", merged=True, state="closed"), 2: _pull("b", state="closed")}, {})
@@ -73,7 +101,7 @@ class EnsureFreshTests(unittest.TestCase):
             ensure_fresh(TASK, CONFIG, memory=memory, github=MagicMock())
 
     def test_registered_system_step_returns_blocked_output(self):
-        github = _github({1: _pull("a"), 2: _pull("b")}, {"a": 2, "b": 0})
+        github = _github({1: _pull("a", mergeable=False), 2: _pull("b")}, {"a": 2, "b": 0})
         with patch("ts_harness.workflows.branch_freshness.GitHubClient.from_env", return_value=github):
             result = system_steps.run_system_step("ensure_fresh", TASK, CONFIG, memory=_memory())
         self.assertEqual(result["status"], "blocked")
@@ -94,7 +122,7 @@ class BaseAdvancedFanOutTests(unittest.TestCase):
             ]
         }
 
-    def _run(self, pulls, behind, event_extra=None):
+    def _run(self, pulls, behind, event_extra=None, defaults=None):
         from ts_harness.workflows.merge_readiness import (
             BASE_ADVANCED_REASON,
             fan_out_base_advanced,
@@ -109,11 +137,12 @@ class BaseAdvancedFanOutTests(unittest.TestCase):
             memory=memory,
             github=_github(pulls, behind),
             engine=engine,
+            program_defaults=defaults if defaults is not None else {},
         )
         return blocked, engine, BASE_ADVANCED_REASON
 
     def test_blocks_only_same_repo_same_base_siblings(self):
-        pulls = {1: _pull("a"), 2: {**_pull("b"), "base": {"ref": "release"}}}
+        pulls = {1: _pull("a", mergeable=False), 2: {**_pull("b", mergeable=False), "base": {"ref": "release"}}}
         blocked, engine, reason = self._run(pulls, {"a": 1, "b": 1})
         self.assertEqual([item["workflow_id"] for item in blocked], ["wf-a"])
         args, kwargs = engine.block_wait.call_args
@@ -128,8 +157,19 @@ class BaseAdvancedFanOutTests(unittest.TestCase):
         engine.block_wait.assert_not_called()
 
     def test_base_ref_falls_back_to_merged_pull(self):
-        pulls = {1: _pull("a"), 2: _pull("b"), 9: _pull("z")}
+        pulls = {1: _pull("a", mergeable=False), 2: _pull("b", mergeable=False), 9: _pull("z")}
         blocked, _engine, _ = self._run(pulls, {"a": 2, "b": 2}, event_extra={})
+        self.assertEqual(sorted(item["workflow_id"] for item in blocked), ["wf-a", "wf-b"])
+
+    def test_behind_siblings_that_merge_cleanly_are_left_alone(self):
+        pulls = {1: _pull("a", mergeable=True), 2: _pull("b")}
+        blocked, engine, _ = self._run(pulls, {"a": 4, "b": 4})
+        self.assertEqual(blocked, [])
+        engine.block_wait.assert_not_called()
+
+    def test_refresh_always_sends_back_every_behind_sibling(self):
+        pulls = {1: _pull("a", mergeable=True), 2: _pull("b")}
+        blocked, _engine, _ = self._run(pulls, {"a": 4, "b": 4}, defaults={"merge_readiness": {"refresh": "always"}})
         self.assertEqual(sorted(item["workflow_id"] for item in blocked), ["wf-a", "wf-b"])
 
     def test_on_merge_fans_out_even_for_foreign_prs(self):

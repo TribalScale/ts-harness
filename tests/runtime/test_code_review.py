@@ -74,6 +74,32 @@ class PrecheckTests(unittest.TestCase):
         self.assertEqual(output["scope_findings"], [])
         self.assertFalse(output["refresh"])
 
+    def test_a_conflict_resolution_refresh_scopes_the_review_to_what_changed(self):
+        reviewed = {"step_name": "review_precheck", "id": "p1", "status": "succeeded", "created_at": "2",
+                    "output": {"diff_fingerprint": "x", "file_identities": [[PR, "src/a.py", "", "modified", "s1"],
+                                                                           [PR, "src/b.py", "", "modified", "s2"]]}}
+        review = {"step_name": "code_review", "id": "r1", "status": "succeeded", "created_at": "3", "depends_on": ["p1"],
+                  "output": {"result": {"verdict": "pass"}}}
+        final = {"step_name": "finalize_code_review", "id": "f1", "status": "succeeded", "created_at": "4", "depends_on": ["r1"]}
+        refreshed = {**DELIVER, "output": {"pr_url": PR, "refresh_method": "conflict_resolution"}, "created_at": "5"}
+        github = _github([{**_file("src/a.py"), "sha": "s1"}, {**_file("src/b.py"), "sha": "s2-resolved"}])
+        task = {**TASK, "created_at": "6"}
+        output = code_review.review_precheck(
+            task, PRECHECK_CONFIG, memory=_memory(tasks=[DELIVER, reviewed, review, final, refreshed]), github=github,
+            program_defaults={},
+        )
+        self.assertEqual(output["refresh_method"], "conflict_resolution")
+        self.assertEqual([f["filename"] for f in output["review_scope"]["files"]], ["src/b.py"])
+
+    def test_a_clean_server_refresh_has_no_review_scope(self):
+        refreshed = {**DELIVER, "output": {"pr_url": PR, "refresh_method": "server_merge"}}
+        output = code_review.review_precheck(
+            TASK, PRECHECK_CONFIG, memory=_memory(tasks=[refreshed]), github=_github([_file("src/a.py")]), program_defaults={}
+        )
+        self.assertTrue(output["refresh"])
+        self.assertIsNone(output["review_scope"])
+        self.assertEqual(len(output["file_identities"]), 1)
+
     def test_precheck_keeps_the_pull_request_title(self):
         github = _github([_file("README.md", 1, 0)])
         github.get_pull.return_value = {

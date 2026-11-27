@@ -549,6 +549,7 @@
         "scope_findings": "$prior.review_precheck.output.scope_findings",
         "test_changes": "$prior.review_precheck.output.test_changes",
         "refresh": "$prior.review_precheck.output.refresh",
+        "review_scope": "$prior.review_precheck.output.review_scope",
         "human_change_requests": "$runtime.human_requests:deliver_work_order"
       },
       "on_reject": {},

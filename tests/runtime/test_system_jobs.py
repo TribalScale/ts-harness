@@ -327,3 +327,40 @@ class RepinChecksWaitTests(unittest.TestCase):
         self.assertEqual(repin_checks_waits({"pr_url": "https://github.com/o/r/pull/1", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
         self.assertEqual(repin_checks_waits({"pr_url": "", "head_sha": "abc"}, tenant_id="default", memory=memory), [])
         memory.patch_task_input.assert_not_called()
+
+
+class ConflictingMergeWaitTests(unittest.TestCase):
+    """A PR waiting for a person to merge it is updated only once it conflicts with its base."""
+
+    def _run(self, pull, behind=3, defaults=None):
+        memory = MagicMock()
+        memory.find_external_waits.return_value = {"waits": [
+            {"workflow_id": "wf-1", "task_id": "t-merge", "match_pr_urls": ["https://github.com/org/app/pull/9"]}]}
+        engine = MagicMock()
+        github = MagicMock()
+        github.get_pull.return_value = {"state": "open", "base": {"ref": "dev"}, "head": {"sha": "abc"}, **pull}
+        github.compare.return_value = {"behind_by": behind}
+        with patch.object(system_jobs, "get_memory_client", return_value=memory), \
+                patch.object(system_jobs, "get_workflow_engine", return_value=engine):
+            result = system_jobs.send_back_conflicting_merges(github=github, program_defaults=defaults or {})
+        return result, engine, github
+
+    def test_a_conflicting_pr_starts_the_refresh(self):
+        from ts_harness.workflows.merge_readiness import BASE_ADVANCED_REASON
+
+        result, engine, _ = self._run({"mergeable": False})
+        self.assertEqual(result["sent_back"], 1)
+        args, kwargs = engine.block_wait.call_args
+        self.assertEqual(args[:3], ("wf-1", "t-merge", BASE_ADVANCED_REASON))
+        self.assertEqual(kwargs["output"]["stale"][0]["status"], "conflict")
+
+    def test_behind_but_clean_or_unknown_is_left_alone_without_a_compare(self):
+        for pull in ({"mergeable": True}, {"mergeable": None}):
+            result, engine, github = self._run(pull)
+            self.assertEqual(result["sent_back"], 0, pull)
+            engine.block_wait.assert_not_called()
+            github.compare.assert_not_called()
+
+    def test_refresh_always_updates_a_behind_pr(self):
+        result, _engine, _ = self._run({"mergeable": True}, defaults={"merge_readiness": {"refresh": "always"}})
+        self.assertEqual(result["sent_back"], 1)

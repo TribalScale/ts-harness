@@ -312,7 +312,7 @@ class SiblingRefreshEndToEndTests(unittest.TestCase):
         )
         memory.workflows["wf-a"]["tasks"][-1]["status"] = "succeeded"
         github = MagicMock()
-        github.get_pull.return_value = {"state": "open", "base": {"ref": "main"}, "head": {"sha": "b1"}}
+        github.get_pull.return_value = {"state": "open", "base": {"ref": "main"}, "head": {"sha": "b1"}, "mergeable": False}
         github.compare.return_value = {"behind_by": 1}
         engine = WorkflowEngine(client=memory, registry=build_default_registry())
         with patch.object(engine, "_maybe_notify", return_value={}), patch.object(engine, "_sync_session"):

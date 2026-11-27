@@ -120,3 +120,49 @@ def carried_output(
         "only the base branch moved, and CI ran again on the new base.",
     }
     return output
+
+
+def _identity_map(identities: list[Any]) -> dict[tuple[str, str], tuple[str, ...]]:
+    out: dict[tuple[str, str], tuple[str, ...]] = {}
+    for item in identities or []:
+        if isinstance(item, (list, tuple)) and len(item) >= 5:
+            out[(str(item[0]), str(item[1]))] = tuple(str(part) for part in item[2:])
+    return out
+
+
+def resolution_scope(
+    precheck: dict[str, Any], tasks: list[dict[str, Any]], identities: list[Any]
+) -> dict[str, Any] | None:
+    """After an agent resolved a merge conflict: the PR files that differ from the last passing review.
+
+    ``precheck`` is the running ``review_precheck`` task and ``identities`` its PR files as
+    ``[pr_url, filename, previous_filename, status, blob]``. The newest code review that passed
+    before it, and the precheck it read, give the reviewed identities; a file is in scope when it
+    is new, gone or has other content. ``None`` when there is no passing review to compare with (or
+    it predates ``file_identities``): the reviewer then reads the whole diff.
+    """
+    by_id = _by_id(tasks)
+    created = str(precheck.get("created_at") or "")
+    reviews = sorted(
+        (
+            item
+            for item in tasks
+            if item.get("step_name") == "code_review"
+            and str(item.get("created_at") or "") < created
+            and _passed(item, tasks)
+        ),
+        key=lambda item: str(item.get("created_at") or ""),
+    )
+    if not reviews:
+        return None
+    reviewed = _upstream_precheck(reviews[-1], by_id)
+    output = (reviewed or {}).get("output") if isinstance((reviewed or {}).get("output"), dict) else {}
+    if not isinstance(output.get("file_identities"), list):
+        return None
+    before, now = _identity_map(output["file_identities"]), _identity_map(identities)
+    changed = sorted({key for key in set(before) | set(now) if before.get(key) != now.get(key)})
+    return {
+        "mode": "conflict_resolution",
+        "files": [{"pr_url": pr_url, "filename": name, "removed": (pr_url, name) not in now} for pr_url, name in changed],
+        "from_task_id": str(reviews[-1].get("id")),
+    }
