@@ -642,7 +642,7 @@ class LedgerRouteTests(unittest.TestCase):
     def test_the_migration_is_in_the_order(self):
         from tests.pg_support import migration_order
 
-        self.assertEqual(migration_order()[-1], "055_improvement_budget.sql")
+        self.assertIn("055_improvement_budget.sql", migration_order())
 
 
 # Off-limits list

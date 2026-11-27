@@ -221,6 +221,16 @@ jobs = [
         "active_start": "00:00",
         "active_end": "23:59",
         "timezone": "UTC",
+    },    # Files harness bugs on the harness's own repository (TS_HARNESS_SELF_REPO) and starts draft
+    # self-fix PRs a person merges (docs/runbooks/self-improvement.md, "Harness-level loop").
+    {
+        "name": "harness-self-issues",
+        "kind": "system",
+        "handler": "harness_self_issues",
+        "interval_seconds": 600,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
     },
 ]
 Path(out).write_text(json.dumps({"jobs": jobs}, indent=2) + "\n")

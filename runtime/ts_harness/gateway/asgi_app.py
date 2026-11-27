@@ -1417,6 +1417,13 @@ async def admin_metrics(request: Request) -> Response:
 
     # Never breaks the page: an unreadable ledger is reported as unavailable.
     result["improvement_budget"] = await asyncio.to_thread(ImprovementBudget(tenant_id=tenant_id, memory=memory).status)
+    from ts_harness.improvement.harness_loop import loop_status
+
+    try:
+        # Issues the harness filed against itself and its self-fix PRs (sanitised; no client data).
+        result["harness_loop"] = await asyncio.to_thread(loop_status, memory, tenant_id=tenant_id)
+    except Exception as exc:  # noqa: BLE001 - never breaks the page
+        log_event("admin_metrics_harness_loop_error", error=str(exc))
     return _json(result)
 
 
