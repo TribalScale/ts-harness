@@ -153,7 +153,7 @@
       "name": "verified_merge",
       "kind": "fragment",
       "fragment": "verified_merge",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "params": {
         "implement_stage": "deliver_work_order"
       },

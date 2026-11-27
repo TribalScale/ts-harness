@@ -473,6 +473,26 @@
               "$previous.id"
             ]
           }
+        ],
+        "cases": [
+          {
+            "error_prefix": "external_blocked:github.pr_checks base_conflict",
+            "max_revisions": 5,
+            "revise": {
+              "step_name": "deliver_work_order",
+              "agent_id": "dev-agent",
+              "budget": "refresh",
+              "static_input": {
+                "refresh": true
+              },
+              "source_steps": [
+                "deliver_work_order"
+              ],
+              "input_map": {
+                "pr_url": "$prior.deliver_work_order.output.pr_url"
+              }
+            }
+          }
         ]
       }
     },

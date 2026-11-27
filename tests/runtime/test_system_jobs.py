@@ -364,3 +364,29 @@ class ConflictingMergeWaitTests(unittest.TestCase):
     def test_refresh_always_updates_a_behind_pr(self):
         result, _engine, _ = self._run({"mergeable": True}, defaults={"merge_readiness": {"refresh": "always"}})
         self.assertEqual(result["sent_back"], 1)
+
+
+class CiWaitConflictRouteTests(unittest.TestCase):
+    """A conflict found while waiting for CI takes the narrow conflict fix (refresh), not a full revision."""
+
+    def _on_block(self):
+        import json
+        from pathlib import Path
+
+        fragment = json.loads((Path(__file__).resolve().parents[2] / "config/fragments/verified_merge.json").read_text())
+        return next(stage for stage in fragment["stages"] if stage["name"] == "await_pr_checks")["on_block"]
+
+    def test_a_base_conflict_is_a_refresh_with_its_own_budget(self):
+        from ts_harness.workflows.hooks.revise_on_reject import select_block_case
+
+        config = select_block_case(dict(self._on_block()), f"{system_jobs.CONFLICT_REASON}: the PR conflicts")
+        self.assertEqual(config["revise"]["budget"], "refresh")
+        self.assertEqual(config["revise"]["static_input"], {"refresh": True})
+        self.assertEqual(config["re_gate"]["step_name"], "await_pr_checks")
+
+    def test_failing_checks_are_still_a_full_revision(self):
+        from ts_harness.workflows.hooks.revise_on_reject import select_block_case
+
+        config = select_block_case(dict(self._on_block()), "external_blocked:github.pr_checks failure")
+        self.assertEqual(config["revise"]["budget"], "checks")
+        self.assertNotIn("static_input", config["revise"])
