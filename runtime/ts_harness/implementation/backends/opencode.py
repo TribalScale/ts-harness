@@ -268,7 +268,7 @@ def _worktree_state(repo_dir: str) -> tuple[str, float]:
     try:
         status = subprocess.run(
             ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True, text=True, check=False, timeout=60,
+            capture_output=True, text=True, errors="replace", check=False, timeout=60,
         ).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return "", 0.0
@@ -303,7 +303,7 @@ def running_processes(pgid: int, limit: int = 15) -> list[str]:
     """``<seconds>s <command>`` for the processes in OpenCode's process group, longest-running first."""
     try:
         out = subprocess.run(
-            ["ps", "-o", "etimes=,args=", "-g", str(pgid)], capture_output=True, text=True, check=False, timeout=15
+            ["ps", "-o", "etimes=,args=", "-g", str(pgid)], capture_output=True, text=True, errors="replace", check=False, timeout=15
         ).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return []
@@ -362,7 +362,7 @@ def stream_opencode_process(
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            text=True, errors="replace",
             bufsize=1,
             start_new_session=True,
         )
@@ -915,7 +915,7 @@ class OpenCodeBackend:
                 cmd,
                 cwd=cwd,
                 capture_output=True,
-                text=True,
+                text=True, errors="replace",
                 check=False,
                 env=env,
             )
@@ -1163,7 +1163,7 @@ class OpenCodeBackend:
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_dir),
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         return str(completed.stdout or "").strip()
@@ -1173,7 +1173,7 @@ class OpenCodeBackend:
             ["git", "diff", "--name-only", f"{baseline}..HEAD"],
             cwd=str(repo_dir),
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         return [line.strip() for line in str(completed.stdout or "").splitlines() if line.strip()]
@@ -1186,7 +1186,7 @@ class OpenCodeBackend:
             ["git", "ls-files", "--others", "--exclude-standard"],
         ):
             completed = self.runner(
-                args, cwd=str(repo_dir), capture_output=True, text=True, check=False
+                args, cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False
             )
             names.extend(line.strip() for line in str(completed.stdout or "").splitlines() if line.strip())
         return sorted(set(names))
@@ -1208,14 +1208,14 @@ class OpenCodeBackend:
                     ["git", "checkout", "HEAD", "--", path],
                     cwd=str(repo_dir),
                     capture_output=True,
-                    text=True,
+                    text=True, errors="replace",
                     check=False,
                 )
                 self.runner(
                     ["git", "clean", "-f", "--", path],
                     cwd=str(repo_dir),
                     capture_output=True,
-                    text=True,
+                    text=True, errors="replace",
                     check=False,
                 )
         return reverted
@@ -1325,13 +1325,13 @@ class OpenCodeBackend:
             remote = github_authenticated_url(request.repo_url, git_env.get("GH_TOKEN", ""))
             listed = self.runner(
                 ["git", "-C", str(repo_dir), "ls-remote", remote, f"refs/heads/{branch}"],
-                capture_output=True, text=True, check=False, env=git_env,
+                capture_output=True, text=True, errors="replace", check=False, env=git_env,
             )
             expected = (str(listed.stdout or "").split() or [""])[0] if listed.returncode == 0 else ""
             pushed = self.runner(
                 ["git", "-C", str(repo_dir), "push", f"--force-with-lease=refs/heads/{branch}:{expected}",
                  remote, f"{sha}:refs/heads/{branch}"],
-                capture_output=True, text=True, check=False, env=git_env,
+                capture_output=True, text=True, errors="replace", check=False, env=git_env,
             )
             if pushed.returncode != 0:
                 log_event("coding_checkpoint_failed", work_order_id=request.work_order_id, label=label,
@@ -1349,15 +1349,15 @@ class OpenCodeBackend:
         env = {**os.environ, "GIT_INDEX_FILE": str(index)}
         try:
             for args in (["read-tree", "HEAD"], ["add", "-A", "--", ".", ":(exclude)**/__pycache__/**", ":(exclude)**/*.pyc"]):
-                done = self.runner(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, check=False, env=env)
+                done = self.runner(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, errors="replace", check=False, env=env)
                 if done.returncode != 0:
                     return ""
-            tree = self.runner(["git", "-C", str(repo_dir), "write-tree"], capture_output=True, text=True, check=False, env=env)
+            tree = self.runner(["git", "-C", str(repo_dir), "write-tree"], capture_output=True, text=True, errors="replace", check=False, env=env)
             if tree.returncode != 0 or not str(tree.stdout or "").strip():
                 return ""
             commit = self.runner(
                 ["git", "-C", str(repo_dir), "commit-tree", str(tree.stdout).strip(), "-p", "HEAD", "-m", message],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, errors="replace", check=False,
             )
             return str(commit.stdout or "").strip() if commit.returncode == 0 else ""
         finally:
@@ -1536,8 +1536,8 @@ class OpenCodeBackend:
             )
             reviewed = self._run_opencode(cmd, cwd=str(repo_dir), env=review_env, log_path=log_path, work_order_id=request.work_order_id)
             # The reviewer must not change the work; drop anything it wrote in the repository.
-            self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
-            self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+            self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
+            self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
             review = ppr.parse_review(output_path) if reviewed.returncode == 0 else None
             if review is None:
                 log_event("pre_push_review_unavailable", work_order_id=request.work_order_id, exit_code=reviewed.returncode)
@@ -1578,8 +1578,8 @@ class OpenCodeBackend:
                     check_label=label,
                 )
             if fixed.returncode != 0 or failure is not None:
-                self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, check=False)
-                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                self.runner(["git", "reset", "--hard", good], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
+                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
                 log_event("pre_push_review_fix_dropped", work_order_id=request.work_order_id, round=number + 1)
                 rounds.append({"status": "fix_failed", **review})
                 break
@@ -1688,8 +1688,8 @@ class OpenCodeBackend:
             if reused:
                 # A reused workspace (a revision of the same ticket) keeps its commits, installed
                 # dependencies and toolchain; edits an interrupted run left uncommitted are dropped.
-                self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
-                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, check=False)
+                self.runner(["git", "reset", "--hard", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
+                self.runner(["git", "clean", "-fd"], cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False)
                 log_event("coding_workspace_reused", work_order_id=request.work_order_id)
             create_work_branch(
                 repo_dir,

@@ -27,15 +27,16 @@ def _content(text):
 
 
 class FakeGitHub:
-    def __init__(self, files, default_branch="dev"):
+    def __init__(self, files, default_branch="dev", only_on=None):
         self.files = files
         self.default_branch = default_branch
+        self.only_on = only_on or {}
         self.reads = []
 
     def get_file(self, owner, name, path, *, ref):
         self.reads.append((f"{owner}/{name}", path, ref))
         key = (f"{owner}/{name}", path)
-        if key not in self.files:
+        if key not in self.files or (key in self.only_on and ref != self.only_on[key]):
             raise RuntimeError("404")
         return _content(self.files[key])
 
@@ -63,6 +64,31 @@ class BackendContractTests(unittest.TestCase):
         contract = bc.backend_contract("https://github.com/org/web", "dev", program_id="p1", memory=memory,
                                        github_factory=lambda url: github)
         self.assertEqual((contract["repo"], contract["ref"]), ("org/api", "dev"))
+
+    def test_the_spec_is_found_on_the_jobs_base_branch_when_the_api_default_is_main(self):
+        github = FakeGitHub({("org/api", "openapi.json"): SPEC}, default_branch="main", only_on={("org/api", "openapi.json"): "dev"})
+        memory = SimpleNamespace(get_program=lambda pid: {"program": {"metadata": {"artifacts": {"project_repositories": [
+            {"full_name": "org/web", "role": "web"}, {"full_name": "org/api", "role": "api"},
+        ]}}}})
+        contract = bc.backend_contract("https://github.com/org/web", "dev", program_id="p1", memory=memory,
+                                       github_factory=lambda url: github)
+        self.assertEqual((contract["repo"], contract["ref"]), ("org/api", "dev"))
+
+    def test_falls_back_to_the_api_default_branch(self):
+        github = FakeGitHub({("org/api", "openapi.json"): SPEC}, default_branch="main", only_on={("org/api", "openapi.json"): "main"})
+        memory = SimpleNamespace(get_program=lambda pid: {"program": {"metadata": {"artifacts": {"project_repositories": [
+            {"full_name": "org/web", "role": "web"}, {"full_name": "org/api", "role": "api"},
+        ]}}}})
+        contract = bc.backend_contract("https://github.com/org/web", "feature-x", program_id="p1", memory=memory,
+                                       github_factory=lambda url: github)
+        self.assertEqual(contract["ref"], "main")
+
+    def test_a_declared_ref_is_the_only_one_read(self):
+        github = FakeGitHub({
+            ("org/web", ".ts-harness.yml"): "contract:\n  openapi:\n    repo: org/api\n    ref: release\n",
+            ("org/api", "openapi.json"): SPEC,
+        }, only_on={("org/api", "openapi.json"): "dev"})
+        self.assertIsNone(bc.backend_contract("https://github.com/org/web", "dev", github_factory=lambda url: github))
 
     def test_no_backend_or_two_backends_means_no_spec(self):
         self.assertIsNone(bc.project_source([{"full_name": "org/web", "role": "web"}], "org/web"))

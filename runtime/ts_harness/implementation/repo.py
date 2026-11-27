@@ -99,7 +99,7 @@ def ensure_repo_clone(
             clone_url,
             str(repo_dir),
         ]
-        completed = runner(cmd, capture_output=True, text=True, check=False)
+        completed = runner(cmd, capture_output=True, text=True, errors="replace", check=False)
         if completed.returncode != 0:
             raise RuntimeError(
                 f"git clone failed: {(completed.stderr or completed.stdout or '').strip()[-2000:]}"
@@ -111,7 +111,7 @@ def ensure_repo_clone(
     runner(
         ["git", "-C", str(repo_dir), "remote", "set-url", "origin", clone_url],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     fetch = runner(
@@ -126,7 +126,7 @@ def ensure_repo_clone(
             depth,
         ],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if fetch.returncode != 0:
@@ -143,7 +143,7 @@ def ensure_repo_clone(
                 depth,
             ],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
     if fetch.returncode != 0:
@@ -156,13 +156,13 @@ def _configure_commit_identity(repo_dir: Path, *, runner=subprocess.run) -> None
     runner(
         ["git", "-C", str(repo_dir), "config", "user.email", "dev-agent@ts-harness.local"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     runner(
         ["git", "-C", str(repo_dir), "config", "user.name", "ts-harness dev-agent"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
 
@@ -176,7 +176,7 @@ def _local_branch_exists(
     completed = runner(
         ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     return completed.returncode == 0
@@ -191,7 +191,7 @@ def _checkout(
     completed = runner(
         ["git", "-C", str(repo_dir), "checkout", *git_args],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if completed.returncode != 0:
@@ -211,7 +211,7 @@ def _origin_base_ref(
     has_origin_base = runner(
         ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", f"refs/remotes/{base_ref}"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     return base_ref if has_origin_base.returncode == 0 else base_branch
@@ -227,7 +227,7 @@ def _has_merge_base(
     completed = runner(
         ["git", "-C", str(repo_dir), "merge-base", left, right],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     return completed.returncode == 0 and bool((completed.stdout or "").strip())
@@ -239,7 +239,7 @@ def _fetch_branch(repo_dir: Path, branch: str, *, runner=subprocess.run, env: di
     return runner(
         ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         **kwargs,
     )
@@ -249,7 +249,7 @@ def _is_ancestor(repo_dir: Path, older: str, newer: str, *, runner=subprocess.ru
     done = runner(
         ["git", "-C", str(repo_dir), "merge-base", "--is-ancestor", older, newer],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     return done.returncode == 0
@@ -276,11 +276,11 @@ def _catch_up_with_remote(repo_dir: Path, branch: str, *, runner=subprocess.run)
     merged = runner(
         ["git", "-C", str(repo_dir), "merge", "--no-edit", remote],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if merged.returncode != 0:
-        runner(["git", "-C", str(repo_dir), "merge", "--abort"], capture_output=True, text=True, check=False)
+        runner(["git", "-C", str(repo_dir), "merge", "--abort"], capture_output=True, text=True, errors="replace", check=False)
         _checkout(repo_dir, "-B", branch, remote, runner=runner, action=f"git checkout {branch} at {remote}")
 
 
@@ -311,7 +311,7 @@ def create_work_branch(
         fetched = runner(
             ["git", "-C", str(repo_dir), "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         if fetched.returncode == 0:
@@ -343,7 +343,7 @@ def create_work_branch(
         delete = runner(
             ["git", "-C", str(repo_dir), "branch", "-D", branch],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         if delete.returncode != 0:
@@ -381,7 +381,7 @@ def list_changed_files(repo_dir: Path, *, base_ref: str | None = None, runner=su
     completed = runner(
         ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=all"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if completed.returncode != 0:
@@ -395,7 +395,7 @@ def list_changed_files(repo_dir: Path, *, base_ref: str | None = None, runner=su
         committed = runner(
             ["git", "-C", str(repo_dir), "diff", "--name-only", "--diff-filter=d", f"{base_ref}...HEAD"],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         if committed.returncode == 0:
@@ -436,13 +436,13 @@ def _discard_junk_worktree_noise(repo_dir: Path, *, runner=subprocess.run) -> No
         runner(
             ["git", "-C", str(repo_dir), "restore", "--worktree", "--staged", "--", path],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
         runner(
             ["git", "-C", str(repo_dir), "clean", "-fd", "--", path],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
 
@@ -471,7 +471,7 @@ def commit_all_changes(
             ":(exclude)**/.pytest_cache/**",
         ],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if add.returncode != 0:
@@ -479,7 +479,7 @@ def commit_all_changes(
     status = runner(
         ["git", "-C", str(repo_dir), "status", "--porcelain"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if not (status.stdout or "").strip():
@@ -487,7 +487,7 @@ def commit_all_changes(
     commit = runner(
         ["git", "-C", str(repo_dir), "commit", "-m", message],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     if commit.returncode != 0:
@@ -522,13 +522,13 @@ def push_branch(
         runner(
             ["git", "-C", str(repo_dir), "remote", "set-url", "origin", remote_url],
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             check=False,
         )
     completed = runner(
         ["git", "-C", str(repo_dir), "push", "-u", "origin", branch],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         env=env,
     )
@@ -545,7 +545,7 @@ def push_branch(
     tip = runner(
         ["git", "-C", str(repo_dir), "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     expected = (tip.stdout or "").strip() if tip.returncode == 0 else ""
@@ -562,7 +562,7 @@ def push_branch(
             branch,
         ],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         env=env,
     )
@@ -590,7 +590,7 @@ def _existing_pull_request_url(
         ["gh", "pr", "view", head_branch, "--json", "url,state"],
         cwd=str(repo_dir),
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         env=env,
     )
@@ -620,7 +620,7 @@ def _existing_pull_request_url(
         ],
         cwd=str(repo_dir),
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         env=env,
     )
@@ -648,7 +648,7 @@ def set_pull_request_draft(
         return False
     cmd = ["gh", "pr", "ready", pr_url] + (["--undo"] if draft else [])
     try:
-        completed = runner(cmd, capture_output=True, text=True, check=False, env=env, timeout=60)
+        completed = runner(cmd, capture_output=True, text=True, errors="replace", check=False, env=env, timeout=60)
     except Exception:  # noqa: BLE001 - the run goes on without the draft state
         return False
     return getattr(completed, "returncode", 1) == 0
@@ -684,7 +684,7 @@ def create_pull_request(
         ],
         cwd=str(repo_dir),
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
         env=env,
     )

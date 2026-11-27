@@ -61,7 +61,8 @@ def declared_source(github: Any, owner: str, name: str, ref: str) -> dict[str, s
             block = {"repo": block}
         if isinstance(block, dict) and str(block.get("repo") or "").strip():
             repo = str(block["repo"]).strip().removesuffix(".git").removeprefix("https://github.com/")
-            return {"repo": repo, "path": str(block.get("path") or "openapi.json"), "ref": str(block.get("ref") or "")}
+            return {"repo": repo, "path": str(block.get("path") or "openapi.json"), "ref": str(block.get("ref") or ""),
+                    "declared": "1"}
         return None
     return None
 
@@ -109,6 +110,31 @@ def _ticket_project_repositories(work_order_id: str, tenant_id: str, memory: Any
     return project_repositories(memory, tenant_id=tenant_id or "default", project_key=match.group(1))
 
 
+def _candidate_refs(source: dict[str, str], base_branch: str, github: Any, owner: str, name: str) -> list[str]:
+    """Where to look for the spec. A ref the web repo declares is the only one. Otherwise the web
+    job's own base branch first (the API work it depends on lands on the same branch name, often
+    ``dev`` while the repo's default is ``main``), then the project's branch, then the default."""
+    if source.get("declared") and source.get("ref"):
+        return [source["ref"]]
+    refs = [base_branch, source.get("ref") or ""]
+    try:
+        refs.append(str((github.request("GET", f"/repos/{owner}/{name}") or {}).get("default_branch") or "main"))
+    except Exception:  # noqa: BLE001
+        refs.append("main")
+    seen: list[str] = []
+    for ref in refs:
+        if ref and ref not in seen:
+            seen.append(ref)
+    return seen
+
+
+def _read_spec(github: Any, owner: str, name: str, path: str, ref: str) -> str:
+    try:
+        return _decoded(github.get_file(owner, name, path, ref=ref))
+    except Exception:  # noqa: BLE001 - not on this ref: try the next
+        return ""
+
+
 def backend_contract(
     repo_url: str,
     base_branch: str,
@@ -147,8 +173,12 @@ def backend_contract(
             return None
         api_owner, _, api_name = source["repo"].partition("/")
         api_github = github_factory(f"https://github.com/{api_owner}/{api_name}")
-        ref = source["ref"] or str((api_github.request("GET", f"/repos/{api_owner}/{api_name}") or {}).get("default_branch") or "main")
-        text = _decoded(api_github.get_file(api_owner, api_name, source["path"], ref=ref))
+        ref, text = "", ""
+        for candidate in _candidate_refs(source, base_branch, api_github, api_owner, api_name):
+            text = _read_spec(api_github, api_owner, api_name, source["path"], candidate)
+            if text:
+                ref = candidate
+                break
     except Exception as exc:  # noqa: BLE001 - the job runs without it
         logger.info("backend contract for %s/%s not read: %s", owner, name, exc)
         return None
