@@ -172,6 +172,48 @@ it("decides a stuck step: revise again with guidance", async () => {
   });
 });
 
+it("shows the arbiter's hand-off and applies its recommendation in one click", async () => {
+  const item: InboxItem = {
+    ...stuckItem,
+    subtitle: "Arbiter handed off · waiting for your decision",
+    meta: {
+      ...stuckItem.meta,
+      arbiter: {
+        label: "Arbiter handed off",
+        current: true,
+        why: "the arbiter already acted 2 times on this step",
+        reason: "The revision redesigned the review panel the ticket leaves alone.",
+        actions: [
+          { action: "revise", reason: "Scope: undo the panel redesign" },
+          { action: "revise", reason: "Same finding again" },
+        ],
+        recommendation: { action: "revise", guidance: "Keep only the dashed Draft badge." },
+      },
+    },
+  };
+  const posts: Record<string, unknown>[] = [];
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: posts.length ? [] : [item] });
+    if (url === "/admin/workflows/decide") {
+      posts.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ status: "revising" });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="stuck_step" initialId="finalize-4" />);
+
+  const detail = await screen.findByRole("region", { name: /Stuck step detail/i });
+  const arbiter = within(detail).getByRole("region", { name: "Arbiter" });
+  expect(within(arbiter).getByText("Arbiter handed off")).toBeInTheDocument();
+  expect(within(arbiter).getByText(/already acted 2 times/)).toBeInTheDocument();
+  expect(within(arbiter).getAllByRole("listitem")).toHaveLength(2);
+
+  await userEvent.click(within(arbiter).getByRole("button", { name: "Apply recommendation" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ workflow_id: "wf-d", task_id: "finalize-4", action: "revise", guidance: "Keep only the dashed Draft badge." });
+});
+
 it("a stuck planning step shows its error and retries with guidance", async () => {
   const planItem: InboxItem = {
     type: "stuck_step",

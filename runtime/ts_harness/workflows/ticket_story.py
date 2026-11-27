@@ -289,10 +289,19 @@ def _decision_events(tasks: list[dict[str, Any]], now: datetime) -> list[dict[st
         if error.startswith(STOPPED_PREFIX):
             actor = error[len(STOPPED_PREFIX):].split(":", 1)[0].strip() or "a person"
             events.append({"at": str(task.get("updated_at") or ""), "kind": "decision", "title": f"Stopped by {actor}", "status": "failed"})
+        arbiter = data.get("_arbiter") if isinstance(data.get("_arbiter"), dict) else {}
+        for action in arbiter.get("actions") or []:
+            if isinstance(action, dict) and action.get("action"):
+                verb = {"retry": "ran it again", "revise": "sent it back with guidance",
+                        "override": "overrode the blocking review findings"}.get(str(action["action"]), str(action["action"]))
+                events.append({"at": str(action.get("at") or ""), "kind": "decision", "title": f"Arbiter {verb}",
+                               "subtitle": str(action.get("reason") or "")[:400], "status": "ok"})
         waiting = data.get(HUMAN_DECISION_KEY) if isinstance(data.get(HUMAN_DECISION_KEY), dict) else None
         if waiting and str(task.get("status") or "") == "blocked" and not error.startswith("awaiting_"):
             since = _parse(waiting.get("since")) or _parse(task.get("updated_at"))
             reason = WAIT_REASONS.get(str(waiting.get("reason") or ""), "a decision is needed")
+            if arbiter.get("label") and arbiter.get("for_since") == waiting.get("since"):
+                reason = f"{arbiter['label']}: {arbiter.get('why') or arbiter.get('reason') or reason}"[:400]
             events.append({"at": _iso(since), "kind": "wait", "title": "Waiting for you", "subtitle": reason,
                            "status": "running", "seconds": _seconds(since, now)})
     return events

@@ -618,6 +618,28 @@ A coding job for a planned work order needs the approved plan: the PRD, requirem
 - **Review:** files *added* under `docs/planning/` are left out of the code review. An edit to one is reviewed like code. Changes to the older top-level `docs/prd|refinery|foundry|planner` folders, which the harness no longer writes, are the agent's and are reviewed too.
 - **Existing repositories:** documents already at the top level stay where they are.
 
+## Stuck steps: the arbiter
+
+Fixed rules handle the common stops first. The runner queues a coding run again when it stalled, hit its time limit, was cut off by the provider, ran out of memory or was stopped by a signal. The review loop has guided revisions, triage at the revision limit and the review/QA arbiter. A step that still stops for a person goes to the **arbiter** first (`workflows/stuck_arbiter.py`, system job `arbitrate-stuck-steps`, every 2 minutes, at most 3 steps a run).
+
+The arbiter reads the step's error, the coding job's result, log tail and file changes (the live feed), every round of code review and QA findings, the work order, and its own earlier actions on the step. The revision diagnosis model then classifies the step as `infrastructure`, `harness_issue`, `agent_off_track`, `reviewer_wrong`, `work_order_unclear` or `product_decision`. A fixed policy, not the model, decides what happens:
+
+| Verdict | What happens |
+| --- | --- |
+| A cause outside the work (`infrastructure`) | **Retry**, on its own |
+| The agent went off track (did unrequested work, weakened a check, rewrote tests, keeps failing a finding) | **Revise** with the arbiter's guidance, on its own. The guidance names files, what to keep and undo, and the work-order lines it rests on |
+| A blocking code-review finding is wrong (`reviewer_wrong`) | **Override**: the code-review step is accepted, and QA still runs and a person still merges. Allowed only when every blocking finding contradicts the work order or a person's request, or the diff already fixes it, each with evidence. Never for a security finding. The reasoning is posted on the PR; reverse it by requesting changes |
+| `harness_issue` | No action. Inbox label **Harness issue**, with the diagnosis, for the harness operator |
+| `work_order_unclear` / `product_decision` | No action. Inbox label **Needs product decision**, with one specific question for the ticket owner |
+| Anything else, low confidence (under 0.6), or the arbiter already acted twice on the step | No action. Inbox label **Arbiter handed off**, with what it tried and its recommendation |
+
+- Acting goes through the same decision path as the Inbox (`decide_blocked_step`, actor `harness-arbiter`). The arbiter never merges, stops a ticket or weakens a check.
+- At most 2 arbiter actions (retry, revise or override) per step, counted across the step's re-created tasks. Each stop of a step is triaged once; a later stop of the same step is triaged again.
+- The Inbox shows the label in the stuck step's subtitle. The detail page has an **Arbiter** section with the diagnosis, the question, what it already did, and its recommendation, with **Apply recommendation** (the same decision, with its text).
+- The ticket timeline shows each action ("Arbiter sent it back with guidance", with the reason). When a person later decides a step the arbiter acted on, `human_decision_after_arbiter` is logged, to measure how often it had to be corrected.
+- The record is `_arbiter` on the task input.
+- Projects with `revision_autonomy: conservative` get labels and recommendations only. `TS_HARNESS_STUCK_ARBITER=off` turns the arbiter off. Without a diagnosis model it does nothing.
+
 ## Merge Gate
 
 After QA passes, Slack posts the QA summary plus a merge ask (no generic “let me know if you want to continue” footer):

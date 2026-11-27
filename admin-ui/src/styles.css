@@ -3265,3 +3265,8 @@ form {
 .file-event-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 16px; }
 .file-event-facts dt { color: var(--muted, #667085); }
 .file-event-paths { max-height: 40vh; overflow-y: auto; }
+
+/* Inbox: the stuck-step arbiter */
+.badge-arbiter { background: var(--bad-bg); color: var(--bad); margin-left: 6px; }
+.arbiter-actions { margin: 6px 0; padding-left: 18px; }
+.arbiter-recommendation pre { white-space: pre-wrap; max-height: 240px; overflow: auto; }
