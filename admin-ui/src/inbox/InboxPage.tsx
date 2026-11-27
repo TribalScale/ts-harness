@@ -43,6 +43,17 @@ const STUCK_DECISION_VARIANT = {
   stop: "danger",
 } as const;
 
+type ArbiterView = {
+  label?: string | null;
+  category?: string | null;
+  reason?: string | null;
+  why?: string | null;
+  question?: string | null;
+  current?: boolean;
+  recommendation?: { action: string; guidance?: string } | null;
+  actions?: { action?: string; reason?: string; at?: string }[] | null;
+};
+
 function stuckDecisions(
   meta: Record<string, unknown> | null | undefined,
 ): StuckDecision[] {
@@ -494,7 +505,7 @@ export function InboxPage({
     }
   }
 
-  async function actStuck(action: StuckDecision) {
+  async function actStuck(action: StuckDecision, guidanceText?: string) {
     const meta = detail || selectedItem?.meta || {};
     const workflowId = String(meta.workflow_id || "");
     const taskId = String(meta.task_id || selectedId || "");
@@ -508,7 +519,11 @@ export function InboxPage({
           workflow_id: workflowId,
           task_id: taskId,
           action,
-          ...(action === "revise" || action === "retry" ? { guidance: guidance.trim() } : {}),
+          ...(guidanceText !== undefined
+            ? { guidance: guidanceText.trim() }
+            : action === "revise" || action === "retry"
+              ? { guidance: guidance.trim() }
+              : {}),
         }),
       });
       await load();
@@ -524,6 +539,56 @@ export function InboxPage({
     } finally {
       setBusy(false);
     }
+  }
+
+  function renderArbiter(meta: Record<string, unknown>, decisions: StuckDecision[]) {
+    const arbiter = (meta.arbiter || null) as ArbiterView | null;
+    if (!arbiter) return null;
+    const actions = (arbiter.actions || []).filter((a) => a && a.action);
+    const rec = arbiter.recommendation;
+    const canApply = !!rec && decisions.includes(rec.action as StuckDecision);
+    return (
+      <section className="detail-card arbiter-card" aria-label="Arbiter">
+        <h3>
+          Arbiter{" "}
+          {arbiter.current && arbiter.label && <span className="badge badge-arbiter">{arbiter.label}</span>}
+        </h3>
+        {(arbiter.why || arbiter.reason) && <p>{arbiter.why || arbiter.reason}</p>}
+        {arbiter.why && arbiter.reason && arbiter.why !== arbiter.reason && <p className="muted">{arbiter.reason}</p>}
+        {arbiter.question && (
+          <p>
+            <strong>Question:</strong> {arbiter.question}
+          </p>
+        )}
+        {actions.length > 0 && (
+          <ul className="arbiter-actions">
+            {actions.map((a, index) => (
+              <li key={index}>
+                <span className="mono">{a.action}</span> {a.reason ? `· ${a.reason}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+        {rec && (
+          <div className="arbiter-recommendation">
+            <p>
+              <strong>Recommended:</strong> <span className="mono">{rec.action}</span>
+            </p>
+            {rec.guidance && <pre className="mono">{rec.guidance}</pre>}
+            {canApply && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => void actStuck(rec.action as StuckDecision, rec.guidance || "")}
+              >
+                Apply recommendation
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    );
   }
 
   function renderStuckSections(meta: Record<string, unknown>) {
@@ -572,6 +637,7 @@ export function InboxPage({
           <h3>Why it is stuck</h3>
           <p>{reason}</p>
         </section>
+        {renderArbiter(meta, decisions)}
         {error && feedback && feedback !== error && (
           <section className="detail-card">
             <h3>Last attempt</h3>

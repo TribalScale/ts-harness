@@ -415,6 +415,9 @@ def _stuck_step_items(memory: Any, auth: AuthContext, approvable: Any = None) ->
         if approvable is not None and not approvable(summary.get("program_id")):
             continue
         reason = _STUCK_REASONS.get(summary["reason"], "Blocked")
+        arbiter = summary.get("arbiter") or {}
+        if arbiter.get("current") and arbiter.get("label"):
+            reason = str(arbiter["label"])  # the arbiter looked and handed it over: say why
         items.append(
             {
                 "type": "stuck_step",

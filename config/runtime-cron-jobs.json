@@ -10,6 +10,15 @@
       "timezone": "UTC"
     },
     {
+      "name": "arbitrate-stuck-steps",
+      "kind": "system",
+      "handler": "arbitrate_stuck_steps",
+      "interval_seconds": 120,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
+    },
+    {
       "name": "escalate-stale-waits",
       "kind": "system",
       "handler": "escalate_stale_waits",
