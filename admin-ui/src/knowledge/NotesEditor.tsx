@@ -15,7 +15,7 @@ export interface NoteDraft {
 
 const EMPTY: NoteDraft = { kind: "avoid", title: "", body: "", why: "", appliesTo: "", exceptionTo: "" };
 
-function draftFrom(note: KnowledgeNote): NoteDraft {
+export function draftFrom(note: KnowledgeNote): NoteDraft {
   return {
     kind: note.kind,
     title: note.title,
@@ -26,7 +26,7 @@ function draftFrom(note: KnowledgeNote): NoteDraft {
   };
 }
 
-function payload(draft: NoteDraft): Record<string, unknown> {
+export function payload(draft: NoteDraft): Record<string, unknown> {
   return {
     kind: draft.kind,
     title: draft.title.trim(),
@@ -254,7 +254,7 @@ export function NotesEditor({
   );
 }
 
-function NoteForm({
+export function NoteForm({
   draft,
   busy,
   allowException,

@@ -202,6 +202,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Drafts proposed knowledge notes from runs that failed and were then fixed; backfills note embeddings.
+    {
+        "name": "draft-failure-notes",
+        "kind": "system",
+        "handler": "draft_failure_notes",
+        "interval_seconds": 3600,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
     # Retries program phase completions that failed, with backoff (up to an hour).
     {
         "name": "retry-program-phases",

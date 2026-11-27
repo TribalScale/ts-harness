@@ -91,6 +91,15 @@
       "timezone": "UTC"
     },
     {
+      "name": "draft-failure-notes",
+      "kind": "system",
+      "handler": "draft_failure_notes",
+      "interval_seconds": 3600,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
+    },
+    {
       "name": "retry-program-phases",
       "kind": "system",
       "handler": "retry_program_phases",

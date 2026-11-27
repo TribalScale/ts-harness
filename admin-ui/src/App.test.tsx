@@ -97,6 +97,11 @@ beforeEach(() => {
   window.location.hash = "#/workflows/new";
 });
 
+it("parses Memory list and note routes", () => {
+  expect(parseHash("#/memory")).toEqual({ nav: "memory", noteId: undefined });
+  expect(parseHash("#/memory/note%201")).toEqual({ nav: "memory", noteId: "note 1" });
+});
+
 it("parses program definition and workflow studio routes", () => {
   expect(parseHash("#/workflows/programs")).toEqual(
     expect.objectContaining({

@@ -22,7 +22,7 @@ NOTE_LEVELS = ("org", "project")
 SCOPES = NOTE_LEVELS
 KINDS = ("avoid", "howto")
 STATUSES = ("proposed", "active", "retired", "rejected")
-SOURCES = ("manual", "review", "agent")
+SOURCES = ("manual", "review", "agent", "drafted")
 PROPOSAL_ACTIONS = ("add", "edit", "retire", "promote")
 
 MAX_TITLE = 120
@@ -186,13 +186,29 @@ def _match_score(note: dict[str, Any], stage: str, paths: list[str]) -> int:
     return 0
 
 
-def rank_notes(notes: list[dict[str, Any]], *, stage: str = "", paths: list[str] | None = None) -> list[dict[str, Any]]:
-    """Specific notes first, then avoid before howto, then the newest."""
-    found = list(paths or [])
+def rank_notes(
+    notes: list[dict[str, Any]],
+    *,
+    stage: str = "",
+    paths: list[str] | None = None,
+    relevance: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Specific notes first, then hybrid recall relevance, then avoid before howto, then the newest.
 
-    def key(note: dict[str, Any]) -> tuple[int, int, str]:
+    ``relevance`` is the RRF score per note id for this run's text (see knowledge_search); with
+    none, the order is applies_to match, kind and recency.
+    """
+    found = list(paths or [])
+    scores = relevance or {}
+
+    def key(note: dict[str, Any]) -> tuple[int, float, int, str]:
         kind_rank = 1 if note.get("kind") == "avoid" else 0
-        return (_match_score(note, stage, found), kind_rank, str(note.get("updated_at") or ""))
+        return (
+            _match_score(note, stage, found),
+            float(scores.get(str(note.get("id")), 0.0)),
+            kind_rank,
+            str(note.get("updated_at") or ""),
+        )
 
     return sorted(notes, key=key, reverse=True)
 
@@ -236,6 +252,7 @@ def select_for_context(
     stage: str = "",
     paths: list[str] | None = None,
     limits: dict[str, Any] | None = None,
+    relevance: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Merge levels in ``NOTE_LEVELS`` order, keeping each level's reserved share.
 
@@ -246,7 +263,8 @@ def select_for_context(
     """
     limits = limits or context_limits()
     ranked = {
-        level: rank_notes(list(grouped.get(level) or []), stage=stage, paths=paths) for level in NOTE_LEVELS
+        level: rank_notes(list(grouped.get(level) or []), stage=stage, paths=paths, relevance=relevance)
+        for level in NOTE_LEVELS
     }
     hidden = {
         str(note.get("exception_to"))
@@ -383,6 +401,9 @@ def list_notes(conn, query: dict[str, Any]) -> dict[str, Any]:
     if query.get("source"):
         where.append("source = %s")
         params.append(_choice(query.get("source"), "source", SOURCES))
+    if query.get("kind"):
+        where.append("kind = %s")
+        params.append(_choice(query.get("kind"), "kind", KINDS))
     with conn.cursor() as cur:
         if query.get("project_id"):
             project_id = _resolve_project(cur, tenant_id, query.get("project_id"), required=True)
@@ -417,8 +438,8 @@ def create_note(conn, body: dict[str, Any]) -> dict[str, Any]:
     source = _choice(body.get("source") or "manual", "source", SOURCES)
     action = _choice(body.get("proposal_action") or "add", "proposal_action", PROPOSAL_ACTIONS)
     status = _choice(body.get("status") or "proposed", "status", ("proposed", "active"))
-    if source in {"agent", "review"} and status == "active":
-        raise ValueError("agent and review notes start as proposals")
+    if source in {"agent", "review", "drafted"} and status == "active":
+        raise ValueError("agent, review and drafted notes start as proposals")
     content = _content(body)
     evidence = _evidence(body.get("evidence"))
     actor = str(body.get("actor") or body.get("proposed_by") or "admin")
@@ -795,9 +816,18 @@ def _split_paths(value: Any) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
-def notes_context(conn, query: dict[str, Any]) -> dict[str, Any]:
+def notes_context(conn, query: dict[str, Any], embed: Any = None) -> dict[str, Any]:
+    """Active notes for one run within the budget.
+
+    ``query`` may carry ``query`` (the run's text, e.g. the work order): notes are then ordered
+    by hybrid recall (full-text + embedding, RRF) after the applies_to match. Recall failing
+    leaves the applies_to/kind/recency order.
+    """
+    from memory_routes import knowledge_search
+
     tenant_id = str(query.get("tenant_id") or "default")
     stage = str(query.get("stage") or "").strip()
+    text = str(query.get("query") or "").strip()
     paths = _split_paths(query.get("paths"))
     limits = context_limits(query)
     try:
@@ -826,7 +856,14 @@ def notes_context(conn, query: dict[str, Any]) -> dict[str, Any]:
             "org": [_public(row) for row in org_rows],
             "project": [_public(row) for row in project_rows],
         }
-        chosen = select_for_context(grouped, stage=stage, paths=paths, limits=limits)
+        relevance: dict[str, float] = {}
+        if text:
+            ids = [note["id"] for level in grouped.values() for note in level]
+            try:
+                relevance = knowledge_search.relevance(conn, ids, text, embed)
+            except Exception:  # noqa: BLE001 - never fail a run because recall failed
+                relevance = {}
+        chosen = select_for_context(grouped, stage=stage, paths=paths, limits=limits, relevance=relevance)
         considered = len(grouped["org"]) + len(grouped["project"])
         if chosen:
             with conn.cursor() as cur:
@@ -846,16 +883,25 @@ def notes_context(conn, query: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_programs_pending_review(conn, query: dict[str, Any]) -> dict[str, Any]:
-    """Finished programs with no review mark, updated after ``since`` when given."""
+    """Finished programs with no review mark, updated after ``since`` when given.
+
+    ``stamp=notes_drafted_at`` lists programs the failure drafter has not looked at instead.
+    """
     tenant_id = str(query.get("tenant_id") or "default")
     limit = min(int(query.get("limit") or 20), 50)
     since = str(query.get("since") or "").strip()
+    stamp = str(query.get("stamp") or "").strip()
+    if stamp and stamp != DRAFT_STAMP:
+        raise ValueError("unsupported stamp")
     where = [
         "tenant_id = %s",
         "status IN ('succeeded', 'failed', 'cancelled')",
-        "(metadata->>'notes_reviewed_at') IS NULL",
-        "(metadata->>'notes_review_started_at') IS NULL",
     ]
+    if stamp:
+        where.append(f"(metadata->>'{DRAFT_STAMP}') IS NULL")
+    else:
+        where.append("(metadata->>'notes_reviewed_at') IS NULL")
+        where.append("(metadata->>'notes_review_started_at') IS NULL")
     params: list[Any] = [tenant_id]
     if since:
         where.append("updated_at > %s")
@@ -890,7 +936,8 @@ def list_programs_pending_review(conn, query: dict[str, Any]) -> dict[str, Any]:
     return {"programs": programs}
 
 
-_REVIEW_STAMPS = {"notes_reviewed_at", "notes_review_started_at"}
+DRAFT_STAMP = "notes_drafted_at"
+_REVIEW_STAMPS = {"notes_reviewed_at", "notes_review_started_at", DRAFT_STAMP}
 
 
 def mark_program_reviewed(conn, program_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -930,3 +977,56 @@ def mark_program_reviewed(conn, program_id: str, body: dict[str, Any] | None = N
         conn.rollback()
         raise
     return {"program_id": pid, key: stamp}
+
+
+def search_notes(conn, query: dict[str, Any], embed: Any = None) -> dict[str, Any]:
+    """Filtered notes ranked by hybrid recall for ``q`` (newest first with no ``q``)."""
+    from memory_routes import knowledge_search
+
+    tenant_id = str(query.get("tenant_id") or "default")
+    where = ["tenant_id = %s"]
+    params: list[Any] = [tenant_id]
+    for field, allowed in (("scope", SCOPES), ("status", STATUSES), ("kind", KINDS), ("source", SOURCES)):
+        if query.get(field):
+            where.append(f"{field} = %s")
+            params.append(_choice(query.get(field), field, allowed))
+    try:
+        limit = max(1, min(int(query.get("limit") or 50), 200))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    if query.get("project_id"):
+        with conn.cursor() as cur:
+            project_id = _resolve_project(cur, tenant_id, query.get("project_id"), required=True)
+        where.append("project_id = %s")
+        params.append(project_id)
+    result = knowledge_search.search(
+        conn,
+        {"where": " AND ".join(where), "params": params, "q": query.get("q"), "limit": limit},
+        embed,
+        public=_public,
+    )
+    conn.commit()
+    return result
+
+
+def embed_pending_notes(conn, body: dict[str, Any], embed: Any = None) -> dict[str, Any]:
+    """Backfill embeddings for notes that have none or whose text changed."""
+    from memory_routes import knowledge_search
+
+    ids = body.get("ids")
+    if ids is not None:
+        if not isinstance(ids, list):
+            raise ValueError("ids must be a list")
+        ids = [_uuid(item, "ids") for item in ids if item]
+    return knowledge_search.embed_pending(conn, embed, ids=ids, limit=int(body.get("limit") or 20))
+
+
+def affected_ids(result: Any) -> list[str]:
+    """Note ids whose text a write may have changed: the note, an edited target, a promoted source."""
+    if not isinstance(result, dict) or not result.get("id"):
+        return []
+    ids = [str(result["id"])]
+    for key in ("revision_of", "promoted_from"):
+        if result.get(key):
+            ids.append(str(result[key]))
+    return ids

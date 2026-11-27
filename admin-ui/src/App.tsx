@@ -8,6 +8,7 @@ import { setUnauthorizedHandler } from "./api/client";
 import { ChatPage } from "./chat/ChatPage";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { InboxPage } from "./inbox/InboxPage";
+import { MemoryPage } from "./knowledge/MemoryPage";
 import { LivePage, type LiveTab } from "./live/LivePage";
 import { AppShell, type NavKey } from "./layout/AppShell";
 import { ProgramDefinitionStudio } from "./program-definitions/ProgramDefinitionStudio";
@@ -25,6 +26,7 @@ interface RouteState {
   sessionId?: string;
   prefill?: string;
   programId?: string;
+  noteId?: string;
   systemSection?: string;
   settingsSection?:
     | "defaults"
@@ -90,6 +92,9 @@ export function parseHash(hash = window.location.hash): RouteState {
   }
   if (parts[0] === "programs") {
     return { nav: "programs", programId: parts[1] };
+  }
+  if (parts[0] === "memory") {
+    return { nav: "memory", noteId: parts[1] ? decodeURIComponent(parts[1]) : undefined };
   }
   const attach = { attachSkill, attachStage, attachJob, attachProgram };
   if (parts[0] === "workflows") {
@@ -494,6 +499,14 @@ export default function App() {
           programId={route.programId}
           onSelect={(id) => {
             setHash(id ? `#/programs/${id}` : "#/programs");
+          }}
+        />
+      )}
+      {route.nav === "memory" && (
+        <MemoryPage
+          noteId={route.noteId}
+          onSelect={(id) => {
+            setHash(id ? `#/memory/${encodeURIComponent(id)}` : "#/memory");
           }}
         />
       )}

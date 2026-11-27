@@ -10,7 +10,18 @@ from ts_harness.workflows.hooks._helpers import load_workflow_payload
 from ts_harness.workflows.registry import HookContext
 
 
-def _load_knowledge_notes(memory_client: Any, program: dict[str, Any], stage: str) -> list[Any]:
+def _recall_text(program: dict[str, Any], extras: dict[str, Any]) -> str:
+    """What this run is about, for hybrid recall of notes: the program summary and the work order."""
+    parts = []
+    if isinstance(program, dict):
+        parts.append(str(program.get("display_name") or program.get("summary") or ""))
+    parts.append(str(extras.get("work_order_body") or "")[:1200])
+    return " ".join(" ".join(part.split()) for part in parts if part.strip())[:1500]
+
+
+def _load_knowledge_notes(
+    memory_client: Any, program: dict[str, Any], stage: str, query_text: str = ""
+) -> list[Any]:
     """Active org and project notes for this dispatch. A failure leaves the run with none."""
     if not hasattr(memory_client, "knowledge_notes_context"):
         return []
@@ -19,10 +30,15 @@ def _load_knowledge_notes(memory_client: Any, program: dict[str, Any], stage: st
     if isinstance(program, dict):
         project_id = str(program.get("project_ref") or program.get("project_id") or "")
         tenant_id = str(program.get("tenant_id") or "default")
+    kwargs: dict[str, Any] = {"tenant_id": tenant_id, "project_id": project_id, "stage": stage}
     try:
-        payload = memory_client.knowledge_notes_context(
-            tenant_id=tenant_id, project_id=project_id, stage=stage
-        )
+        if query_text:
+            try:
+                payload = memory_client.knowledge_notes_context(**kwargs, query_text=query_text)
+            except TypeError:
+                payload = memory_client.knowledge_notes_context(**kwargs)
+        else:
+            payload = memory_client.knowledge_notes_context(**kwargs)
     except Exception:
         return []
     notes = payload.get("notes") if isinstance(payload, dict) else None
@@ -50,7 +66,9 @@ def _program_artifact_extras(
     artifacts = (metadata.get("artifacts") or {}) if isinstance(metadata, dict) else {}
     if isinstance(artifacts, dict):
         extras.update(_artifact_fields(artifacts))
-    extras["knowledge_notes"] = _load_knowledge_notes(memory_client, program, stage)
+    extras["knowledge_notes"] = _load_knowledge_notes(
+        memory_client, program, stage, _recall_text(program, extras)
+    )
     return extras
 
 

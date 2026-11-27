@@ -331,7 +331,8 @@ def _knowledge_note_items(memory: Any, auth: AuthContext, runtime: Any) -> list[
                 "type": "knowledge_note",
                 "id": str(note.get("id") or ""),
                 "title": str(note.get("title") or "Knowledge note"),
-                "subtitle": f"{note.get('scope') or 'note'} · {action}",
+                "subtitle": f"{note.get('scope') or 'note'} · {action}"
+                + (" · drafted from a run" if note.get("source") == "drafted" else ""),
                 "created_at": note.get("updated_at") or note.get("created_at"),
                 "href": f"/#/inbox/knowledge_note/{quote(str(note.get('id') or ''), safe='')}",
                 "meta": meta,

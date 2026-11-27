@@ -18,7 +18,7 @@ the session database) unless the row says otherwise.
 | Audit events | `runtime_audit_events`, `session_audit_log` | Who did what: tool calls, routing, workflow steps, approvals, access | 730 days; approval and decision events kept until you set a window |
 | Human decisions | `workflow_decisions`, `program_releases` | Gate approvals, track choices, promotions, releases with actor and reason | Kept (compliance record); deleted only by a purge with `--include-decisions` |
 | LLM usage | `llm_usage`, `agent_token_usage` | Tokens and cost per call, with team, program, workflow, task and user ids. No prompt or response text | Kept (budgets and billing); a purge removes the program, workflow and task ids |
-| Program memories | `memories` (tag `program:<id>`), `program_briefs`, `knowledge_notes` | Summaries and notes learned from a program | Kept until purged (program memories) or edited by an admin (notes) |
+| Program memories | `memories` (tag `program:<id>`), `program_briefs`, `knowledge_notes` (with its search vector and embedding) | Summaries and notes learned from a program, including notes drafted from failed-then-fixed runs | Kept until purged (program memories) or edited by an admin (notes) |
 | Uploaded files | Intake object store, `intake/<tenant>/...` | Files attached to a request (console, Slack, Discord, Telegram) | 14 days (bucket lifecycle rule; the local store is swept hourly) |
 | Design images | Intake object store, `design/<tenant>/<sha256>.<ext>` | Figma frames and attached images used as design references | 180 days after their program finished (and the bucket's one-year `design/` rule) |
 | Coding file events | `coding_job_events` | The live feed: each file a run created, edited, deleted, renamed or restored, with the step, line counts and a diff excerpt of at most 200 lines (secret-looking values masked in the worker before sending); many files at once are one row listing up to 50 paths | Deleted 30 days after they were recorded (the coding-log period) |
@@ -51,7 +51,15 @@ to the coding model through OpenCode.
   other OpenAI-compatible endpoint. Check `agents.*.model`, `coding_backend` and `llm_pricing` in
   the rendered config to see which ones a host uses.
 - Memory embeddings send memory text to `EMBEDDINGS_PROVIDER` (`openai`, `voyage`, `gemini`,
-  `mistral` or `bedrock`).
+  `mistral` or `bedrock`). The same provider embeds knowledge notes (title, body, why), the
+  search text typed on the console's Memory page, and a run's summary and the head of its work
+  order when notes are picked for that run. The vectors are stored on the note
+  (`knowledge_notes.embedding`, migration 054); query vectors are cached in the memory API's
+  process only.
+- The failure drafter (`draft_failure_notes`) sends the revision diagnosis model short excerpts
+  of a finished run: repeated review or QA findings, failed CI check names and feedback, coding
+  job errors and log tails, and guidance a person or the arbiter gave. Its drafts are stored as
+  proposed knowledge notes with links to the program, workflow, tasks and PR.
 - Intake vision (`TS_HARNESS_INTAKE_VISION_MODEL`) sends uploaded images and Figma frames.
 
 Each provider's own retention and training terms apply to what it receives; use the providers'

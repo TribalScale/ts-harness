@@ -3262,6 +3262,20 @@ async def admin_org_notes(request: Request) -> Response:
     return await _admin_projects_call(request, lambda m, a, c, _b: bff.list_org_notes_admin(m, a, c, _b))
 
 
+async def admin_knowledge_notes(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    query = dict(request.query_params)
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.search_notes_admin(m, a, c, query))
+
+
+async def admin_knowledge_note(request: Request) -> Response:
+    from ts_harness.gateway import knowledge_bff as bff
+
+    note_id = request.path_params["note_id"]
+    return await _admin_projects_call(request, lambda m, a, c, _b: bff.note_detail_admin(m, a, c, note_id))
+
+
 async def admin_note(request: Request) -> Response:
     from ts_harness.gateway import knowledge_bff as bff
 
@@ -4844,6 +4858,8 @@ routes = [
     Route("/admin/budgets", endpoint=admin_budgets, methods=["GET"]),
     Route("/admin/budgets/{team_id}/raise", endpoint=admin_budget_raise, methods=["POST"]),
     Route("/admin/budgets/programs/{program_id}", endpoint=admin_program_budget, methods=["GET", "PUT"]),
+    Route("/admin/knowledge/notes", endpoint=admin_knowledge_notes, methods=["GET"]),
+    Route("/admin/knowledge/notes/{note_id}", endpoint=admin_knowledge_note, methods=["GET"]),
     Route("/admin/notes", endpoint=admin_org_notes, methods=["GET", "POST"]),
     Route("/admin/notes/{note_id}", endpoint=admin_note, methods=["PATCH"]),
     Route("/admin/notes/{note_id}/status", endpoint=admin_note_status, methods=["POST"]),

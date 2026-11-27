@@ -4,7 +4,7 @@ import { clearSession, getRoles } from "../auth/session";
 import { Button } from "../components/Button";
 import { useMediaQuery } from "./useMediaQuery";
 
-export type NavKey = "inbox" | "live" | "chat" | "programs" | "workflows" | "system";
+export type NavKey = "inbox" | "live" | "chat" | "programs" | "workflows" | "memory" | "system";
 
 const NAV_ITEMS: { key: NavKey; label: string; icon: React.ReactNode }[] = [
   {
@@ -51,6 +51,16 @@ const NAV_ITEMS: { key: NavKey; label: string; icon: React.ReactNode }[] = [
       <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
         <path d="M6 6h5v5H6zM13 13h5v5h-5z" />
         <path d="M11 8.5h3a2 2 0 0 1 2 2V13M13 15.5h-3a2 2 0 0 1-2-2V11" />
+      </svg>
+    ),
+  },
+  {
+    key: "memory",
+    label: "Memory",
+    icon: (
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        <path d="M6 4h10l3 3v13H6z" />
+        <path d="M9 10h7M9 14h7M9 18h4" />
       </svg>
     ),
   },
