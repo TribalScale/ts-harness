@@ -124,6 +124,16 @@ def opencode_exit_error(completed: subprocess.CompletedProcess[str], *, cgroup_r
 
 PROVIDER_INTERRUPTED = "provider_interrupted"
 STALLED = "stalled"
+# OpenCode ended by a signal that wasn't the stall watchdog or a memory kill (a container stop, a
+# host restart, the reader losing the stream): says nothing about the work, so it is retried.
+KILLED = "killed"
+_SIGNAL_EXITS = {-15, -9, -2, -1, 143, 137, 130, 129}
+
+
+def killed_by_signal(completed: subprocess.CompletedProcess[str], error: str = "") -> bool:
+    if completed.returncode not in _SIGNAL_EXITS:
+        return False
+    return not (error or opencode_exit_error(completed)).startswith(OUT_OF_MEMORY)
 DEFAULT_CHECKPOINT_SECONDS = 900
 
 
@@ -1144,6 +1154,8 @@ class OpenCodeBackend:
                             (
                                 opencode_exit_error(fix_completed)
                                 if fix_completed.returncode == OPENCODE_STALLED_RC
+                                else f"{KILLED}: opencode fix exit {fix_completed.returncode}"
+                                if killed_by_signal(fix_completed)
                                 else f"opencode fix exit {fix_completed.returncode}"
                             )
                             + f"; fix_passes_used={fix_passes_used}"
@@ -1844,6 +1856,19 @@ class OpenCodeBackend:
                         pr_url=request.pr_url,
                         error=f"{PROVIDER_INTERRUPTED}: {interrupted}" + (f"; {saved}" if saved else ""),
                     )
+                exit_error = opencode_exit_error(completed)
+                if killed_by_signal(completed, exit_error):
+                    saved = self._save_interrupted_work(repo_dir, request, branch, changed, reason="stopped by a signal")
+                    return CodingResult(
+                        ok=False,
+                        branch=branch,
+                        summary="OpenCode was stopped from outside before it finished",
+                        changed_files=changed,
+                        log_tail=log,
+                        log_path=str(log_path),
+                        pr_url=request.pr_url,
+                        error=f"{KILLED}: {exit_error}" + (f"; {saved}" if saved else ""),
+                    )
                 return CodingResult(
                     ok=False,
                     branch=branch,
@@ -1851,7 +1876,7 @@ class OpenCodeBackend:
                     changed_files=changed,
                     log_tail=log,
                     log_path=str(log_path),
-                    error=opencode_exit_error(completed),
+                    error=exit_error,
                 )
 
             self._revert_undeclared(repo_dir, request)

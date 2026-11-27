@@ -281,7 +281,7 @@ TRANSPORT_EXTRA_RETRIES = 3
 PROVIDER_INTERRUPTED_RETRIES = 2
 # Coding runs that stopped for a reason outside the work and pushed what they had: queued again,
 # and the new run continues from the branch.
-RESUMABLE_STOPS = ("provider_interrupted", "time_limit", "stalled")
+RESUMABLE_STOPS = ("provider_interrupted", "time_limit", "stalled", "killed")
 
 
 def compute_poll_backoff(base_interval: int, failures: int, *, cap: int = 60) -> int:
