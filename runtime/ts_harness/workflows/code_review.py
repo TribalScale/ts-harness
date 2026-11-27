@@ -100,6 +100,12 @@ def _looks_like_path(token: str) -> bool:
     return "/" in token or "*" in token or bool(re.search(r"\.[A-Za-z0-9]{1,8}$", token)) or token.startswith(".")
 
 
+# A placeholder the planner wrote before the ticket had a key: `features/<JIRA-KEY>-badge.feature`,
+# `features/{TICKET}-x.feature`. It stands for whatever the coding agent names the file, so it is
+# matched as a glob, never as literal text (a literal match failed a run that did the right thing).
+_PLACEHOLDER_RE = re.compile(r"<[^<>/\s]+>|\{[A-Za-z_][A-Za-z0-9_-]*\}")
+
+
 def _scope_entries(work_order_body: str) -> list[tuple[list[str], str]]:
     """Each ``## Files`` / ``## Touches`` bullet as (paths it names, its text).
 
@@ -126,7 +132,7 @@ def _scope_entries(work_order_body: str) -> list[tuple[list[str], str]]:
         for token in tokens:
             if not _looks_like_path(token):
                 continue
-            token = token.removeprefix("./")
+            token = _PLACEHOLDER_RE.sub("*", token.removeprefix("./"))
             if "/" in token.rstrip("/"):
                 folder = token.rsplit("/", 1)[0] if not token.endswith("/") else token.rstrip("/")
             elif folder and not token.startswith(".") and "*" not in token:
@@ -155,8 +161,12 @@ def required_paths(work_order_body: str) -> list[str]:
     for paths, text in _scope_entries(work_order_body):
         if _KEEP_RE.search(text.split(":", 1)[-1] if ":" in text else text):
             continue
+        placeholder = bool(_PLACEHOLDER_RE.search(text))
         for path in paths:
-            if "*" in path or path.endswith("/") or path in required:
+            # A placeholder file (one `*` that stood for `<JIRA-KEY>`) is still a file to create;
+            # a real glob (`src/**/*.ts`) is not a single file.
+            single_placeholder = placeholder and path.count("*") == 1 and "**" not in path
+            if ("*" in path and not single_placeholder) or path.endswith("/") or path in required:
                 continue
             if re.search(r"\.[A-Za-z0-9]{1,8}$", path) or Path(path).name.startswith("."):
                 required.append(path)

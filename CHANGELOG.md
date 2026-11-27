@@ -11,6 +11,7 @@ First public release.
 
 ### Added
 
+- A placeholder in a work order's file list (`features/<JIRA-KEY>-draft-badge.feature`, `{TICKET}`) is matched as a glob: the feature file the coding agent named after the ticket satisfies it. The required-files check compared the literal text and failed a run whose checks all passed; the code review scope check reads it the same way.
 - Cancelling a program's only running phase (from chat or the workflow's own Cancel) now cancels the program too. It used to stay "running" with nothing left to run and keep a person's in-flight slot. A program with another phase running, or a ticket queue with tickets left, is left alone. The program page shows phases before the first one that ran (a program started at a later phase) as "skipped", not "not started".
 - Program flow fixes found running real requests through the console:
   - Ticket selection: a request naming several tickets or an epic ("implement the tickets in epic PROJ-33 except PROJ-45, and PROJ-47") becomes a confirmed queue of exactly those tickets: epics expanded into their tickets, excluded and done tickets listed with why, blockers first. A key after "except", "do not implement" and similar is never picked. An epic is never coded: ticket delivery refuses it, and "implement PROJ-33" on an epic queues its tickets. Routing and the program proposal force such requests to the queue whatever entry the model suggests. Before this, one request coded the epic itself and another coded the one ticket it was told to leave out.
