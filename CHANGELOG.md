@@ -425,6 +425,8 @@ First public release.
 
 ### Fixed
 
+- A coding run no longer dies as "opencode exit -15" when a tool prints bytes that aren't valid UTF-8 (test-runner progress output). The harness read OpenCode's output strictly, so one such byte silently stopped the reader; the harness then took the run for finished and killed it. Every subprocess read in the coding worker now replaces undecodable bytes.
+- A web coding job finds its backend's `openapi.json` when the API repo's default branch (often `main`) doesn't have it: without a declared ref, the harness reads the job's own base branch first (usually `dev`, where the API work lands), then the project's branch, then the default. Web jobs had been blocked with "cannot read the API repository".
 - Terraform creates the nightly smoke report secret (`smoke-report-secret`, a random value) with the other harness secrets, so the instance role can read it; before, phase 10 was refused (AccessDenied) and smoke reports stayed off. An optional secret that cannot be read is now a warning in the deploy log, not an "ERROR" (AWS and GCP adapters).
 - CI's secret scan checks a pull request's own commits; pushes to `dev` and `main` still scan the whole history. The full-history scan on a PR read every open branch, so one branch's fake test value failed every other PR.
 - A coding job is marked lost after 5 minutes without a heartbeat (`CODING_JOB_HEARTBEAT_TIMEOUT_SECONDS`, was 90 seconds): a worker busy with parallel type checks missed 90 seconds of beats while still working and was stopped.

@@ -272,14 +272,14 @@ def untouched_required_files(repo_dir: Path, work_order_body: str, base_ref: str
     if base_ref:
         diff = runner(
             ["git", "-C", str(repo_dir), "diff", "--name-only", base_ref, "--", *pathspecs],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, errors="replace", check=False,
         )
         if diff.returncode != 0:
             return []  # the base cannot be compared: do not block on it
         touched.update(line.strip() for line in (diff.stdout or "").splitlines() if line.strip())
     status = runner(
         ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=all", "--", *pathspecs],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, errors="replace", check=False,
     )
     for line in (status.stdout or "").splitlines():
         path = line[3:].strip() if len(line) > 3 else ""
@@ -435,7 +435,7 @@ def prepare_test_dependencies(
         ["python3", "-m", "pip", "install", "-q", "-r", str(req)],
         cwd=str(repo_dir),
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
         check=False,
     )
     detail = (completed.stderr or completed.stdout or "").strip()
@@ -900,7 +900,7 @@ def _run_command(
     started = time.monotonic()
     try:
         result = runner(
-            command, cwd=repo_dir, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout, **kwargs
+            command, cwd=repo_dir, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=timeout, **kwargs
         )
         try:
             result.seconds = time.monotonic() - started  # how long each check takes, in the evidence

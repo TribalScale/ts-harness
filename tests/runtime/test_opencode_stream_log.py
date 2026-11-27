@@ -22,6 +22,29 @@ class OpenCodeStreamLogTests(unittest.TestCase):
         path = opencode_progress_log_path(Path("/ws/WO-001"), "WO-001")
         self.assertEqual(path, Path("/ws/WO-001/.ts-harness/opencode-WO-001.log"))
 
+    def test_invalid_utf8_in_the_output_does_not_end_the_run(self):
+        """A stray byte (test-runner output) once crashed the reader; the run was then killed as "exit -15"."""
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "fake_opencode.py"
+            script.write_text(
+                "import sys, time\n"
+                "sys.stdout.buffer.write(b'[29/142] chromium \\xff\\xfe broken\\n'); sys.stdout.flush()\n"
+                "time.sleep(0.5)\n"
+                "print('finished normally')\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            completed = stream_opencode_process(
+                [os.environ.get("PYTHON", "python3"), str(script)],
+                cwd=tmp,
+                env=os.environ.copy(),
+                log_path=Path(tmp) / "opencode.log",
+                work_order_id="WO-1",
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertIn("finished normally", completed.stdout)
+            self.assertIn("\ufffd", completed.stdout)
+
     def test_stream_opencode_process_writes_log_and_captures_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / ".ts-harness" / "opencode-WO-001.log"

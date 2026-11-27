@@ -274,13 +274,13 @@ class LocalDockerLauncher:
     def _memory_in_use(self) -> int:
         """Bytes reserved by the coding workers running on this host (their --memory limits)."""
         listed = self._run(
-            ["docker", "ps", "-q", "--filter", "label=ts-harness.coding-job"], capture_output=True, text=True, timeout=30
+            ["docker", "ps", "-q", "--filter", "label=ts-harness.coding-job"], capture_output=True, text=True, errors="replace", timeout=30
         )
         ids = (listed.stdout or "").split() if listed.returncode == 0 else []
         if not ids:
             return 0
         inspected = self._run(
-            ["docker", "inspect", "-f", "{{.HostConfig.Memory}}", *ids], capture_output=True, text=True, timeout=30
+            ["docker", "inspect", "-f", "{{.HostConfig.Memory}}", *ids], capture_output=True, text=True, errors="replace", timeout=30
         )
         return sum(int(line) for line in (inspected.stdout or "").split() if line.isdigit())
 
@@ -303,7 +303,7 @@ class LocalDockerLauncher:
             return
         created = self._run(
             ["docker", "volume", "create", "--label", f"{WORKSPACE_LABEL}={job.get('workflow_id') or ''}", volume],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, errors="replace", timeout=60,
         )
         if created.returncode != 0:
             raise LaunchError((created.stderr or created.stdout or "docker volume create failed").strip()[-500:])
@@ -323,13 +323,13 @@ class LocalDockerLauncher:
         except ValueError:
             ttl = 48 * 3600
         listed = self._run(
-            ["docker", "volume", "ls", "-q", "--filter", f"label={WORKSPACE_LABEL}"], capture_output=True, text=True, timeout=60
+            ["docker", "volume", "ls", "-q", "--filter", f"label={WORKSPACE_LABEL}"], capture_output=True, text=True, errors="replace", timeout=60
         )
         names = (listed.stdout or "").split() if listed.returncode == 0 else []
         if not names:
             return []
         inspected = self._run(
-            ["docker", "volume", "inspect", "-f", "{{.Name}} {{.CreatedAt}}", *names], capture_output=True, text=True, timeout=60
+            ["docker", "volume", "inspect", "-f", "{{.Name}} {{.CreatedAt}}", *names], capture_output=True, text=True, errors="replace", timeout=60
         )
         removed: list[str] = []
         from datetime import datetime
@@ -345,7 +345,7 @@ class LocalDockerLauncher:
                 continue
             if now - stamp < ttl:
                 continue
-            gone = self._run(["docker", "volume", "rm", name], capture_output=True, text=True, timeout=60)
+            gone = self._run(["docker", "volume", "rm", name], capture_output=True, text=True, errors="replace", timeout=60)
             if gone.returncode == 0:
                 removed.append(name)
         if removed:
@@ -354,7 +354,7 @@ class LocalDockerLauncher:
 
     def _egress_proxy_ids(self) -> list[str]:
         listed = self._run(
-            ["docker", "ps", "-q", "--filter", f"label={egress.PROXY_LABEL}"], capture_output=True, text=True, timeout=30
+            ["docker", "ps", "-q", "--filter", f"label={egress.PROXY_LABEL}"], capture_output=True, text=True, errors="replace", timeout=30
         )
         return (listed.stdout or "").split() if listed.returncode == 0 else []
 
@@ -381,7 +381,7 @@ class LocalDockerLauncher:
         reloaded = False
         if changed and proxies:
             # squid re-reads its configuration and ACL files on SIGHUP; open tunnels stay up.
-            sent = self._run(["docker", "kill", "-s", "HUP", *proxies], capture_output=True, text=True, timeout=30)
+            sent = self._run(["docker", "kill", "-s", "HUP", *proxies], capture_output=True, text=True, errors="replace", timeout=30)
             reloaded = sent.returncode == 0
         summary = {"domains": len(domains), "changed": changed, "reloaded": reloaded, "proxy_running": bool(proxies)}
         if changed or not proxies:
@@ -396,7 +396,7 @@ class LocalDockerLauncher:
         proc = self._run(
             self.command(job),
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
             timeout=120,
             env={**self._environ, "JOB_TOKEN": token, **job_proxy_env(job, self._environ)},
         )
@@ -405,11 +405,11 @@ class LocalDockerLauncher:
         return (proc.stdout or "").strip()[:64]
 
     def stop(self, runner_ref: str) -> None:
-        self._run(["docker", "stop", "-t", "10", runner_ref], capture_output=True, text=True, timeout=60)
+        self._run(["docker", "stop", "-t", "10", runner_ref], capture_output=True, text=True, errors="replace", timeout=60)
 
     def describe(self, runner_ref: str) -> str:
         proc = self._run(
-            ["docker", "inspect", "-f", "{{.State.Status}}", runner_ref], capture_output=True, text=True, timeout=30
+            ["docker", "inspect", "-f", "{{.State.Status}}", runner_ref], capture_output=True, text=True, errors="replace", timeout=30
         )
         if proc.returncode != 0:
             return "missing"
