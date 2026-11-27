@@ -137,7 +137,8 @@ class PrepareTicketDeliveryTests(unittest.TestCase):
         out = _run(jira=_Jira(description=description, attachments=[b"x"]), memory=_memory(owner_refs=PROGRAM_REFS))
         self.assertEqual([r["id"] for r in out["design_refs"]], ["D1", "D2", "D3"])
         self.assertEqual(out["owner_program_id"], "prd-prog")
-        self.assertEqual(out["planner_artifacts"], {"work_orders_markdown": "# WOs"})
+        self.assertEqual(out["planner_artifacts"]["work_orders_markdown"], "# WOs")
+        self.assertEqual(out["planner_artifacts"]["source_program_id"], "prd-prog")
         # The ticket named D2; the attachment joins that line.
         self.assertIn("Design: D2, D3", out["work_order_body"])
         self.assertEqual(out["work_order_body"].count("Design:"), 1)

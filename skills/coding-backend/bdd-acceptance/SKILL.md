@@ -16,9 +16,9 @@ Automate observable behavior as executable Gherkin scenarios. This is an outer a
 
 Derive scenarios when Given/When/Then (or equivalent acceptance criteria) can be inferred from **any** of:
 
-1. The active work order under `docs/planner/work-orders/` (E2E, acceptance, user-visible outcomes)
-2. Linked FRDs / requirements under `docs/refinery/`
-3. Feature blueprints / contracts under `docs/foundry/`
+1. The active work order under `docs/planning/<program>/planner/work-orders/` (E2E, acceptance, user-visible outcomes)
+2. Linked FRDs / requirements under the same folder's `refinery/`
+3. Feature blueprints / contracts under the same folder's `foundry/`
 4. Planner context that restates observable behavior for this WO
 
 **Scope filter:** only behaviors inside this WO’s In Scope. Do not automate an entire FRD when the WO is a slice.

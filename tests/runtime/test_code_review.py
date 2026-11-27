@@ -202,10 +202,12 @@ class PrecheckTests(unittest.TestCase):
     def test_undeclared_paths_drop_files_the_work_order_did_not_name(self):
         body = "# WO-1\n\n## Files\n- app/pricing.py\n"
         extra = code_review.undeclared_paths(
-            ["app/pricing.py", "requirements-dev.txt", ".gitignore", "docs/planner/work-orders.md"],
+            ["app/pricing.py", "requirements-dev.txt", ".gitignore", "docs/planning/hub-ab12cd34/planner/context-graph.md",
+             "docs/planner/work-orders.md"],
             body,
         )
-        self.assertEqual(extra, ["requirements-dev.txt"])
+        # The program's planning folder is the harness's; the old docs/planner folder no longer is.
+        self.assertEqual(extra, ["docs/planner/work-orders.md", "requirements-dev.txt"])
         self.assertEqual(code_review.undeclared_paths(["requirements-dev.txt"], "# WO-1\n\n## In Scope\n- api"), [])
 
     def test_scope_findings_only_with_declared_files(self):
@@ -220,6 +222,18 @@ class PrecheckTests(unittest.TestCase):
         output = code_review.review_precheck(TASK, PRECHECK_CONFIG, memory=_memory("# WO-1\n\n## In Scope\n- api"), github=_github(files), program_defaults={})
         self.assertEqual(output["scope_findings"], [])
 
+    def test_an_edit_to_a_planning_doc_or_the_old_docs_folders_is_reviewed(self):
+        files = [
+            _file("docs/planning/hub-ab12cd34/foundry/architecture-summary.md"),
+            _file("docs/foundry/components/_unassigned.md"),
+            {**_file("docs/planning/hub-ab12cd34/planner/context-graph.md"), "status": "added"},
+        ]
+        output = code_review.review_precheck(TASK, PRECHECK_CONFIG, memory=_memory(), github=_github(files), program_defaults={})
+        self.assertEqual(
+            sorted(f["filename"] for f in output["files"]),
+            ["docs/foundry/components/_unassigned.md", "docs/planning/hub-ab12cd34/foundry/architecture-summary.md"],
+        )
+
     def test_pipeline_written_files_are_neither_scope_findings_nor_counted(self):
         body = "# WO-1\n\n## Files\n- app/pricing.py\n"
         files = [
@@ -227,7 +241,7 @@ class PrecheckTests(unittest.TestCase):
             _file(".opencode/opencode.json"),
             _file(".opencode/skills/implement-work-order/SKILL.md", 400),
             _file(".gitignore"),
-            _file("docs/planner/work-orders.md", 900),
+            {**_file("docs/planning/hub-ab12cd34/planner/work-orders/WO-1.md", 900), "status": "added"},
         ]
         output = code_review.review_precheck(
             TASK,

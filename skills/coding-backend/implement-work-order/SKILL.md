@@ -14,20 +14,25 @@ You are implementing **one** work order in a host-managed git worktree.
 
 ## Source of truth
 
-1. Read the primary work-order file under `docs/planner/work-orders/` (e.g. `WO-001-*.md`).
-2. Use supporting context only as needed:
-   - `docs/refinery/` (FRDs, requirements, feature tree)
-   - `docs/foundry/` (components, feature blueprints, ADRs)
-   - `docs/planner/context-graph.md` and `docs/planner/execution-phases.md`
-   - `docs/prd/approved-prd.md` when present
-3. Prefer the work order's In Scope / Out of Scope and E2E acceptance criteria over inventing requirements.
+1. Read the primary work-order file the prompt names. It is in the planning program's folder,
+   `docs/planning/<program>/planner/work-orders/` (e.g. `WO-001-*.md`); older repositories also
+   have planning documents directly under `docs/planner/`, `docs/refinery/` and `docs/foundry/`.
+2. Use supporting context from the same program folder only as needed:
+   - `refinery/` (FRDs, requirements, feature tree)
+   - `foundry/` (components, feature blueprints, ADRs)
+   - `planner/context-graph.md` and `planner/execution-phases.md`
+   - `prd/approved-prd.md` when present
+3. The planning documents are the approved plan. Read them; never rewrite, regenerate or delete
+   them. Edit one only when your change makes it wrong (an architecture decision or a component's
+   behaviour changed), and keep that edit to what changed: it is reviewed like code.
+4. Prefer the work order's In Scope / Out of Scope and E2E acceptance criteria over inventing requirements.
 
 ## Practice skills (required)
 
 After reading the specs above, load and follow these skills from `.opencode/skills/` only:
 
 1. **`coding-practices`** — TDD (RED-GREEN-REFACTOR), verification before claiming done, and root-cause debugging.
-2. **`bdd-acceptance`** — derive/update acceptance scenarios (Gherkin only where the repo already uses it) from the WO and/or `docs/refinery|foundry|planner` when Given/When/Then (or equivalent AC) is derivable, scoped to this WO’s In Scope.
+2. **`bdd-acceptance`** — derive/update acceptance scenarios (Gherkin only where the repo already uses it) from the WO and/or the program folder's `refinery|foundry|planner` documents when Given/When/Then (or equivalent AC) is derivable, scoped to this WO’s In Scope.
 
 Do not load other skill packs or planning workflows. Specs under `docs/` are already approved.
 

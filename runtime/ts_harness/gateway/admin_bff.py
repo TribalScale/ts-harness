@@ -288,6 +288,7 @@ def _gate_draft_checks(memory: Any, workflow_id: str) -> list[str] | None:
 _STUCK_REASONS = {
     "revision_limit": "Revision limit reached",
     "conflicting_feedback": "Code review and QA disagree",
+    "ticket_not_ready": "Needs product decision",
 }
 
 
