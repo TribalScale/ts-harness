@@ -77,6 +77,11 @@ class JiraClient:
     def comment(self, key: str, text: str) -> None:
         self.request("POST", f"{self._issue_path(key)}/comment", body={"body": adf_from_text(text)})
 
+    def comments(self, key: str, *, max_results: int = 50) -> list[dict[str, Any]]:
+        """The issue's comments, oldest first (``id``, ``author``, ``created``, ADF ``body``)."""
+        payload = self.request("GET", f"{self._issue_path(key)}/comment?maxResults={max(1, min(int(max_results), 100))}&orderBy=created") or {}
+        return list(payload.get("comments") or [])
+
     def transition(self, key: str, name: str) -> bool:
         """Apply the transition named ``name``; ``False`` when the issue has no such transition."""
         payload = self.request("GET", f"{self._issue_path(key)}/transitions") or {}

@@ -196,8 +196,33 @@ def planning_docs_file_map(
     return files
 
 
-def materialize_planning_docs(repo_dir: Path, files: dict[str, str]) -> list[str]:
-    """Write relative ``docs/`` files into ``repo_dir``. Returns written paths."""
+PLANNING_ROOT = "docs/planning"
+
+
+def planning_folder(program_id: str | None, program_name: str | None = None) -> str:
+    """``docs/planning/<name>-<id8>``: one folder per planning program, so programs never overwrite
+    each other's documents or reuse each other's work order numbers."""
+    pid = re.sub(r"[^a-z0-9]", "", str(program_id or "").lower())[:8]
+    name = _slugify(str(program_name or ""))[:40].strip("-")
+    leaf = "-".join(part for part in (name, pid) if part) or "program"
+    return f"{PLANNING_ROOT}/{leaf}"
+
+
+def rehome(files: dict[str, str], folder: str) -> dict[str, str]:
+    """Move a ``docs/...`` file map under ``folder`` (``docs/prd/x.md`` -> ``<folder>/prd/x.md``)."""
+    out: dict[str, str] = {}
+    for relative, content in (files or {}).items():
+        rel = str(relative or "").replace("\\", "/").lstrip("/")
+        out[f"{folder}/{rel.removeprefix('docs/')}"] = content
+    return out
+
+
+def materialize_planning_docs(repo_dir: Path, files: dict[str, str], *, only_missing: bool = False) -> list[str]:
+    """Write relative ``docs/`` files into ``repo_dir``. Returns the paths now present.
+
+    ``only_missing`` leaves a file that already exists alone: a program's documents are committed
+    once, by its first PR, and later runs read them instead of rewriting them.
+    """
     root = Path(repo_dir).resolve()
     written: list[str] = []
     for relative, content in (files or {}).items():
@@ -207,6 +232,9 @@ def materialize_planning_docs(repo_dir: Path, files: dict[str, str]) -> list[str
         target = (root / rel).resolve()
         if not str(target).startswith(str(root)):
             raise ValueError(f"planning docs path escapes repo: {relative!r}")
+        if only_missing and target.exists():
+            written.append(rel)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         text = str(content or "")
         if text and not text.endswith("\n"):

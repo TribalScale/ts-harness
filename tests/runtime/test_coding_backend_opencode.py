@@ -473,13 +473,15 @@ class OpenCodeBackendTests(unittest.TestCase):
                         result.stdout = " M docs/planner/work-orders/WO-001-lobby.md\n"
                 elif str(cmd[0]).endswith("/opencode"):
                     repo = repo_holder["repo"]
-                    frd_files = list((repo / "docs/refinery/features").glob("FRD-001*.md"))
-                    wo_files = list((repo / "docs/planner/work-orders").glob("WO-001*.md"))
+                    frd_files = list(repo.glob("docs/planning/*/refinery/features/FRD-001*.md"))
+                    wo_files = list(repo.glob("docs/planning/*/planner/work-orders/WO-001*.md"))
                     self.assertTrue(frd_files, "FRD file missing before OpenCode")
                     self.assertTrue(wo_files, "WO file missing before OpenCode")
+                    self.assertFalse((repo / "docs/planner").exists(), "planning docs written outside the program folder")
                     prompt = cmd[-1]
-                    self.assertIn("Primary spec:", prompt)
-                    self.assertIn("docs/planner/work-orders/", prompt)
+                    self.assertIn("Primary spec: docs/planning/", prompt)
+                    self.assertIn("/planner/work-orders/", prompt)
+                    self.assertIn("don't rewrite or delete them", prompt)
                 return result
 
             backend = OpenCodeBackend(

@@ -369,6 +369,28 @@ For an epic, prefer a small controlled batch:
 Start the first two implementation-ready tickets under PROJ-100. Open separate PRs and hand each one to QA.
 ```
 
+#### Hand-written tickets: readiness check
+
+A ticket the harness filed points back to the program that planned it (`Program:` and work order lines), so its coding job gets the approved plan. A ticket a person wrote has only what it says. Before anything is built, `prepare_ticket_delivery` checks such a ticket (`jira/ticket_readiness.py`):
+
+1. **Context.** It reads the description, the comments, the parent epic, linked tickets, pull requests that mention the key, and the repository's file list.
+2. **Assessment.** The revision diagnosis model returns one of `ready`, `assumptions` or `not_ready`. For `ready` and `assumptions` it also writes a work order in the harness's format (Summary, Requirements, Acceptance Tests, In Scope, Out of Scope, Files), listing each assumption as `minor` or `behaviour`. Acceptance criteria that can be derived from the description are enough.
+3. **Decision** (by policy, not the model):
+
+| Result | What happens |
+| --- | --- |
+| `ready`, or assumptions that are all `minor` (placement, naming, an internal helper) | Coding starts from the work order. The work order and its assumptions are posted on the ticket as a `[TS Harness]` comment, and the PR is built and reviewed against it |
+| An assumption that changes behaviour or scope (what users see or can do, data rules, an API's shape, a permission), or `not_ready` | Nothing is built. The questions, the assumptions and the draft work order go to the ticket as a comment, to the bound chat and to the Inbox (**Needs product decision**). The step waits (`_awaiting_human_decision.reason: ticket_not_ready`), so the ticket pool keeps its place |
+
+4. **Answers.** Any of these runs the step again with the answers:
+   - a reply on the ticket (the merge poller checks every minute);
+   - `/retry <answers>` in the chat;
+   - Retry with guidance in the Inbox.
+
+   Answering "go ahead" (or "proceed", "approved") builds the ticket with its assumptions as they are. It never proceeds on its own after a timeout.
+
+Projects with `revision_autonomy: conservative` confirm any assumption. Without a diagnosis model, or with `TS_HARNESS_TICKET_READINESS=off`, tickets go straight through as before.
+
 ### A3. QA, Merge, Deploy (Jira track)
 
 See sections **QA Gate (program stage)**, **Merge Gate**, and **Release and rollback** below. On the Jira track, dynamic implement PRs are aggregated by the `collect_delivery_results` barrier, then a single `qa_gate` reviews the full PR set before `await_human_merge`.
@@ -585,6 +607,16 @@ Code review blocked the PR; sending it back to OpenCode (revision 1/3).
 ```
 
 Branch protection must require `harness/code-review`. TS Harness posts that status and never approves or requests changes.
+
+## Planning documents in the repository
+
+A coding job for a planned work order needs the approved plan: the PRD, requirements and FRDs (Refinery), blueprints and ADRs (Foundry), and the work orders and context graph (Planner). The harness writes them into the repository under the planning program's own folder, `docs/planning/<program name>-<id8>/` (`prd/`, `refinery/`, `foundry/`, `planner/`):
+
+- **Only missing files are written.** The program's first PR adds its documents. Later tickets find them on the base branch and read them; they never rewrite them. Two first PRs of the same program add identical files, which merge cleanly.
+- **One folder per program**, so two programs never overwrite each other's documents or reuse each other's work order numbers. Before 2026-11, every ticket rewrote the shared `docs/refinery|foundry|planner` files with its own program's snapshot, which churned every PR and caused merge conflicts.
+- **The agent is told not to rewrite them.** It edits a planning document only when its change makes it wrong (an architecture decision or a component's behaviour changed).
+- **Review:** files *added* under `docs/planning/` are left out of the code review. An edit to one is reviewed like code. Changes to the older top-level `docs/prd|refinery|foundry|planner` folders, which the harness no longer writes, are the agent's and are reviewed too.
+- **Existing repositories:** documents already at the top level stay where they are.
 
 ## Merge Gate
 

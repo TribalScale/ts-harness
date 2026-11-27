@@ -37,6 +37,8 @@ from ts_harness.implementation.coding_backend_skills import (
 from ts_harness.implementation.planning_docs import (
     materialize_planning_docs,
     planning_docs_file_map,
+    planning_folder,
+    rehome,
 )
 from ts_harness.implementation.repo import (
     claim_workspace,
@@ -777,6 +779,7 @@ def build_implement_prompt(
             + "\n".join(f"- {item}" for item in requests) + "\n"
         )
     if docs_materialized and primary_spec_path:
+        folder = primary_spec_path.split("/planner/", 1)[0] if "/planner/" in primary_spec_path else "docs"
         skill_line = (
             "Load implement-work-order, coding-practices, and bdd-acceptance "
             "from .opencode/skills/ when available.\n"
@@ -787,11 +790,13 @@ def build_implement_prompt(
             f"{qa_section}"
             f"Implement work order {work_order_id} only.\n"
             f"Primary spec: {primary_spec_path}\n"
-            "Use docs/refinery/, docs/foundry/, and docs/planner/ as supporting context.\n"
+            f"Use {folder}/refinery/, {folder}/foundry/ and {folder}/planner/ as supporting context.\n"
             f"{skill_line}"
             "Follow acceptance criteria exactly. Prefer small, testable changes.\n"
             f"{hard_rules}"
-            "Planning docs under docs/ are intentional and must remain in the change set.\n"
+            f"The planning documents under {folder}/ are the approved plan: read them, don't rewrite or delete them. "
+            "Edit one only when your change makes it wrong (an architecture decision or a component's behaviour "
+            "changed); that edit is reviewed like code.\n"
         )
     return (
         f"{qa_section}"
@@ -851,14 +856,9 @@ def _primary_work_order_path(written: list[str], work_order_id: str) -> str | No
     wo_id = str(work_order_id or "").strip().upper()
     if not wo_id:
         return None
-    prefix = f"docs/planner/work-orders/{wo_id}"
     for path in written:
         name = Path(path).name.upper()
-        if path.startswith("docs/planner/work-orders/") and name.startswith(wo_id):
-            return path
-    # Prefer exact prefix match even if slug missing from list order
-    for path in written:
-        if path.startswith(prefix):
+        if "planner/work-orders/" in path and name.startswith(wo_id):
             return path
     return None
 
@@ -1756,7 +1756,13 @@ class OpenCodeBackend:
                     approved_prd_markdown=request.approved_prd_markdown,
                     active_work_order_id=request.work_order_id,
                 )
-                docs_written = materialize_planning_docs(repo_dir, files)
+                # In the planning program's own folder, written only where missing: committed once
+                # by the program's first PR, never rewritten by later tickets.
+                folder = planning_folder(
+                    str(planner.get("source_program_id") or request.program_id or ""),
+                    str(planner.get("source_program_name") or ""),
+                )
+                docs_written = materialize_planning_docs(repo_dir, rehome(files, folder), only_missing=True)
                 primary_spec = _primary_work_order_path(docs_written, request.work_order_id)
             test_env, prep_log = self._prepare_test_env(request.workspace_dir, repo_dir, request.api_contract)
             # A review revision may also edit the module glue beside the flagged files and what

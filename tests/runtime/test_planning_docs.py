@@ -120,3 +120,29 @@ class MaterializePlanningDocsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class ProgramFolderTests(unittest.TestCase):
+    def test_each_program_gets_its_own_folder(self):
+        from ts_harness.implementation.planning_docs import planning_folder, rehome
+
+        folder = planning_folder("ab12cd34-0000-0000-0000-000000000000", "Hub UI conformance")
+        self.assertEqual(folder, "docs/planning/hub-ui-conformance-ab12cd34")
+        self.assertEqual(planning_folder("", ""), "docs/planning/program")
+        self.assertEqual(rehome({"docs/planner/context-graph.md": "x"}, folder),
+                         {"docs/planning/hub-ui-conformance-ab12cd34/planner/context-graph.md": "x"})
+
+    def test_existing_documents_are_read_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            target = repo / "docs/planning/p/planner/context-graph.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("committed by the first PR\n")
+            present = materialize_planning_docs(
+                repo, {"docs/planning/p/planner/context-graph.md": "a later snapshot", "docs/planning/p/prd/approved-prd.md": "prd"},
+                only_missing=True,
+            )
+            self.assertEqual(target.read_text(), "committed by the first PR\n")
+            self.assertEqual((repo / "docs/planning/p/prd/approved-prd.md").read_text(), "prd\n")
+            self.assertEqual(sorted(present), ["docs/planning/p/planner/context-graph.md", "docs/planning/p/prd/approved-prd.md"])

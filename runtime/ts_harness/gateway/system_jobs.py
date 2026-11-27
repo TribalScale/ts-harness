@@ -262,6 +262,17 @@ def _keep_approved_current(tenant_id: str) -> dict[str, Any]:
         return {"checked": 0, "updated": 0, "error": str(exc)[:200]}
 
 
+def _recheck_waiting_tickets(tenant_id: str) -> dict[str, Any]:
+    """A hand-written ticket waiting for answers resumes when someone replies on it."""
+    from ts_harness.jira.ticket_readiness import recheck_waiting_tickets
+
+    try:
+        return recheck_waiting_tickets(tenant_id=tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("waiting tickets not rechecked: %s", exc)
+        return {"checked": 0, "resumed": 0, "error": str(exc)[:200]}
+
+
 def _reopen_pools(tenant_id: str) -> dict[str, Any]:
     from ts_harness.jira.ticket_pool import reopen_pools
 
@@ -279,6 +290,7 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         "upstreams": poll_release_upstreams(tenant_id=tenant_id),
         "conflicts": send_back_conflicting_checks(tenant_id=tenant_id),
         "merge_conflicts": send_back_conflicting_merges(tenant_id=tenant_id),
+        "ticket_replies": _recheck_waiting_tickets(tenant_id),
         "kept_current": _keep_approved_current(tenant_id),
         "pools": _reopen_pools(tenant_id),
     }

@@ -311,6 +311,14 @@ def _ensure_repository_ready(
     return list(result.notes)
 
 
+def _program_name(memory: Any, program_id: str) -> str:
+    try:
+        program = (memory.get_program(program_id) or {}).get("program") or {}
+    except Exception:  # noqa: BLE001 - the folder falls back to the id
+        return ""
+    return str(program.get("display_name") or program.get("summary") or "")[:80]
+
+
 def _program_artifacts(memory: Any, program_id: str) -> dict[str, Any]:
     status = memory.get_program_status(program_id) or {}
     return status.get("artifacts") if isinstance(status.get("artifacts"), dict) else {}
@@ -345,6 +353,7 @@ def prepare_ticket_delivery(
     configured: tuple[str, str] | None = None,
     ready: Callable[..., Any] | None = None,
     inspect_repo: Callable[..., Any] | None = None,
+    readiness_check: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Read the ticket from Jira and resolve everything the coding job needs.
 
@@ -431,6 +440,14 @@ def prepare_ticket_delivery(
             artifacts = _program_artifacts(memory, owner)
             refs = [r for r in artifacts.get("design_refs") or [] if isinstance(r, dict) and r.get("id")]
             planning = {k: artifacts[k] for k in ("refinery_artifacts", "foundry_artifacts", "planner_artifacts") if artifacts.get(k)}
+            if planning:
+                # The coding job writes these into the planning program's own folder
+                # (docs/planning/<name>-<id>), named after the program the ticket was planned in.
+                planning["planner_artifacts"] = {
+                    **dict(planning.get("planner_artifacts") or {}),
+                    "source_program_id": owner,
+                    "source_program_name": _program_name(memory, owner),
+                }
             body = _with_work_order_design(body, artifacts, pointer.work_order_id, refs)
             body = _with_work_order_complexity(body, artifacts, pointer.work_order_id)
             owner_repositories = [r for r in artifacts.get("project_repositories") or [] if isinstance(r, dict)]
@@ -475,6 +492,22 @@ def prepare_ticket_delivery(
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"onboarding check failed: {exc}")
         onboarding = {"checked": False, "reason": str(exc)}
+
+    # A ticket a person wrote (no pointer to a planning program): gather its context and check it is
+    # ready before anything is built; a ticket that isn't waits for answers (StepBlocked).
+    from ts_harness.jira.ticket_readiness import check_ready, hand_written
+
+    if hand_written(pointer):
+        readiness = (readiness_check or check_ready)(
+            memory=memory, task=task, task_input=task_input, jira=jira, key=key, issue=issue, summary=summary,
+            description=description, repo_url=repo_url, base_branch=base_branch,
+        )
+        if readiness:
+            # The work order goes first; repository setup and test policy notes the step added stay.
+            head = f"# {key} {summary}\n\n{description}\n" if description else f"# {key} {summary}\n"
+            added = body[len(head):] if body.startswith(head) else ""
+            body = readiness["body"].rstrip() + "\n" + (f"\n{added.strip()}\n" if added.strip() else "")
+            warnings.append(readiness["note"])
 
     # Jira shows the ticket is being worked on (program_defaults.jira_tracking).
     from ts_harness.jira.tracking import move_ticket

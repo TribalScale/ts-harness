@@ -43,11 +43,13 @@ MIN_FILE_PATCH = 6_000
 PIPELINE_WRITTEN = (
     ".opencode/**",
     ".gitignore",
-    "docs/prd/**",
-    "docs/refinery/**",
-    "docs/foundry/**",
-    "docs/planner/**",
+    # A planning program's documents, added once by its first PR (implementation/planning_docs.py).
+    # Only added files are skipped by the review: an edit to one is a deliberate doc change and is
+    # reviewed like code. The older top-level docs/prd|refinery|foundry|planner folders are no
+    # longer written by the harness, so changes there are the agent's and are reviewed too.
+    "docs/planning/**",
 )
+PLANNING_DOCS = "docs/planning/**"
 
 # Test files may be added beyond a work order's ``## Files`` list: more tests are never out of
 # scope. The implementer's revert, OpenCode's edit permissions and the review's scope check
@@ -510,7 +512,9 @@ def review_precheck(
             entry = {**_file_entry(item), "pr_url": pr_url}
             if not entry["patch"] and entry["status"] == "added" and entry["additions"] and head_sha:
                 entry["patch"] = _added_file_patch(github, owner, repo, entry["filename"], head_sha)[:PATCH_LIMIT]
-            if _excluded(entry["filename"], list(PIPELINE_WRITTEN)):
+            if _excluded(entry["filename"], list(PIPELINE_WRITTEN)) and not (
+                _excluded(entry["filename"], [PLANNING_DOCS]) and entry["status"] != "added"
+            ):
                 totals["pipeline_files"] += 1
                 continue
             if _excluded(entry["filename"], exclude):
