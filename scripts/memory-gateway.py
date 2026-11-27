@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import coding_job_events as coding_job_event_routes  # noqa: E402
 from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
@@ -4773,6 +4774,7 @@ class MemoryHandler(BaseHTTPRequestHandler):
         ("GET", "identity"),
         ("POST", "heartbeat"),
         ("POST", "complete"),
+        ("POST", "events"),
     }
 
     def _coding_job_worker_authorized(self, method: str) -> bool:
@@ -4800,9 +4802,15 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         try:
             with connect_db() as conn:
+                query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
                 if method == "GET" and not parts:
-                    query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
                     self._send_json(200, coding_job_routes.list_coding_jobs(conn, query))
+                elif method == "GET" and parts == ["events"]:
+                    self._send_json(200, coding_job_event_routes.list_recent_events(conn, query))
+                elif method == "GET" and len(parts) == 2 and parts[0] == "events":
+                    self._send_json(200, coding_job_event_routes.get_event(conn, parts[1]))
+                elif method == "GET" and len(parts) == 2 and parts[1] == "events":
+                    self._send_json(200, coding_job_event_routes.list_job_events(conn, parts[0], query))
                 elif method == "POST" and parts == ["create"]:
                     self._send_json(200, coding_job_routes.create_coding_job(conn, body))
                 elif method == "POST" and parts == ["claim"]:
@@ -4821,6 +4829,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     job_id, action = parts
                     if action == "heartbeat":
                         self._send_json(200, coding_job_routes.heartbeat_coding_job(conn, job_id, body))
+                    elif action == "events":
+                        self._send_json(200, coding_job_event_routes.record_events(conn, job_id, body))
                     elif action == "complete":
                         self._send_json(200, coding_job_routes.complete_coding_job(conn, job_id, body))
                     elif action == "launched":

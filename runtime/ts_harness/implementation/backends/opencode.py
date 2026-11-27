@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 
@@ -13,7 +14,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -1201,22 +1202,54 @@ class OpenCodeBackend:
         # dropped unless the work order is about them, whatever the work order's file list says.
         protected = [path for path in changed if protected_path(path) and not _work_order_mentions(request.work_order_body, path)]
         reverted = sorted(protected)
-        for path in reverted:
-            self.runner(
-                ["git", "checkout", "HEAD", "--", path],
-                cwd=str(repo_dir),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.runner(
-                ["git", "clean", "-f", "--", path],
-                cwd=str(repo_dir),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        with self._feed_harness():
+            for path in reverted:
+                self.runner(
+                    ["git", "checkout", "HEAD", "--", path],
+                    cwd=str(repo_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.runner(
+                    ["git", "clean", "-f", "--", path],
+                    cwd=str(repo_dir),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
         return reverted
+
+    _feed: Any = None
+
+    def _start_file_feed(self, repo_dir: Path) -> Any:
+        """Start watching the checkout for the live feed; never fails the run."""
+        self._stop_file_feed()
+        try:
+            from ts_harness.implementation import progress
+            from ts_harness.implementation.file_feed import FileFeed, current_step
+
+            return FileFeed(repo_dir, progress.emit_events, step=current_step).start()
+        except Exception as exc:  # noqa: BLE001
+            log_event("coding_file_feed_unavailable", error=str(exc)[:200])
+            return None
+
+    def _stop_file_feed(self) -> None:
+        feed, self._feed = self._feed, None
+        if feed is not None:
+            try:
+                feed.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @contextlib.contextmanager
+    def _feed_harness(self) -> Iterator[None]:
+        """Changes inside the block are the harness's (a revert, a base merge) in the live feed."""
+        if self._feed is None:
+            yield
+            return
+        with self._feed.harness():
+            yield
 
     _run_started: float = 0.0
 
@@ -1667,6 +1700,8 @@ class OpenCodeBackend:
                 # model provider interrupted pushed its work there, and this run finishes it.
                 from_remote=bool(pr_head) or not request.pr_url,
             )
+            # The console's live feed of file changes, for the rest of the run (see file_feed).
+            self._feed = self._start_file_feed(repo_dir)
             if not pr_head and not request.pr_url and self._ahead_of_base(repo_dir, request.base_branch):
                 log_event("coding_resumed_interrupted_work", work_order_id=request.work_order_id, branch=branch)
                 request = dataclasses.replace(request, work_order_body=RESUME_NOTE + "\n\n" + str(request.work_order_body or ""))
@@ -1675,7 +1710,8 @@ class OpenCodeBackend:
             if pr_head:
                 # Start from the latest base: a revision built on a stale branch pushes a PR that
                 # conflicts with what merged since, and GitHub runs no CI on it.
-                note = self._merge_latest_base(repo_dir, request)
+                with self._feed_harness():
+                    note = self._merge_latest_base(repo_dir, request)
                 if note:
                     request = dataclasses.replace(
                         request, review_feedback=(note + "\n\n" + str(request.review_feedback or "")).strip()
@@ -1970,6 +2006,7 @@ class OpenCodeBackend:
                 error=str(exc),
             )
         finally:
+            self._stop_file_feed()
             if drafted:
                 set_pull_request_draft(request.pr_url or "", False, runner=self.runner, env=_git_env(request.repo_url))
 

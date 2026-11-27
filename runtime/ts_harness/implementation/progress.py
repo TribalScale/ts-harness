@@ -24,6 +24,7 @@ _state: dict[str, Any] = {"phase": "", "since": 0.0, "detail": "", "done": {}, "
 def reset() -> None:
     with _lock:
         _state.update(phase="", since=0.0, detail="", done={}, steps={}, step_since=0.0)
+        _events.clear()
 
 
 def _close_step(now: float) -> None:
@@ -91,3 +92,33 @@ def step_timings() -> dict[str, list[dict[str, Any]]]:
             for step in steps:
                 step.pop("active", None)
         return view
+
+
+# -- file events (see file_feed.py) -----------------------------------------------------------
+
+MAX_BUFFERED_EVENTS = 2000
+_events: list[dict[str, Any]] = []
+
+
+def emit_events(events: list[dict[str, Any]]) -> None:
+    """Queue file events for the worker to send; the oldest are dropped past ``MAX_BUFFERED_EVENTS``."""
+    with _lock:
+        _events.extend(events)
+        if len(_events) > MAX_BUFFERED_EVENTS:
+            del _events[: len(_events) - MAX_BUFFERED_EVENTS]
+
+
+def take_events(limit: int = 200) -> list[dict[str, Any]]:
+    """Up to ``limit`` queued events, oldest first; they leave the queue."""
+    with _lock:
+        taken = _events[:limit]
+        del _events[:limit]
+        return taken
+
+
+def return_events(events: list[dict[str, Any]]) -> None:
+    """Put events back at the front after a failed send."""
+    with _lock:
+        _events[:0] = events
+        if len(_events) > MAX_BUFFERED_EVENTS:
+            del _events[MAX_BUFFERED_EVENTS:]

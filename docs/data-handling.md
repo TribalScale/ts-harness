@@ -21,6 +21,7 @@ the session database) unless the row says otherwise.
 | Program memories | `memories` (tag `program:<id>`), `program_briefs`, `knowledge_notes` | Summaries and notes learned from a program | Kept until purged (program memories) or edited by an admin (notes) |
 | Uploaded files | Intake object store, `intake/<tenant>/...` | Files attached to a request (console, Slack, Discord, Telegram) | 14 days (bucket lifecycle rule; the local store is swept hourly) |
 | Design images | Intake object store, `design/<tenant>/<sha256>.<ext>` | Figma frames and attached images used as design references | 180 days after their program finished (and the bucket's one-year `design/` rule) |
+| Coding file events | `coding_job_events` | The live feed: each file a run created, edited, deleted, renamed or restored, with the step, line counts and a diff excerpt of at most 200 lines (secret-looking values masked in the worker before sending); many files at once are one row listing up to 50 paths | Deleted 30 days after they were recorded (the coding-log period) |
 | Coding workspaces | One Docker volume per ticket (`ts-coding-ws-*`) | The repository clone, installed dependencies, build output | 48 hours (`CODING_WORKSPACE_TTL_HOURS`) |
 | Screenshots | An evidence branch in the client's repository (`ts-harness-evidence/<branch>`) | Playwright screenshots for review and QA | Deleted when the PR merges |
 | Channel dedup ids | `channel_event_dedup` | Platform event ids only | 7 days (`sweep-channel-dedup`) |
@@ -69,7 +70,7 @@ It returns counts per category, which show in the cron run history.
 | Variable | Default | What it trims or deletes |
 | --- | --- | --- |
 | `TS_HARNESS_RETENTION_TRANSCRIPT_DAYS` | 180 | Transcript messages older than this. An active chat keeps its recent messages; replays repair a history that starts mid tool call. |
-| `TS_HARNESS_RETENTION_CODING_LOG_DAYS` | 30 | On finished coding jobs: `result.log_tail`, every `output_tail`, `stdout` and `stderr` in the result, `progress` and `last_output`. Status, timings, usage, PR link, branch, changed files, security summary and the pre-push review summary stay. |
+| `TS_HARNESS_RETENTION_CODING_LOG_DAYS` | 30 | On finished coding jobs: `result.log_tail`, every `output_tail`, `stdout` and `stderr` in the result, `progress` and `last_output`. Status, timings, usage, PR link, branch, changed files, security summary and the pre-push review summary stay. The live feed's file events (`coding_job_events`, with their diff excerpts) older than this are deleted. |
 | `TS_HARNESS_RETENTION_WORKFLOW_TASK_DAYS` | 365 | For tasks of workflows that finished this long ago: `input` and `output` keep only their short top-level values (ids, status, outcome, URLs) plus `retention_trimmed: true`; `error` is cut to 500 characters; the coding job `spec` of those tasks is trimmed the same way. Status and timestamps stay. |
 | `TS_HARNESS_RETENTION_AUDIT_DAYS` | 730 | Runtime and session audit events, except approval and decision events. |
 | `TS_HARNESS_RETENTION_AUDIT_DECISION_DAYS` | 0 | Approval, rejection, decision, gate, permission, access, governance, release, evidence and purge audit events. 0 keeps them. |

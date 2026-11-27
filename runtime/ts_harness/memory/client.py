@@ -1304,6 +1304,39 @@ class MemoryClient:
         jobs = self._request("GET", f"/coding-jobs?{urlencode({'id': job_id, 'limit': 1})}").get("jobs") or []
         return jobs[0] if jobs else None
 
+    def list_coding_job_events(self, job_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
+        """A run's file events after event id ``after``, oldest first (the live feed)."""
+        from urllib.parse import quote, urlencode
+
+        return self._request("GET", f"/coding-jobs/{quote(job_id, safe='')}/events?{urlencode({'after': after, 'limit': limit})}")
+
+    def list_recent_coding_job_events(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        active: bool = False,
+        tenant_id: str | None = None,
+        program_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """The newest file events across runs, newest first; ``program_ids`` limits them (empty: none)."""
+        from urllib.parse import urlencode
+
+        params: dict[str, Any] = {"after": after, "limit": limit}
+        if active:
+            params["active"] = "1"
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        if program_ids is not None:
+            params["program_ids"] = ",".join(program_ids)
+        return self._request("GET", f"/coding-jobs/events?{urlencode(params)}")
+
+    def get_coding_job_event(self, event_id: int | str) -> dict[str, Any]:
+        """One file event with its diff excerpt and the file's history in that run."""
+        from urllib.parse import quote
+
+        return self._request("GET", f"/coding-jobs/events/{quote(str(event_id), safe='')}")
+
     def get_github_registration(self, host: str) -> dict[str, Any] | None:
         from urllib.parse import quote
 

@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 HEARTBEAT_SECONDS = 30
+# File events (the console's live feed) are sent this often, at most this many per request.
+EVENTS_SECONDS = 5
+EVENTS_BATCH = 100
 _LAST_LINE_BYTES = 4096
 TOKEN_REFRESH_MARGIN = 600
 
@@ -77,6 +80,10 @@ class JobApi:
         if progress:
             body["progress"] = progress
         return str(self._request("POST", "heartbeat", body).get("status") or "")
+
+    def events(self, events: list[dict[str, Any]]) -> int:
+        """Send file events (see ``file_feed``); returns how many the API stored."""
+        return int(self._request("POST", "events", {"events": events}).get("stored") or 0)
 
     def complete(self, *, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
         return self._request("POST", "complete", {"result": result, "error": error})
@@ -218,7 +225,28 @@ def run_job(
                 on_cancel()
                 return
 
+    def send_events() -> None:
+        """Ship queued file events every few seconds; a failed send keeps them for the next try."""
+        from ts_harness.implementation import progress
+
+        while True:
+            stopping = stop.wait(EVENTS_SECONDS)
+            while True:
+                batch = progress.take_events(EVENTS_BATCH)
+                if not batch:
+                    break
+                try:
+                    api.events(batch)
+                except Exception as exc:  # noqa: BLE001 - the feed never fails a run
+                    progress.return_events(batch)
+                    _log("coding_job_events_failed", job_id=api.job_id, error=str(exc)[:200])
+                    break
+            if stopping:
+                return
+
     threading.Thread(target=beat, name="coding-job-heartbeat", daemon=True).start()
+    events_thread = threading.Thread(target=send_events, name="coding-job-events", daemon=True)
+    events_thread.start()
     _log("coding_job_started", job_id=api.job_id, work_order_id=spec.get("work_order_id"))
     try:
         result = run(spec)
@@ -229,6 +257,7 @@ def run_job(
         _log("coding_job_crashed", job_id=api.job_id, error=str(exc))
         return 1
     stop.set()
+    events_thread.join(timeout=15)  # the last file events reach the feed before the job completes
     if cancelled.is_set():
         return 0
     api.complete(result=result)
