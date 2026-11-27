@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 from starlette.applications import Starlette
@@ -1432,6 +1433,105 @@ async def admin_ticket_story(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001
         log_event("admin_ticket_story_error", error=str(exc))
         return _json({"error": "could not build the ticket story"}, 500)
+
+
+def _file_event_access(auth: Any, memory: Any) -> Callable[[str | None], bool]:
+    """Who may see a run's file events: anyone who can read its program (admins for a run with none)."""
+    cache: dict[str, bool] = {}
+
+    def allowed(program_id: str | None) -> bool:
+        key = str(program_id or "")
+        if key not in cache:
+            try:
+                if key:
+                    _require_program_level(key, auth, "read", route="live_files", memory=memory)
+                else:
+                    _require_admin(get_runtime(), auth, "manage")
+                cache[key] = True
+            except Exception:  # noqa: BLE001 - not readable: left out
+                cache[key] = False
+        return cache[key]
+
+    return allowed
+
+
+async def admin_live_files(request: Request) -> Response:
+    """The newest file changes across running tickets the caller can read (the Live work feed)."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    allowed = _file_event_access(auth, memory)
+    query = request.query_params
+    try:
+        after = int(query.get("after") or 0)
+    except ValueError:
+        after = 0
+    try:
+        found = memory.list_recent_coding_job_events(
+            after=after,
+            limit=200,
+            active=str(query.get("active") or "") in {"1", "true"},
+            tenant_id=str(auth.tenant_id or "default"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_live_files_error", error=str(exc))
+        return _json({"error": "could not read the file feed"}, 500)
+    events = [event for event in found.get("events") or [] if allowed(event.get("program_id"))]
+    return _json({"events": events[:100], "next_after": found.get("next_after", after)})
+
+
+async def admin_coding_job_files(request: Request) -> Response:
+    """One run's file changes after an event id, oldest first (the feed on the run's card)."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    job_id = request.path_params["job_id"]
+    try:
+        job = memory.get_coding_job(job_id)
+    except Exception:  # noqa: BLE001
+        job = None
+    if not job or str(job.get("tenant_id") or "default") != str(auth.tenant_id or "default"):
+        return _json({"error": "coding job not found"}, 404)
+    if not _file_event_access(auth, memory)(job.get("program_id")):
+        return _json({"error": "you cannot read this program"}, 403)
+    try:
+        after = int(request.query_params.get("after") or 0)
+    except ValueError:
+        after = 0
+    try:
+        return _json(memory.list_coding_job_events(job_id, after=after, limit=200))
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_coding_job_files_error", job_id=job_id, error=str(exc))
+        return _json({"error": "could not read the file feed"}, 500)
+
+
+async def admin_file_event(request: Request) -> Response:
+    """One file change: its diff excerpt, the file's history in the run, checks that failed on it."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    try:
+        detail = memory.get_coding_job_event(request.path_params["event_id"])
+    except Exception:  # noqa: BLE001
+        return _json({"error": "file event not found"}, 404)
+    event = detail.get("event") or {}
+    if str(event.get("tenant_id") or "default") != str(auth.tenant_id or "default"):
+        return _json({"error": "file event not found"}, 404)
+    if not _file_event_access(auth, memory)(event.get("program_id")):
+        return _json({"error": "you cannot read this program"}, 403)
+    return _json(detail)
 
 
 async def admin_programs_board(request: Request) -> Response:
@@ -4603,6 +4703,9 @@ routes = [
     Route("/admin/programs/{id}/board", endpoint=admin_programs_board, methods=["GET"]),
     Route("/admin/programs/{id}/tickets/{workflow_id}/story", endpoint=admin_ticket_story, methods=["GET"]),
     Route("/admin/live", endpoint=admin_live, methods=["GET"]),
+    Route("/admin/live/files", endpoint=admin_live_files, methods=["GET"]),
+    Route("/admin/live/files/{event_id}", endpoint=admin_file_event, methods=["GET"]),
+    Route("/admin/coding-jobs/{job_id}/files", endpoint=admin_coding_job_files, methods=["GET"]),
     Route("/admin/proposals/cancel", endpoint=admin_proposals_cancel, methods=["POST"]),
     Route("/admin/history", endpoint=admin_history, methods=["GET"]),
     Route("/admin/metrics", endpoint=admin_metrics, methods=["GET"]),

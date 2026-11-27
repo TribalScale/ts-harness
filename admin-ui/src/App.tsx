@@ -19,6 +19,7 @@ import type { FragmentRoute, WorkflowRoute } from "./workflows/types";
 interface RouteState {
   nav: NavKey | "login";
   liveTab?: LiveTab;
+  fileEventId?: string;
   inboxType?: InboxType;
   inboxId?: string;
   sessionId?: string;
@@ -84,7 +85,8 @@ export function parseHash(hash = window.location.hash): RouteState {
     return { nav: "chat", sessionId: parts[1], prefill };
   }
   if (parts[0] === "live") {
-    return { nav: "live", liveTab: parts[1] === "history" || parts[1] === "metrics" ? parts[1] : "now" };
+    const tab = parts[1] === "history" || parts[1] === "metrics" || parts[1] === "files" ? parts[1] : "now";
+    return { nav: "live", liveTab: tab, fileEventId: tab === "files" && parts[2] ? decodeURIComponent(parts[2]) : undefined };
   }
   if (parts[0] === "programs") {
     return { nav: "programs", programId: parts[1] };
@@ -483,6 +485,7 @@ export default function App() {
       {route.nav === "live" && (
         <LivePage
           tab={route.liveTab || "now"}
+          fileEventId={route.fileEventId}
           onTab={(tab) => setHash(tab === "now" ? "#/live" : `#/live/${tab}`)}
         />
       )}

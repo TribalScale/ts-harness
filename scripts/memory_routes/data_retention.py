@@ -132,6 +132,22 @@ def _coding_logs(cur, days: int, batch: int) -> dict[str, Any]:
     return {"trimmed": len(rows)}
 
 
+def _coding_job_events(cur, days: int, batch: int) -> dict[str, Any]:
+    """The live feed's file events follow the coding-log period: deleted, oldest first, in batches."""
+    if not days:
+        return {"kept": "forever"}
+    cur.execute(
+        """
+        DELETE FROM coding_job_events
+         WHERE id IN (SELECT id FROM coding_job_events
+                       WHERE created_at < now() - make_interval(days => %s)
+                       ORDER BY id LIMIT %s)
+        """,
+        (days, batch),
+    )
+    return {"deleted": cur.rowcount}
+
+
 def _workflow_tasks(cur, days: int, batch: int) -> dict[str, Any]:
     if not days:
         return {"kept": "forever"}
@@ -219,6 +235,7 @@ def apply_retention(conn, body: dict[str, Any]) -> dict[str, Any]:
     steps = (
         ("transcripts", lambda cur: _transcripts(cur, transcript_days, batch)),
         ("coding_job_logs", lambda cur: _coding_logs(cur, coding_log_days, batch)),
+        ("coding_job_events", lambda cur: _coding_job_events(cur, coding_log_days, batch)),
         ("workflow_tasks", lambda cur: _workflow_tasks(cur, task_days, batch)),
         ("audit_events", lambda cur: _audit(cur, audit_days, decision_days, batch)),
     )
