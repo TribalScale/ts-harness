@@ -266,17 +266,19 @@ def untouched_required_files(repo_dir: Path, work_order_body: str, base_ref: str
     required = required_paths(work_order_body)
     if not required:
         return []
+    # `features/*-badge.feature` (from a `<JIRA-KEY>` placeholder) is a glob pathspec for git.
+    pathspecs = [f":(glob){path}" if "*" in path else path for path in required]
     touched: set[str] = set()
     if base_ref:
         diff = runner(
-            ["git", "-C", str(repo_dir), "diff", "--name-only", base_ref, "--", *required],
+            ["git", "-C", str(repo_dir), "diff", "--name-only", base_ref, "--", *pathspecs],
             capture_output=True, text=True, check=False,
         )
         if diff.returncode != 0:
             return []  # the base cannot be compared: do not block on it
         touched.update(line.strip() for line in (diff.stdout or "").splitlines() if line.strip())
     status = runner(
-        ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=all", "--", *required],
+        ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=all", "--", *pathspecs],
         capture_output=True, text=True, check=False,
     )
     for line in (status.stdout or "").splitlines():
@@ -285,7 +287,13 @@ def untouched_required_files(repo_dir: Path, work_order_body: str, base_ref: str
             path = path.split(" -> ", 1)[1]
         if path:
             touched.add(path)
-    return [path for path in required if path not in touched]
+    import fnmatch
+
+    return [
+        path
+        for path in required
+        if path not in touched and not ("*" in path and any(fnmatch.fnmatch(t, path) for t in touched))
+    ]
 
 
 def detect_unit_test_command(repo_dir: Path, *, python: str = "python3") -> list[str] | None:
