@@ -1155,6 +1155,17 @@ class MemoryClient:
     def claim_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/alerts", {"tenant_id": tenant_id})
 
+    def improvement_spend(self, *, tenant_id: str = "default", month: str = "") -> dict[str, Any]:
+        """The month's self-improvement spend (``month`` ``YYYY-MM``, default the current UTC month)."""
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, **({"month": month} if month else {})}
+        return self._request("GET", f"/budgets/improvement?{urlencode(params)}")
+
+    def charge_improvement(self, **body: Any) -> dict[str, Any]:
+        """Record a self-improvement charge (``cost_usd``, ``purpose``, ``ref``, ``model``, tokens, ``actor``)."""
+        return self._request("POST", "/budgets/improvement/charges", body)
+
     def claim_program_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/program-alerts", {"tenant_id": tenant_id})
 

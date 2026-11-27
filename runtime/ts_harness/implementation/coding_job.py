@@ -385,7 +385,8 @@ def build_coding_request(
 
 # worker_memory_mb sizes a retry after the worker ran out of memory; the launcher reads it.
 # budget_note: why a program over its budget runs on the default model (memory API stores it).
-_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb", "budget_note"}
+# versions: run tagging (ts_harness.improvement.versions), read by metrics, not by the run.
+_SPEC_ONLY_KEYS = {"spec_version", "record_workflow_id", "backend", "worker_memory_mb", "budget_note", "versions"}
 
 
 def _note_list(value: Any) -> list[dict[str, Any]] | None:

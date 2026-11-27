@@ -60,7 +60,20 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         )
         if contract:
             spec = {**spec, "api_contract": contract}
-    return spec
+    return with_versions(spec, task_input)
+
+
+def with_versions(spec: dict[str, Any], task_input: dict[str, Any]) -> dict[str, Any]:
+    """The spec with ``versions``: the task's ``_versions`` plus the job's models and review variant.
+
+    See ts_harness.improvement.versions. Tagging never stops the job.
+    """
+    from ts_harness.improvement import versions as run_versions
+
+    stamped = run_versions.safe_versions(
+        lambda: run_versions.with_coding_spec(task_input.get(run_versions.VERSIONS_KEY), spec)
+    )
+    return {**spec, "versions": stamped} if stamped else spec
 
 
 def _synthetic_tool_audit(run: dict[str, Any]) -> list[dict[str, Any]]:

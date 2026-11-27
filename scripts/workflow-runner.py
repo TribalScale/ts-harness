@@ -642,6 +642,13 @@ class MemoryApiClient:
     def consume_coding_job(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/coding-jobs/{job_id}/consume", {})
 
+    def patch_task_input(self, task_id: str, input_data: dict[str, Any], *, actor: str = "workflow-runner") -> dict[str, Any]:
+        return self._request("PATCH", f"/workflow/task/{task_id}/input", {"input": input_data, "actor": actor})
+
+    def kv_get(self, namespace: str, key: str) -> dict[str, Any]:
+        quoted = urllib.parse.quote(key, safe="")
+        return self._request("GET", f"/runtime-kv/{namespace}/{quoted}")
+
 
 # ---------------------------------------------------------------------------
 # Gateway adapter
@@ -1366,6 +1373,7 @@ class WorkflowRunner:
         task_input = dict(task.get("input") or {})
         if stage is not None and stage.input_map:
             task_input = self._fill_stage_inputs(task, stage, task_input)
+        task_input = self._stamp_versions(task, stage, task_input)
 
         from ts_harness.workflows import coding_job_stage
 
@@ -1396,7 +1404,8 @@ class WorkflowRunner:
             "step_name": task.get("step_name"),
             "agent_id": task.get("agent_id"),
             "tenant_id": task.get("tenant_id", ""),
-            "input": task_input,
+            # Run tagging (``_versions``) is for metrics, not for the agent.
+            "input": {k: v for k, v in task_input.items() if k != "_versions"},
             "required_artifacts": task.get("required_artifacts")
             or ([] if stage is None else stage.required_artifacts),
             "skill_hints": task.get("skill_hints")
@@ -1423,6 +1432,39 @@ class WorkflowRunner:
             if str((result or {}).get("status") or "") == "succeeded":
                 self._record_delivered_frames(task, task_input)
         self._apply_dispatch_result(task, stage, result, dispatch_started)
+
+    def _stamp_versions(
+        self,
+        task: dict[str, Any],
+        stage: workflow_definitions.Stage | None,
+        task_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Record the versions this step runs with on its input (``_versions``); never fails the dispatch.
+
+        See ts_harness.improvement.versions. The stored input gets it too, so metrics can read it.
+        """
+        from ts_harness.improvement import versions as run_versions
+
+        if not run_versions.enabled():
+            return task_input
+
+        def build() -> dict[str, Any]:
+            skeleton = self._skeleton_for_task(task) if stage is not None else None
+            variants: dict[str, str] = {}
+            if hasattr(self.memory, "kv_get"):
+                variants = run_versions.ticket_variants(str(task.get("workflow_id") or ""), memory=self.memory)
+            return run_versions.versions_for_task(task, stage=stage, skeleton=skeleton, variants=variants)
+
+        stamped = run_versions.safe_versions(build)
+        if not stamped:
+            return task_input
+        updated = {**task_input, run_versions.VERSIONS_KEY: stamped}
+        if task_input.get(run_versions.VERSIONS_KEY) != stamped and hasattr(self.memory, "patch_task_input"):
+            try:
+                self.memory.patch_task_input(str(task.get("id")), updated, actor="workflow-runner")
+            except Exception as exc:  # noqa: BLE001 - the step runs without its stored tag
+                log_event("run_tagging_error", task_id=task.get("id"), error=str(exc))
+        return updated
 
     def _add_design_input(self, task: dict[str, Any], task_input: dict[str, Any]) -> None:
         """Design references (Figma frames, attached images) for PRD, planning, coding and QA steps."""

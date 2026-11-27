@@ -424,3 +424,91 @@ def claim_program_budget_alerts(conn, body: dict[str, Any]) -> dict[str, Any]:
         notes = list(cur.fetchall())
     conn.commit()
     return {"alerts": due, "notes": notes}
+
+
+# Improvement budget (migration 055): the self-improvement loop's model spend per calendar month
+# (UTC), apart from delivery budgets. The cap is a runtime setting; these routes only keep and sum
+# the ledger (see ts_harness.improvement.budget).
+
+MAX_CHARGE_USD = Decimal("1000")
+
+
+def _month(value: Any) -> str | None:
+    """``YYYY-MM`` or ``YYYY-MM-DD`` to the month's first day; ``None`` for the current month."""
+    import re
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.fullmatch(r"(\d{4})-(\d{2})(?:-\d{2})?", text)
+    if not match or not 1 <= int(match.group(2)) <= 12:
+        raise ValueError("month must be YYYY-MM")
+    return f"{match.group(1)}-{match.group(2)}-01"
+
+
+def improvement_spend(conn, params: dict[str, Any]) -> dict[str, Any]:
+    """The month's improvement spend: total, by purpose and the latest charges."""
+    tenant = _tenant(params)
+    month = _month(params.get("month"))
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(%s::date, (date_trunc('month', now() AT TIME ZONE 'UTC'))::date) AS month",
+            (month,),
+        )
+        month_day = cur.fetchone()["month"]
+        cur.execute(
+            "SELECT purpose, COALESCE(sum(cost_usd), 0) AS spent, count(*) AS charges "
+            "FROM improvement_spend WHERE tenant_id = %s AND month = %s GROUP BY purpose ORDER BY purpose",
+            (tenant, month_day),
+        )
+        by_purpose = {row["purpose"]: {"spent_usd": round(float(row["spent"]), 4), "charges": int(row["charges"])}
+                      for row in cur.fetchall()}
+        cur.execute(
+            "SELECT id::text AS id, cost_usd, purpose, ref, model, input_tokens, output_tokens, actor, created_at "
+            "FROM improvement_spend WHERE tenant_id = %s AND month = %s ORDER BY created_at DESC LIMIT 20",
+            (tenant, month_day),
+        )
+        recent = [{**row, "cost_usd": round(float(row["cost_usd"]), 4)} for row in cur.fetchall()]
+    spent = round(sum(item["spent_usd"] for item in by_purpose.values()), 4)
+    return {"tenant_id": tenant, "month": str(month_day), "spent_usd": spent, "by_purpose": by_purpose, "recent": recent}
+
+
+def _tokens(body: dict[str, Any], key: str) -> int | None:
+    value = body.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be a whole number") from exc
+    if number < 0:
+        raise ValueError(f"{key} must be zero or more")
+    return number
+
+
+def charge_improvement(conn, body: dict[str, Any]) -> dict[str, Any]:
+    """Record one improvement charge; returns the month's spend after it."""
+    tenant = _tenant(body)
+    amount = _amount(body.get("cost_usd"), "cost_usd") if body.get("cost_usd") not in (None, "") else None
+    if amount is None:
+        raise ValueError("cost_usd is required")
+    exact = Decimal(str(body.get("cost_usd"))).quantize(Decimal("0.0001"))
+    if exact > MAX_CHARGE_USD:
+        raise ValueError(f"cost_usd must be at most {MAX_CHARGE_USD}")
+    purpose = str(body.get("purpose") or "").strip()[:80]
+    if not purpose:
+        raise ValueError("purpose is required")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO improvement_spend (tenant_id, cost_usd, purpose, ref, model, input_tokens, output_tokens, actor)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id::text AS id, month
+            """,
+            (tenant, exact, purpose, str(body.get("ref") or "")[:200] or None,
+             str(body.get("model") or "")[:200] or None, _tokens(body, "input_tokens"), _tokens(body, "output_tokens"),
+             str(body.get("actor") or "")[:120] or None),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return {"charge_id": row["id"], **improvement_spend(conn, {"tenant_id": tenant, "month": str(row["month"])})}

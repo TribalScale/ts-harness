@@ -228,9 +228,17 @@ class ProposalTests(unittest.TestCase):
 
     def test_the_program_is_remembered_against_each_failure(self):
         self.handle()
-        (state, _), = self.memory.kv.values()
+        state, _ = self.memory.kv[(ns.KV_NAMESPACE, "org--web")]
         (entry,) = state["failures"].values()
         self.assertEqual((entry["program_id"], entry["route"]), ("prog-1", "/notes"))
+
+    def test_the_api_repository_gets_an_index_for_the_post_merge_guard(self):
+        self.handle()
+        state, _ = self.memory.kv[(ns.KV_NAMESPACE, ns.api_index_key("org/api"))]
+        (entry,) = state["failures"].values()
+        self.assertEqual((entry["web_repo"], entry["program_id"], entry["at"]), ("org/web", "prog-1", NOW))
+        # The index is not a de-duplication record: the web repository's key still decides.
+        self.assertEqual(self.handle(now=NOW + 60)["status"], "duplicate")
 
 
 class EndpointTests(unittest.TestCase):

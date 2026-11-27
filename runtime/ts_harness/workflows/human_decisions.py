@@ -17,6 +17,17 @@ from ts_harness.workflows.work_order_waves import (
 )
 
 ACCEPT_KEY = "_human_accept"
+# Every decision on a stuck step, newest last: ``{"action", "actor", "at", "after_arbiter"?}``.
+# ``after_arbiter`` (the arbiter's last action on the step) marks a person overruling the arbiter.
+# The autonomy and guard metrics count these (ts_harness.improvement.guard).
+DECISION_LOG_KEY = "_decision_log"
+DECISION_LOG_LIMIT = 20
+# Actors that are the harness itself, not a person. ``jira-reply`` is a person answering the
+# ticket's readiness questions on Jira, so it counts as a person stepping in.
+HARNESS_ACTORS = frozenset({
+    "harness-arbiter", "harness-triage", "harness-drafter", "harness-cancelled",
+    "workflow-runner", "orchestrator",
+})
 STOPPED_PREFIX = "stopped_by_human:"
 DECISIONS = ("retry", "revise", "accept", "stop")
 # Input key a retry with guidance sets; the agent loop shows it in the step's prompt.
@@ -261,19 +272,51 @@ def accepted_output(task: dict[str, Any], *, github: Any = None) -> dict[str, An
     return output
 
 
-def _note_after_arbiter(tasks: list[dict[str, Any]], step: str, action: str, actor: str) -> None:
-    """Log a person's decision on a step the arbiter already acted on: how often it had to step in."""
-    if actor == "harness-arbiter":
-        return
+def is_harness_actor(actor: str) -> bool:
+    """The harness acting on its own (arbiter, triage, runner), not a person."""
+    actor = str(actor or "").strip().lower()
+    return actor in HARNESS_ACTORS or actor.startswith("harness-")
+
+
+def _note_after_arbiter(tasks: list[dict[str, Any]], step: str, action: str, actor: str) -> str:
+    """A person's decision on a step the arbiter already acted on: the arbiter's last action, or "".
+
+    Logged (``human_decision_after_arbiter``) and recorded in the step's decision log, so the guard
+    metrics can count how often a person overruled the arbiter.
+    """
+    if is_harness_actor(actor):
+        return ""
     from ts_harness.workflows.stuck_arbiter import record
 
     acted = [a for t in tasks if str(t.get("step_name") or "") == step for a in record(t).get("actions") or [] if isinstance(a, dict)]
-    if acted:
+    if not acted:
+        return ""
+    import logging
+
+    logging.getLogger(__name__).info(
+        "human_decision_after_arbiter step=%s arbiter=%s human=%s", step, acted[-1].get("action"), action
+    )
+    return str(acted[-1].get("action") or "acted")
+
+
+def decision_log(task: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [entry for entry in _input(task).get(DECISION_LOG_KEY) or [] if isinstance(entry, dict)]
+
+
+def _record_decision(engine: Any, task: dict[str, Any], action: str, actor: str, after_arbiter: str) -> None:
+    """Append the decision to the step's ``_decision_log`` (best effort: the decision stands without it)."""
+    entry: dict[str, Any] = {"action": action, "actor": str(actor or ""), "at": _now()}
+    if after_arbiter:
+        entry["after_arbiter"] = after_arbiter
+    updated = {**_input(task), DECISION_LOG_KEY: [*decision_log(task), entry][-DECISION_LOG_LIMIT:]}
+    try:
+        engine.client.patch_task_input(str(task.get("id")), updated, actor=str(actor or "orchestrator"))
+    except Exception as exc:  # noqa: BLE001
         import logging
 
-        logging.getLogger(__name__).info(
-            "human_decision_after_arbiter step=%s arbiter=%s human=%s", step, acted[-1].get("action"), action
-        )
+        logging.getLogger(__name__).warning("decision not logged on task %s: %s", task.get("id"), exc)
+        return
+    task["input"] = updated  # later patches in this decision build on it
 
 
 def decide(
@@ -315,7 +358,7 @@ def decide(
     label = work_order_label(tasks, workflow)
     output = task.get("output") if isinstance(task.get("output"), dict) else {}
     base = {"decision": action, "workflow_id": workflow_id, "task_id": str(task_id), "step_name": step, "work_order": label}
-    _note_after_arbiter(tasks, step, action, actor)
+    _record_decision(engine, task, action, actor, _note_after_arbiter(tasks, step, action, actor))
     who = display_actor(actor)
 
     if action == "revise" and _reruns_on_revise(ctx.stage):

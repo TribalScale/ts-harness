@@ -727,6 +727,58 @@ export interface MetricsTicket {
   cost_usd: number;
   strong_cost_usd: number;
   lost_jobs: number;
+  merged_at?: string;
+  interventions?: string[];
+  autonomous?: boolean;
+  versions?: Record<string, unknown>;
+  guard?: MetricsTicketGuard;
+}
+
+/** Post-merge signals for one ticket: a count, or null when it could not be read ("unknown"). */
+export interface MetricsTicketGuard {
+  reverts: number | null;
+  jira_bugs: number | null;
+  smoke_failures: number | null;
+  arbiter_overruled: number | null;
+  problems: number;
+  unknown: string[];
+  merged_at: string;
+  window_open: boolean;
+  window_days: number;
+}
+
+export interface MetricsGuardSignal {
+  count: number | null;
+  checked: number;
+  unknown: number;
+}
+
+export interface MetricsGuardSummary {
+  window_days: number;
+  merged: number;
+  tickets_with_problems: number;
+  problem_rate: number | null;
+  fully_checked: number;
+  window_open: number;
+  signals: Record<"reverts" | "jira_bugs" | "smoke_failures" | "arbiter_overruled", MetricsGuardSignal>;
+}
+
+export interface MetricsAutonomy {
+  autonomous: number;
+  rate: number | null;
+  merged_share: number | null;
+  intervened: number;
+  by_kind: Record<string, number>;
+}
+
+export interface ImprovementBudgetStatus {
+  month: string;
+  cap_usd: number;
+  spent_usd: number | null;
+  remaining_usd: number | null;
+  paused: boolean;
+  by_purpose: Record<string, { spent_usd: number; charges: number }>;
+  available: boolean;
 }
 
 export interface MetricsStats {
@@ -756,6 +808,8 @@ export interface MetricsSummary {
   cost_usd: { median: number | null; total: number };
   strong_cost_share: number | null;
   lost_jobs: number;
+  autonomy?: MetricsAutonomy;
+  guard?: MetricsGuardSummary;
 }
 
 export interface MetricsResponse {
@@ -763,9 +817,12 @@ export interface MetricsResponse {
   days: number;
   include_running: boolean;
   summary: MetricsSummary;
-  weekly: { week: string; tickets: number; first_try_rate: number | null; revisions_mean: number }[];
+  weekly: { week: string; tickets: number; first_try_rate: number | null; autonomy_rate?: number | null; revisions_mean: number }[];
   tickets: MetricsTicket[];
-  facets: { projects: string[]; repos: string[] };
+  facets: { projects: string[]; repos: string[]; group_keys?: string[] };
+  group_by?: string;
+  groups?: { value: string; tickets: number; summary: MetricsSummary }[];
+  improvement_budget?: ImprovementBudgetStatus;
 }
 
 export interface StoryFinding {

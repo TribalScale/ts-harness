@@ -256,4 +256,85 @@ describe("Metrics", () => {
     await user.click(screen.getByLabelText("Include running tickets"));
     await vi.waitFor(() => expect(urls.some((u) => u.includes("running=1") && u.includes("days=14"))).toBe(true));
   });
+
+  it("shows autonomy, the post-merge guard with unknowns, the improvement budget and groups by a versions key", async () => {
+    const user = userEvent.setup();
+    const urls: string[] = [];
+    const guard = {
+      window_days: 14, merged: 2, tickets_with_problems: 1, problem_rate: 0.5, fully_checked: 1, window_open: 1,
+      signals: {
+        reverts: { count: 1, checked: 2, unknown: 0 },
+        jira_bugs: { count: null, checked: 0, unknown: 2 },
+        smoke_failures: { count: 0, checked: 1, unknown: 1 },
+        arbiter_overruled: { count: 1, checked: 2, unknown: 0 },
+      },
+    };
+    const summary = {
+      tickets: 2, finished: 2, merged: 2, first_try: 1, first_try_rate: 0.5,
+      revisions: { median: 1, mean: 1, max: 2, total: 2, by_trigger: {} },
+      time_to_merge_seconds: { median: 9240, mean: 9240, max: 11940 },
+      you_seconds: 0, agent_seconds: 0, you_share: null, coding_runs: 2, reviewed_runs: 0,
+      review_catch_rate: null, review_fixed: 0, gate_compared: 0, gate_disagreed: 0, gate_disagreement_rate: null,
+      cost_usd: { median: 4, total: 8 }, strong_cost_share: null, lost_jobs: 0,
+      autonomy: { autonomous: 1, rate: 0.5, merged_share: 0.5, intervened: 1, by_kind: { revise_grant: 1 } },
+      guard,
+    };
+    mockFetch((url) => {
+      urls.push(url);
+      if (url.startsWith("/admin/metrics")) {
+        return jsonResponse({
+          generated_at: "", days: 14, include_running: false, summary, weekly: [],
+          tickets: [ticket("PROJ-2", { interventions: ["revise_grant"], autonomous: false }), ticket("PROJ-1", { interventions: [], autonomous: true })],
+          facets: { projects: ["PROJ"], repos: ["o/r"], group_keys: ["models.coding", "variants.pre_push"] },
+          ...(url.includes("group_by=variants.pre_push")
+            ? { group_by: "variants.pre_push", groups: [{ value: "gate_inputs", tickets: 1, summary }, { value: "(none)", tickets: 1, summary: { ...summary, guard: { ...guard, signals: { ...guard.signals, reverts: { count: null, checked: 0, unknown: 1 }, smoke_failures: { count: null, checked: 0, unknown: 1 } } } } }] }
+            : {}),
+          improvement_budget: { month: "2026-01", cap_usd: 150, spent_usd: 150, remaining_usd: 0, paused: true, by_purpose: {}, available: true },
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    renderPage(<LivePage tab="metrics" onTab={vi.fn()} />);
+    const tiles = await screen.findByLabelText("Headline numbers");
+    expect(tiles).toHaveTextContent("Merged without a person50%1 of 2 finished · 1 needed a person (1 /revise)");
+    expect(tiles).toHaveTextContent("Problems after merge50%1 of 2 merged within 14 days");
+    expect(tiles).toHaveTextContent("reverts 1 · Jira bugs unknown · smoke failures 0 (1 unknown) · arbiter overruled 1");
+    expect(tiles).toHaveTextContent("Improvement budget$150.00 of $150.00");
+    expect(tiles).toHaveTextContent("cap reached: improvement work paused until next month");
+    const table = screen.getByRole("table", { name: "Tickets by cost" });
+    const rows = within(table).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("/revise");
+    expect(rows[2]).toHaveTextContent("No");
+    await user.selectOptions(screen.getByLabelText("Group by"), "variants.pre_push");
+    await vi.waitFor(() => expect(urls.some((u) => u.includes("group_by=variants.pre_push"))).toBe(true));
+    const groups = await screen.findByLabelText("By version");
+    expect(groups).toHaveTextContent("By variants.pre_push");
+    const groupRows = within(groups).getAllByRole("row");
+    expect(groupRows[1]).toHaveTextContent("gate_inputs150%50%50%$4.00");
+    expect(groupRows[2]).toHaveTextContent("(none)150%50%unknown");
+  });
+
+  it("shows unknown when the improvement budget cannot be read", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/admin/metrics")) {
+        return jsonResponse({
+          generated_at: "", days: 14, include_running: false,
+          summary: {
+            tickets: 0, finished: 0, merged: 0, first_try: 0, first_try_rate: null,
+            revisions: { median: null, mean: null, max: null, total: 0, by_trigger: {} },
+            time_to_merge_seconds: { median: null, mean: null, max: null },
+            you_seconds: 0, agent_seconds: 0, you_share: null, coding_runs: 0, reviewed_runs: 0,
+            review_catch_rate: null, review_fixed: 0, gate_compared: 0, gate_disagreed: 0, gate_disagreement_rate: null,
+            cost_usd: { median: null, total: 0 }, strong_cost_share: null, lost_jobs: 0,
+          },
+          weekly: [], tickets: [], facets: { projects: [], repos: [] },
+          improvement_budget: { month: "2026-01", cap_usd: 150, spent_usd: null, remaining_usd: null, paused: true, by_purpose: {}, available: false },
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    renderPage(<LivePage tab="metrics" onTab={vi.fn()} />);
+    const tiles = await screen.findByLabelText("Headline numbers");
+    expect(tiles).toHaveTextContent("Improvement budgetunknowncap $150.00 for 2026-01");
+  });
 });

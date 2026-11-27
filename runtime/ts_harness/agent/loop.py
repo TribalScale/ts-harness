@@ -299,6 +299,9 @@ class EnterpriseAgent:
             },
             effort=_run_effort(agent, payload, source),
         )
+        if isinstance(payload.get("input"), dict) and "_versions" in payload["input"]:
+            # Run tagging is for metrics (ts_harness.improvement.versions); the agent never sees it.
+            payload = {**payload, "input": {k: v for k, v in payload["input"].items() if k != "_versions"}}
         system_prompt = self._build_workflow_system_prompt(agent, payload)
         task_input = dict(payload.get("input") or {})
         images = task_input.pop("_images", None)

@@ -308,6 +308,9 @@ class BudgetsConfig:
     # "downgrade": revisions, complex first runs and the pre-push review stop using the
     # stronger model; "stop": the program's new coding jobs wait until its budget is raised.
     program_action: str = "downgrade"
+    # Monthly cap on the self-improvement loop's own model spend, apart from delivery budgets
+    # (ts_harness.improvement.budget). 0 pauses improvement work.
+    improvement_monthly_usd: float = 150.0
 
     def settings_payload(self) -> dict[str, Any]:
         return {
@@ -849,6 +852,9 @@ def parse_budgets(raw: Any) -> BudgetsConfig:
         notify_channel=str(raw.get("notify_channel") or ""),
         program_default_usd=amount(raw.get("program_default_usd", defaults.program_default_usd), "program_default_usd"),
         program_action=action,
+        improvement_monthly_usd=amount(
+            raw.get("improvement_monthly_usd", defaults.improvement_monthly_usd), "improvement_monthly_usd"
+        ),
     )
 
 

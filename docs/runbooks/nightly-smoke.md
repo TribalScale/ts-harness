@@ -153,7 +153,9 @@ checkout `SMOKE_API_URL=http://127.0.0.1:3000 SMOKE_API_DIR=../api npm run test:
    program is still open, is known. A report with only known failures answers
    `{"status": "duplicate"}` and proposes nothing; a fix that later breaks again (its program
    ended more than a day ago) is proposed again. The keys are kept in `runtime_kv` (namespace
-   `nightly-smoke`) for 30 days.
+   `nightly-smoke`) for 30 days. A report naming its `api_repo` also records the new failures
+   under `api:<owner>--<repo>`, so the post-merge guard can attribute them to the API repository
+   (see [self-improvement.md](self-improvement.md)); that index plays no part in de-duplication.
 4. **Proposal**: the new failures of one report go into **one** `bug_to_jira_work_orders`
    program started at `bug_intake`, with a bug report as its summary: each failing scenario
    with its step, route and error, the run URL, the artifact link and both commits. So a night

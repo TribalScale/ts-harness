@@ -215,6 +215,15 @@ def _kv_key(repo: str) -> str:
     return repo.lower().replace("/", "--")
 
 
+def api_index_key(api_repo: str) -> str:
+    """Key of the failures recorded against an API repository (the smoke's ``api_repo``).
+
+    Not used for de-duplication: the post-merge guard reads it to attribute a smoke failure to
+    the API repository as well as the web one (ts_harness.improvement.guard).
+    """
+    return f"api:{_kv_key(api_repo)}"
+
+
 def _program_open(memory: Any, program_id: str) -> bool:
     if not program_id:
         return False
@@ -316,6 +325,12 @@ def handle_smoke_report(
         raise
     program_id = str(getattr(result, "program_id", "") or "")
     kv_update(KV_NAMESPACE, _kv_key(report.repo), lambda v: _recorded(v, claimed, program_id), default={}, client=memory)
+    if report.api_repo:
+        try:
+            kv_update(KV_NAMESPACE, api_index_key(report.api_repo),
+                      lambda v: _indexed(v, claimed, report.repo, program_id, now), default={}, client=memory)
+        except Exception as exc:  # noqa: BLE001 - the proposal stands without the index
+            logger.info("smoke report: API index for %s not updated: %s", report.api_repo, exc)
     logger.info("smoke report for %s proposed program %s (%d new failures)", report.repo, program_id, len(failures))
     return {
         "status": "proposed",
@@ -336,6 +351,15 @@ def _pruned(seen: dict[str, Any], now: float) -> dict[str, Any]:
 def _released(value: Any, prints: list[str]) -> Any:
     state = dict(value or {})
     state["failures"] = {fp: e for fp, e in (state.get("failures") or {}).items() if fp not in prints}
+    return state
+
+
+def _indexed(value: Any, prints: list[str], web_repo: str, program_id: str, now: float) -> Any:
+    state = dict(value or {})
+    seen = dict(state.get("failures") or {})
+    for fp in prints:
+        seen[fp] = {"at": now, "web_repo": web_repo, "program_id": program_id}
+    state["failures"] = _pruned(seen, now)
     return state
 
 

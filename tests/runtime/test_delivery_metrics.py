@@ -120,9 +120,20 @@ def memory_for(tickets, *, statuses=None, completed=None):
     return memory
 
 
+def offline_guard(**kwargs):
+    """A guard context whose GitHub and Jira calls fail, as when they are down."""
+    from ts_harness.improvement.guard import GuardContext
+
+    def down(*args, **kw):
+        raise RuntimeError("offline")
+
+    return GuardContext(now=NOW, github_for=down, jira_factory=down, memory=MagicMock(), **kwargs)
+
+
 class DeliveryMetricsTests(unittest.TestCase):
     def metrics(self, **kwargs):
         tickets = [first_try_ticket(), revised_ticket()]
+        kwargs.setdefault("guard", False)
         return dm.delivery_metrics(memory_for(tickets), allowed=lambda pid: pid == "p1", now=NOW, **kwargs)
 
     def rows(self):
@@ -180,17 +191,18 @@ class DeliveryMetricsTests(unittest.TestCase):
     def test_period_and_filters(self):
         tickets = [first_try_ticket(), revised_ticket(), cancelled_ticket()]
         memory = memory_for(tickets, statuses={"wf-PROJ-3": "cancelled"}, completed={"wf-PROJ-3": at(11990)})
-        week = dm.delivery_metrics(memory, days=7, now=NOW)
+        week = dm.delivery_metrics(memory, days=7, now=NOW, guard=False)
         self.assertEqual(sorted(r["jira_issue_key"] for r in week["tickets"]), ["PROJ-1", "PROJ-2"])
-        month = dm.delivery_metrics(memory, days=30, now=NOW)
+        month = dm.delivery_metrics(memory, days=30, now=NOW, guard=False)
         self.assertEqual(month["summary"]["finished"], 3)
         self.assertEqual(month["facets"]["repos"], ["o/other", "o/r"])
-        only = dm.delivery_metrics(memory, days=30, repo="O/Other", now=NOW)
+        only = dm.delivery_metrics(memory, days=30, repo="O/Other", now=NOW, guard=False)
         self.assertEqual([r["jira_issue_key"] for r in only["tickets"]], ["PROJ-3"])
-        self.assertEqual(dm.delivery_metrics(memory, days=30, project="OTHER", now=NOW)["tickets"], [])
+        self.assertEqual(dm.delivery_metrics(memory, days=30, project="OTHER", now=NOW, guard=False)["tickets"], [])
         weeks = [w["week"] for w in month["weekly"]]
         self.assertEqual(weeks, sorted(weeks))
-        self.assertEqual(month["weekly"][-1], {"week": "2026-01-12", "tickets": 2, "first_try_rate": 0.5, "revisions_mean": 1.0})
+        self.assertEqual(month["weekly"][-1], {"week": "2026-01-12", "tickets": 2, "first_try_rate": 0.5,
+                                              "autonomy_rate": 0.5, "revisions_mean": 1.0})
 
     def test_running_tickets_are_optional(self):
         key, tasks, jobs = first_try_ticket("PROJ-4")
@@ -198,8 +210,8 @@ class DeliveryMetricsTests(unittest.TestCase):
         tasks[1].update({"status": "blocked", "completed_at": None, "error": "awaiting_external:coding.finished"})
         memory = memory_for([(key, tasks, [{**jobs[0], "status": "running", "finished_at": None, "result": {}}])],
                             statuses={"wf-PROJ-4": "running"})
-        self.assertEqual(dm.delivery_metrics(memory, now=NOW)["tickets"], [])
-        out = dm.delivery_metrics(memory, include_running=True, now=NOW)
+        self.assertEqual(dm.delivery_metrics(memory, now=NOW, guard=False)["tickets"], [])
+        out = dm.delivery_metrics(memory, include_running=True, now=NOW, guard=False)
         self.assertEqual(out["tickets"][0]["outcome"], "running")
         self.assertEqual((out["summary"]["tickets"], out["summary"]["finished"], out["summary"]["first_try_rate"]), (1, 0, None))
 
@@ -222,7 +234,8 @@ class MetricsEndpointTests(unittest.TestCase):
             mock.patch.object(asgi_app, "get_memory_client", return_value=self.memory),
             mock.patch.object(asgi_app, "_require_program_level", side_effect=level),
             # The fixtures are dated around NOW, not the wall clock.
-            mock.patch.object(dm, "delivery_metrics", side_effect=lambda *a, _real=dm.delivery_metrics, **k: _real(*a, now=NOW, **k)),
+            mock.patch.object(dm, "delivery_metrics", side_effect=lambda *a, _real=dm.delivery_metrics, **k: _real(
+                *a, now=NOW, guard_context=offline_guard(), **k)),
         ]
         for patch in self.patches:
             patch.start()
