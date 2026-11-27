@@ -123,6 +123,9 @@ Write your review as JSON to {output_path} (this file is outside the repository;
 # fixes before the push is what the gate would block. ``legacy`` keeps the prompt above.
 VARIANT_GATE = "gate_rubric"
 VARIANT_LEGACY = "legacy"
+# Trial step 2 (2026-11-27): the gate's rubric plus the gate's own inputs, computed locally (the scope
+# check, the test-change list, the design frames). Recorded as its own variant so the trial compares.
+VARIANT_GATE_INPUTS = "gate_inputs"
 GATE_SKILL = Path("review") / "governed-code-review" / "SKILL.md"
 # The parts of the gate's skill that say how to judge a change; the rest is about its PR inputs and
 # its JSON envelope, which the local review replaces.
@@ -130,6 +133,8 @@ GATE_SECTIONS = (
     "Untrusted input",
     "Review depth",
     "Deep checks",
+    "API types in a web PR",
+    "Tests that change meaning",
     "Review Checklist",
     "Severity",
     "Not In Scope",
@@ -158,6 +163,11 @@ Write your review as JSON to {output_path} (this file is outside the repository;
                  "category": "correctness|security|scope|tests|maintainability",
                  "file": "path/in/repo", "line": 0, "message": "what is wrong and the fix you expect"}}]}}
 """
+
+
+def inputs_enabled() -> bool:
+    """``TS_HARNESS_PRE_PUSH_REVIEW_INPUTS`` (default on): give the reviewer the gate's inputs too."""
+    return (os.environ.get("TS_HARNESS_PRE_PUSH_REVIEW_INPUTS") or "on").strip().lower() not in OFF_VALUES
 
 
 def review_variant() -> str:
@@ -199,6 +209,86 @@ def extract_sections(markdown: str, titles: tuple[str, ...]) -> str:
     return "\n".join(kept).strip()
 
 
+_STATUS = {"A": "added", "M": "modified", "D": "removed", "R": "renamed", "C": "added", "T": "modified"}
+MAX_LOCAL_FILES = 300
+MAX_LOCAL_PATCH = 20000
+
+
+def local_changed_files(repo_dir: Path, base_ref: str, runner: Any) -> list[dict[str, Any]]:
+    """The branch's change against ``base_ref`` the way the gate sees a PR: ``[{filename, status, patch}]``."""
+    listed = runner(
+        ["git", "diff", "--name-status", "-M", f"{base_ref}...HEAD"],
+        cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False,
+    )
+    files: list[dict[str, Any]] = []
+    for line in str(listed.stdout or "").splitlines()[:MAX_LOCAL_FILES]:
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status, path = _STATUS.get(parts[0][:1], "modified"), parts[-1]
+        patch = runner(
+            ["git", "diff", f"{base_ref}...HEAD", "--", path],
+            cwd=str(repo_dir), capture_output=True, text=True, errors="replace", check=False,
+        )
+        files.append({"filename": path, "status": status, "patch": str(patch.stdout or "")[:MAX_LOCAL_PATCH]})
+    return files
+
+
+def gate_inputs(
+    repo_dir: Path, *, base_ref: str, work_order_body: str, design_refs: list[dict[str, Any]] | None, runner: Any
+) -> dict[str, Any]:
+    """What the code review gate is given besides the diff, computed from the local branch:
+    the scope check (files outside the work order's list, boundary findings), the test-change list
+    (removed, reversed or weakened tests), and the design frames the work order names."""
+    from ts_harness.workflows.code_review import boundary_findings, scope_findings
+    from ts_harness.workflows.test_changes import test_changes
+
+    try:
+        files = local_changed_files(repo_dir, base_ref, runner)
+    except Exception:  # noqa: BLE001 - the review runs without them
+        files = []
+    scope = [*scope_findings("local", files, work_order_body), *boundary_findings("local", files, work_order_body)]
+    frames: list[dict[str, str]] = []
+    try:
+        from ts_harness.implementation.design_files import DESIGN_DIR
+        from ts_harness.intake.design import refs_named_by_work_order
+
+        named = refs_named_by_work_order(list(design_refs or []), work_order_body) if design_refs else []
+        folder = Path(repo_dir) / DESIGN_DIR
+        for ref in named:
+            image = next(iter(sorted(folder.glob(f"{re.sub(r'[^A-Za-z0-9]', '', str(ref.get('id') or ''))}.*"))), None)
+            if image is not None and image.suffix != ".md":
+                frames.append({"id": str(ref.get("id")), "title": str(ref.get("title") or ""), "path": f"{DESIGN_DIR}/{image.name}"})
+    except Exception:  # noqa: BLE001
+        frames = []
+    return {"scope_findings": scope, "test_changes": test_changes(files), "design_frames": frames}
+
+
+def _gate_inputs_text(inputs: dict[str, Any]) -> str:
+    parts: list[str] = []
+    scope = inputs.get("scope_findings") or []
+    if scope:
+        parts.append(
+            "\nScope check (the gate's `input.scope_findings`): judge each file the way the gate does; a file the work "
+            "needs is fine, work the order does not ask for is a `major` `scope` finding:\n"
+            + "\n".join(f"- {f.get('file')}: {f.get('message')}" for f in scope[:40])
+        )
+    changes = inputs.get("test_changes") or []
+    if changes:
+        parts.append(
+            "\nTest changes (the gate's `input.test_changes`; apply \"Tests that change meaning\"): "
+            + json.dumps(changes[:20])[:6000]
+        )
+    frames = inputs.get("design_frames") or []
+    if frames:
+        parts.append(
+            "\nDesign frames the work order names (open each image and compare the UI the change renders: layout, "
+            "order, spacing, colours, text; a visible mismatch with a named frame is a `major` `correctness` finding):\n"
+            + "\n".join(f"- {f['id']} {f['title']}: {f['path']}" for f in frames)
+        )
+    return "\n".join(parts)
+
+
 def build_review_prompt(
     *,
     work_order_id: str,
@@ -208,8 +298,13 @@ def build_review_prompt(
     review_feedback: str | None = None,
     human_change_requests: list[str] | None = None,
     rubric: str | None = None,
+    inputs: dict[str, Any] | None = None,
 ) -> str:
     extra: list[str] = []
+    if inputs:
+        text = _gate_inputs_text(inputs)
+        if text:
+            extra.append(text)
     if human_change_requests:
         extra.append(
             "\nA human reviewer asked for these changes; they amend the work order (the latest wins). "

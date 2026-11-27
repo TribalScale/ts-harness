@@ -181,7 +181,8 @@ def _review_settings(mode: str, provider: str) -> dict[str, Any]:
         # Read here (the runner has the skills); the worker image does not carry the review skills.
         rubric = pre_push_review.gate_rubric()
         if rubric:
-            settings.update(review_rubric=rubric, review_variant=pre_push_review.VARIANT_GATE)
+            variant = pre_push_review.VARIANT_GATE_INPUTS if pre_push_review.inputs_enabled() else pre_push_review.VARIANT_GATE
+            settings.update(review_rubric=rubric, review_variant=variant)
     return settings
 
 
