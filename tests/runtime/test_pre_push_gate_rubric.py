@@ -53,8 +53,13 @@ class SettingsTests(unittest.TestCase):
         with patch.object(coding_job, "_guided_model", return_value="claude-opus-5-5"), \
                 patch.dict("os.environ", {"TS_HARNESS_PRE_PUSH_REVIEW_VARIANT": "gate_rubric"}):
             settings = coding_job._review_settings("implement", "anthropic")
-        self.assertEqual(settings["review_variant"], "gate_rubric")
+        # The rubric now comes with the gate's inputs (scope check, test changes, design frames).
+        self.assertEqual(settings["review_variant"], "gate_inputs")
         self.assertIn("## Severity", settings["review_rubric"])
+        with patch.object(coding_job, "_guided_model", return_value="claude-opus-5-5"), \
+                patch.dict("os.environ", {"TS_HARNESS_PRE_PUSH_REVIEW_VARIANT": "gate_rubric",
+                                          "TS_HARNESS_PRE_PUSH_REVIEW_INPUTS": "off"}):
+            self.assertEqual(coding_job._review_settings("implement", "anthropic")["review_variant"], "gate_rubric")
 
     def test_the_result_says_which_variant_ran(self):
         record = ppr.summary_record([{"status": "pass", "summary": "ok", "findings": []}], model="m", variant="gate_rubric")

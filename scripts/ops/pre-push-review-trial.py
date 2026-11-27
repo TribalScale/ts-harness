@@ -7,7 +7,8 @@ Run inside the agent-runtime container (it has TS_HARNESS_SESSION_DB_URL):
     docker exec docker-agent-runtime-1 python3 /app/scripts/ops/pre-push-review-trial.py [--days 14]
 
 For each delivery whose first coding run had a pre-push review, it reads that run's review
-variant (``gate_rubric`` for the trial, ``legacy`` before it) and the code review gate's first
+variant (``gate_inputs`` since the reviewer gets the gate's inputs, ``gate_rubric`` before that,
+``legacy`` before the trial) and the code review gate's first
 verdict. The decision rule agreed for the trial: after at least ``--sample`` gate_rubric tickets,
 fewer than ``--min-passes`` first-try passes means the pre-push review is turned off
 (``TS_HARNESS_PRE_PUSH_REVIEW_ROUNDS=0``).
@@ -21,6 +22,10 @@ import statistics
 from typing import Any
 
 import psycopg
+
+
+# Newest first: gate_inputs (the gate's rubric and inputs), gate_rubric (rubric only), legacy.
+VARIANTS = ("gate_inputs", "gate_rubric", "legacy")
 
 
 def _first_runs(conn: Any, days: int) -> dict[str, dict[str, Any]]:
@@ -72,26 +77,31 @@ def main() -> int:
             run["verdict"] = _first_verdict(conn, workflow_id)
 
     decided = [run for run in runs.values() if run["verdict"]]
-    for variant in ("gate_rubric", "legacy"):
+    for variant in VARIANTS:
         group = [run for run in decided if run["variant"] == variant]
         if not group:
             print(f"{variant}: no tickets with a gate verdict yet")
             continue
         passes = sum(1 for run in group if run["verdict"] == "pass")
         minutes = statistics.mean(run["minutes"] for run in group)
+        # The review found nothing to fix, yet the gate blocked: what giving it the gate's inputs targets.
+        missed = sum(1 for run in group if not run["fixed"] and run["verdict"] != "pass")
         print(
             f"{variant}: {len(group)} tickets, first-try gate pass {passes}/{len(group)} "
-            f"({passes / len(group):.0%}), pre-push review {minutes:.1f} min per ticket on average"
+            f"({passes / len(group):.0%}), missed {missed} (nothing fixed, gate blocked), "
+            f"pre-push review {minutes:.1f} min per ticket on average"
         )
         for run in group:
             print(f"  {run['work_order']}: fixed {run['fixed']}, gate {run['verdict']}, review {run['minutes']:.1f} min")
 
-    trial = [run for run in decided if run["variant"] == "gate_rubric"]
+    # The rule applies to the newest variant with any tickets (gate_inputs, then gate_rubric).
+    current = next((v for v in VARIANTS[:-1] if any(run["variant"] == v for run in decided)), "gate_rubric")
+    trial = [run for run in decided if run["variant"] == current]
     passes = sum(1 for run in trial if run["verdict"] == "pass")
     if len(trial) < args.sample:
-        print(f"\nDecision: keep collecting ({len(trial)} of {args.sample} trial tickets have a gate verdict).")
+        print(f"\nDecision: keep collecting ({len(trial)} of {args.sample} {current} tickets have a gate verdict).")
     elif passes >= args.min_passes:
-        print(f"\nDecision: keep the gate_rubric pre-push review ({passes}/{len(trial)} passed the gate first time).")
+        print(f"\nDecision: keep the {current} pre-push review ({passes}/{len(trial)} passed the gate first time).")
     else:
         print(
             f"\nDecision: turn the pre-push review off ({passes}/{len(trial)} passed the gate first time, "

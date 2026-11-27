@@ -1533,6 +1533,12 @@ class OpenCodeBackend:
             output_path = out_dir / f"review-{number + 1}.json"
             progress.detail(f"reviewing (round {number + 1})")
             output_path.unlink(missing_ok=True)
+            # The gate's own inputs, computed from this round's branch (the diff changes after a fix).
+            inputs = (
+                ppr.gate_inputs(repo_dir, base_ref=base_ref, work_order_body=request.work_order_body,
+                                design_refs=request.design_refs, runner=self.runner)
+                if request.review_rubric and ppr.inputs_enabled() else None
+            )
             prompt = ppr.build_review_prompt(
                 work_order_id=request.work_order_id,
                 work_order_body=request.work_order_body,
@@ -1541,6 +1547,7 @@ class OpenCodeBackend:
                 review_feedback=request.review_feedback,
                 human_change_requests=request.human_change_requests,
                 rubric=request.review_rubric,
+                inputs=inputs,
             )
             cmd = build_opencode_command(
                 binary=binary, repo_dir=repo_dir, prompt=prompt, run_args=self.run_args,
