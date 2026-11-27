@@ -448,6 +448,50 @@ export interface KnowledgeNote {
   promoted_from: string | null;
   use_count: number;
   updated_at?: string | null;
+  tenant_id?: string;
+  proposed_by?: string | null;
+  approved_by?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export type KnowledgeEvidence = KnowledgeNote["evidence"][number];
+
+/** A note as the Memory page's list and detail routes return it. */
+export interface MemoryNote extends KnowledgeNote {
+  project_key: string | null;
+  can_write: boolean;
+  score?: number;
+}
+
+export interface MemoryProject {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface MemoryListResponse {
+  notes: MemoryNote[];
+  mode: "hybrid" | "text" | "list";
+  is_admin: boolean;
+  projects: MemoryProject[];
+}
+
+export interface MemoryNoteVersion {
+  version: number;
+  snapshot?: Record<string, unknown>;
+  changed_by: string | null;
+  change_reason: string | null;
+  created_at: string | null;
+}
+
+export interface MemoryDetailResponse {
+  note: MemoryNote;
+  versions: MemoryNoteVersion[];
+  project: MemoryProject | null;
+  can_write: boolean;
+  is_admin: boolean;
+  drafted_from: KnowledgeEvidence[];
 }
 
 export interface ProjectRegistry {

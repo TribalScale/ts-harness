@@ -24,6 +24,7 @@ from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
+from memory_routes import knowledge_search as knowledge_search_routes  # noqa: E402
 from memory_routes import github_app as github_routes  # noqa: E402
 from memory_routes.leases import acquire_service_lease  # noqa: E402
 from memory_routes import task_claims as task_claim_routes  # noqa: E402
@@ -5110,7 +5111,11 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 elif parts == ["notes"] and method == "POST":
                     result = knowledge_note_routes.create_note(conn, body)
                 elif parts == ["notes", "context"] and method == "GET":
-                    result = knowledge_note_routes.notes_context(conn, query)
+                    result = knowledge_note_routes.notes_context(conn, query, embed=generate_embedding)
+                elif parts == ["notes", "search"] and method == "GET":
+                    result = knowledge_note_routes.search_notes(conn, query, embed=generate_embedding)
+                elif parts == ["notes", "embed-pending"] and method == "POST":
+                    result = knowledge_note_routes.embed_pending_notes(conn, body, embed=generate_embedding)
                 elif parts == ["notes", "pending-programs"] and method == "GET":
                     result = knowledge_note_routes.list_programs_pending_review(conn, query)
                 elif len(parts) == 2 and method == "GET":
@@ -5130,6 +5135,8 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 else:
                     self._send_json(404, {"error": "not found"})
                     return
+                if method in {"POST", "PATCH"} and parts[-1] not in {"embed-pending", "reviewed"}:
+                    self._embed_written_notes(conn, result)
             self._send_json(200, result)
         except knowledge_note_routes.NoteConflict as exc:
             self._send_json(409, {"error": "version conflict", "note": exc.note})
@@ -5139,6 +5146,21 @@ class MemoryHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _embed_written_notes(conn, result: Any) -> None:
+        """Embed the notes a write changed. Best effort: the write already committed."""
+        ids = knowledge_note_routes.affected_ids(result)
+        if not ids:
+            return
+        try:
+            knowledge_search_routes.embed_pending(conn, generate_embedding, ids=ids, limit=len(ids))
+        except Exception as exc:  # noqa: BLE001 - the note stays full-text only until the backfill
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            print(f"knowledge note embedding skipped: {exc}", file=sys.stderr)
 
     def _authorized(self) -> bool:
         token = os.environ.get("MEMORY_API_TOKEN", "").strip()

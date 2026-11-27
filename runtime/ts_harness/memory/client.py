@@ -1213,7 +1213,9 @@ class MemoryClient:
         paths: list[str] | None = None,
         max_chars: int | None = None,
         max_notes: int | None = None,
+        query_text: str = "",
     ) -> dict[str, Any]:
+        """Active notes for a run. ``query_text`` (e.g. the work order) orders them by hybrid recall."""
         from urllib.parse import urlencode
 
         query: dict[str, Any] = {"tenant_id": tenant_id}
@@ -1221,6 +1223,8 @@ class MemoryClient:
             query["project_id"] = project_id
         if stage:
             query["stage"] = stage
+        if query_text.strip():
+            query["query"] = " ".join(query_text.split())[:1500]
         if paths:
             query["paths"] = ",".join(paths)
         if max_chars is not None:
@@ -1229,14 +1233,50 @@ class MemoryClient:
             query["max_notes"] = max_notes
         return self._request("GET", f"/notes/context?{urlencode(query)}")
 
+    def search_knowledge_notes(
+        self,
+        *,
+        tenant_id: str = "default",
+        q: str = "",
+        scope: str = "",
+        project_id: str = "",
+        status: str = "",
+        kind: str = "",
+        source: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Notes ranked by hybrid recall (full-text + embeddings, RRF); newest first with no ``q``."""
+        from urllib.parse import urlencode
+
+        query = {
+            k: v
+            for k, v in {
+                "tenant_id": tenant_id,
+                "q": " ".join(str(q or "").split())[:500],
+                "scope": scope,
+                "project_id": project_id,
+                "status": status,
+                "kind": kind,
+                "source": source,
+                "limit": limit,
+            }.items()
+            if v
+        }
+        return self._request("GET", f"/notes/search?{urlencode(query)}")
+
+    def embed_pending_knowledge_notes(self, *, limit: int = 20) -> dict[str, Any]:
+        return self._request("POST", "/notes/embed-pending", {"limit": limit})
+
     def list_programs_pending_note_review(
-        self, *, tenant_id: str = "default", since: str = "", limit: int = 20
+        self, *, tenant_id: str = "default", since: str = "", limit: int = 20, stamp: str = ""
     ) -> dict[str, Any]:
         from urllib.parse import urlencode
 
         query = {"tenant_id": tenant_id, "limit": limit}
         if since:
             query["since"] = since
+        if stamp:
+            query["stamp"] = stamp
         return self._request("GET", f"/notes/pending-programs?{urlencode(query)}")
 
     def get_knowledge_note(self, note_id: str) -> dict[str, Any]:

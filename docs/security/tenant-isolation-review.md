@@ -140,6 +140,7 @@ Legend:
 | POST /admin/projects/{id}/notes/{note}/promote | bearer | manager of the project | **Fixed**: the note must belong to this project and tenant | n/a | Fixed (F5) |
 | /admin/notes GET, POST; /{id} PATCH, /status, /restore | bearer | view; writes need admin (org) or manager (project) | T | n/a | OK |
 | GET /admin/notes/{id}/versions | bearer | view | **Fixed**: was not checked for org notes | n/a | Fixed (F5) |
+| GET /admin/knowledge/notes; GET /admin/knowledge/notes/{id} | bearer | view; proposals only for whoever could approve them (`can_see_proposal`) | T (search is tenant-filtered; a project note needs a project in the tenant) | n/a | OK |
 
 ### Webhooks, channels, SCIM and coding jobs
 

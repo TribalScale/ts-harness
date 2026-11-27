@@ -847,6 +847,17 @@ def review_finished_programs() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
+def draft_failure_notes() -> dict[str, Any]:
+    """Draft proposed knowledge notes from runs that failed and were then fixed (bounded, idempotent)."""
+    from ts_harness.learning.failure_drafts import draft_failure_notes as run_drafts
+
+    try:
+        return run_drafts()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failure note drafting failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 def sweep_channel_dedup() -> dict[str, Any]:
     """Forget inbound channel event ids older than a week; platforms stop retrying long before that."""
     from ts_harness.storage.backend import state_backend
@@ -896,6 +907,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "apply_data_retention": apply_data_retention,
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
+    "draft_failure_notes": draft_failure_notes,
     "retry_program_phases": lambda: _retry_program_phases(),
     "arbitrate_stuck_steps": lambda: _arbitrate_stuck_steps(),
 }

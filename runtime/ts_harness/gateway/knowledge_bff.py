@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ts_harness.gateway.auth import AuthContext
-from ts_harness.gateway.knowledge_access import can_write_knowledge_note, is_notes_admin
+from ts_harness.gateway.knowledge_access import can_see_proposal, can_write_knowledge_note, is_notes_admin
 from ts_harness.gateway.projects_bff import ProjectAccessDenied, _actor, _project, _tenant
 
 _FIELDS = ("kind", "title", "body", "why", "applies_to", "evidence", "exception_to")
@@ -159,3 +159,90 @@ def restore_note_admin(
         expected_version=body.get("expected_version"),
         actor=_actor(auth),
     )
+
+
+# ---------------------------------------------------------------------------
+# Memory page: search and detail across org and project notes
+# ---------------------------------------------------------------------------
+
+_SEARCH_FILTERS = ("q", "scope", "project_id", "status", "kind", "source")
+
+
+def _project_ref(project: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not project:
+        return None
+    return {"id": str(project.get("id") or ""), "key": project.get("key") or "", "name": project.get("name") or ""}
+
+
+def _readable(auth: AuthContext, config: Any, note: dict[str, Any], project: dict[str, Any] | None) -> bool:
+    """Active and retired notes: anyone who can see the project. Proposals: whoever could approve them."""
+    if note.get("scope") == "project" and not project:
+        return False
+    if note.get("status") in {"proposed", "rejected"}:
+        return can_see_proposal(auth, config, note, project)
+    return True
+
+
+def _note_can_write(auth: AuthContext, config: Any, note: dict[str, Any], project: dict[str, Any] | None) -> bool:
+    return can_write_knowledge_note(
+        auth, config, scope=str(note.get("scope") or ""), project=project, exception_to=note.get("exception_to")
+    )
+
+
+def search_notes_admin(memory: Any, auth: AuthContext, config: Any, query: dict[str, Any]) -> dict[str, Any]:
+    """Notes for the Memory page, ranked by hybrid search when ``q`` is given."""
+    filters = {key: str(query.get(key) or "").strip() for key in _SEARCH_FILTERS}
+    try:
+        limit = max(1, min(int(query.get("limit") or 100), 200))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    listed = memory.list_projects(tenant_id=_tenant(auth)).get("projects") or []
+    projects = [p for p in listed if isinstance(p, dict)]
+    by_id = {str(p.get("id")): p for p in projects}
+    if filters["project_id"]:
+        wanted = filters["project_id"]
+        match = by_id.get(wanted) or next((p for p in projects if p.get("key") == wanted), None)
+        if match is None:
+            raise LookupError("project not found")
+        filters["project_id"] = str(match["id"])
+    found = memory.search_knowledge_notes(
+        tenant_id=_tenant(auth), limit=limit, **{k: v for k, v in filters.items() if v}
+    )
+    notes = []
+    for note in found.get("notes") or []:
+        project = by_id.get(str(note.get("project_id") or "")) if note.get("project_id") else None
+        if not _readable(auth, config, note, project):
+            continue
+        notes.append(
+            {
+                **note,
+                "project_key": (project or {}).get("key"),
+                "can_write": _note_can_write(auth, config, note, project),
+            }
+        )
+    return {
+        "notes": notes,
+        "mode": found.get("mode") or "list",
+        "is_admin": is_notes_admin(auth, config),
+        "projects": [_project_ref(p) for p in projects],
+    }
+
+
+def note_detail_admin(memory: Any, auth: AuthContext, config: Any, note_id: str) -> dict[str, Any]:
+    """One note with its history, project and whether this person can change it."""
+    note = memory.get_knowledge_note(note_id)
+    if str(note.get("tenant_id") or "default") != _tenant(auth):
+        raise LookupError("note not found")
+    project = _note_project(memory, auth, note)
+    if not _readable(auth, config, note, project):
+        raise LookupError("note not found")
+    versions = memory.knowledge_note_versions(note_id).get("versions") or []
+    evidence = [item for item in note.get("evidence") or [] if isinstance(item, dict)]
+    return {
+        "note": {**note, "project_key": (project or {}).get("key")},
+        "versions": versions,
+        "project": _project_ref(project),
+        "can_write": _note_can_write(auth, config, note, project),
+        "is_admin": is_notes_admin(auth, config),
+        "drafted_from": [item for item in evidence if item.get("type") == "drafted_from"],
+    }
