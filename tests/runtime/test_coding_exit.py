@@ -90,3 +90,17 @@ class LongPromptTests(unittest.TestCase):
             # The file option is last: OpenCode reads every argument after -f as a file.
             self.assertEqual(cmd[-2], "-f")
             self.assertIn(attached.name, cmd[-3])
+
+
+
+class KilledBySignalTests(unittest.TestCase):
+    def test_signal_exits_count_as_killed_but_memory_kills_and_failures_do_not(self):
+        import subprocess as sp
+
+        from ts_harness.implementation.backends.opencode import killed_by_signal
+
+        self.assertTrue(killed_by_signal(sp.CompletedProcess([], -15)))
+        self.assertTrue(killed_by_signal(sp.CompletedProcess([], 143)))
+        self.assertFalse(killed_by_signal(sp.CompletedProcess([], 1)))
+        self.assertFalse(killed_by_signal(sp.CompletedProcess([], 124)))
+        self.assertFalse(killed_by_signal(sp.CompletedProcess([], -9), "out_of_memory: the coding worker hit its memory limit"))

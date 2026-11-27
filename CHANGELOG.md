@@ -425,6 +425,7 @@ First public release.
 
 ### Fixed
 
+- A coding run that OpenCode didn't finish because it was stopped by a signal from outside ("opencode exit -15", a container stop, a host restart) is queued again automatically, continuing from its pushed work, like stalls, time limits and provider interruptions (at most twice per step, shared with those). It used to wait for a person. A memory kill still retries with more memory, a cancelled job is never retried, and a plain failure still blocks.
 - A coding run no longer dies as "opencode exit -15" when a tool prints bytes that aren't valid UTF-8 (test-runner progress output). The harness read OpenCode's output strictly, so one such byte silently stopped the reader; the harness then took the run for finished and killed it. Every subprocess read in the coding worker now replaces undecodable bytes.
 - A web coding job finds its backend's `openapi.json` when the API repo's default branch (often `main`) doesn't have it: without a declared ref, the harness reads the job's own base branch first (usually `dev`, where the API work lands), then the project's branch, then the default. Web jobs had been blocked with "cannot read the API repository".
 - Terraform creates the nightly smoke report secret (`smoke-report-secret`, a random value) with the other harness secrets, so the instance role can read it; before, phase 10 was refused (AccessDenied) and smoke reports stayed off. An optional secret that cannot be read is now a warning in the deploy log, not an "ERROR" (AWS and GCP adapters).
