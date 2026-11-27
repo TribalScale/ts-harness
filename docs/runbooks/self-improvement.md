@@ -1,9 +1,17 @@
+<<<<<<< HEAD
 # Self-improvement
 
 The harness is building a loop that improves its own delivery: a weekly failure-pattern digest
 that proposes changes, offline replay evaluation, automatic canaries with rollback, and the
 harness filing and fixing its own bugs. Sections 1 to 4 cover the foundation; sections 5 to 10
 cover the digest, proposals, replay, canary and promotion. The foundation:
+=======
+# Self-improvement: the foundation
+
+The harness is building a loop that improves its own delivery: a weekly failure-pattern digest
+that proposes changes, offline replay evaluation, automatic canaries with rollback, and the
+harness filing and fixing its own bugs. This runbook covers the foundation those parts build on:
+>>>>>>> origin/dev
 
 1. **Run tagging**: every agent step and coding job records the versions it ran with.
 2. **The target and the guard**: autonomy (tickets merged without a person stepping in) and
@@ -225,10 +233,13 @@ canary that matches. The list covers:
   `MIN_CONFIDENCE`, the override guards), `review_arbiter.py`, `TS_HARNESS_STUCK_ARBITER`.
 - **The metrics and guard themselves:** `delivery_metrics.py`, `ticket_story.py`, `guard.py`,
   `versions.py`, `human_decisions.py` (what counts as a person) and the list itself.
+<<<<<<< HEAD
 - **The loop's own rules:** everything under `runtime/ts_harness/improvement/` (the replay pass
   rule, the canary stop rule, the screening), the proposal lifecycle (migration 056, its routes),
   `TS_HARNESS_CANARIES`, `TS_HARNESS_CANARY_SHARE`, `TS_HARNESS_IMPROVEMENT_*` and the
   `MIN_TICKETS`, `AUTONOMY_MARGIN` and `CATCH_MARGIN` constants.
+=======
+>>>>>>> origin/dev
 
 A test checks that every listed path, Markdown section and constant exists, so a rename has to
 update the list.
@@ -245,6 +256,7 @@ update the list.
 | Post-merge problems | `guard.post_merge(GuardContext(...), row, tasks, merged_at)` |
 | Spend on improvement | `ImprovementBudget().can_spend / track / model_call / charge` |
 | Is a change allowed | `off_limits.is_off_limits(path=..., setting=..., constant=...)` |
+<<<<<<< HEAD
 
 # The loop: digest, proposals, replay, canary
 
@@ -452,3 +464,5 @@ Apply migration 056 with `scripts/ops/migrate-db.sh`. The two jobs are in
 
 To stop everything at once: `TS_HARNESS_CANARIES=off` (no new canary or assignment) and roll back
 live canaries from the Inbox; or set the improvement budget to 0.
+=======
+>>>>>>> origin/dev

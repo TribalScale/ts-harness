@@ -1166,6 +1166,7 @@ class MemoryClient:
         """Record a self-improvement charge (``cost_usd``, ``purpose``, ``ref``, ``model``, tokens, ``actor``)."""
         return self._request("POST", "/budgets/improvement/charges", body)
 
+<<<<<<< HEAD
     # Self-improvement proposals and replay cases (migration 056; ts_harness.improvement).
 
     def list_improvement_proposals(self, *, tenant_id: str = "default", status: str = "", pattern_key: str = "",
@@ -1210,6 +1211,8 @@ class MemoryClient:
     def prune_replay_cases(self, *, tenant_id: str = "default", days: int = 90) -> dict[str, Any]:
         return self._request("POST", "/improvements/replay-cases/prune", {"tenant_id": tenant_id, "days": days})
 
+=======
+>>>>>>> origin/dev
     def claim_program_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/program-alerts", {"tenant_id": tenant_id})
 

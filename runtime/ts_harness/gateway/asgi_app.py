@@ -1418,6 +1418,7 @@ async def admin_metrics(request: Request) -> Response:
     # Never breaks the page: an unreadable ledger is reported as unavailable.
     result["improvement_budget"] = await asyncio.to_thread(ImprovementBudget(tenant_id=tenant_id, memory=memory).status)
     return _json(result)
+<<<<<<< HEAD
 
 
 def _improvements_view(memory: Any, tenant_id: str) -> dict[str, Any]:
@@ -1510,6 +1511,8 @@ async def admin_improvement_decision(request: Request) -> Response:
                  "promotion": result.get("promotion")},
     )
     return _json(result)
+=======
+>>>>>>> origin/dev
 
 
 async def admin_ticket_story(request: Request) -> Response:

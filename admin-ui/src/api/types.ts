@@ -780,6 +780,7 @@ export interface ImprovementBudgetStatus {
   paused: boolean;
   by_purpose: Record<string, { spent_usd: number; charges: number }>;
   available: boolean;
+<<<<<<< HEAD
 }
 
 /** One side of a canary: candidate or control tickets (see ts_harness.improvement.canary). */
@@ -882,6 +883,8 @@ export interface ImprovementsResponse {
     replay: { cases: number; min_each: number; catch_margin: number };
     canary: { share: number; min_tickets: number; autonomy_margin: number; max_days: number; enabled: boolean };
   };
+=======
+>>>>>>> origin/dev
 }
 
 export interface MetricsStats {

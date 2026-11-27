@@ -315,7 +315,10 @@ export function MetricsView() {
         </ul>
       )}
       {data?.groups && data.groups.length > 0 && <GroupsTable groupBy={data.group_by || groupBy} groups={data.groups} />}
+<<<<<<< HEAD
       <ImprovementsPanel />
+=======
+>>>>>>> origin/dev
       {weeks.length > 1 && (
         <section className="metrics-trend" aria-label="Weekly trend">
           <h3>By week</h3>
