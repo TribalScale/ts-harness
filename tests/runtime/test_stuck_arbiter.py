@@ -192,6 +192,16 @@ class SweepTests(unittest.TestCase):
         self.assertEqual([c.args[1]["id"] for c in one.call_args_list], ["a"])
         self.assertEqual(out["waiting"], 1)
 
+    def test_a_ticket_waiting_for_answers_is_left_to_people(self):
+        waiting = _task(task_id="t")
+        waiting["input"][HUMAN_DECISION_KEY] = {"reason": "ticket_not_ready", "since": SINCE}
+        memory = MagicMock()
+        memory.list_stuck_tasks.return_value = [waiting]
+        with patch.object(sa, "arbitrate_one") as one:
+            out = sa.arbitrate_stuck(memory=memory, engine=MagicMock(), model_call=lambda p: "{}")
+        one.assert_not_called()
+        self.assertEqual(out["checked"], 0)
+
     def test_switched_off_or_without_a_model_it_does_nothing(self):
         with patch.dict("os.environ", {"TS_HARNESS_STUCK_ARBITER": "off"}):
             self.assertEqual(sa.arbitrate_stuck(memory=MagicMock(), engine=MagicMock())["status"], "off")

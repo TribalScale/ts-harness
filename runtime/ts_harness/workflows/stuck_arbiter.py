@@ -409,6 +409,11 @@ def arbitrate_one(
     return {"task_id": task_id, "acted": done["action"]}
 
 
+def _waiting_for_answers(task: dict[str, Any]) -> bool:
+    mark = _input(task).get(HUMAN_DECISION_KEY)
+    return isinstance(mark, dict) and mark.get("reason") == "ticket_not_ready"
+
+
 def arbitrate_stuck(
     *,
     tenant_id: str = "default",
@@ -433,7 +438,8 @@ def arbitrate_stuck(
         from ts_harness.workflows.engine import get_workflow_engine
 
         engine = get_workflow_engine()
-    stuck = [t for t in list(memory.list_stuck_tasks(tenant_id=tenant_id) or []) if not seen(t)]
+    # A hand-written ticket waiting for answers is already a product question (jira/ticket_readiness.py).
+    stuck = [t for t in list(memory.list_stuck_tasks(tenant_id=tenant_id) or []) if not seen(t) and not _waiting_for_answers(t)]
     results = []
     for task in stuck[:limit]:
         try:
