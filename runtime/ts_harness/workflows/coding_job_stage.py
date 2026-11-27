@@ -60,7 +60,6 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         )
         if contract:
             spec = {**spec, "api_contract": contract}
-<<<<<<< HEAD
     return with_versions(with_canary(spec, task_input, tenant_id=str(task.get("tenant_id") or "").strip() or "default"),
                          task_input)
 
@@ -85,9 +84,6 @@ def with_canary(spec: dict[str, Any], task_input: dict[str, Any], *, tenant_id: 
 
         logging.getLogger(__name__).warning("canary not applied to the coding job", exc_info=True)
         return spec
-=======
-    return with_versions(spec, task_input)
->>>>>>> origin/dev
 
 
 def with_versions(spec: dict[str, Any], task_input: dict[str, Any]) -> dict[str, Any]:

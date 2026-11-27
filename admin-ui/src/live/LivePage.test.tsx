@@ -337,7 +337,6 @@ describe("Metrics", () => {
     const tiles = await screen.findByLabelText("Headline numbers");
     expect(tiles).toHaveTextContent("Improvement budgetunknowncap $150.00 for 2026-01");
   });
-<<<<<<< HEAD
 
   it("lists improvement proposals with their canary numbers and the month's spend", async () => {
     const user = userEvent.setup();
@@ -392,6 +391,4 @@ describe("Metrics", () => {
     await user.click(within(table).getByRole("button", { name: "Details" }));
     expect(await within(section).findByText("3/8 candidate and 4/8 control finished")).toBeInTheDocument();
   });
-=======
->>>>>>> origin/dev
 });
