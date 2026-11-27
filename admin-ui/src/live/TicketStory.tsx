@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { CurrentRun, StepTiming, StoryEvent, StoryFinding, TicketStoryResponse } from "../api/types";
+import { FileFeed } from "./FileFeed";
 
 const POLL_MS = 10000;
 const FINDINGS_SHOWN = 2;
@@ -156,6 +157,7 @@ export function CurrentRunBreakdown({ run }: { run: CurrentRun }) {
         </ol>
       )}
       {!run.queued && !current && <p className="muted">Waiting for the worker's first progress report.</p>}
+      {!run.queued && run.job_id && <FileFeed jobId={run.job_id} title="File changes" />}
     </section>
   );
 }

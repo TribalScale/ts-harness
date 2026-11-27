@@ -67,6 +67,7 @@ ORDER=(
   050_coding_job_progress.sql
   051_data_retention.sql
   052_program_budgets.sql
+  053_coding_job_events.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

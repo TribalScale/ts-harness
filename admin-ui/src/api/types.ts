@@ -762,6 +762,8 @@ export interface StoryEvent {
 
 export interface CurrentRun {
   title: string;
+  /** The running coding job: its file changes are on the run's live feed. */
+  job_id?: string;
   model: string;
   started_at: string;
   seconds: number | null;
@@ -805,4 +807,41 @@ export interface BoardResponse {
   items: BoardItem[];
   totals: { category: string; label: string; seconds: number; share: number }[];
   parallel_limit: number | null;
+}
+
+/** One file change a coding run made (the live feed). */
+export interface FileEvent {
+  id: number;
+  job_id: string;
+  at: string | null;
+  kind: "created" | "edited" | "deleted" | "renamed" | "restored" | "bulk";
+  path: string;
+  from_path?: string | null;
+  paths?: string[];
+  file_count: number;
+  bulk_kind?: string | null;
+  additions: number;
+  deletions: number;
+  step: string;
+  actor: "agent" | "harness";
+  truncated: boolean;
+  binary: boolean;
+  masked: boolean;
+  work_order_id?: string | null;
+  program_id?: string | null;
+  job_status?: string | null;
+  excerpt?: string;
+}
+
+export interface FileEventList {
+  events: FileEvent[];
+  next_after: number;
+}
+
+export interface FileEventDetail {
+  event: FileEvent;
+  history: FileEvent[];
+  failed_checks: { check?: string; command?: string; output_tail?: string }[];
+  pr_url?: string | null;
+  branch?: string | null;
 }

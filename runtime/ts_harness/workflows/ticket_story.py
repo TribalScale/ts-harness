@@ -155,6 +155,7 @@ def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any
         status = str(job.get("status") or "")
         event: dict[str, Any] = {
             **ids,
+            "job_id": str(job.get("id") or ""),
             "job_status": status,
             "at": _iso(started or created),
             "kind": "coding",
@@ -317,6 +318,7 @@ def current_run(events: list[dict[str, Any]], now: datetime) -> dict[str, Any] |
     started = _parse(running.get("started_at"))
     return {
         "title": running["title"],
+        "job_id": str(running.get("job_id") or ""),
         "model": running.get("model") or "",
         "started_at": running.get("started_at") or "",
         "seconds": _seconds(started, now),

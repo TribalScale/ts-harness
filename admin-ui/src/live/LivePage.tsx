@@ -6,6 +6,8 @@ import { HistoryView } from "./HistoryView";
 import { MetricsView } from "./MetricsView";
 import { formatDuration } from "./Timeline";
 import { CurrentRunBreakdown, TicketStory } from "./TicketStory";
+import { FileEventPage } from "./FileEventPage";
+import { FileFeed } from "./FileFeed";
 
 const POLL_MS = 10000;
 
@@ -121,12 +123,13 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
   );
 }
 
-export type LiveTab = "now" | "history" | "metrics";
+export type LiveTab = "now" | "files" | "history" | "metrics";
 
-const TAB_LABELS: Record<LiveTab, string> = { now: "Now", history: "History", metrics: "Metrics" };
+const TAB_LABELS: Record<LiveTab, string> = { now: "Now", files: "Files", history: "History", metrics: "Metrics" };
 
 const TAB_INTROS: Record<LiveTab, string> = {
   now: "Every ticket being built right now, refreshed every 10 seconds.",
+  files: "Files the running tickets create, edit, rename or delete, as it happens. Open one for its change.",
   history: "Finished tickets and work orders: merged, accepted, stopped, cancelled or failed.",
   metrics: "Delivery quality over a period: first-try pass rate, revisions, time to merge, review catch rate and cost.",
 };
@@ -134,9 +137,12 @@ const TAB_INTROS: Record<LiveTab, string> = {
 export function LivePage({
   tab = "now",
   onTab,
+  fileEventId,
 }: {
   tab?: LiveTab;
   onTab?: (tab: LiveTab) => void;
+  /** A file change to show (#/live/files/<id>). */
+  fileEventId?: string;
 }) {
   const [data, setData] = useState<LiveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,7 +172,7 @@ export function LivePage({
         <p className="muted">{TAB_INTROS[tab]}</p>
       </header>
       <div className="live-tabs" role="tablist" aria-label="Live views">
-        {(["now", "history", "metrics"] as const).map((key) => (
+        {(["now", "files", "history", "metrics"] as const).map((key) => (
           <button
             key={key}
             type="button"
@@ -179,6 +185,7 @@ export function LivePage({
           </button>
         ))}
       </div>
+      {tab === "files" && (fileEventId ? <FileEventPage eventId={fileEventId} /> : <FileFeed all title="File changes in running tickets" />)}
       {tab === "history" && <HistoryView />}
       {tab === "metrics" && <MetricsView />}
       {tab === "now" && error && <div className="error-banner" role="alert">{error}</div>}
