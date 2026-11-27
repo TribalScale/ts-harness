@@ -101,6 +101,16 @@ jobs = [
         "active_end": "23:59",
         "timezone": "UTC",
     },
+    # Triages steps waiting for a person: retries, revises with guidance or overrides a review where safe, else labels it.
+    {
+        "name": "arbitrate-stuck-steps",
+        "kind": "system",
+        "handler": "arbitrate_stuck_steps",
+        "interval_seconds": 120,
+        "active_start": "00:00",
+        "active_end": "23:59",
+        "timezone": "UTC",
+    },
     # Escalates waits and gates past their deadlines; expired waits stay blocked with a recommended action.
     {
         "name": "escalate-stale-waits",

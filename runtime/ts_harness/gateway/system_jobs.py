@@ -865,6 +865,13 @@ def _retry_program_phases() -> dict[str, Any]:
     return retry_due()
 
 
+def _arbitrate_stuck_steps(tenant_id: str = "default") -> dict[str, Any]:
+    """Triage steps waiting for a person; act where it's safe (see workflows/stuck_arbiter.py)."""
+    from ts_harness.workflows.stuck_arbiter import arbitrate_stuck
+
+    return arbitrate_stuck(tenant_id=tenant_id)
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
@@ -878,6 +885,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
     "retry_program_phases": lambda: _retry_program_phases(),
+    "arbitrate_stuck_steps": lambda: _arbitrate_stuck_steps(),
 }
 
 PAYLOAD_HANDLERS = frozenset({"start_program"})

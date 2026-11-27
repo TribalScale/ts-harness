@@ -201,7 +201,20 @@ def stuck_summary(engine: Any, workflow_id: str, task_id: str) -> dict[str, Any]
         "reason": str((_input(task).get(HUMAN_DECISION_KEY) or {}).get("reason") or ""),
         "pr_url": pr_url,
         "program_id": program_id,
+        "arbiter": _arbiter_view(task),
     }
+
+
+def _arbiter_view(task: dict[str, Any]) -> dict[str, Any] | None:
+    """The arbiter's verdict on this stop, for the Inbox: label, diagnosis, recommendation, actions."""
+    from ts_harness.workflows.stuck_arbiter import record, seen
+
+    rec = record(task)
+    if not rec:
+        return None
+    view = {key: rec.get(key) for key in ("label", "category", "reason", "why", "question", "recommendation", "actions", "at")}
+    view["current"] = seen(task)
+    return view
 
 
 def output_shape_problem(task: dict[str, Any] | None, output: dict[str, Any] | None) -> str:
@@ -248,6 +261,21 @@ def accepted_output(task: dict[str, Any], *, github: Any = None) -> dict[str, An
     return output
 
 
+def _note_after_arbiter(tasks: list[dict[str, Any]], step: str, action: str, actor: str) -> None:
+    """Log a person's decision on a step the arbiter already acted on: how often it had to step in."""
+    if actor == "harness-arbiter":
+        return
+    from ts_harness.workflows.stuck_arbiter import record
+
+    acted = [a for t in tasks if str(t.get("step_name") or "") == step for a in record(t).get("actions") or [] if isinstance(a, dict)]
+    if acted:
+        import logging
+
+        logging.getLogger(__name__).info(
+            "human_decision_after_arbiter step=%s arbiter=%s human=%s", step, acted[-1].get("action"), action
+        )
+
+
 def decide(
     engine: Any,
     workflow_id: str,
@@ -287,6 +315,7 @@ def decide(
     label = work_order_label(tasks, workflow)
     output = task.get("output") if isinstance(task.get("output"), dict) else {}
     base = {"decision": action, "workflow_id": workflow_id, "task_id": str(task_id), "step_name": step, "work_order": label}
+    _note_after_arbiter(tasks, step, action, actor)
     who = display_actor(actor)
 
     if action == "revise" and _reruns_on_revise(ctx.stage):
