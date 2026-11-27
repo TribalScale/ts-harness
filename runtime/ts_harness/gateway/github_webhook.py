@@ -187,6 +187,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
                 "pr_url": str(pr.get("html_url") or ""),
                 "number": pr.get("number"),
                 "head_sha": str((pr.get("head") or {}).get("sha") or ""),
+                "before_sha": str(body.get("before") or ""),
                 "base_branch": str((pr.get("base") or {}).get("ref") or ""),
                 "head_ref": str((pr.get("head") or {}).get("ref") or ""),
                 "author": _login(pr.get("user")),
@@ -594,6 +595,12 @@ def handle_github_webhook(
                     result["checks_waits_moved"] = repin_checks_waits(event, tenant_id=tenant_id)
                 except Exception as exc:  # noqa: BLE001 - the delivery is still acknowledged
                     logger.warning("checks wait re-pin failed for %s: %s", event.get("pr_url"), exc)
+                from ts_harness.workflows.merge_modes import carry_on_update
+
+                try:
+                    result["statuses_kept"] = carry_on_update(event, tenant_id=tenant_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("harness statuses not kept for %s: %s", event.get("pr_url"), exc)
     if subscribers:
         result["subscribers"] = subscribers
     return result

@@ -444,6 +444,61 @@ def prepare_checks_wait(
 
 BASE_ADVANCED_REASON = "external_blocked:github.merge base_advanced"
 
+# When a PR is brought up to date with its base: only once it conflicts (the default), or as soon
+# as it falls behind (``merge_readiness.refresh: always``, the behaviour before 2026-11).
+REFRESH_POLICIES = ("on_conflict", "always")
+
+
+def refresh_policy(program_defaults: dict[str, Any] | None) -> str:
+    raw = str(dict((program_defaults or {}).get("merge_readiness") or {}).get("refresh") or "on_conflict")
+    return raw if raw in REFRESH_POLICIES else "on_conflict"
+
+
+def pr_base_state(
+    github: GitHubClient,
+    pr_url: str,
+    *,
+    attempts: int = 1,
+    delay: float = 2.0,
+    sleep: Any = time.sleep,
+) -> dict[str, Any]:
+    """Where a PR stands against its base branch.
+
+    ``status``: ``fresh`` (contains the base head), ``behind`` (merges cleanly),
+    ``behind_unknown`` (GitHub has not computed mergeability yet), ``conflict`` or
+    ``skipped`` (merged or closed). GitHub computes ``mergeable`` lazily after the base
+    moves; ``attempts`` re-reads the PR that many times, ``delay`` seconds apart.
+    """
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None:
+        raise ValueError(f"cannot parse PR URL: {pr_url}")
+    owner, repo, number = parsed
+    pull = github.get_pull(owner, repo, number)
+    entry: dict[str, Any] = {
+        "pr_url": pr_url,
+        "base_ref": str((pull.get("base") or {}).get("ref") or ""),
+        "head_sha": str((pull.get("head") or {}).get("sha") or ""),
+    }
+    if pull.get("merged") or pull.get("state") == "closed":
+        return {**entry, "status": "skipped", "behind_by": 0}
+    behind_by = int((github.compare(owner, repo, entry["base_ref"], entry["head_sha"]) or {}).get("behind_by") or 0)
+    if behind_by <= 0:
+        return {**entry, "status": "fresh", "behind_by": 0}
+    tries = 1
+    while pull.get("mergeable") is None and tries < attempts:
+        sleep(delay)
+        pull = github.get_pull(owner, repo, number)
+        tries += 1
+    mergeable = pull.get("mergeable")
+    status = "conflict" if mergeable is False else "behind" if mergeable is True else "behind_unknown"
+    return {**entry, "status": status, "behind_by": behind_by}
+
+
+def needs_refresh(state: dict[str, Any], policy: str) -> bool:
+    if state.get("status") == "conflict":
+        return True
+    return policy == "always" and state.get("status") in {"behind", "behind_unknown"}
+
 
 def _wait_pr_urls(wait: dict[str, Any]) -> list[str]:
     urls = [str(url) for url in wait.get("match_pr_urls") or [] if url]
@@ -501,8 +556,12 @@ def fan_out_base_advanced(
     memory: Any = None,
     github: GitHubClient | None = None,
     engine: Any = None,
+    program_defaults: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Block sibling merge waits whose PRs share the merged PR's repo and base branch."""
+    """Send back sibling merge waits whose PRs (same repo and base) now conflict with the base.
+
+    Under ``merge_readiness.refresh: always`` any sibling that fell behind is sent back.
+    """
     merged_url = str(event.get("pr_url") or "")
     parsed = parse_github_pr_url(merged_url)
     if parsed is None:
@@ -531,20 +590,18 @@ def fan_out_base_advanced(
         from ts_harness.workflows.engine import get_workflow_engine
 
         engine = get_workflow_engine()
+    policy = refresh_policy(program_defaults if program_defaults is not None else _live_program_defaults())
     blocked: list[dict[str, Any]] = []
     for wait, urls in candidates:
         stale = []
         for url in urls:
-            sibling_owner, sibling_repo, sibling_number = parse_github_pr_url(url)
-            pull = github.get_pull(sibling_owner, sibling_repo, sibling_number)
-            if pull.get("merged") or pull.get("state") == "closed":
+            state = pr_base_state(github, url)
+            if state["status"] == "skipped" or state["base_ref"] != base_ref:
                 continue
-            if str((pull.get("base") or {}).get("ref") or "") != base_ref:
-                continue
-            head_sha = str((pull.get("head") or {}).get("sha") or "")
-            behind_by = int((github.compare(sibling_owner, sibling_repo, base_ref, head_sha) or {}).get("behind_by") or 0)
-            if behind_by > 0:
-                stale.append({"pr_url": url, "base_ref": base_ref, "head_sha": head_sha, "behind_by": behind_by})
+            # A PR that still merges cleanly stays as it is; one GitHub has not checked yet is
+            # picked up by the poller (send_back_conflicting_merges) once it conflicts.
+            if needs_refresh(state, policy):
+                stale.append({key: state[key] for key in ("pr_url", "base_ref", "head_sha", "behind_by", "status")})
         if not stale:
             continue
         workflow_id, task_id = str(wait.get("workflow_id") or ""), str(wait.get("task_id") or "")

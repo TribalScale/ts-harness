@@ -298,14 +298,32 @@ def _decision_events(tasks: list[dict[str, Any]], now: datetime) -> list[dict[st
     return events
 
 
-def _merge_event(task: dict[str, Any], bar: dict[str, Any]) -> dict[str, Any] | None:
+def merge_mode_note(freshness: dict[str, Any] | None) -> str:
+    """How the PR is kept up to date with its base until it merges (from ``ensure_fresh``)."""
+    prs = [pr for pr in (freshness or {}).get("prs") or [] if isinstance(pr, dict)]
+    notes = []
+    for pr in prs:
+        mode = pr.get("merge_mode") if isinstance(pr.get("merge_mode"), dict) else {}
+        text = str(mode.get("description") or "")
+        if pr.get("status") in {"behind", "behind_unknown"}:
+            text = f"Behind {pr.get('base_ref') or 'its base'} but merges cleanly. {text}".strip()
+        if text and text not in notes:
+            notes.append(text)
+    return " ".join(notes)
+
+
+def _merge_event(task: dict[str, Any], bar: dict[str, Any], freshness: dict[str, Any] | None = None) -> dict[str, Any] | None:
     status = str(task.get("status") or "")
     if status == "succeeded":
         return {"at": bar["end"], "kind": "done", "title": "Merged", "subtitle": "after waiting for you",
                 "status": "ok", "seconds": bar["seconds"], "waited": True}
     if bar["open"]:
-        return {"at": bar["start"], "kind": "wait", "title": "Ready to merge: waiting for you", "status": "running",
-                "seconds": bar["seconds"]}
+        event = {"at": bar["start"], "kind": "wait", "title": "Ready to merge: waiting for you", "status": "running",
+                 "seconds": bar["seconds"]}
+        note = merge_mode_note(freshness)
+        if note:
+            event["subtitle"] = note
+        return event
     return None
 
 
@@ -376,6 +394,7 @@ def ticket_story(memory: Any, workflow: dict[str, Any], *, now: datetime | None 
     coding_step = next((str(t.get("step_name") or "") for t in tasks if t.get("agent_id") == pa.CODING_AGENT), "")
     events: list[dict[str, Any]] = []
     revision = -1
+    freshness: dict[str, Any] | None = None
     for bar in bars:
         task = by_id.get(bar["task_id"]) or {}
         step = bar["step_name"]
@@ -388,8 +407,10 @@ def ticket_story(memory: Any, workflow: dict[str, Any], *, now: datetime | None 
                 events.append(event)
         elif step == "await_pr_checks":
             events.append(_ci_event(task, bar))
+        elif step == "ensure_fresh" and task.get("status") == "succeeded":
+            freshness = task.get("output") if isinstance(task.get("output"), dict) else None
         elif step == "await_human_merge":
-            event = _merge_event(task, bar)
+            event = _merge_event(task, bar, freshness)
             if event:
                 events.append(event)
         elif step == "close_ticket" and task.get("status") == "succeeded":

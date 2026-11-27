@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.10.0
+version: 1.11.0
 ---
 
 # Governed Code Review
@@ -53,7 +53,15 @@ Then:
    finding naming the file and why it does not belong.
 5. If `input.refresh` is `true`, the PR was just updated with its base branch.
    Focus on the merge delta and any conflict resolution; do not re-review code
-   that was already reviewed unless the merge changed it.
+   that was already reviewed unless the merge changed it. When
+   `input.review_scope` is set (`mode: conflict_resolution`), an agent resolved
+   a merge conflict and everything else passed your last review unchanged:
+   review only the files in `review_scope.files` (a `removed: true` file is
+   gone from the PR). In each, check that both sides survived (this work
+   order's change and the base branch's), that no conflict marker or duplicate
+   block is left, and that the result still meets the work order. Findings on
+   other files only when the resolution broke them (a caller of a renamed
+   function). Say in the summary that this was a conflict-resolution review.
 6. Trace every bullet under **Requirements** and every **Acceptance Test** to
    the code that implements it. Evaluate the code by hand with the example
    values the work order gives, including each boundary it names ("100 or
