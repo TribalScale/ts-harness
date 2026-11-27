@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { ImprovementBudgetStatus, MetricsGuardSummary, MetricsResponse, MetricsSummary, MetricsTicket } from "../api/types";
 import { OUTCOME_LABELS } from "./HistoryView";
+import { ImprovementsPanel } from "./ImprovementsPanel";
 import { TicketStory } from "./TicketStory";
 import { formatDuration } from "./Timeline";
 
@@ -314,6 +315,7 @@ export function MetricsView() {
         </ul>
       )}
       {data?.groups && data.groups.length > 0 && <GroupsTable groupBy={data.group_by || groupBy} groups={data.groups} />}
+      <ImprovementsPanel />
       {weeks.length > 1 && (
         <section className="metrics-trend" aria-label="Weekly trend">
           <h3>By week</h3>

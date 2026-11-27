@@ -337,4 +337,58 @@ describe("Metrics", () => {
     const tiles = await screen.findByLabelText("Headline numbers");
     expect(tiles).toHaveTextContent("Improvement budgetunknowncap $150.00 for 2026-01");
   });
+
+  it("lists improvement proposals with their canary numbers and the month's spend", async () => {
+    const user = userEvent.setup();
+    mockFetch((url) => {
+      if (url.startsWith("/admin/improvements")) {
+        return jsonResponse({
+          available: true,
+          budget: { month: "2026-11", cap_usd: 150, spent_usd: 12.5, remaining_usd: 137.5, paused: false, by_purpose: {}, available: true },
+          rules: {
+            replay: { cases: 10, min_each: 3, catch_margin: 0.1 },
+            canary: { share: 0.5, min_tickets: 8, autonomy_margin: 0.125, max_days: 45, enabled: true },
+          },
+          proposals: [
+            {
+              id: 4, type: "skill_edit", status: "canary", target: "pre_push_review", title: "Ask for retry tests",
+              summary: "s", pattern_key: "review:tests", metric: "autonomy", expected_effect: "", risk: "",
+              change: {}, evidence: { tickets: 3 }, evaluation: { status: "passed" }, cost_usd: 2.25,
+              canary: {
+                variant: "proposal-4", share: 0.5, started_at: "2026-11-01T00:00:00Z",
+                latest: {
+                  checked_at: "2026-11-20T00:00:00Z",
+                  candidate: { tickets: 3, finished: 3, merged: 3, autonomy_rate: 1, problem_rate: 0, tickets_with_problems: 0 },
+                  control: { tickets: 4, finished: 4, merged: 4, autonomy_rate: 0.5, problem_rate: 0, tickets_with_problems: 0 },
+                  decision: { action: "wait", reason: "3/8 candidate and 4/8 control finished" },
+                },
+              },
+            },
+          ],
+        });
+      }
+      if (url.startsWith("/admin/metrics")) {
+        return jsonResponse({
+          generated_at: "", days: 14, include_running: false,
+          summary: {
+            tickets: 0, finished: 0, merged: 0, first_try: 0, first_try_rate: null,
+            revisions: { median: null, mean: null, max: null, total: 0, by_trigger: {} },
+            time_to_merge_seconds: { median: null, mean: null, max: null },
+            you_seconds: 0, agent_seconds: 0, you_share: null, coding_runs: 0, reviewed_runs: 0,
+            review_catch_rate: null, review_fixed: 0, gate_compared: 0, gate_disagreed: 0, gate_disagreement_rate: null,
+            cost_usd: { median: null, total: 0 }, strong_cost_share: null, lost_jobs: 0,
+          },
+          weekly: [], tickets: [], facets: { projects: [], repos: [] },
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    renderPage(<LivePage tab="metrics" onTab={vi.fn()} />);
+    const section = await screen.findByLabelText("Improvements");
+    expect(section).toHaveTextContent("This month $12.50 of $150.00 improvement budget · 1 live canary");
+    const table = within(section).getByRole("table", { name: "Improvement proposals" });
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("#4 Ask for retry testsskill editcanary runningpassed100% vs 50% (3/4)$2.25");
+    await user.click(within(table).getByRole("button", { name: "Details" }));
+    expect(await within(section).findByText("3/8 candidate and 4/8 control finished")).toBeInTheDocument();
+  });
 });

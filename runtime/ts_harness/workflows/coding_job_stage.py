@@ -60,7 +60,30 @@ def stage_spec(task: dict[str, Any], task_input: dict[str, Any], *, program_id: 
         )
         if contract:
             spec = {**spec, "api_contract": contract}
-    return with_versions(spec, task_input)
+    return with_versions(with_canary(spec, task_input, tenant_id=str(task.get("tenant_id") or "").strip() or "default"),
+                         task_input)
+
+
+def with_canary(spec: dict[str, Any], task_input: dict[str, Any], *, tenant_id: str = "default") -> dict[str, Any]:
+    """The spec as the ticket's improvement canary wants it: a ``candidate`` ticket of a pre-push
+    review proposal reviews with the candidate rubric (ts_harness.improvement.canary). Never stops
+    the job: on any error the spec is unchanged (the ticket runs as control)."""
+    from ts_harness.improvement import versions as run_versions
+
+    variants = (task_input.get(run_versions.VERSIONS_KEY) or {}).get("variants") if isinstance(
+        task_input.get(run_versions.VERSIONS_KEY), dict) else None
+    if not variants or not any(str(name).startswith("proposal-") for name in variants):
+        return spec
+    try:
+        from ts_harness.improvement.canary import apply_to_spec
+        from ts_harness.memory.client import get_memory_client
+
+        return apply_to_spec(spec, task_input, memory=get_memory_client(), tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001 - the ticket runs as control
+        import logging
+
+        logging.getLogger(__name__).warning("canary not applied to the coding job", exc_info=True)
+        return spec
 
 
 def with_versions(spec: dict[str, Any], task_input: dict[str, Any]) -> dict[str, Any]:

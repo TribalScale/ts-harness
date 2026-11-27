@@ -22,6 +22,7 @@ from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
 from memory_routes import coding_job_events as coding_job_event_routes  # noqa: E402
 from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
+from memory_routes import improvements as improvement_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
 from memory_routes import knowledge_search as knowledge_search_routes  # noqa: E402
@@ -4950,6 +4951,53 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def _is_budgets_path(path: str) -> bool:
         return path == "/budgets" or path.startswith(("/budgets?", "/budgets/"))
 
+    @staticmethod
+    def _is_improvements_path(path: str) -> bool:
+        return path.startswith(("/improvements/", "/improvements?"))
+
+    def _improvements(self, method: str) -> None:
+        """Self-improvement proposals and replay cases (memory_routes/improvements.py)."""
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method == "POST" else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == ["proposals"] and method == "GET":
+                    result = improvement_routes.list_proposals(conn, query)
+                elif parts == ["proposals"] and method == "POST":
+                    result = improvement_routes.create_proposal(conn, body)
+                elif len(parts) == 2 and parts[0] == "proposals" and method == "GET":
+                    result = improvement_routes.get_proposal(conn, parts[1], query)
+                elif len(parts) == 2 and parts[0] == "proposals" and method == "POST":
+                    result = improvement_routes.update_proposal(conn, parts[1], body)
+                elif parts == ["replay-cases"] and method == "GET":
+                    result = improvement_routes.list_replay_cases(conn, query)
+                elif parts == ["replay-cases"] and method == "POST":
+                    result = improvement_routes.put_replay_case(conn, body)
+                elif parts == ["replay-cases", "prune"] and method == "POST":
+                    result = improvement_routes.prune_replay_cases(conn, body)
+                elif len(parts) == 3 and parts[0] == "replay-cases" and parts[2] == "verdicts" and method == "POST":
+                    result = improvement_routes.put_replay_verdict(conn, parts[1], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except improvement_routes.ProposalConflict as exc:
+            self._send_json(409, {"error": str(exc), "code": exc.code, "status": exc.current})
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     def _scale_metrics(self) -> None:
         from urllib.parse import parse_qs, urlparse
 
@@ -5195,6 +5243,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_budgets_path(self.path):
             self._budgets("GET")
+            return
+        if self._is_improvements_path(self.path):
+            self._improvements("GET")
             return
         if self._is_shared_state_path(self.path):
             self._shared_state("GET")
@@ -5568,6 +5619,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_budgets_path(self.path):
             self._budgets("POST")
+            return
+        if self._is_improvements_path(self.path):
+            self._improvements("POST")
             return
         if self._is_shared_state_path(self.path):
             self._shared_state("POST")

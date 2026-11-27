@@ -80,6 +80,16 @@ OFF_LIMITS: tuple[dict[str, str], ...] = (
     {"kind": "path", "match": "runtime/ts_harness/improvement/versions.py", "why": "run tagging the comparisons rely on"},
     {"kind": "path", "match": "runtime/ts_harness/improvement/off_limits.py", "why": "this list"},
     {"kind": "path", "match": "runtime/ts_harness/workflows/human_decisions.py", "why": "what counts as a person stepping in"},
+    # The loop's own rules: the replay pass rule, the canary stop rule, what it may act on
+    {"kind": "path", "match": "runtime/ts_harness/improvement/", "why": "the loop's pass rule, stop rule and screening"},
+    {"kind": "path", "match": "database/migrations/056_improvement_proposals.sql", "why": "the proposal lifecycle"},
+    {"kind": "path", "match": "scripts/memory_routes/improvements.py", "why": "the proposal lifecycle"},
+    {"kind": "setting", "match": "TS_HARNESS_CANARIES", "why": "whether canaries run"},
+    {"kind": "setting", "match": "TS_HARNESS_CANARY_SHARE", "why": "the canary's exposure"},
+    {"kind": "setting", "match": "TS_HARNESS_IMPROVEMENT_*", "why": "the loop's own switches and model"},
+    {"kind": "constant", "match": "ts_harness.improvement.canary:MIN_TICKETS", "why": "canary sample size"},
+    {"kind": "constant", "match": "ts_harness.improvement.canary:AUTONOMY_MARGIN", "why": "canary stop rule"},
+    {"kind": "constant", "match": "ts_harness.improvement.replay:CATCH_MARGIN", "why": "replay pass rule"},
 )
 
 

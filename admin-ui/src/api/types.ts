@@ -4,7 +4,8 @@ export type InboxType =
   | "workflow_gate"
   | "stuck_step"
   | "knowledge_note"
-  | "pending_proposal";
+  | "pending_proposal"
+  | "improvement_proposal";
 
 export type StuckDecision = "retry" | "revise" | "accept" | "stop";
 
@@ -779,6 +780,108 @@ export interface ImprovementBudgetStatus {
   paused: boolean;
   by_purpose: Record<string, { spent_usd: number; charges: number }>;
   available: boolean;
+}
+
+/** One side of a canary: candidate or control tickets (see ts_harness.improvement.canary). */
+export interface CanarySide {
+  tickets: number;
+  finished: number;
+  merged: number;
+  autonomy_rate: number | null;
+  problem_rate: number | null;
+  tickets_with_problems: number;
+  cost_median_usd?: number | null;
+  time_to_merge_median_seconds?: number | null;
+}
+
+export interface ReplayScore {
+  blocks: number;
+  passes: number;
+  caught: number;
+  false_blocks: number;
+  catch_rate: number | null;
+  false_block_rate: number | null;
+  agreement: number | null;
+}
+
+export interface ImprovementEvaluation {
+  kind?: string;
+  status: string;
+  reason?: string;
+  at?: string;
+  cases?: number;
+  compared?: number;
+  cost_usd?: number;
+  scores?: { current: ReplayScore; candidate: ReplayScore };
+}
+
+export type ImprovementStatus =
+  | "proposed"
+  | "evaluating"
+  | "canary"
+  | "awaiting_approval"
+  | "promoted"
+  | "rolled_back"
+  | "rejected";
+
+/** A self-improvement proposal (ts_harness.improvement.proposals). */
+export interface ImprovementProposal {
+  id: number;
+  type: "knowledge_note" | "skill_edit" | "setting_change" | "fragment_change" | "needs_design";
+  status: ImprovementStatus;
+  target: string;
+  title: string;
+  summary: string;
+  pattern_key: string;
+  metric: string;
+  expected_effect: string;
+  risk: string;
+  change: {
+    diff?: string;
+    files?: string[];
+    setting?: { name: string; old: unknown; new: unknown };
+    note?: { title: string; body: string; scope?: string };
+    note_id?: string;
+    idea?: string;
+    original_type?: string;
+    off_limits?: { match?: string; why?: string; section?: string };
+    offline_check?: string;
+  };
+  evidence: {
+    tickets?: number;
+    pattern?: string;
+    examples?: string[];
+    refs?: { workflow_id?: string; jira_issue_key?: string; pr_url?: string; project?: string }[];
+    digest_id?: string;
+  };
+  evaluation?: ImprovementEvaluation | null;
+  evaluations?: ImprovementEvaluation[];
+  canary?: {
+    started_at?: string;
+    share?: number;
+    variant?: string;
+    latest?: {
+      checked_at: string;
+      candidate: CanarySide;
+      control: CanarySide;
+      decision?: { action: string; reason: string };
+    };
+  } | null;
+  promotion?: { method: string; pr_url?: string; reason?: string; by?: string; at?: string } | null;
+  history?: { status?: string; from?: string; actor?: string; reason?: string; at?: string }[];
+  cost_usd: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ImprovementsResponse {
+  available: boolean;
+  proposals: ImprovementProposal[];
+  budget: ImprovementBudgetStatus;
+  rules: {
+    replay: { cases: number; min_each: number; catch_margin: number };
+    canary: { share: number; min_tickets: number; autonomy_margin: number; max_days: number; enabled: boolean };
+  };
 }
 
 export interface MetricsStats {

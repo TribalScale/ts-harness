@@ -881,6 +881,28 @@ def apply_data_retention() -> dict[str, Any]:
     return run_retention()
 
 
+def improvement_digest() -> dict[str, Any]:
+    """Weekly failure-pattern digest: recurring problems across tickets become improvement proposals."""
+    from ts_harness.improvement.digest import run_digest
+
+    try:
+        return run_digest()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("improvement digest failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+def improvement_loop() -> dict[str, Any]:
+    """Replay proposals offline, start canaries for those that pass, apply the canary stop rule."""
+    from ts_harness.improvement.loop import run_loop
+
+    try:
+        return run_loop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("improvement loop failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
 def _retry_program_phases() -> dict[str, Any]:
     """Program phase completions that failed earlier (see ``workflows.phase_retries``)."""
     from ts_harness.workflows.phase_retries import retry_due
@@ -908,6 +930,8 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "start_program": start_scheduled_program,
     "review_finished_programs": review_finished_programs,
     "draft_failure_notes": draft_failure_notes,
+    "improvement_digest": improvement_digest,
+    "improvement_loop": improvement_loop,
     "retry_program_phases": lambda: _retry_program_phases(),
     "arbitrate_stuck_steps": lambda: _arbitrate_stuck_steps(),
 }
