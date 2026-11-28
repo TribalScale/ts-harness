@@ -785,7 +785,17 @@ class WorkflowEngine:
                     )
                     label = human_decisions.work_order_label(tasks, ctx.workflow)
                     decisions = human_decisions.available_decisions(ctx.stage)
-                    if reason == "conflicting_feedback":
+                    if reason == "run_limit":
+                        ctx.extras["error"] = (
+                            f"{cause}; this ticket has had {revise_result.get('runs')} coding runs "
+                            f"(the most a ticket gets, whatever sent it back), so it waits for a decision."
+                        )
+                        ctx.extras["channel_text"] = (
+                            f"{label}: {revise_result.get('runs')} coding runs and it keeps being sent back ({cause}). "
+                            "Another automatic round is unlikely to fix it, so it stopped for a decision. "
+                            "The latest feedback is in the Inbox; revise with guidance, amend the work order, accept or stop."
+                        )
+                    elif reason == "conflicting_feedback":
                         ctx.extras["error"] = (
                             "Code review and QA keep asking for opposite changes; a human must decide."
                         )

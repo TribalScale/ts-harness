@@ -24,6 +24,7 @@ WAIT_REASONS = {
     "conflicting_feedback": "code review and QA ask for opposite changes",
     "failed_run": "the coding run failed",
     "auto_accept": "triage accepted it with follow-ups",
+    "run_limit": "it reached the most coding runs a ticket gets",
 }
 MESSAGE_LIMIT = 600
 
