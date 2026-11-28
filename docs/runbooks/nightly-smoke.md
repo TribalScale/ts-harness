@@ -192,6 +192,12 @@ screen against its design (`ts_harness.workflows.design_conformance`).
    frame with its Figma link, its capture and what differs. Its gates wait for a person, like a
    smoke failure. Answers: `proposed` (202), `duplicate`, or `conforms`.
 
+A frame several tickets build in parts (`## Frame scope`) is judged per ticket only for the
+part each owns, so this run is where the whole frame is compared. Its record lists every work
+order that delivered part of it and the siblings that own the rest; the bug names them all
+("built in parts by PROJ-11, PROJ-12, PROJ-13", and which are not delivered yet), so a gap
+between tickets shows up as one.
+
 Layout and missing panels need judgement, not sampling: the bug links both images so the
 investigation, and the person approving it, can look. Funnel serves `/webhooks/smoke/frames`
 through the `/webhooks/smoke` mount. Repositories created before react-web 1.5.0 need

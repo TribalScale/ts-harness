@@ -342,6 +342,97 @@ def _other_run_building(memory: Any, key: str, tenant_id: str, workflow_id: str)
     return ""
 
 
+MAX_SIBLINGS = 20
+
+
+def _queue_siblings(memory: Any, task: dict[str, Any], tenant_id: str) -> list[str]:
+    """Ticket keys running alongside this one: its pool's queue, and other running tickets of its program."""
+    from ts_harness.workflows.hooks._helpers import load_workflow_payload
+
+    keys: list[str] = []
+    workflow, _tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
+    parent_id = str(workflow.get("parent_workflow_id") or "")
+    if parent_id:
+        parent, parent_tasks = load_workflow_payload(memory, parent_id)
+        found = (parent.get("input") or {}).get("jira_issue_keys") if isinstance(parent.get("input"), dict) else None
+        keys.extend(str(k) for k in found or [] if k)
+        for item in parent_tasks:
+            output = item.get("output") if isinstance(item.get("output"), dict) else {}
+            if item.get("step_name") == "fill_pool" and isinstance(output.get("queue"), list):
+                keys.extend(str(k) for k in output["queue"] if k)
+            item_input = item.get("input") if isinstance(item.get("input"), dict) else {}
+            keys.extend(str(k) for k in item_input.get("jira_issue_keys") or [] if k)
+    program_id = str(workflow.get("program_id") or "")
+    try:
+        rows = _rows(memory.running_ticket_work(tenant_id=tenant_id), "tickets")
+    except Exception:  # noqa: BLE001 - the queue alone still finds siblings
+        rows = []
+    for row in rows:
+        same_program = program_id and str(row.get("program_id") or "") == program_id
+        same_parent = parent_id and str(row.get("parent_workflow_id") or "") == parent_id
+        if (same_program or same_parent) and row.get("key"):
+            keys.append(str(row["key"]))
+    return list(dict.fromkeys(keys))
+
+
+def _issue_text(issue: dict[str, Any]) -> tuple[str, str]:
+    from ts_harness.integrations.adf import adf_to_text
+
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    raw = fields.get("description")
+    description = (adf_to_text(raw) if isinstance(raw, dict) else str(raw or "")).strip()
+    return str(fields.get("summary") or "").strip(), description
+
+
+def frame_siblings(
+    memory: Any, jira: Any, task: dict[str, Any], *, key: str, tenant_id: str, artifacts: dict[str, Any],
+    work_order_id: str | None,
+) -> list[dict[str, Any]]:
+    """``{ref, title, body}`` of the tickets and work orders that run alongside ``key``.
+
+    The tickets of its queue (the pool's list) and the other running tickets of its program,
+    read from Jira, plus the other work orders of the plan it was filed from that no queued
+    ticket stands for.
+    """
+    from ts_harness.jira.pointer_block import parse_pointer_block
+
+    siblings: list[dict[str, Any]] = []
+    covered: set[str] = set()
+    for other in [k for k in _queue_siblings(memory, task, tenant_id) if k != key][:MAX_SIBLINGS]:
+        try:
+            title, description = _issue_text(jira.get_issue(other) or {})
+        except Exception:  # noqa: BLE001 - one unreadable sibling does not stop the rest
+            continue
+        pointer = parse_pointer_block(description)
+        if pointer.work_order_id:
+            covered.add(str(pointer.work_order_id).upper())
+        siblings.append({"ref": other, "title": title, "body": f"# {other} {title}\n\n{description}"})
+    markdown = str(artifacts.get("work_orders_markdown") or "")
+    if markdown:
+        from ts_harness.implementation.frame_scope import _sections
+
+        for wo_id, section in _sections(markdown).items():
+            if wo_id == str(work_order_id or "").upper() or wo_id in covered:
+                continue
+            siblings.append({"ref": wo_id, "title": "", "body": section})
+    return siblings
+
+
+def _with_shared_frames(
+    body: str, siblings: list[dict[str, Any]], *, key: str, title: str, warnings: list[str]
+) -> tuple[str, list[dict[str, Any]]]:
+    """``body`` with ``## Shared frames`` and ``## Frame scope`` when a sibling names the same frames."""
+    from ts_harness.implementation.frame_scope import ticket_overlaps, ticket_scope_sections
+
+    if "## Shared frames" in body:
+        return body, []
+    text, shared = ticket_scope_sections(key, body, siblings, own_title=title)
+    if not text:
+        return body, []
+    warnings.extend(ticket_overlaps(key, body + "\n" + text, shared))
+    return body.rstrip() + "\n\n" + text, shared
+
+
 def prepare_ticket_delivery(
     task: dict[str, Any],
     config: dict[str, Any],
@@ -471,6 +562,20 @@ def prepare_ticket_delivery(
         refs = number_refs([*refs, *attached])[: max_design_refs()]
         body = _with_design_line(body, [str(r["id"]) for r in refs if str(r.get("object_key")) not in program_keys])
 
+    # Other tickets in the queue or program that build parts of the same frames: this ticket's
+    # design check judges only its own part (implementation/frame_scope.py).
+    shared_frames: list[dict[str, Any]] = []
+    from ts_harness.implementation.frame_checklist import design_ids
+
+    try:
+        siblings = [] if not design_ids(body) else frame_siblings(
+            memory, jira, task, key=key, tenant_id=tenant_id,
+            artifacts=_program_artifacts(memory, owner) if owner else {}, work_order_id=pointer.work_order_id,
+        )
+        body, shared_frames = _with_shared_frames(body, siblings, key=key, title=summary, warnings=warnings)
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"shared frame check failed: {exc}")
+
     # How the ticket is tested: its program's decision for the repository, else the project setting.
     body = _with_test_policy(body, memory, tenant_id=tenant_id, jira_project=key.split("-", 1)[0], repo_url=repo_url, owner_repositories=owner_repositories, warnings=warnings, inspect_repo=inspect_repo)
 
@@ -526,6 +631,11 @@ def prepare_ticket_delivery(
         lines.append("Design: " + ", ".join(f"{r['id']} ({r.get('title') or r.get('source')})" for r in named_refs))
     elif refs:
         lines.append("Design: none (the ticket names no design frames)")
+    for item in shared_frames:
+        lines.append(
+            f"{item['frame']} is shared with " + ", ".join(o["ref"] for o in item["siblings"])
+            + ": this ticket's design check covers only its own part."
+        )
     if onboarding.get("needed"):
         lines.append("The repository has no .ts-harness.yml yet; this PR also adds it.")
     lines += [f"Note: {w}" for w in warnings]
@@ -540,6 +650,7 @@ def prepare_ticket_delivery(
         "base_branch": base_branch,
         "owner_program_id": owner or None,
         "design_refs": refs,
+        "shared_frames": shared_frames,
         "onboarding": onboarding,
         "warnings": warnings,
         **planning,

@@ -84,11 +84,14 @@ built and checked.
 4. **QA.** Each frame is laid next to its capture in one labelled image (design left, app right),
    and both are sampled on a grid: where both are a flat colour, the colours are compared and
    pairs that differ are listed in `design_checks` (`runtime/ts_harness/workflows/frame_review.py`).
-   QA (`governed-qa-gate` 1.10.0) judges every listed frame as its own criterion: a missing panel,
+   QA (`governed-qa-gate` 1.11.0) judges every listed frame as its own criterion: a missing panel,
    state or card content is a defect, a different colour token (a beige page behind a white
    design, white rows where the design is grey) is a defect, and a frame with no capture fails
    instead of passing as unverified. Rendering noise, 1 px shifts and different example data do
-   not count.
+   not count. A frame shared with other tickets (`## Frame scope`, `## Shared frames`) is judged
+   only for the part this ticket owns, and a capture in the wrong data state is one `test_data`
+   defect; see
+   [governed-delivery-flow.md](governed-delivery-flow.md#shared-design-frames-each-ticket-is-judged-on-its-own-part).
 5. **Tests rewritten to fit.** `review_precheck` lists what the patch changed in existing tests
    (`test_changes`: removed and added test names and assertions, and reversals such as "pick up
    any block and Carry-over card" becoming "…but not a Carry-over card"). Code review (1.10.0)

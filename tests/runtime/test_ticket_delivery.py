@@ -247,5 +247,54 @@ class ResolveTargetTests(unittest.TestCase):
         self.assertEqual(resolve_target(parse_pointer_block(""), "", ("", "")), ("", "", ""))
 
 
+class _QueueJira(_Jira):
+    """Each ticket of the queue has its own description."""
+
+    def __init__(self, issues):
+        super().__init__()
+        self.issues = issues
+
+    def get_issue(self, key):
+        summary, description = self.issues[key]
+        return {"key": key, "fields": {"summary": summary, "description": description}}
+
+
+class SharedFrameTests(unittest.TestCase):
+    """Tickets in one queue that build parts of the same frame each own their part."""
+
+    def _memory(self):
+        memory = _memory(program_refs=PROGRAM_REFS)
+        workflows = {
+            "wf-1": {"workflow": {"id": "wf-1", "parent_workflow_id": "pool-1", "input": {"jira_issue_key": "THD-33"}}, "tasks": []},
+            "pool-1": {"workflow": {"id": "pool-1", "input": {"jira_issue_keys": ["THD-33", "THD-34", "THD-35"]}}, "tasks": []},
+        }
+        memory.get_workflow.side_effect = lambda wid: workflows[wid]
+        return memory
+
+    def test_siblings_naming_the_same_frame_are_listed_with_what_they_cover(self):
+        jira = _QueueJira({
+            "THD-33": ("Schedule blocks", "## In Scope\n- schedule blocks\n\nDesign: D1\n\nRepo: acme/web@fe-dev"),
+            "THD-34": ("Grid rows", "## In Scope\n- grid rows and their tones\n\nDesign: D1\n\nRepo: acme/web@fe-dev"),
+            "THD-35": ("Settings", "Design: D2\n\nRepo: acme/web@fe-dev"),
+        })
+        out = _run(jira=jira, memory=self._memory())
+        body = out["work_order_body"]
+        self.assertIn("## Shared frames", body)
+        self.assertIn("  - THD-34: grid rows and their tones", body)
+        self.assertNotIn("THD-35", body)
+        self.assertIn("## Frame scope\n\n### D1\n- Owns:\n  - schedule blocks", body)
+        self.assertEqual([s["frame"] for s in out["shared_frames"]], ["D1"])
+        self.assertIn("D1 is shared with THD-34", out["summary"])
+
+    def test_overlapping_siblings_are_a_warning(self):
+        jira = _QueueJira({
+            "THD-33": ("Toolbar", "## In Scope\n- week toolbar\n\nDesign: D1\n\nRepo: acme/web@fe-dev"),
+            "THD-34": ("Header", "## In Scope\n- week header and toolbar\n\nDesign: D1\n\nRepo: acme/web@fe-dev"),
+            "THD-35": ("Settings", "Design: D2\n\nRepo: acme/web@fe-dev"),
+        })
+        out = _run(jira=jira, memory=self._memory())
+        self.assertTrue(any("THD-33 and THD-34 both seem to build" in w for w in out["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

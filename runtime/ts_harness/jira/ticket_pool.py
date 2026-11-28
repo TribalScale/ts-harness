@@ -63,11 +63,13 @@ def _repo_of(issue: dict[str, Any], default: str = "") -> str:
 
 
 def ready_tickets(
-    jira: Any, keys: list[str], waiting: dict[str, list[str]] | None = None
+    jira: Any, keys: list[str], waiting: dict[str, list[str]] | None = None,
+    issues: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """(ready tickets as ``{"key", "repo"}`` in queue order, keys already done in Jira).
 
-    ``waiting``, when given, collects each blocked ticket's open blockers.
+    ``waiting``, when given, collects each blocked ticket's open blockers; ``issues`` each open
+    ticket as Jira returned it.
     """
     ready, done = [], []
     for key in keys:
@@ -79,6 +81,8 @@ def ready_tickets(
         if _status_done(issue):
             done.append(key)
             continue
+        if issues is not None:
+            issues[key] = issue
         blockers = open_blockers((issue.get("fields") or {}).get("issuelinks"))
         if blockers:
             if waiting is not None:
@@ -106,6 +110,41 @@ def busy_elsewhere(memory: Any, tenant_id: str, own: set[str]) -> dict[str, str]
         if key and workflow_id and workflow_id not in own and str(row.get("parent_workflow_id") or "") not in own:
             busy.setdefault(key, workflow_id)
     return busy
+
+
+def frame_overlap_notes(issues: dict[str, dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """``(shared, overlaps)``: frames several queued tickets build, and tickets that claim the same region.
+
+    Each ticket's design check then judges only its own part (``## Shared frames``, added when
+    the ticket starts); two tickets that both describe the same region of a frame are a warning
+    at queue start, so a person can amend one work order before both are built.
+    """
+    from ts_harness.implementation.frame_scope import TICKET_REF, shared_frames, ticket_overlaps, ticket_scope_sections
+    from ts_harness.integrations.adf import adf_to_text
+
+    bodies: dict[str, str] = {}
+    titles: dict[str, str] = {}
+    for key, issue in issues.items():
+        fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        raw = fields.get("description")
+        text = adf_to_text(raw) if isinstance(raw, dict) else str(raw or "")
+        titles[key] = str(fields.get("summary") or "")
+        bodies[key] = f"# {key} {titles[key]}\n\n{text}"
+    shared = [
+        f"{frame} is built in parts by {_and(refs)}: each ticket's design check covers only its own part"
+        for frame, refs in sorted(shared_frames(bodies).items(), key=lambda item: int(item[0][1:]))
+    ]
+    overlaps: list[str] = []
+    seen: set[frozenset[str]] = set()
+    for key, body in bodies.items():
+        siblings = [{"ref": k, "title": titles[k], "body": b} for k, b in bodies.items() if k != key]
+        text, found = ticket_scope_sections(key, body, siblings, own_title=titles[key])
+        for warning in ticket_overlaps(key, body + "\n" + text, found):
+            pair = frozenset(TICKET_REF.findall(warning)[:2])
+            if pair not in seen:
+                seen.add(pair)
+                overlaps.append(warning)
+    return shared, overlaps
 
 
 def _choose(ready: list[dict[str, Any]], running_repos: list[str], room: int) -> list[dict[str, Any]]:
@@ -178,7 +217,8 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
 
         jira = JiraClient.from_env()
     waiting: dict[str, list[str]] = {}
-    ready, done = ready_tickets(jira, queue, waiting)
+    issues: dict[str, dict[str, Any]] = {}
+    ready, done = ready_tickets(jira, queue, waiting, issues)
     # A ticket another run is already building is left to that run (never built twice).
     busy = busy_elsewhere(memory, str(task.get("tenant_id") or "default"), {workflow_id})
     ready = [item for item in ready if item["key"] not in busy]
@@ -195,14 +235,24 @@ def fill(task: dict[str, Any], config: dict[str, Any], *, memory: Any, jira: Any
         raise ValueError("no ticket in the queue is ready: every remaining ticket waits on an open blocker")
     children = _fork(memory, parent={"workflow_id": workflow_id, "tenant_id": task.get("tenant_id")},
                      shared=_shared(task_input), items=chosen, actor=actor, version=task_input.get("_child_version"))
+    try:
+        frames_shared, overlaps = frame_overlap_notes(issues)
+    except Exception as exc:  # noqa: BLE001 - the queue starts without the note
+        logger.warning("ticket pool: shared frame check failed: %s", exc)
+        frames_shared, overlaps = [], []
+    frame_text = "".join(f" {line[0].upper()}{line[1:]}." for line in frames_shared)
+    frame_text += "".join(f" Warning: {line}." for line in overlaps)
     return {
         "children": children,
         "queue": queue,
         "max_parallel_tickets": limit,
         "already_done": done,
         "busy_elsewhere": sorted(busy),
+        "shared_frames": frames_shared,
+        "frame_overlaps": overlaps,
         "summary": start_text([c["label"] for c in children], waiting, limit)
-        + (f" Left to the run already building it: {', '.join(sorted(busy))}." if busy else ""),
+        + (f" Left to the run already building it: {', '.join(sorted(busy))}." if busy else "")
+        + frame_text,
     }
 
 

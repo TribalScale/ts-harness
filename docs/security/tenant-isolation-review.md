@@ -107,6 +107,8 @@ Legend:
 | GET /admin/workflows/gate-review | bearer | view | T (via the program) | P(read) | OK |
 | POST /admin/workflows/approve, /reject | bearer | approve_gate | **Fixed**: the task's workflow must be in the caller's tenant | P(approve) | Fixed (F2) |
 | POST /admin/workflows/decide | bearer | approve_gate | T (workflow), and the task is looked up inside it | P(approve) | OK |
+| POST /admin/workflows/amend | bearer | approve_gate | T (workflow) | P(approve) of the workflow's program | OK |
+| GET /admin/workflows/{id}/amendments | bearer | view | T (workflow) | P(read) of the workflow's program | OK |
 
 ### Deployment-wide configuration
 

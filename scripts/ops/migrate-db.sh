@@ -72,6 +72,7 @@ ORDER=(
   055_improvement_budget.sql
   056_improvement_proposals.sql
   057_harness_self_issues.sql
+  058_task_output_patch_audit.sql
 )
 
 psql "${DB_URL}" -v ON_ERROR_STOP=1 <<'SQL'

@@ -278,6 +278,7 @@ def validate_work_order_artifacts(
         )
 
         from ts_harness.implementation.frame_checklist import frame_checklist_problems
+        from ts_harness.implementation.frame_scope import frame_scope_problems
 
         markdown = str(artifacts.get("work_orders_markdown") or "")
         listed = repositories if isinstance(repositories, list) else None
@@ -286,6 +287,7 @@ def validate_work_order_artifacts(
             *deferred_work_problems(markdown),
             *api_contract_problems(markdown, listed),
             *frame_checklist_problems(markdown),
+            *frame_scope_problems(markdown),
         ]
         return [ContractViolation("/artifacts/work_orders_markdown", problem) for problem in problems]
     return []
@@ -402,7 +404,12 @@ def validate_qa_pr_url_set(
         failed = [c for c in pr.get("acceptance_criteria") or []
                   if isinstance(c, dict) and str(c.get("status") or "").strip().lower() == "fail"]
         defects = [d for d in pr.get("defects") or [] if d]
-        if len(defects) < len(failed):
+        # One test-data defect covers every criterion the wrong data state failed (it lists them).
+        covered = sum(
+            max(1, len(d["criteria"])) if isinstance(d, dict) and isinstance(d.get("criteria"), list) else 1
+            for d in defects
+        )
+        if covered < len(failed):
             violations.append(
                 ContractViolation(
                     "/result/prs/defects",

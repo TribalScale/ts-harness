@@ -8,6 +8,7 @@ import { formatDuration } from "./Timeline";
 import { CurrentRunBreakdown, TicketStory } from "./TicketStory";
 import { FileEventPage } from "./FileEventPage";
 import { FileFeed } from "./FileFeed";
+import { AmendWorkOrder } from "./AmendWorkOrder";
 
 const POLL_MS = 10000;
 
@@ -113,6 +114,7 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
         )}
         {item.stuck_task_id && <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>Decide in Inbox</a>}
         {item.program_id && <a href={`#/programs/${item.program_id}`}>Program</a>}
+        {item.kind !== "done" && <AmendWorkOrder workflowId={item.workflow_id} label={title} />}
         <button type="button" className="link-button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? "Hide details" : "Details"}
         </button>

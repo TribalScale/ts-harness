@@ -383,8 +383,61 @@ def poll_github_merges(*, tenant_id: str = "default", force: bool = False) -> di
         "errors": errors,
         "checks": poll_github_checks(tenant_id=tenant_id, github=github),
         "deployments": poll_github_deployments(tenant_id=tenant_id, github=github),
+        "amendments": _poll_amendments(tenant_id),
         **local,
     }
+
+
+def _poll_amendments(tenant_id: str) -> dict[str, Any]:
+    try:
+        return poll_pr_amendments(tenant_id=tenant_id)
+    except Exception as exc:  # noqa: BLE001 - the merge reconcile still reports
+        logger.warning("amend poller failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+def poll_pr_amendments(
+    *, tenant_id: str = "default", github: Any = None, memory: Any = None, handle: Any = None
+) -> dict[str, Any]:
+    """``/amend`` comments the webhook missed, on every running delivery's PR; each comment applied once."""
+    from ts_harness.gateway.pr_commands import handle_amend_command, parse_command
+    from ts_harness.workflows.work_order_amendments import comment_handled, running_deliveries
+
+    memory = memory or get_memory_client()
+    handle = handle or handle_amend_command
+    checked = applied = errors = 0
+    for delivery in running_deliveries(memory, tenant_id=tenant_id):
+        parsed = parse_github_pr_url(str(delivery.get("pr_url") or ""))
+        if parsed is None:
+            continue
+        checked += 1
+        try:
+            comments = (github or github_for(delivery["pr_url"])).list_issue_comments(*parsed)
+        except Exception as exc:  # noqa: BLE001 - the next poll tries again
+            errors += 1
+            logger.warning("amend poller could not read comments of %s: %s", delivery.get("pr_url"), exc)
+            continue
+        for comment in comments:
+            text = str(comment.get("body") or "").strip()
+            command = parse_command(text)
+            comment_id = str(comment.get("id") or "")
+            if not command or command[0] != "amend" or not comment_id:
+                continue
+            if comment_handled(memory, str(delivery["workflow_id"]), comment_id):
+                continue
+            event = {
+                "pr_url": delivery["pr_url"],
+                "author": str((comment.get("user") or {}).get("login") or ""),
+                "body": text,
+                "comment_id": comment_id,
+            }
+            try:
+                result = handle(event, tenant_id=tenant_id, memory=memory, delivery=delivery)
+                applied += 1 if result.get("status") == "amended" else 0
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.warning("amend poller failed on comment %s: %s", comment_id, exc)
+    return {"checked": checked, "applied": applied, "errors": errors}
 
 
 def poll_github_checks(*, tenant_id: str = "default", github: GitHubClient | None = None) -> dict[str, Any]:

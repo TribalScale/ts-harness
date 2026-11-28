@@ -1374,6 +1374,7 @@ class WorkflowRunner:
         if stage is not None and stage.input_map:
             task_input = self._fill_stage_inputs(task, stage, task_input)
         task_input = self._stamp_versions(task, stage, task_input)
+        task_input = self._apply_work_order_amendments(task, task_input)
 
         from ts_harness.workflows import coding_job_stage
 
@@ -1394,6 +1395,12 @@ class WorkflowRunner:
             try:
                 record = self.memory.get_workflow_record(str(task.get("workflow_id") or ""))
                 task_input.update(qa_screenshot_input(list(record.get("tasks") or [])))
+                from ts_harness.workflows.qa_history import previous_qa_rounds
+
+                rounds = previous_qa_rounds(list(record.get("tasks") or []), str(task.get("id") or ""))
+                if rounds:
+                    # QA keeps its earlier rulings and re-checks earlier defects first.
+                    task_input["previous_qa_rounds"] = rounds
             except Exception as exc:  # noqa: BLE001 - QA still runs on the text evidence
                 log_event("qa_screenshots_error", task_id=task.get("id"), error=str(exc))
         self._add_design_input(task, task_input)
@@ -1472,6 +1479,21 @@ class WorkflowRunner:
                 self.memory.patch_task_input(str(task.get("id")), updated, actor="workflow-runner")
             except Exception as exc:  # noqa: BLE001 - the step runs without its stored tag
                 log_event("run_tagging_error", task_id=task.get("id"), error=str(exc))
+        return updated
+
+    def _apply_work_order_amendments(self, task: dict[str, Any], task_input: dict[str, Any]) -> dict[str, Any]:
+        """A person amended the work order: every step that carries it sees each ``## Scope amendment``."""
+        if not str(task_input.get("work_order_body") or "").strip() or not hasattr(self.memory, "kv_get"):
+            return task_input
+        try:
+            from ts_harness.workflows.work_order_amendments import with_recorded_amendments
+
+            updated = with_recorded_amendments(self.memory, str(task.get("workflow_id") or ""), task_input)
+        except Exception as exc:  # noqa: BLE001 - the step runs with the body it has
+            log_event("work_order_amendments_error", task_id=task.get("id"), error=str(exc))
+            return task_input
+        if updated is not task_input:
+            log_event("work_order_amendments_applied", task_id=task.get("id"), step=task.get("step_name"))
         return updated
 
     def _add_design_input(self, task: dict[str, Any], task_input: dict[str, Any]) -> None:

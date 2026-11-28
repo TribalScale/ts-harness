@@ -577,6 +577,100 @@ step. The Inbox uses `POST /admin/workflows/decide` with
 sign-in the server has no personal identity, so the thread says "An admin"
 rather than a name; single sign-on (OIDC) records the person.
 
+### Shared design frames: each ticket is judged on its own part
+
+Several tickets often build parts of the same screen in parallel (one the schedule
+blocks, one the grid rows and their tones, one the week header and toolbar), each with
+"Then the page matches D1". Judged against the whole frame none of them can pass until
+all of them merge. So a frame named by more than one work order or ticket in the same
+plan, queue or program is split (`runtime/ts_harness/implementation/frame_scope.py`):
+
+- **Planned work orders.** The planner gives each work order that names a shared frame
+  a `## Frame scope` section: per frame, `- Owns:` (the regions or elements it builds)
+  and `- Owned by other work orders:` (`WO-n: region`). The planner contract rejects a
+  shared frame without a scope entry in every work order that names it, and two work
+  orders that both claim the same region (`prd-to-work-orders-governed` 1.6.0; stories on
+  the Jira path get the same section, `story-writer` 1.3.0).
+- **Jira tickets.** `prepare_ticket_delivery` looks up the siblings: the other tickets of
+  the pool's queue, other running tickets of the same program, and the other work orders
+  of the plan the ticket was filed from. When one names the same frame IDs, the work
+  order gets `## Shared frames` (who else builds each frame and what they cover, from
+  their In Scope list, Files or summary) and, unless the ticket already has one, a
+  derived `## Frame scope`. The step summary says which frames are shared.
+- **QA** (`governed-qa-gate` 1.11.0) compares only the owned part. Differences in a
+  region another ticket owns are `notes`, not defects. `input.frame_scope` carries the
+  scope, and each `design_checks` colour mismatch is marked `owned: false` with its
+  `owner` when the frame scope, the checklist line naming that colour, or a person's
+  scope amendment gives it to another ticket. A whole-page "matches D1" criterion on a
+  shared frame is judged for the owned part only.
+- **Code review** (`governed-code-review` 1.12.0) does not flag missing work in a region
+  another ticket owns, and flags rebuilding it as scope creep. The coding prompt says
+  which part of each shared frame to build.
+- **The whole frame** is compared after delivery by the nightly design conformance run
+  ([nightly-smoke.md](nightly-smoke.md#design-frames-every-night)). Its record of a
+  shared frame lists every ticket that delivered part of it and the siblings not
+  delivered yet, and the proposed bug names them, so a gap between tickets (a region
+  nobody owned, two tickets disagreeing) is reported as one.
+- **Overlap warnings.** When the pool starts, the summary names each frame several
+  queued tickets build and warns when two of them describe the same region ("PROJ-12
+  and PROJ-13 both seem to build ..."); `prepare_ticket_delivery` repeats the warning on
+  the ticket. Amend one work order to say who owns it.
+
+**Wrong data state.** When a capture shows a different data state than the frame draws
+(the plan still loading, sparse seed data without the late or stacked orders the frame
+shows), QA reports every such gap in **one** defect `{"category": "test_data", "criteria":
+[...], "fix": "<scenario or seed to fix>"}` and raises no UI defects for those regions in
+later rounds unless the UI is still wrong once the data is right. The QA contract counts a
+defect that lists `criteria` against each criterion it lists.
+
+**Earlier rounds.** Every `qa_gate` call gets `previous_qa_rounds`: its earlier verdicts on
+the same workflow (defects, failed criteria, notes), oldest first
+(`runtime/ts_harness/workflows/qa_history.py`). QA re-checks each earlier defect first,
+reports every difference in its owned scope in one pass, and does not reverse an earlier
+ruling (a layout it accepted, a region it gave to another ticket) unless the work order
+changed through a scope amendment or a human change request.
+
+## Amending a work order
+
+A person can change a running ticket's work order at any stage, without waiting for the
+merge wait (where PR `/revise` acts). The change is appended as
+
+```markdown
+## Scope amendment (by lee@example.com, 2026-11-20)
+
+This amends the work order and wins over anything above it that it contradicts.
+
+Row surfaces (#F3F4F6) belong to PROJ-12; judge only the schedule blocks here.
+```
+
+to the `work_order_body` of the earliest succeeded task output that carries it
+(`prepare_ticket_delivery`, or `prepare_work_order_delivery`), which is where
+`$input.work_order_body` resolves from. Every later step (coding, code review, QA) reads
+it; tasks that already hold a copy and have not run are patched, program artifacts that
+carry the body too, and the runner re-applies a missing amendment just before a step that
+carries the body runs. QA, code review and the coding prompt treat a scope amendment as
+winning over the rest of the work order. The task output change goes through
+`PATCH /workflow/task/<id>/output` on the memory API and is audited
+(`workflow_task_output_patched`).
+
+Three ways to amend (`runtime/ts_harness/workflows/work_order_amendments.py`):
+
+| Where | How | Who |
+| --- | --- | --- |
+| Console | **Amend work order** on a ticket card (Live) or on the ticket opened on the program board; it also lists earlier amendments | `approve_gate` and approve access to the program, like other ticket decisions |
+| Admin API | `POST /admin/workflows/amend` `{workflow_id, text}`; `GET /admin/workflows/<id>/amendments` for the history | same |
+| PR comment | `/amend <text>` on the ticket's PR, at any stage | a GitHub user with write access to the repository; named by their mapped email, else `@login` |
+
+`/amend` arrives through the `issue_comment` webhook; when webhooks look unhealthy the merge
+poller also reads the comments of every running delivery's PR. One amendment per comment:
+the comment id makes it idempotent, and a refused comment is not answered twice. The
+harness acknowledges each amendment on the PR and in the bound chat thread.
+
+History: `runtime_kv` namespace `work-order-amendments`, key `workflow:<id>`, keeps the
+original work order text and each amendment (text, person, source, date, PR comment id,
+and the body before it). Only a running delivery that has its work order can be amended;
+the text is limited to 4,000 characters and 30 amendments per work order.
+
 ## Code review
 
 After the PR's checks finish and before QA, every PR gets an automated review by a separate, read-only agent.

@@ -1983,6 +1983,37 @@ def patch_workflow_task_input(conn, task_id: str, body: dict[str, Any]) -> dict[
     return {"id": parsed_id}
 
 
+def patch_workflow_task_output(conn, task_id: str, body: dict[str, Any]) -> dict[str, str]:
+    """Replace a finished task's output (a person amending the work order it carries); audited."""
+    parsed_id = parse_uuid(task_id)
+    actor = str(body.get("actor", "orchestrator"))
+    output = body.get("output")
+    if not isinstance(output, dict):
+        raise ValueError("output must be an object")
+    reason = str(body.get("reason") or "")[:500]
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE workflow_tasks
+            SET output = %s::jsonb
+            WHERE id = %s
+            """,
+            (json.dumps(output), parsed_id),
+        )
+        if getattr(cur, "rowcount", 1) == 0:
+            raise ValueError("workflow task not found")
+        audit_workflow_event(
+            cur,
+            "workflow_task_output_patched",
+            "Workflow task output updated",
+            {"task_id": parsed_id, "reason": reason},
+            actor,
+        )
+    conn.commit()
+    return {"id": parsed_id}
+
+
 def set_task_wait_state(conn, body: dict[str, Any]) -> dict[str, str]:
     task_id = parse_uuid(body.get("id"))
     wait_token = str(body.get("wait_token") or "").strip()
@@ -5890,6 +5921,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
                 if self.path.startswith("/workflow/task/") and self.path.endswith("/input"):
                     task_id = self.path.removeprefix("/workflow/task/").removesuffix("/input")
                     self._send_json(200, patch_workflow_task_input(conn, task_id, body))
+                elif self.path.startswith("/workflow/task/") and self.path.endswith("/output"):
+                    task_id = self.path.removeprefix("/workflow/task/").removesuffix("/output")
+                    self._send_json(200, patch_workflow_task_output(conn, task_id, body))
                 elif self.path.startswith("/programs/") and self.path.endswith("/visibility"):
                     program_id = self.path.removeprefix("/programs/").removesuffix("/visibility")
                     self._send_json(200, set_program_visibility(conn, program_id, body))
