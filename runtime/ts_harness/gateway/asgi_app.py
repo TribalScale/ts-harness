@@ -1427,6 +1427,98 @@ async def admin_metrics(request: Request) -> Response:
     return _json(result)
 
 
+def _improvements_view(memory: Any, tenant_id: str) -> dict[str, Any]:
+    """Proposals, evaluations, canaries and the month's improvement spend (Metrics -> Improvements)."""
+    from ts_harness.improvement import canary as improvement_canary
+    from ts_harness.improvement import replay as improvement_replay
+    from ts_harness.improvement.budget import ImprovementBudget
+
+    try:
+        rows = memory.list_improvement_proposals(tenant_id=tenant_id, limit=100)
+        available = True
+    except Exception as exc:  # noqa: BLE001 - the page shows the budget anyway
+        log_event("admin_improvements_error", error=str(exc))
+        rows, available = [], False
+    return {
+        "available": available,
+        "proposals": rows,
+        "budget": ImprovementBudget(tenant_id=tenant_id, memory=memory).status(),
+        "rules": {
+            "replay": {"cases": improvement_replay.DEFAULT_CASES, "min_each": improvement_replay.MIN_EACH,
+                       "catch_margin": improvement_replay.CATCH_MARGIN},
+            "canary": {"share": improvement_canary.share(), "min_tickets": improvement_canary.MIN_TICKETS,
+                       "autonomy_margin": improvement_canary.AUTONOMY_MARGIN, "max_days": improvement_canary.MAX_DAYS,
+                       "enabled": improvement_canary.enabled()},
+        },
+    }
+
+
+async def admin_improvements(request: Request) -> Response:
+    """GET /admin/improvements: the self-improvement loop's proposals and spend (same access as metrics)."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    tenant_id = str(auth.tenant_id or "default")
+    return _json(await asyncio.to_thread(_improvements_view, get_memory_client(), tenant_id))
+
+
+async def admin_improvement_decision(request: Request) -> Response:
+    """POST /admin/improvements/{id}/decision {action: approve|reject|rollback, reason}: a person decides."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "edit_config")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    from ts_harness.improvement import canary as improvement_canary
+    from ts_harness.memory.client import MemoryApiConflict
+
+    action = str((body or {}).get("action") or "").strip()
+    if action not in {"approve", "reject", "rollback"}:
+        return _json({"error": "action must be approve, reject or rollback"}, 400)
+    reason = str((body or {}).get("reason") or "").strip()[:500]
+    tenant_id = str(auth.tenant_id or "default")
+    actor = str(getattr(auth, "email", None) or auth.actor_id or "admin")
+    memory = get_memory_client()
+    proposal_id = request.path_params["proposal_id"]
+
+    def decide() -> dict[str, Any]:
+        proposal = memory.get_improvement_proposal(proposal_id, tenant_id=tenant_id)
+        if action == "approve":
+            return improvement_canary.promote(memory, proposal, actor=actor, tenant_id=tenant_id)
+        if action == "rollback":
+            if proposal.get("status") not in {"canary", "awaiting_approval"}:
+                raise ValueError("only a running canary can be rolled back")
+            return improvement_canary.rollback(memory, proposal, reason or f"rolled back by {actor}", actor=actor,
+                                               tenant_id=tenant_id)
+        return improvement_canary.reject(memory, proposal, actor=actor, reason=reason, tenant_id=tenant_id)
+
+    try:
+        result = await asyncio.to_thread(decide)
+    except MemoryApiConflict as exc:
+        return _json({"error": f"changed meanwhile: {exc}"}, 409)
+    except ValueError as exc:
+        return _json({"error": str(exc)}, 400)
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_improvement_decision_error", error=str(exc))
+        return _json({"error": "could not record the decision"}, 500)
+    get_runtime().audit.append(
+        tenant_id=tenant_id,
+        action_type=f"improvement_{action}",
+        actor_id=actor,
+        correlation_id=f"proposal-{proposal_id}",
+        payload={"proposal_id": proposal_id, "status": result.get("status"), "reason": reason,
+                 "promotion": result.get("promotion")},
+    )
+    return _json(result)
+
+
 async def admin_ticket_story(request: Request) -> Response:
     """One ticket or work order's story: events in order, coding runs with phases, findings, time totals."""
     try:
@@ -4745,6 +4837,8 @@ routes = [
     Route("/admin/proposals/cancel", endpoint=admin_proposals_cancel, methods=["POST"]),
     Route("/admin/history", endpoint=admin_history, methods=["GET"]),
     Route("/admin/metrics", endpoint=admin_metrics, methods=["GET"]),
+    Route("/admin/improvements", endpoint=admin_improvements, methods=["GET"]),
+    Route("/admin/improvements/{proposal_id}/decision", endpoint=admin_improvement_decision, methods=["POST"]),
     Route("/admin/programs/{id}/advance", endpoint=admin_programs_advance, methods=["POST"]),
     Route(
         "/admin/programs/{id}/department-memory",

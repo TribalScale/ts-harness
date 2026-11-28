@@ -650,3 +650,118 @@ it("lists a pending chat proposal and cancels it", async () => {
   await waitFor(() => expect(posted).toEqual(['{"session_id":"s1"}']));
   expect(await screen.findByText("Proposal cancelled")).toBeInTheDocument();
 });
+
+it("shows an improvement proposal's diff, evidence and replay, and promotes it", async () => {
+  const posted: { url: string; body: string }[] = [];
+  let decided = false;
+  const proposal = {
+    id: 12,
+    type: "skill_edit",
+    status: "awaiting_approval",
+    target: "pre_push_review",
+    title: "Ask for a test per retry path",
+    summary: "The reviewer misses untested retry branches.",
+    pattern_key: "review:tests",
+    metric: "autonomy",
+    expected_effect: "fewer test blocks at the gate",
+    risk: "more pre-push findings",
+    change: { diff: "--- a/skills/x/SKILL.md\n+++ b/skills/x/SKILL.md\n@@ -1 +1,2 @@\n ## Deep checks\n+- retries\n" },
+    evidence: {
+      tickets: 4,
+      pattern: "review:tests",
+      examples: ["no unit test for the retry"],
+      refs: [{ workflow_id: "wf-1", jira_issue_key: "PROJ-7", pr_url: "https://github.com/org/api/pull/3" }],
+    },
+    evaluation: {
+      status: "passed",
+      reason: "catch rate 80% vs 40%",
+      cost_usd: 1.2,
+      scores: {
+        current: { blocks: 5, passes: 5, caught: 2, false_blocks: 0, catch_rate: 0.4, false_block_rate: 0, agreement: 0.7 },
+        candidate: { blocks: 5, passes: 5, caught: 4, false_blocks: 0, catch_rate: 0.8, false_block_rate: 0, agreement: 0.9 },
+      },
+    },
+    canary: {
+      variant: "proposal-12",
+      share: 0.5,
+      started_at: "2026-11-01T00:00:00Z",
+      latest: {
+        checked_at: "2026-11-20T00:00:00Z",
+        candidate: { tickets: 8, finished: 8, merged: 8, autonomy_rate: 0.75, problem_rate: 0, tickets_with_problems: 0 },
+        control: { tickets: 8, finished: 8, merged: 8, autonomy_rate: 0.625, problem_rate: 0, tickets_with_problems: 0 },
+        decision: { action: "approve", reason: "autonomy 75% vs control 62%" },
+      },
+    },
+    cost_usd: 1.3,
+  };
+  const item: InboxItem = {
+    type: "improvement_proposal",
+    id: "12",
+    title: proposal.title,
+    subtitle: "skill edit · Canary passed: promote or reject",
+    created_at: "2026-11-20T00:00:00Z",
+    meta: { proposal, status: "awaiting_approval" },
+  };
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: decided ? [] : [item] });
+    if (url === "/admin/improvements/12/decision") {
+      posted.push({ url, body: String(init?.body) });
+      decided = true;
+      return jsonResponse({
+        ...proposal,
+        status: "promoted",
+        promotion: { method: "pull_request", pr_url: "https://github.com/org/harness/pull/9" },
+      });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  renderPage(<StatefulInbox initialType="improvement_proposal" initialId="12" />);
+  expect(await screen.findByRole("button", { name: /Improvements 1/ })).toBeInTheDocument();
+  expect(await screen.findByLabelText("Diff")).toHaveTextContent("+- retries");
+  expect(screen.getByText("no unit test for the retry")).toBeInTheDocument();
+  expect(screen.getByLabelText("Replay scores")).toHaveTextContent("candidate80% (4/5)");
+  expect(screen.getByLabelText("Variant against control")).toHaveTextContent("control863%");
+  await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+  await waitFor(() =>
+    expect(posted).toEqual([{ url: "/admin/improvements/12/decision", body: '{"action":"approve","reason":""}' }]),
+  );
+  expect(await screen.findByText(/Pull request opened \(not merged\)/)).toBeInTheDocument();
+});
+
+it("an off-limits idea can only be dismissed", async () => {
+  const item: InboxItem = {
+    type: "improvement_proposal",
+    id: "13",
+    title: "Block on any missing test",
+    subtitle: "needs design",
+    meta: {
+      status: "proposed",
+      proposal: {
+        id: 13,
+        type: "needs_design",
+        status: "proposed",
+        target: "skills/review/governed-code-review/SKILL.md",
+        title: "Block on any missing test",
+        summary: "",
+        pattern_key: "review:tests",
+        metric: "",
+        expected_effect: "",
+        risk: "",
+        change: {
+          idea: "make missing tests blockers",
+          off_limits: { match: "SKILL.md#Severity", why: "what blocks a PR", section: "Severity" },
+        },
+        evidence: { tickets: 3 },
+        cost_usd: 0.1,
+      },
+    },
+  };
+  mockFetch((url) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: [item] });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  renderPage(<StatefulInbox initialType="improvement_proposal" initialId="13" />);
+  expect(await screen.findByText(/A person has to design this change/)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+});

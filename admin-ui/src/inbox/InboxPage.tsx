@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiFetch } from "../api/client";
 import type {
+  ImprovementProposal,
   InboxItem,
   InboxType,
   SkillDraftDetail,
@@ -18,6 +19,7 @@ import { StatusPill, type SemanticStatus } from "../components/StatusPill";
 import { SplitView } from "../layout/SplitView";
 import { useMediaQuery } from "../layout/useMediaQuery";
 import { GateReview } from "../programs/GateReview";
+import { ProposalDetail } from "../live/ImprovementsPanel";
 
 const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "all", label: "All for me" },
@@ -27,6 +29,7 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "stuck_step", label: "Stuck" },
   { key: "knowledge_note", label: "Notes" },
   { key: "pending_proposal", label: "Proposals" },
+  { key: "improvement_proposal", label: "Improvements" },
 ];
 
 const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "retry", "revise"];
@@ -69,6 +72,7 @@ function badgeClass(type: InboxType): string {
   if (type === "stuck_step") return "badge badge-stuck";
   if (type === "knowledge_note") return "badge badge-skill";
   if (type === "pending_proposal") return "badge badge-tool";
+  if (type === "improvement_proposal") return "badge badge-skill";
   return "badge badge-gate";
 }
 
@@ -78,6 +82,7 @@ function typeLabel(type: InboxType): string {
   if (type === "stuck_step") return "Stuck step";
   if (type === "knowledge_note") return "Knowledge note";
   if (type === "pending_proposal") return "Chat proposal";
+  if (type === "improvement_proposal") return "Improvement";
   return "Workflow gate";
 }
 
@@ -291,6 +296,9 @@ export function InboxPage({
       pending_proposal: visibleItems.filter(
         (item) => item.type === "pending_proposal",
       ).length,
+      improvement_proposal: visibleItems.filter(
+        (item) => item.type === "improvement_proposal",
+      ).length,
     }),
     [visibleItems],
   );
@@ -471,6 +479,40 @@ export function InboxPage({
       setDetail(null);
     } catch (e: any) {
       setDetailError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function actImprovement(action: "approve" | "reject") {
+    const proposal = selectedItem?.meta?.proposal as ImprovementProposal | undefined;
+    if (!proposal) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await apiFetch<ImprovementProposal>(
+        `/admin/improvements/${encodeURIComponent(String(proposal.id))}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify({ action, reason: action === "reject" ? "rejected from inbox" : "" }),
+        },
+      );
+      if (action === "approve") {
+        setNotice({
+          title: "Proposal promoted",
+          detail: result?.promotion?.pr_url
+            ? `Pull request opened (not merged): ${result.promotion.pr_url}`
+            : `Apply the change by hand: ${result?.promotion?.reason || "see the proposal"}`,
+        });
+      }
+      await load();
+      setDetail(null);
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 409) {
+        setDetailError("Changed meanwhile. Reload the inbox.");
+      } else {
+        setDetailError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -681,6 +723,8 @@ export function InboxPage({
   function renderDetailSections(type: InboxType) {
     if (type === "stuck_step")
       return renderStuckSections(detail || selectedItem?.meta || {});
+    if (type === "improvement_proposal" && selectedItem?.meta?.proposal)
+      return <ProposalDetail proposal={selectedItem.meta.proposal as ImprovementProposal} />;
     const fallbackDetail = selectedItem ? itemRecord(selectedItem) : null;
     const raw = detail || selectedItem?.meta || fallbackDetail || {};
     const timestampDetail = detail || selectedItem?.meta || fallbackDetail;
@@ -874,6 +918,18 @@ export function InboxPage({
             >
               Approve
             </Button>
+          </>
+        )}
+        {type === "improvement_proposal" && (
+          <>
+            <Button variant="danger" busy={busy} onClick={() => void actImprovement("reject")}>
+              {(selectedItem?.meta?.proposal as ImprovementProposal | undefined)?.type === "needs_design" ? "Dismiss" : "Reject"}
+            </Button>
+            {(selectedItem?.meta?.proposal as ImprovementProposal | undefined)?.type !== "needs_design" && (
+              <Button variant="primary" busy={busy} onClick={() => void actImprovement("approve")}>
+                Approve
+              </Button>
+            )}
           </>
         )}
         {type === "pending_proposal" && (

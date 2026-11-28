@@ -1451,6 +1451,14 @@ class WorkflowRunner:
         def build() -> dict[str, Any]:
             skeleton = self._skeleton_for_task(task) if stage is not None else None
             variants: dict[str, str] = {}
+            if hasattr(self.memory, "list_improvement_proposals"):
+                # A running improvement canary assigns a new ticket to candidate or control first.
+                try:
+                    from ts_harness.improvement.canary import assign_for_task
+
+                    assign_for_task(task, memory=self.memory)
+                except Exception as exc:  # noqa: BLE001 - the ticket runs unassigned
+                    log_event("canary_assign_error", task_id=task.get("id"), error=str(exc))
             if hasattr(self.memory, "kv_get"):
                 variants = run_versions.ticket_variants(str(task.get("workflow_id") or ""), memory=self.memory)
             return run_versions.versions_for_task(task, stage=stage, skeleton=skeleton, variants=variants)

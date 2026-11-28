@@ -1166,6 +1166,50 @@ class MemoryClient:
         """Record a self-improvement charge (``cost_usd``, ``purpose``, ``ref``, ``model``, tokens, ``actor``)."""
         return self._request("POST", "/budgets/improvement/charges", body)
 
+    # Self-improvement proposals and replay cases (migration 056; ts_harness.improvement).
+
+    def list_improvement_proposals(self, *, tenant_id: str = "default", status: str = "", pattern_key: str = "",
+                                   target: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        params = {"tenant_id": tenant_id, "limit": limit}
+        params.update({k: v for k, v in (("status", status), ("pattern_key", pattern_key), ("target", target)) if v})
+        return list(self._request("GET", f"/improvements/proposals?{urlencode(params)}").get("proposals") or [])
+
+    def get_improvement_proposal(self, proposal_id: int | str, *, tenant_id: str = "default") -> dict[str, Any]:
+        from urllib.parse import quote
+
+        return self._request("GET", f"/improvements/proposals/{quote(str(proposal_id), safe='')}?tenant_id={quote(tenant_id)}")
+
+    def create_improvement_proposal(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/improvements/proposals", body)
+
+    def update_improvement_proposal(self, proposal_id: int | str, **body: Any) -> dict[str, Any]:
+        """Move or annotate a proposal; ``expected_status`` makes it conditional (409 when it moved)."""
+        from urllib.parse import quote
+
+        return self._request("POST", f"/improvements/proposals/{quote(str(proposal_id), safe='')}", body)
+
+    def list_replay_cases(self, *, tenant_id: str = "default", kind: str = "pre_push_review", limit: int = 100,
+                          inputs: bool = True, workflow_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        params: dict[str, Any] = {"tenant_id": tenant_id, "kind": kind, "limit": limit, "inputs": "1" if inputs else "0"}
+        if workflow_ids:
+            params["workflow_ids"] = ",".join(workflow_ids)
+        return list(self._request("GET", f"/improvements/replay-cases?{urlencode(params)}").get("cases") or [])
+
+    def put_replay_case(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/improvements/replay-cases", body)
+
+    def put_replay_verdict(self, case_id: int | str, *, key: str, verdict: dict[str, Any],
+                           tenant_id: str = "default") -> dict[str, Any]:
+        body = {"key": key, "verdict": verdict, "tenant_id": tenant_id}
+        return self._request("POST", f"/improvements/replay-cases/{int(case_id)}/verdicts", body)
+
+    def prune_replay_cases(self, *, tenant_id: str = "default", days: int = 90) -> dict[str, Any]:
+        return self._request("POST", "/improvements/replay-cases/prune", {"tenant_id": tenant_id, "days": days})
+
     def list_harness_issues(self, *, tenant_id: str = "default", limit: int = 50) -> dict[str, Any]:
         """Harness self-issues, most recently seen first, with ``open_fixes`` and ``fixes_last_7_days``."""
         from urllib.parse import urlencode

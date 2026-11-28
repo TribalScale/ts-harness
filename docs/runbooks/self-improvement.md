@@ -1,8 +1,9 @@
-# Self-improvement: the foundation
+# Self-improvement
 
 The harness is building a loop that improves its own delivery: a weekly failure-pattern digest
 that proposes changes, offline replay evaluation, automatic canaries with rollback, and the
-harness filing and fixing its own bugs. This runbook covers the foundation those parts build on:
+harness filing and fixing its own bugs. Sections 1 to 4 cover the foundation; sections 5 to 10
+cover the digest, proposals, replay, canary and promotion. The foundation:
 
 1. **Run tagging**: every agent step and coding job records the versions it ran with.
 2. **The target and the guard**: autonomy (tickets merged without a person stepping in) and
@@ -226,6 +227,10 @@ canary that matches. The list covers:
   `MIN_CONFIDENCE`, the override guards), `review_arbiter.py`, `TS_HARNESS_STUCK_ARBITER`.
 - **The metrics and guard themselves:** `delivery_metrics.py`, `ticket_story.py`, `guard.py`,
   `versions.py`, `human_decisions.py` (what counts as a person) and the list itself.
+- **The loop's own rules:** everything under `runtime/ts_harness/improvement/` (the replay pass
+  rule, the canary stop rule, the screening), the proposal lifecycle (migration 056, its routes),
+  `TS_HARNESS_CANARIES`, `TS_HARNESS_CANARY_SHARE`, `TS_HARNESS_IMPROVEMENT_*` and the
+  `MIN_TICKETS`, `AUTONOMY_MARGIN` and `CATCH_MARGIN` constants.
 
 A test checks that every listed path, Markdown section and constant exists, so a rename has to
 update the list.
@@ -389,5 +394,212 @@ it as `harness_loop`. Self-fix spend shows in the improvement budget under `harn
 | Post-merge problems | `guard.post_merge(GuardContext(...), row, tasks, merged_at)` |
 | Spend on improvement | `ImprovementBudget().can_spend / track / model_call / charge` |
 | Is a change allowed | `off_limits.is_off_limits(path=..., setting=..., constant=...)` |
+
+# The loop: digest, proposals, replay, canary
+
+Built on the foundation above. Code: `runtime/ts_harness/improvement/` (`digest.py`,
+`proposals.py`, `patches.py`, `replay.py`, `canary.py`, `loop.py`, `llm.py`); storage: migration
+`056_improvement_proposals.sql` (tables `improvement_proposals` and `improvement_replay_cases`,
+memory API routes under `/improvements/`).
+
+```
+weekly digest ──► proposal (proposed) ──► offline replay (evaluating)
+                       │                      │ passed            │ failed ─► rejected
+                       │ no offline check     ▼                   │ inconclusive ─► proposed (retry in 7 days)
+                       ▼                  canary (automatic) ──► stop rule ──► rolled_back
+                Inbox: a person               │ enough tickets, no worse
+                approves / rejects            ▼
+                                       awaiting_approval ──► Inbox: a person promotes ─► promoted (PR or by hand)
+```
+
+The loop may **start** a canary on its own once a proposal passes the offline replay. Full rollout
+(promotion) always needs a person. Nothing on the off-limits list is ever proposed as an
+actionable change or canaried. Every model call is charged to the improvement budget; when it is
+used up the work pauses quietly until next month.
+
+## 6. The weekly failure-pattern digest
+
+System job `improvement-digest` (handler `improvement_digest`), checked daily, runs once every 7
+days (the last run is kept in `runtime_kv`, namespace `improvement-loop`, key `digest`, so restarts
+do not re-run it). `TS_HARNESS_IMPROVEMENT_DIGEST=off` turns it off.
+
+It reads the tickets that finished in the last 7 days and collects, per ticket:
+
+| Signal key | From |
+| --- | --- |
+| `review:<category>` | Blocking findings of the code review gate (`finalize_code_review`), by category |
+| `qa:<category>` | QA gate defects |
+| `repeated:<gate>` | The same finding came back in a later round (`revision_guidance.repeated_findings`) |
+| `ci:<check>` | Failed CI checks (`failed_checks` of `await_pr_checks`), without a matrix suffix |
+| `stuck:<reason>` | Why a step waited for a person (`_awaiting_human_decision.reason`) |
+| `arbiter:<category>` | The stuck-step arbiter's classification (`_arbiter.category`) |
+| `readiness:questions` | A hand-written ticket was not ready and its questions went to a person |
+| `intervention:<kind>` | How a person stepped in (`guard.interventions`) |
+| `post_merge:<signal>` | Reverts, Jira bugs, smoke failures after merge (merges of the last 21 days) |
+
+**Threshold:** a signal is a pattern when at least **3 different tickets** show it in the week.
+One or two tickets are as likely a quirk of those tickets as a cause in the harness; at a few
+dozen tickets a week a higher bar would hide real recurring problems. Patterns are ranked by how
+many tickets show them.
+
+**Dedupe and cap:** a pattern already covered by an open proposal, or by one rejected or rolled
+back in the last 28 days, is skipped; so is a proposal with the same title as an open one, and a
+knowledge note that near-duplicates an active or proposed note. At most **5 proposals a week**
+(counting earlier runs that week).
+
+For each pattern one model call (`TS_HARNESS_IMPROVEMENT_MODEL`, else the revision diagnosis
+model) asks for ONE proposal. The prompt carries the pattern, up to 8 examples, the off-limits
+list, the open proposals' titles and, for review, QA and CI patterns, the text of the skill most
+likely to need the change (so a diff applies exactly). Types:
+
+| Type | What it carries | After the digest |
+| --- | --- | --- |
+| `knowledge_note` | A note (scope, kind, title, body, why, applies_to) | Created through the proposed-notes path (`source=drafted`, actor `harness-improver`); a person approves the note in the Inbox and the proposal follows it (promoted or rejected) |
+| `skill_edit` | A unified diff to a file under `skills/` | Replayed when it only changes the review skill's reviewer sections (below); otherwise "no offline check available" |
+| `setting_change` | Setting name, old value, new value | "No offline check available": a person decides |
+| `fragment_change` | A unified diff to `config/fragments/*` or `config/workflows/*` (must stay valid JSON) | "No offline check available": a person decides |
+| `needs_design` | The idea, why it is off limits, no diff | A person designs the change; it can only be dismissed |
+
+Every proposal stores its evidence (pattern, ticket count, ticket and workflow references, PR
+links, examples), the metric it should move, the expected effect, a risk note and its cost.
+
+**Off limits:** `proposals.screen` checks every file a diff touches (and, for a Markdown skill,
+every `##` section it changes) and every setting against `is_off_limits`. A hit turns the proposal
+into `needs_design`: the diff is dropped, the idea and the reason are kept, and it is never acted
+on. A diff that does not apply, touches a file outside its type's folders, or deletes a file is
+dropped.
+
+## 7. Offline replay (the pre-push reviewer)
+
+Code: `replay.py`. The one target with an offline check is the pre-push reviewer's rubric: a
+`skill_edit` to `skills/review/governed-code-review/SKILL.md` that changes only the sections the
+pre-push reviewer reads and that are not off limits (Review depth, Deep checks, API types in a web
+PR, Tests that change meaning, Review Checklist, Not In Scope, Reading beyond the diff; Severity
+and Untrusted input are off limits). Target name `pre_push_review`.
+
+**Cases** (`improvement_replay_cases`): for each delivered ticket of the last 60 days, its first
+push as the code review gate judged it: the work order, the PR's changed files with patches and the
+gate's scope check and test-change list (from the stored `review_precheck` output, or read from
+GitHub with `compare` on the head the gate saw), and the gate's first verdict and blocking findings
+as ground truth. Built on demand (at most 40 per run) when fewer than 5 blocks or 5 passes are
+stored; kept 90 days.
+
+**Evaluation:** the current rubric and the candidate (the skill with the diff applied) review the
+same N cases (default **10**: up to 5 gate blocks and 5 gate passes, newest first), one model call
+per case and version, with the patches inline (no checkout). Each version's verdict per case is
+cached on the case (key: rubric hash and model), so re-evaluations and the current version's runs
+are not paid twice. The budget is checked before every call.
+
+| Score | Meaning |
+| --- | --- |
+| Catch rate | Gate-blocked cases the reviewer blocks |
+| False-block rate | Gate-passed cases the reviewer blocks |
+| Agreement | Cases where the reviewer's verdict matches the gate's |
+
+**Pass rule:** the candidate's catch rate is at least **10 points** higher than the current one's
+*and* it catches at least one more block, and its false-block rate is **no higher**. At least **3
+blocks and 3 passes** must be replayed on both versions, otherwise the result is *inconclusive*
+(also when the budget runs out mid-way). With 5 blocks, 10 points means at least one more caught
+block; the false-block rule allows no extra false block, because a reviewer that blocks good work
+costs a fix round on every ticket.
+
+Results: passed → the canary starts (below); failed → `rejected`; inconclusive → back to
+`proposed`, tried again after 7 days. Each evaluation is recorded on the proposal (`evaluation`,
+history in `evaluations`) with its cost, which is added to the proposal's `cost_usd`.
+
+Proposals that cannot be replayed yet (settings, fragments, other skills) are marked "no offline
+check available" and wait in the Inbox for a person; they never start a canary.
+
+## 8. The canary
+
+Code: `canary.py`. System job `improvement-loop` (handler `improvement_loop`, hourly) runs the
+replay for at most one due proposal, then the stop rule. `TS_HARNESS_IMPROVEMENT_LOOP=off` stops
+the job; `TS_HARNESS_CANARIES=off` stops new canaries and new assignments.
+
+**Start:** a proposal that passed moves to `canary` on its own, with `canary.started_at`, its
+share and variant name `proposal-<id>`. **One live proposal per target** (`canary` or
+`awaiting_approval`): a unique index enforces it; a proposal that passes while the slot is taken
+goes back to `proposed` and is re-checked (cached verdicts make that cheap) when the slot frees.
+
+**Assignment:** when a ticket's workflow starts (the first step the runner dispatches for an
+`implement_jira_ticket` or `deliver_work_order` run created after the canary started), it is put in
+`candidate` or `control` of variant `proposal-<id>` with `set_ticket_variant`: a stable hash of the
+workflow and proposal ids against `TS_HARNESS_CANARY_SHARE` (default **0.5**, 0.05 to 0.95). Each
+later step records it under `_versions.variants`. Tickets that started earlier are left out.
+
+**How the variant changes behaviour:** when the runner builds a candidate ticket's coding job
+(`coding_job_stage.with_canary`), the job's `review_rubric` (the pre-push reviewer's rubric, chosen
+in `coding_job._review_settings`) is replaced by the candidate rubric: the review skill with the
+proposal's diff applied, the reviewer's sections. Control tickets keep the current rubric. Once the
+proposal is rolled back, candidate tickets get the current rubric on their next coding job. Any
+error leaves the job as control; the canary never stops a job.
+
+**Stop rule** (each hour, `delivery_metrics(..., group_by="variants.proposal-<id>", guard=True)`):
+
+| Condition | Action |
+| --- | --- |
+| Any candidate ticket with a problem after merge (revert, Jira bug, smoke failure) | Roll back at once |
+| The review skill changed so the diff no longer applies | Roll back |
+| 8 candidate and 8 control tickets finished, candidate autonomy more than **12.5 points** (one ticket in eight) below control | Roll back |
+| Same, candidate post-merge problem rate above control's | Roll back |
+| Same, otherwise | `awaiting_approval`: Inbox, for a person to promote |
+| Fewer than 8 per side after 45 days | Roll back (not enough tickets) |
+
+A proposal waiting for approval stops getting new tickets but stays watched: a later problem on
+one of its candidate tickets still rolls it back. The latest numbers (finished, autonomy, problem
+rate, cost per ticket, per side) and the decision are stored on the proposal (`canary.latest`).
+
+**Rollback** ends the experiment: new tickets are no longer assigned, candidate tickets review with
+the current rubric from their next coding job, and the variant assignments stay for the metrics. A
+person can also stop a live canary (Reject in the Inbox, or `POST /admin/improvements/<id>/decision`
+with `rollback`).
+
+## 9. Promotion
+
+Proposals waiting for a person show in the Inbox as **Improvement** items (admins only): a canary
+that passed (`awaiting_approval`), a proposal with no offline check, and `needs_design` ideas. The
+detail shows the diff or setting, the evidence, the replay scores and the canary's
+candidate-vs-control numbers. Approve and Reject call `POST /admin/improvements/<id>/decision`
+(`approve`, `reject`, `rollback`; permission `edit_config`; audited as `improvement_<action>`).
+A `needs_design` item can only be dismissed.
+
+**What Approve does** (chosen: open a PR, never merge):
+
+- `skill_edit` and `fragment_change`: when `TS_HARNESS_IMPROVEMENT_PR_REPO` (`owner/repo` of the
+  harness) is set and the GitHub App or token can write to it, the harness opens a pull request
+  against `TS_HARNESS_IMPROVEMENT_PR_BASE` (default `dev`) on branch `improvement/proposal-<id>-…`
+  with the diff applied to that branch's files. It never merges it; review it like any change and
+  raise the skill's `version` if needed. A skill edit to the review skill also changes the code
+  review gate once merged (the gate reads the whole skill); the canary only changed the pre-push
+  reviewer. Without the setting, or if the PR cannot be opened, the proposal is marked promoted
+  "by hand" and the diff is shown for a person to apply.
+- `setting_change`: recorded as promoted by hand; a person changes the setting (see
+  [runtime-config.md](runtime-config.md)).
+- `knowledge_note`: approve the note itself (a Notes item); the proposal follows.
+
+## 10. Seeing it
+
+Live → Metrics → **Improvements**: every proposal with its type, status, offline check result,
+candidate vs control autonomy and ticket counts, cost, and a detail view; the month's improvement
+spend and whether canaries are on. `GET /admin/improvements` returns the same.
+
+## 11. Operating it
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `TS_HARNESS_IMPROVEMENT_MODEL` | revision diagnosis model | Model for the digest and the replay (`off` stops both) |
+| `TS_HARNESS_IMPROVEMENT_DIGEST` | `on` | The weekly digest |
+| `TS_HARNESS_IMPROVEMENT_LOOP` | `on` | The hourly replay and stop-rule job |
+| `TS_HARNESS_CANARIES` | `on` | New canaries and assignments |
+| `TS_HARNESS_CANARY_SHARE` | `0.5` | Share of new tickets that get the candidate |
+| `TS_HARNESS_IMPROVEMENT_PR_REPO` | unset | `owner/repo` for promotion PRs |
+| `TS_HARNESS_IMPROVEMENT_PR_BASE` | `dev` | Base branch for promotion PRs |
+| `TS_HARNESS_REPO_DIR` | the checkout | Where the harness's `skills/` and `config/` are read from |
+
+Apply migration 056 with `scripts/ops/migrate-db.sh`. The two jobs are in
+`config/runtime-cron-jobs.json` and phase 15 (re-run phase 15 to add them on a Postgres host).
+
+To stop everything at once: `TS_HARNESS_CANARIES=off` (no new canary or assignment) and roll back
+live canaries from the Inbox; or set the improvement budget to 0.
 | Keep client data out of harness-bound text | `sanitize.safe_field(text, ClientContext(...))`, `sanitize.leaks(text, ctx)` |
 | Harness issues and self-fixes | `harness_loop.loop_status(memory)`, `GET /harness-issues` |

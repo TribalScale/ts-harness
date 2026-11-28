@@ -196,6 +196,8 @@ def build_inbox(
     items.extend(_stuck_step_items(memory, auth, approvable))
     items.extend(_knowledge_note_items(memory, auth, runtime))
     items.extend(_proposal_items(auth))
+    if is_admin(auth, runtime):
+        items.extend(_improvement_items(memory, auth))
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return {"items": items, "total": len(items)}
 
@@ -390,6 +392,39 @@ def _proposal_items(auth: AuthContext) -> list[dict[str, Any]]:
             "created_at": row.get("proposed_at") or row.get("started_at"),
             "href": f"/#/inbox/pending_proposal/{quote(item_id, safe='')}",
             "meta": {**row, "status": "pending"},
+        })
+    return items
+
+
+_IMPROVEMENT_SUBTITLES = {
+    "awaiting_approval": "Canary passed: promote or reject",
+    "needs_design": "Needs a person to design (off limits for the loop)",
+    "proposed": "No offline check available: approve or reject",
+}
+
+
+def _improvement_items(memory: Any, auth: AuthContext) -> list[dict[str, Any]]:
+    """Self-improvement proposals waiting for a person (admins only; see ts_harness.improvement)."""
+    try:
+        from ts_harness.improvement.proposals import needs_person
+
+        rows = list(memory.list_improvement_proposals(tenant_id=str(auth.tenant_id or "default"),
+                                                      status="proposed,awaiting_approval", limit=100))
+    except Exception:  # noqa: BLE001 - the Inbox shows the rest
+        return []
+    items = []
+    for row in rows:
+        if not isinstance(row, dict) or not needs_person(row):
+            continue
+        key = "needs_design" if row.get("type") == "needs_design" else str(row.get("status") or "")
+        items.append({
+            "type": "improvement_proposal",
+            "id": str(row.get("id") or ""),
+            "title": str(row.get("title") or "Improvement proposal"),
+            "subtitle": f"{str(row.get('type') or '').replace('_', ' ')} · {_IMPROVEMENT_SUBTITLES.get(key, key)}",
+            "created_at": row.get("updated_at") or row.get("created_at"),
+            "href": f"/#/inbox/improvement_proposal/{quote(str(row.get('id') or ''), safe='')}",
+            "meta": {"proposal": row, "status": row.get("status")},
         })
     return items
 
