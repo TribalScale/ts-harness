@@ -10,6 +10,8 @@ cover the digest, proposals, replay, canary and promotion. The foundation:
    problems after merge, on the Live → Metrics tab, groupable by any recorded version.
 3. **The improvement budget**: a monthly model-cost cap for improvement work, apart from delivery.
 4. **The off-limits list**: what the loop may never change on its own.
+5. **The harness-level loop**: the harness files bugs against its own repository and opens draft
+   self-fix PRs a person merges (section 5).
 
 Agreed goals:
 
@@ -233,6 +235,153 @@ canary that matches. The list covers:
 A test checks that every listed path, Markdown section and constant exists, so a rename has to
 update the list.
 
+## 5. Harness-level loop: the harness files and fixes its own bugs
+
+Code: `runtime/ts_harness/improvement/harness_loop.py` (collect, file, comment),
+`runtime/ts_harness/improvement/self_fix.py` (self-fix PRs), `runtime/ts_harness/improvement/sanitize.py`
+(privacy). Ledger: table `harness_self_issues` (migration `057_harness_self_issues.sql`) behind
+`GET /harness-issues`, `POST /harness-issues/occurrences` and `PATCH /harness-issues/<id>` on the
+memory API. System job: `harness_self_issues` (cron `harness-self-issues`, every 10 minutes).
+
+The product owner agreed: the harness may file bug reports against itself and open PRs on its own
+repository. It never merges or deploys, and never changes anything on the off-limits list.
+
+### What triggers filing
+
+| Source | When | One occurrence is |
+| --- | --- | --- |
+| Stuck-step arbiter | A step waiting for a person whose `_arbiter` record has category `harness_issue` (Inbox label "Harness issue") | One stop of that step (task id and the stop's `since`) |
+| Ops alert: lost jobs | `TS_HARNESS_ALERT_LOST_JOBS` (default 2) or more coding jobs lost in the last hour | One lost job |
+| Ops alert: LLM proxy | `LLM_PROXY_URL` is set and its `/health` does not answer | One hour of failure |
+
+Other ops alerts (stuck decisions, non-converging work, spend, disk) are about client work or the
+host, not harness code, and are not filed. The memory API being down is not filed either: the
+ledger lives behind it. The job reads the arbiter's record and runs the two harness-facing alert
+checks itself, so it works whether or not ops alerts post to Slack.
+
+### Dedupe and what an issue holds
+
+A failure class is its **fingerprint**: a hash of the source, the harness component (the deepest
+harness file in the traceback, else `step <name>`) and the sanitised error signature with ids,
+hex strings and numbers normalised. A new class files one issue (labels `harness-bug` and
+`harness:<source>`; at most 3 new issues per run). A known class gets a comment with the new
+count ("Seen again: N occurrence(s) in total (was M)"), at most once every 6 hours per issue and 5
+comments per run. Before creating an issue the job looks for an issue on the harness repository
+whose body carries the same `ts-harness-fingerprint` marker, so a lost ledger does not duplicate
+issues. An issue a person closes stays closed; new occurrences are still counted and commented.
+
+Each issue carries: what happened (the source), the component and its files, the kind (`code`,
+`configuration`, `operations`, `unknown`), the signature, the arbiter's diagnosis, the harness
+stack frames, how often (count, first and last seen) and internal references (workflow type,
+step, workflow, task and coding job ids, timestamps) to look up in the console.
+
+### Privacy: the sanitiser
+
+The harness repository never receives client data. Every text goes through
+`sanitize.sanitize_text` and `safe_field`, with the install's client identifiers: every project
+repository (with its role), project key and name, team, tenant display name, the repo allowlist,
+Jira filing projects and the GitHub org, plus the task's repository, ticket keys, work order and
+ticket text. If those identifiers cannot be read, **nothing is filed that run**.
+
+| Rule | Becomes |
+| --- | --- |
+| Fenced code; diff, quote, table and bullet lines; lines that look like source code; traceback source lines | `<code removed>` |
+| A GitHub URL or slug of a known client repository, or its bare name | `<web repo>`, `<api repo>` (its role), `<client repo>` |
+| Any other GitHub URL or `owner/repo` | `<repo>` |
+| Any other URL, an e-mail address | `<url>`, `<email>` |
+| Known ticket keys and work order ids (also inside branch names), any ticket of a known project key, anything shaped like `ABC-123` | `<ticket>` |
+| Project keys and names, teams, tenants, the GitHub org, distinctive words of the work order or ticket (CamelCase, ALLCAPS, capitalised mid-sentence) | `<name>` |
+| A path that is not a file of the harness itself (a `runtime/ts_harness/...` path that exists in the package, or a `scripts/`, `config/`, `skills/`, `database/`, `admin-ui/`, `docs/` path that exists in the checkout) | `<path>`, or `<repo>` for `owner/name` |
+| Quoted text that is not one identifier (`'pr_url'` stays) or a harness path | `'<text>'` |
+| A line sharing a run of 5 words with the work order or ticket text | `<text removed>` |
+
+Afterwards `sanitize.leaks` checks the result; a field where anything client-looking survives is
+replaced by "(withheld: may contain client data; see the internal references)". The issue title
+and body get a last check (`assert_clean`) before they are sent. When in doubt, it is left out:
+the internal ids are always there to look the rest up inside the harness. The tests in
+`tests/runtime/test_harness_loop.py` feed known client-looking strings through the whole sweep and
+check that none reaches GitHub, the ledger or the self-fix work order.
+
+### Self-fix PRs
+
+For each filed, open issue with no self-fix yet:
+
+1. **Fixable?** Only `kind = code` with at least one harness file. Configuration and access
+   problems (credentials, tokens, 401/403, "not configured") and operations problems are labelled
+   `needs-human` with the reason, and a comment says so.
+2. **Off limits?** Every file the fix is expected to touch (the failure's harness files) is
+   checked with `is_off_limits`. Any hit: no fix, label `needs-human`, a comment naming the file
+   and why.
+3. **Limits**: at most **2** self-fix PRs open (status `started` or `pr_open`), at most **3**
+   started in any 7 days, **one per issue, ever** (the ledger refuses a second start), and one
+   started per run.
+4. **Budget**: the improvement budget must cover 20 USD (`SELF_FIX_ESTIMATE_USD`); otherwise the
+   fix waits quietly (its status stays `none`) until the next month.
+5. **Deliverable?** See "What an admin must configure". Otherwise the fix waits and the Metrics
+   tab says what is missing.
+6. **Start**: a `deliver_work_order` run (no parent workflow) with work order `HSF-<issue number>`
+   built from the sanitised issue, `repo_url` the harness repository and `base_branch`
+   `TS_HARNESS_SELF_REPO_BRANCH`. The work order requires a regression test that fails before the
+   fix, the full test suite and ruff to pass, and no off-limits change. The normal flow runs:
+   coding, CI, code review, QA and the human merge wait.
+7. **Follow**: when the run opens its PR, the job labels it `harness-self-fix`, makes it a draft,
+   comments that it is never merged automatically and links it from the issue. A revision run
+   marks the PR ready when it ends, so the job drafts it again whenever the head commit changes
+   (a person marking the same head ready is left alone). If the PR's actual files include an
+   off-limits path, the PR is labelled `needs-human` with a "do not merge" comment. Merged,
+   closed and failed runs are recorded. The run's coding job cost is charged to the improvement
+   budget (purpose `harness_self_fix`) as it accrues; the gate agents' calls are metered in
+   `llm_usage` as usual.
+
+Nothing here merges, approves or enables auto-merge. Self-fix statuses: `none`, `not_fixable`,
+`needs_human`, `started`, `pr_open`, `merged`, `closed`, `failed`.
+
+The loop's own files (`sanitize.py`, `harness_loop.py`, `self_fix.py`,
+`memory_routes/harness_issues.py`, migration 057), its limits (`MAX_OPEN_FIXES`,
+`MAX_FIXES_PER_WEEK`) and switches (`TS_HARNESS_SELF_*`, `program_defaults.harness_loop.*`) are on
+the off-limits list, so a bug in the loop itself is labelled `needs-human`.
+
+### Switches and defaults
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `TS_HARNESS_SELF_REPO` | unset | `owner/name` of the harness's own repository. Unset (or invalid): filing **and** self-fixes are off |
+| `TS_HARNESS_SELF_ISSUES` | `on` | Issue filing. Off also stops self-fixes |
+| `TS_HARNESS_SELF_FIX` | `on` | Self-fix PRs, independently of filing |
+| `TS_HARNESS_SELF_REPO_BRANCH` | `dev` | The branch self-fix PRs target |
+
+The same keys can live in the runtime config as `program_defaults.harness_loop` (`repo`,
+`file_issues`, `self_fix`, `branch`); an environment variable wins. The variables are in the
+instance env keys and the container env file (`scripts/phases/lib/common.sh`): set them in the
+install config, then re-render the runtime env and restart the runtime (see
+[runtime-config.md](runtime-config.md)).
+
+### What an admin must configure
+
+1. Apply migration 057 (`scripts/ops/migrate-db.sh`; it is in the ORDER list) and re-run phase 15
+   (or merge the cron jobs) so `harness-self-issues` is scheduled.
+2. Set `TS_HARNESS_SELF_REPO=owner/name`, and `TS_HARNESS_SELF_REPO_BRANCH` if the development
+   branch is not `dev`.
+3. Give the harness write access to that repository: install the GitHub App on it with
+   **issues**, **contents** and **pull requests** read and write, or set a `GITHUB_TOKEN` with
+   those scopes. Without issues write, filing fails and the Metrics tab says so.
+4. For self-fixes, make the repository deliverable: add it to the repo allowlist
+   (`program_defaults.repo_picker.repos`) or link it to a project in System → Projects, and onboard
+   it like any repository (a `.ts-harness.yml` with its test commands, CI that runs on PRs into the
+   development branch, branch protection that requires a person's review).
+5. Optional: create the labels `harness-bug`, `harness-self-fix` and `needs-human` with colours
+   (GitHub creates missing labels on first use).
+
+Until 3 and 4 are done, the Metrics tab ("Harness issues") lists what is missing and no self-fix
+starts; filing failures are recorded on each issue row (`last_error`) and retried next run.
+
+### Where to see it
+
+Live → Metrics → "Harness issues": the switches, open and weekly self-fix counts against their
+limits, setup problems from the last run, and each filed issue (marked "Harness issue", linking
+the GitHub issue) with its occurrences, self-fix status and PR link. `GET /admin/metrics` returns
+it as `harness_loop`. Self-fix spend shows in the improvement budget under `harness_self_fix`.
+
 ## Interfaces for later work
 
 | Need | Use |
@@ -268,7 +417,7 @@ The loop may **start** a canary on its own once a proposal passes the offline re
 actionable change or canaried. Every model call is charged to the improvement budget; when it is
 used up the work pauses quietly until next month.
 
-## 5. The weekly failure-pattern digest
+## 6. The weekly failure-pattern digest
 
 System job `improvement-digest` (handler `improvement_digest`), checked daily, runs once every 7
 days (the last run is kept in `runtime_kv`, namespace `improvement-loop`, key `digest`, so restarts
@@ -320,7 +469,7 @@ into `needs_design`: the diff is dropped, the idea and the reason are kept, and 
 on. A diff that does not apply, touches a file outside its type's folders, or deletes a file is
 dropped.
 
-## 6. Offline replay (the pre-push reviewer)
+## 7. Offline replay (the pre-push reviewer)
 
 Code: `replay.py`. The one target with an offline check is the pre-push reviewer's rubric: a
 `skill_edit` to `skills/review/governed-code-review/SKILL.md` that changes only the sections the
@@ -361,7 +510,7 @@ history in `evaluations`) with its cost, which is added to the proposal's `cost_
 Proposals that cannot be replayed yet (settings, fragments, other skills) are marked "no offline
 check available" and wait in the Inbox for a person; they never start a canary.
 
-## 7. The canary
+## 8. The canary
 
 Code: `canary.py`. System job `improvement-loop` (handler `improvement_loop`, hourly) runs the
 replay for at most one due proposal, then the stop rule. `TS_HARNESS_IMPROVEMENT_LOOP=off` stops
@@ -405,7 +554,7 @@ the current rubric from their next coding job, and the variant assignments stay 
 person can also stop a live canary (Reject in the Inbox, or `POST /admin/improvements/<id>/decision`
 with `rollback`).
 
-## 8. Promotion
+## 9. Promotion
 
 Proposals waiting for a person show in the Inbox as **Improvement** items (admins only): a canary
 that passed (`awaiting_approval`), a proposal with no offline check, and `needs_design` ideas. The
@@ -428,13 +577,13 @@ A `needs_design` item can only be dismissed.
   [runtime-config.md](runtime-config.md)).
 - `knowledge_note`: approve the note itself (a Notes item); the proposal follows.
 
-## 9. Seeing it
+## 10. Seeing it
 
 Live → Metrics → **Improvements**: every proposal with its type, status, offline check result,
 candidate vs control autonomy and ticket counts, cost, and a detail view; the month's improvement
 spend and whether canaries are on. `GET /admin/improvements` returns the same.
 
-## 10. Operating it
+## 11. Operating it
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -452,3 +601,5 @@ Apply migration 056 with `scripts/ops/migrate-db.sh`. The two jobs are in
 
 To stop everything at once: `TS_HARNESS_CANARIES=off` (no new canary or assignment) and roll back
 live canaries from the Inbox; or set the improvement budget to 0.
+| Keep client data out of harness-bound text | `sanitize.safe_field(text, ClientContext(...))`, `sanitize.leaks(text, ctx)` |
+| Harness issues and self-fixes | `harness_loop.loop_status(memory)`, `GET /harness-issues` |

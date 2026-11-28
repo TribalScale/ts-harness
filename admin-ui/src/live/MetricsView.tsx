@@ -1,6 +1,13 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { ImprovementBudgetStatus, MetricsGuardSummary, MetricsResponse, MetricsSummary, MetricsTicket } from "../api/types";
+import type {
+  HarnessLoopStatus,
+  ImprovementBudgetStatus,
+  MetricsGuardSummary,
+  MetricsResponse,
+  MetricsSummary,
+  MetricsTicket,
+} from "../api/types";
 import { OUTCOME_LABELS } from "./HistoryView";
 import { ImprovementsPanel } from "./ImprovementsPanel";
 import { TicketStory } from "./TicketStory";
@@ -175,6 +182,96 @@ function GroupsTable({ groupBy, groups }: { groupBy: string; groups: { value: st
   );
 }
 
+const FIX_LABELS: Record<string, string> = {
+  none: "not started",
+  not_fixable: "needs a person (not a code fix)",
+  needs_human: "needs a person",
+  started: "self-fix running",
+  pr_open: "draft PR open",
+  merged: "merged",
+  closed: "PR closed",
+  failed: "self-fix failed",
+};
+
+/** Bugs the harness filed against its own repository, and its self-fix PRs (a person always merges). */
+export function HarnessLoopSection({ loop }: { loop: HarnessLoopStatus }) {
+  const { settings } = loop;
+  if (!settings.repo) {
+    return (
+      <section className="metrics-trend" aria-label="Harness issues">
+        <h3>Harness issues</h3>
+        <p className="muted">Off: set TS_HARNESS_SELF_REPO to let the harness file bugs against its own repository.</p>
+        {loop.problems.map((p) => (
+          <p key={p} className="muted">{p}</p>
+        ))}
+      </section>
+    );
+  }
+  const limits = loop.limits;
+  return (
+    <section className="metrics-trend" aria-label="Harness issues">
+      <h3>Harness issues</h3>
+      <p className="muted">
+        {settings.repo} · filing {settings.file_issues ? "on" : "off"} · self-fix {settings.self_fix ? "on" : "off"} into{" "}
+        {settings.branch}
+        {limits ? ` · ${limits.open_fixes} of ${limits.max_open} self-fix PRs open · ${limits.fixes_last_7_days} of ${limits.max_per_week} this week` : ""}
+      </p>
+      {!loop.available && <p className="muted">The harness issue ledger could not be read.</p>}
+      {loop.problems.length > 0 && (
+        <ul aria-label="Harness loop setup">
+          {loop.problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {loop.issues.length === 0 ? (
+        <p className="muted">No harness issues filed.</p>
+      ) : (
+        <table className="metrics-table">
+          <thead>
+            <tr>
+              <th>Issue</th>
+              <th>Component</th>
+              <th>Seen</th>
+              <th>Self-fix</th>
+              <th>PR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loop.issues.map((issue) => (
+              <tr key={issue.id}>
+                <td>
+                  {issue.issue_url ? (
+                    <a href={issue.issue_url} target="_blank" rel="noreferrer">
+                      #{issue.issue_number}
+                    </a>
+                  ) : (
+                    "not filed yet"
+                  )}{" "}
+                  <span className="pill">Harness issue</span> {issue.issue_state === "closed" ? "(closed) " : ""}
+                  {issue.title}
+                </td>
+                <td>{issue.component}</td>
+                <td>{issue.occurrences}×</td>
+                <td title={issue.fix_reason || undefined}>{FIX_LABELS[issue.fix_status] || issue.fix_status}</td>
+                <td>
+                  {issue.fix_pr_url ? (
+                    <a href={issue.fix_pr_url} target="_blank" rel="noreferrer">
+                      PR
+                    </a>
+                  ) : (
+                    "–"
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 /** Delivery quality: first-try pass rate, revisions, time to merge, review catch rate, gate disagreement, cost. */
 export function MetricsView() {
   const [days, setDays] = useState("14");
@@ -314,6 +411,7 @@ export function MetricsView() {
           {data?.improvement_budget && <Tile label="Improvement budget" {...budgetTile(data.improvement_budget)} />}
         </ul>
       )}
+      {data?.harness_loop && <HarnessLoopSection loop={data.harness_loop} />}
       {data?.groups && data.groups.length > 0 && <GroupsTable groupBy={data.group_by || groupBy} groups={data.groups} />}
       <ImprovementsPanel />
       {weeks.length > 1 && (

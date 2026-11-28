@@ -90,6 +90,16 @@ OFF_LIMITS: tuple[dict[str, str], ...] = (
     {"kind": "constant", "match": "ts_harness.improvement.canary:MIN_TICKETS", "why": "canary sample size"},
     {"kind": "constant", "match": "ts_harness.improvement.canary:AUTONOMY_MARGIN", "why": "canary stop rule"},
     {"kind": "constant", "match": "ts_harness.improvement.replay:CATCH_MARGIN", "why": "replay pass rule"},
+    # The harness-level loop: its privacy filter, switches and self-fix limits
+    {"kind": "path", "match": "runtime/ts_harness/improvement/sanitize.py", "why": "keeps client data out of harness issues"},
+    {"kind": "path", "match": "runtime/ts_harness/improvement/harness_loop.py", "why": "what is filed against the harness"},
+    {"kind": "path", "match": "runtime/ts_harness/improvement/self_fix.py", "why": "self-fix rules and rate limits"},
+    {"kind": "path", "match": "scripts/memory_routes/harness_issues.py", "why": "one self-fix per issue"},
+    {"kind": "path", "match": "database/migrations/057_harness_self_issues.sql", "why": "harness issue ledger"},
+    {"kind": "constant", "match": "ts_harness.improvement.self_fix:MAX_OPEN_FIXES", "why": "open self-fix PRs"},
+    {"kind": "constant", "match": "ts_harness.improvement.self_fix:MAX_FIXES_PER_WEEK", "why": "self-fixes per week"},
+    {"kind": "setting", "match": "TS_HARNESS_SELF_*", "why": "the harness-level loop's switches"},
+    {"kind": "setting", "match": "program_defaults.harness_loop.*", "why": "the harness-level loop's switches"},
 )
 
 

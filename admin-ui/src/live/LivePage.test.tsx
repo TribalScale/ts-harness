@@ -338,6 +338,49 @@ describe("Metrics", () => {
     expect(tiles).toHaveTextContent("Improvement budgetunknowncap $150.00 for 2026-01");
   });
 
+  it("lists the harness issues and self-fix PRs, and what an admin must configure", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/admin/metrics")) {
+        return jsonResponse({
+          generated_at: "", days: 14, include_running: false,
+          summary: {
+            tickets: 0, finished: 0, merged: 0, first_try: 0, first_try_rate: null,
+            revisions: { median: null, mean: null, max: null, total: 0, by_trigger: {} },
+            time_to_merge_seconds: { median: null, mean: null, max: null },
+            you_seconds: 0, agent_seconds: 0, you_share: null, coding_runs: 0, reviewed_runs: 0,
+            review_catch_rate: null, review_fixed: 0, gate_compared: 0, gate_disagreed: 0, gate_disagreement_rate: null,
+            cost_usd: { median: null, total: 0 }, strong_cost_share: null, lost_jobs: 0,
+          },
+          weekly: [], tickets: [], facets: { projects: [], repos: [] },
+          harness_loop: {
+            settings: { repo: "org/ts-harness", branch: "dev", file_issues: true, self_fix: true, problems: [] },
+            available: true,
+            problems: ["Self-fixes are waiting: no GitHub credentials for org/ts-harness."],
+            limits: { open_fixes: 1, max_open: 2, fixes_last_7_days: 1, max_per_week: 3 },
+            issues: [
+              {
+                id: "i1", fingerprint: "abcdef0123456789", source: "arbiter", kind: "code",
+                component: "runtime/ts_harness/workflows/engine.py", title: "KeyError: 'pr_url'", occurrences: 3,
+                first_seen: "", last_seen: "", issue_number: 12, issue_url: "https://github.com/org/ts-harness/issues/12",
+                issue_state: "open", fix_status: "pr_open", fix_reason: "", fix_pr_url: "https://github.com/org/ts-harness/pull/13",
+                fix_started_at: "", fix_charged_usd: 1.5, last_error: "",
+              },
+            ],
+          },
+        });
+      }
+      return jsonResponse({ generated_at: "", items: [], capacity: { running: 0, queued: 0, limit: null } });
+    });
+    renderPage(<LivePage tab="metrics" onTab={vi.fn()} />);
+    const section = await screen.findByLabelText("Harness issues");
+    expect(section).toHaveTextContent("org/ts-harness · filing on · self-fix on into dev · 1 of 2 self-fix PRs open · 1 of 3 this week");
+    expect(section).toHaveTextContent("no GitHub credentials");
+    expect(within(section).getByRole("link", { name: "#12" })).toHaveAttribute("href", "https://github.com/org/ts-harness/issues/12");
+    expect(within(section).getByRole("link", { name: "PR" })).toHaveAttribute("href", "https://github.com/org/ts-harness/pull/13");
+    expect(section).toHaveTextContent("Harness issue");
+    expect(section).toHaveTextContent("draft PR open");
+  });
+
   it("lists improvement proposals with their canary numbers and the month's spend", async () => {
     const user = userEvent.setup();
     mockFetch((url) => {

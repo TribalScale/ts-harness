@@ -926,6 +926,39 @@ export interface MetricsResponse {
   group_by?: string;
   groups?: { value: string; tickets: number; summary: MetricsSummary }[];
   improvement_budget?: ImprovementBudgetStatus;
+  harness_loop?: HarnessLoopStatus;
+}
+
+/** One failure class the harness filed against its own repository (sanitised: no client data). */
+export interface HarnessSelfIssue {
+  id: string;
+  fingerprint: string;
+  source: "arbiter" | "ops_alert";
+  kind: "code" | "configuration" | "operations" | "unknown";
+  component: string;
+  title: string;
+  occurrences: number;
+  first_seen: string;
+  last_seen: string;
+  issue_number: number | null;
+  issue_url: string | null;
+  issue_state: string | null;
+  fix_status: "none" | "not_fixable" | "needs_human" | "started" | "pr_open" | "merged" | "closed" | "failed";
+  fix_reason: string;
+  fix_pr_url: string | null;
+  fix_started_at: string | null;
+  fix_charged_usd: number;
+  last_error: string;
+}
+
+/** The harness-level loop: switches, what an admin must configure, filed issues and self-fix PRs. */
+export interface HarnessLoopStatus {
+  settings: { repo: string; branch: string; file_issues: boolean; self_fix: boolean; problems: string[] };
+  available: boolean;
+  checked_at?: string;
+  problems: string[];
+  issues: HarnessSelfIssue[];
+  limits?: { open_fixes: number; max_open: number; fixes_last_7_days: number; max_per_week: number };
 }
 
 export interface StoryFinding {

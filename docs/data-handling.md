@@ -29,6 +29,7 @@ the session database) unless the row says otherwise.
 | Coding file events | `coding_job_events` | The live feed: each file a run created, edited, deleted, renamed or restored, with the step, line counts and a diff excerpt of at most 200 lines (secret-looking values masked in the worker before sending); many files at once are one row listing up to 50 paths | Deleted 30 days after they were recorded (the coding-log period) |
 | Coding workspaces | One Docker volume per ticket (`ts-coding-ws-*`) | The repository clone, installed dependencies, build output | 48 hours (`CODING_WORKSPACE_TTL_HOURS`) |
 | Screenshots | An evidence branch in the client's repository (`ts-harness-evidence/<branch>`) | Playwright screenshots for review and QA | Deleted when the PR merges |
+| Harness self-issues | `harness_self_issues` (migration 057); `runtime_kv` namespace `harness-loop` | Failure classes the harness filed against its own repository: a fingerprint, sanitised error signature and diagnosis, harness file paths and stack frames, counts, internal ids (workflow, task, coding job), the GitHub issue and self-fix PR links and the self-fix status. No client repository names, ticket keys or text, code, design content or customer names (sanitised before it is stored) | Kept (until deleted by an admin) |
 | Channel dedup ids | `channel_event_dedup` | Platform event ids only | 7 days (`sweep-channel-dedup`) |
 | Agent workspaces | `/workspace/<agent>` or the workspaces bucket | Agent documents and file-tool output | Kept; bucket noncurrent versions expire after 30 days |
 
@@ -69,6 +70,15 @@ to the coding model through OpenCode.
 
 Each provider's own retention and training terms apply to what it receives; use the providers'
 zero-retention or enterprise terms where a client requires it.
+
+When `TS_HARNESS_SELF_REPO` is set, the harness files issues and opens draft fix PRs on **its
+own** repository (the harness-level loop, [self-improvement.md](runbooks/self-improvement.md)).
+Those carry harness-side facts only: every text goes through the sanitiser
+(`ts_harness.improvement.sanitize`), which replaces client repository names with their role
+(`<web repo>`), ticket keys with `<ticket>` and names with `<name>`, drops code, quoted text,
+paths outside the harness and any line copied from a work order or ticket, and withholds a field
+that still looks like client data. The self-fix work order is built from the same sanitised
+fields. Leave `TS_HARNESS_SELF_REPO` unset to send nothing there.
 
 The harness also writes to the client's own systems as part of the work: Jira tickets, GitHub
 branches, pull requests, PR comments and evidence branches, Slack messages and Google Drive

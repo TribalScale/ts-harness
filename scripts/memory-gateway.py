@@ -23,6 +23,7 @@ from memory_routes import coding_job_events as coding_job_event_routes  # noqa: 
 from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
 from memory_routes import improvements as improvement_routes  # noqa: E402
+from memory_routes import harness_issues as harness_issue_routes  # noqa: E402
 from memory_routes import projects as project_routes  # noqa: E402
 from memory_routes import knowledge_notes as knowledge_note_routes  # noqa: E402
 from memory_routes import knowledge_search as knowledge_search_routes  # noqa: E402
@@ -4951,6 +4952,41 @@ class MemoryHandler(BaseHTTPRequestHandler):
     def _is_budgets_path(path: str) -> bool:
         return path == "/budgets" or path.startswith(("/budgets?", "/budgets/"))
 
+    def _harness_issues(self, method: str) -> None:
+        """Harness self-issues (migration 057): see memory_routes/harness_issues.py."""
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.split("/") if p][1:]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            body = self._read_body() if method in {"POST", "PATCH"} else {}
+        except json.JSONDecodeError as exc:
+            self._send_json(400, {"error": f"invalid JSON: {exc}"})
+            return
+        try:
+            with connect_db() as conn:
+                if parts == [] and method == "GET":
+                    result = harness_issue_routes.list_issues(conn, query)
+                elif parts == ["occurrences"] and method == "POST":
+                    result = harness_issue_routes.record_occurrence(conn, body)
+                elif len(parts) == 1 and method == "PATCH":
+                    result = harness_issue_routes.update_issue(conn, parts[0], body)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                    return
+            self._send_json(200, result)
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
+    @staticmethod
+    def _is_harness_issues_path(path: str) -> bool:
+        return path == "/harness-issues" or path.startswith(("/harness-issues?", "/harness-issues/"))
+
     @staticmethod
     def _is_improvements_path(path: str) -> bool:
         return path.startswith(("/improvements/", "/improvements?"))
@@ -5246,6 +5282,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_improvements_path(self.path):
             self._improvements("GET")
+            return
+        if self._is_harness_issues_path(self.path):
+            self._harness_issues("GET")
             return
         if self._is_shared_state_path(self.path):
             self._shared_state("GET")
@@ -5623,6 +5662,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
         if self._is_improvements_path(self.path):
             self._improvements("POST")
             return
+        if self._is_harness_issues_path(self.path):
+            self._harness_issues("POST")
+            return
         if self._is_shared_state_path(self.path):
             self._shared_state("POST")
             return
@@ -5830,6 +5872,9 @@ class MemoryHandler(BaseHTTPRequestHandler):
             return
         if self._is_notes_path(self.path):
             self._notes("PATCH")
+            return
+        if self._is_harness_issues_path(self.path):
+            self._harness_issues("PATCH")
             return
         if self.path.startswith("/scim/"):
             self._scim("PATCH")
