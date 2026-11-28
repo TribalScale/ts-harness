@@ -16,6 +16,8 @@ import time
 import uuid
 from typing import Any
 
+from memory_routes import pause as pause_routes
+
 ACTIVE = ("queued", "starting", "running")
 RUNNING = ("starting", "running")
 TERMINAL = ("succeeded", "failed", "lost", "cancelled")
@@ -292,12 +294,29 @@ def held_note(program: dict[str, Any]) -> str:
     )
 
 
-def _mark_held(cur, rows: list[dict[str, Any]], over_budget: set[str], stopped: dict[str, dict[str, Any]]) -> None:
-    """Record why queued jobs wait (team budget first) and clear the reason of jobs no longer held.
+def _mark_held(
+    cur,
+    rows: list[dict[str, Any]],
+    over_budget: set[str],
+    stopped: dict[str, dict[str, Any]],
+    paused: dict[str, str] | None = None,
+) -> None:
+    """Record why queued jobs wait (a pause first, then team budget) and clear the reason of jobs
+    no longer held.
 
     A job newly held for its program also gets a ``budget_note`` for its ticket's thread.
     """
+    paused = paused or {}
     queued = [r for r in rows if r["status"] == "queued"]
+    by_reason: dict[str, list[str]] = {}
+    for job_id, reason in paused.items():
+        by_reason.setdefault(reason, []).append(job_id)
+    for reason, ids in by_reason.items():
+        cur.execute(
+            "UPDATE coding_jobs SET held_reason = %s WHERE id = ANY(%s::uuid[]) AND held_reason IS DISTINCT FROM %s",
+            (reason, ids, reason),
+        )
+    queued = [r for r in queued if str(r["id"]) not in paused]
     team_held = [str(r["id"]) for r in queued if r["team"] in over_budget]
     program_held: dict[str, list[str]] = {}
     for row in queued:
@@ -316,7 +335,7 @@ def _mark_held(cur, rows: list[dict[str, Any]], over_budget: set[str], stopped: 
             """,
             (PROGRAM_HELD_REASON, held_note(stopped[program]), ids, PROGRAM_HELD_REASON),
         )
-    held = team_held + [i for ids in program_held.values() for i in ids]
+    held = list(paused) + team_held + [i for ids in program_held.values() for i in ids]
     cur.execute(
         "UPDATE coding_jobs SET held_reason = NULL "
         "WHERE status = 'queued' AND held_reason IS NOT NULL AND NOT (id = ANY(%s::uuid[]))",
@@ -337,11 +356,12 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
     deferred = 0
     held_by_budget = 0
     held_by_program_budget = 0
+    held_by_pause = 0
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('coding_jobs_claim'))")
         cur.execute(
             """
-            SELECT j.id, j.status,
+            SELECT j.id, j.status, j.workflow_id::text AS workflow_id,
                    COALESCE(t.requested_by, j.requested_by) AS requester,
                    COALESCE(j.program_id, workflow_program_id(j.workflow_id))::text AS program,
                    COALESCE(t.team_id::text, j.team_slug) AS team
@@ -357,7 +377,10 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
         cur.execute("SELECT id::text AS id FROM teams WHERE team_budget_reached(tenant_id, id::text)")
         over_budget = {r["id"] for r in cur.fetchall()}
         stopped = _stopped_programs(cur, rows)
-        _mark_held(cur, rows, over_budget, stopped)
+        # A paused ticket, program or everything: its queued jobs stay queued (never cancelled)
+        # and are not claimed until the pause ends (memory_routes/pause.py).
+        paused = pause_routes.held_job_ids(cur, rows)
+        _mark_held(cur, rows, over_budget, stopped, paused)
         active = [r for r in rows if r["status"] in RUNNING]
         running = len(active)
         room = min(limit, max_running - running)
@@ -371,6 +394,9 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
             if len(ids) >= room:
                 break
             if row["status"] != "queued":
+                continue
+            if str(row["id"]) in paused:
+                held_by_pause += 1
                 continue
             if row["team"] in over_budget:
                 held_by_budget += 1
@@ -406,6 +432,7 @@ def claim_coding_jobs(conn, body: dict[str, Any]) -> dict[str, Any]:
         "deferred_by_quota": deferred,
         "held_by_budget": held_by_budget,
         "held_by_program_budget": held_by_program_budget,
+        "held_by_pause": held_by_pause,
         "jobs": [{**_public(r), "token": issue_job_token(str(r["id"]), ttl_seconds=ttl)} for r in claimed],
     }
 

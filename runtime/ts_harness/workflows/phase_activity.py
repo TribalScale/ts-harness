@@ -25,6 +25,7 @@ EVENT_WAITS = {
     "coding.finished": ("OpenCode implementing", "running"),
 }
 CODING_WAIT = "awaiting_external:coding.finished"
+PAUSE_WAIT = "awaiting_external:workflow.resumed"  # ts_harness.workflows.pause
 UPSTREAM_WAIT = "release.upstream_recorded"
 
 
@@ -143,6 +144,11 @@ def _state(
             # A draft re-run on a reviewer's feedback: the gate is gone until it is done.
             return f"Revising {label} with your feedback", "running"
         return f"{label[:1].upper()}{label[1:]} running", "running"
+    if status == "blocked" and error == PAUSE_WAIT:
+        from ts_harness.workflows.pause import HOLD_KEY, status_label
+
+        hold = _input(current).get(HOLD_KEY)
+        return status_label(str((hold or {}).get("kind") or "") if isinstance(hold, dict) else ""), "paused"
     if status == "blocked":
         if error.startswith("awaiting_external:"):
             event = error.split(":", 1)[1]

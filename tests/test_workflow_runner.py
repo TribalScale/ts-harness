@@ -2748,3 +2748,126 @@ class DesignInputHookTests(unittest.TestCase):
         task_input = {"x": 1}
         runner._add_design_input({"id": "t1", "workflow_id": "wf", "step_name": "qa_gate"}, task_input)
         self.assertEqual(task_input, {"x": 1})
+
+
+class PausingMemoryClient(CodingJobMemoryClient):
+    """A coding-job memory API with a pause document and the chains it is checked against."""
+
+    def __init__(self, ready=None, jobs=None, *, state=None, workflow_chain=("wf-1",), program_chain=("prog-1",)):
+        super().__init__(ready, jobs)
+        self.state = state or {}
+        self.workflow_chain = list(workflow_chain)
+        self.program_chain = list(program_chain)
+        self.holds = []
+
+    def kv_get(self, namespace, key):
+        assert (namespace, key) == ("coding-pause", "state")
+        return {"value": self.state, "version": 1}
+
+    def task_program(self, task_id):
+        return {"task_id": task_id, "program_id": "prog-1", "workflow_id": self.workflow_chain[0],
+                "workflow_chain": self.workflow_chain, "program_chain": self.program_chain}
+
+    def hold_paused_task(self, task_id, *, hold, actor="workflow-runner"):
+        self.holds.append((task_id, hold))
+        return {"id": task_id, "status": "blocked"}
+
+
+class PauseHoldTests(unittest.TestCase):
+    """A paused ticket, queue or program: the runner holds the task instead of starting a coding run."""
+
+    TICKET_PAUSE = {"workflows": {"wf-1": {"by": "alice@example.com", "at": "2026-11-28T10:00:00+00:00", "kind": "ticket"}}}
+
+    def setUp(self):
+        env = patch.dict("os.environ", {"TS_HARNESS_HOOK_ENGINE": "false", "CODING_JOBS_ENABLED": "true"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.runner_module = load_runner()
+        self.skeletons = self.runner_module.load_workflow_skeletons(REPO_ROOT / "config" / "workflows")
+
+    def task(self, **input_extra):
+        return {
+            "id": "task-1", "workflow_id": "wf-1", "workflow_type": "deliver_work_order",
+            "step_name": "deliver_work_order", "agent_id": "dev-agent", "attempt": 0, "max_retries": 2,
+            "input": {"work_order_id": "WO-1", "work_order_body": "Do it", "repo_url": "https://github.com/acme/app",
+                      **input_extra},
+        }
+
+    def run_tick(self, memory):
+        adapter = FakeAdapter({"status": "succeeded", "output": {"summary": "agent ran"}})
+        runner = self.runner_module.WorkflowRunner(
+            memory, adapter, runner_id="runner-1", skeletons={"deliver_work_order": self.skeletons["deliver_work_order"]}
+        )
+        with patch("ts_harness.workflows.coding_job_stage.stage_spec", return_value={"repo_url": "https://github.com/acme/app"}):
+            runner.tick()
+        return adapter
+
+    def test_a_paused_ticket_creates_no_coding_job_and_holds_its_revision(self):
+        memory = PausingMemoryClient(ready=[self.task(review_feedback="Fix the empty state", _revision_source="qa_gate")],
+                                     state=self.TICKET_PAUSE)
+        adapter = self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(adapter.payloads, [])
+        [(task_id, hold)] = memory.holds
+        self.assertEqual(task_id, "task-1")
+        self.assertEqual((hold["kind"], hold["scope"], hold["by"]), ("revision", "ticket", "alice@example.com"))
+        # Held, not blocked for good: the task input (the feedback) is left for the resume.
+        self.assertEqual(memory.blocked, [])
+
+    def test_a_program_pause_holds_the_first_run(self):
+        state = {"programs": {"prog-1": {"by": "bob@example.com", "at": "2026-11-28T10:00:00+00:00"}}}
+        memory = PausingMemoryClient(ready=[self.task()], state=state)
+        self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.holds[0][1]["kind"], "first_run")
+        self.assertEqual(memory.holds[0][1]["scope"], "program")
+
+    def test_a_queue_pause_covers_the_tickets_it_started(self):
+        state = {"workflows": {"pool-1": {"by": "bob@example.com", "at": "2026-11-28T10:00:00+00:00", "kind": "queue"}}}
+        memory = PausingMemoryClient(ready=[self.task()], state=state, workflow_chain=("wf-1", "pool-1"))
+        self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.holds[0][1]["scope"], "queue")
+
+    def test_nothing_paused_queues_the_job_as_before(self):
+        memory = PausingMemoryClient(ready=[self.task()], state={})
+        self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)
+        self.assertEqual(memory.holds, [])
+
+    def test_a_global_pause_does_not_hold_tasks_the_launcher_waits_instead(self):
+        state = {"global": {"by": "admin@example.com", "at": "2026-11-28T10:00:00+00:00"}}
+        memory = PausingMemoryClient(ready=[self.task()], state=state)
+        self.run_tick(memory)
+        self.assertEqual(len(memory.created_jobs), 1)  # queued; the launcher does not claim it
+        self.assertEqual(memory.holds, [])
+
+    def test_a_pause_does_not_stop_a_finished_run_from_being_read(self):
+        done = {"id": "job-1", "task_id": "task-1", "status": "succeeded",
+                "result": {"ok": True, "pr_url": "https://github.com/acme/app/pull/7", "summary": "done"}}
+        memory = PausingMemoryClient(ready=[self.task()], jobs=[done], state=self.TICKET_PAUSE)
+        self.run_tick(memory)
+        self.assertEqual(memory.holds, [])
+        self.assertEqual(memory.consumed, ["job-1"])
+
+    def test_an_automatic_retry_is_held_and_its_finished_job_kept_for_the_resume(self):
+        oom = {"id": "job-1", "task_id": "task-1", "status": "failed", "worker_memory_mb": 2048,
+               "error": "out_of_memory: the coding worker hit its memory limit (2048 MB)"}
+        memory = PausingMemoryClient(ready=[self.task()], jobs=[oom], state=self.TICKET_PAUSE)
+        self.run_tick(memory)
+        self.assertEqual(memory.created_jobs, [])
+        self.assertEqual(memory.consumed, [])  # resume finds it again and retries with more memory
+        self.assertEqual(memory.holds[0][1]["kind"], "retry")
+
+    def test_a_paused_pool_starts_no_new_tickets(self):
+        memory = PausingMemoryClient(ready=[], state=self.TICKET_PAUSE)
+        runner = self.runner_module.WorkflowRunner(
+            memory, FakeAdapter({"status": "succeeded"}), runner_id="runner-1",
+            skeletons={"implement_jira_pool": self.skeletons["implement_jira_pool"]},
+        )
+        task = {"id": "fill-1", "workflow_id": "wf-1", "workflow_type": "implement_jira_pool", "step_name": "fill_pool",
+                "agent_id": "orchestrator", "input": {"jira_issue_keys": ["PROJ-1"]}}
+        with patch.object(runner, "_run_barrier_step") as run_step:
+            runner._handle_barrier(task)
+        run_step.assert_not_called()
+        self.assertEqual(memory.holds[0][1]["kind"], "queue_start")

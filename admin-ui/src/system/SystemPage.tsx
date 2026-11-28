@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
+import { CodingPauseCard } from "./CodingPauseCard";
 import { normalizeHealth } from "../api/normalizers";
 import type { HealthReport, HealthStatus, NormalizedHealthReport } from "../api/types";
 import { Button } from "../components/Button";
@@ -264,7 +265,10 @@ export function SystemPage({
         ) : activeSection === "settings" ? (
           <SettingsPage section={settingsSection} onDirtyChange={onSettingsDirtyChange} />
         ) : (
-          healthContent()
+          <>
+            <CodingPauseCard />
+            {healthContent()}
+          </>
         )}
       </div>
     </div>

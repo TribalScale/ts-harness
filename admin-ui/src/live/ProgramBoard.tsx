@@ -7,6 +7,7 @@ import { OUTCOME_LABELS } from "./HistoryView";
 import { CATEGORY_LABELS, Timeline, formatDuration } from "./Timeline";
 import { TicketStory } from "./TicketStory";
 import { AmendWorkOrder } from "./AmendWorkOrder";
+import { PauseBadge, PauseButton } from "./PauseControls";
 
 const POLL_MS = 15000;
 
@@ -16,6 +17,7 @@ export const COLUMN_LABELS: Record<string, string> = {
   coding: "Coding",
   in_review: "In review",
   waiting_for_you: "Waiting for you",
+  paused: "Paused",
   done: "Done",
   stopped: "Stopped",
 };
@@ -40,6 +42,11 @@ function BoardCard({ entry, onOpen, open }: { entry: BoardItem; onOpen: () => vo
       {item && entry.column !== "done" && (
         <div className="board-card-meta muted">
           {item.state} · {formatDuration(item.in_step_seconds)}
+        </div>
+      )}
+      {item?.paused && entry.column !== "done" && entry.column !== "stopped" && (
+        <div className="board-chips">
+          <span className="board-chip board-chip-paused">paused by {item.paused.by || "someone"}</span>
         </div>
       )}
       {item && entry.column === "done" && (
@@ -72,7 +79,22 @@ export function ProgramBoard({ programId }: { programId: string }) {
 
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return null;
-  if (!data.items.length) return null;
+  const programPaused = data.paused?.scope === "program" && data.paused.target_id === programId;
+  const pauseRow = (
+    <div className="board-pause">
+      {data.paused && <PauseBadge entry={data.paused} own={programPaused} />}
+      {(!data.paused || programPaused) && (
+        <PauseButton scope="program" targetId={programId} paused={programPaused} label="this program" onChanged={() => void load()} />
+      )}
+    </div>
+  );
+  if (!data.items.length) {
+    return data.paused ? (
+      <section className="detail-card program-board" aria-label="Ticket board">
+        {pauseRow}
+      </section>
+    ) : null;
+  }
   const opened = data.items.find((entry) => entry.key === openKey);
   const columns = data.columns.filter((column) => column !== "stopped" || data.items.some((e) => e.column === "stopped"));
   return (
@@ -83,6 +105,7 @@ export function ProgramBoard({ programId }: { programId: string }) {
           <span className="muted"> · up to {data.parallel_limit} at a time</span>
         ) : null}
       </h3>
+      {pauseRow}
       <div className="board-columns">
         {columns.map((column) => {
           const entries = data.items.filter((entry) => entry.column === column);
@@ -114,9 +137,21 @@ export function ProgramBoard({ programId }: { programId: string }) {
               label={WAITING_LABELS[opened.item.waiting_on]}
             />
           </div>
+          {opened.item.paused && opened.column !== "done" && opened.column !== "stopped" && (
+            <PauseBadge entry={opened.item.paused} own={opened.item.paused.scope === "ticket"} />
+          )}
           {opened.column !== "done" && opened.column !== "stopped" && (
             <div className="live-card-links">
               <AmendWorkOrder workflowId={opened.item.workflow_id} label={opened.key} />
+              {(!opened.item.paused || opened.item.paused.scope === "ticket") && (
+                <PauseButton
+                  scope="ticket"
+                  targetId={opened.item.workflow_id}
+                  paused={opened.item.paused?.scope === "ticket"}
+                  label={opened.key}
+                  onChanged={() => void load()}
+                />
+              )}
             </div>
           )}
           <TicketStory programId={programId} workflowId={opened.item.workflow_id} />

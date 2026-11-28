@@ -33,8 +33,9 @@ CATEGORIES = {
     "prepare_ticket_delivery": "other",
 }
 CATEGORY_LABELS = {"coding": "Coding", "ci": "CI checks", "review": "Code review", "qa": "QA",
-                   "merge": "Waiting for merge", "decision": "Waiting for a decision", "other": "Other"}
-COLUMNS = ("waiting_on_blockers", "ready", "coding", "in_review", "waiting_for_you", "done", "stopped")
+                   "merge": "Waiting for merge", "decision": "Waiting for a decision", "paused": "Paused",
+                   "other": "Other"}
+COLUMNS = ("waiting_on_blockers", "ready", "coding", "in_review", "waiting_for_you", "paused", "done", "stopped")
 
 
 def _parse(value: Any) -> datetime | None:
@@ -56,6 +57,8 @@ def _iso(value: datetime | None) -> str:
 
 def _category(task: dict[str, Any], coding_step: str) -> str:
     step = str(task.get("step_name") or "")
+    if str(task.get("status") or "") == "blocked" and str(task.get("error") or "") == pa.PAUSE_WAIT:
+        return "paused"  # held by a pause: not coding time, not stuck time
     if step == coding_step or task.get("agent_id") == pa.CODING_AGENT:
         return "coding"
     if awaiting_human_decision(task):
@@ -119,6 +122,8 @@ def waiting_on(summary: dict[str, Any]) -> str:
         return "done"
     if kind in {"stuck", "failed", "blocked"}:
         return "you"
+    if kind == "paused":
+        return "paused"
     current = str(summary.get("current_step") or "")
     state = str(summary.get("state") or "")
     if current == "await_human_merge" or state.startswith("Waiting for approval") or state == "Ready to merge":
@@ -168,16 +173,18 @@ def _workflow(memory: Any, workflow_id: str) -> dict[str, Any]:
     return pa._workflow_record(memory, workflow_id)
 
 
-def _descendants(memory: Any, workflow_id: str, depth: int = 0) -> list[dict[str, Any]]:
+def _descendants(memory: Any, workflow_id: str, depth: int = 0, chain: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """Workflows below ``workflow_id``; each carries ``_chain``, its id then its parents' (for pauses)."""
     if depth > 3:
         return []
+    chain = chain or (workflow_id,)
     found = []
     for child in memory.get_workflow_children(workflow_id) or []:
         child_id = str(child.get("id") or "")
         if not child_id:
             continue
-        found.append(child)
-        found.extend(_descendants(memory, child_id, depth + 1))
+        found.append({**child, "_chain": [child_id, *chain]})
+        found.extend(_descendants(memory, child_id, depth + 1, (child_id, *chain)))
     return found
 
 
@@ -187,7 +194,7 @@ def _program_items(memory: Any, program_id: str, *, running_only: bool) -> list[
     seen: dict[str, dict[str, Any]] = {}
     for record in workflows:
         wid = str(record.get("id") or "")
-        candidates = [record, *_descendants(memory, wid)]
+        candidates = [{**record, "_chain": [wid]}, *_descendants(memory, wid)]
         for candidate in candidates:
             cid = str(candidate.get("id") or "")
             if not cid or str(candidate.get("workflow_type") or "") not in TICKET_TYPES:
@@ -196,6 +203,32 @@ def _program_items(memory: Any, program_id: str, *, running_only: bool) -> list[
                 continue
             seen[cid] = candidate
     return list(seen.values())
+
+
+def program_chain(program: dict[str, Any]) -> list[str]:
+    ids = [str(program.get(key) or "") for key in ("id", "parent_program_id", "root_program_id")]
+    return [pid for i, pid in enumerate(ids) if pid and pid not in ids[:i]]
+
+
+def with_pause(view: dict[str, Any], state: dict[str, Any], *, workflow_chain: list[str], programs: list[str]) -> dict[str, Any]:
+    """``paused``: the pause covering the item (scope, who, when, reason), or None. ``held`` is the
+    kind of run waiting for the resume when one is (``revision``, ``first_run``...)."""
+    from ts_harness.workflows import pause
+
+    entry = pause.entry_for(state, workflow_chain=workflow_chain, program_chain=programs)
+    view["paused"] = {k: entry.get(k) for k in ("scope", "target_id", "by", "at", "reason", "label")} if entry else None
+    view.setdefault("held", "")
+    return view
+
+
+def _held_kind(workflow: dict[str, Any]) -> str:
+    from ts_harness.workflows.pause import HOLD_KEY
+
+    for task in workflow.get("tasks") or []:
+        if isinstance(task, dict) and task.get("status") == "blocked" and task.get("error") == pa.PAUSE_WAIT:
+            hold = (task.get("input") or {}).get(HOLD_KEY) if isinstance(task.get("input"), dict) else None
+            return str((hold or {}).get("kind") or "held") if isinstance(hold, dict) else "held"
+    return ""
 
 
 def coding_capacity(memory: Any) -> dict[str, Any]:
@@ -213,7 +246,10 @@ def coding_capacity(memory: Any) -> dict[str, Any]:
 
 def live(memory: Any, *, tenant_id: str = "default", allowed: Any = None, now: datetime | None = None) -> dict[str, Any]:
     """Every running ticket or work order across running programs, waiting-for-you first."""
+    from ts_harness.workflows import pause
+
     now = now or datetime.now(timezone.utc)
+    state = pause.read_state(memory)
     programs = (memory.list_programs(tenant_id=tenant_id, status="running", limit=100) or {}).get("programs") or []
     items = []
     for program in programs:
@@ -221,13 +257,17 @@ def live(memory: Any, *, tenant_id: str = "default", allowed: Any = None, now: d
         if not program_id or (allowed is not None and not allowed(program_id)):
             continue
         for record in _program_items(memory, program_id, running_only=True):
-            view = item_view(memory, _workflow(memory, str(record["id"])), now=now)
+            workflow = _workflow(memory, str(record["id"]))
+            view = item_view(memory, workflow, now=now)
             view.update({"program_id": program_id,
-                         "program_label": str(program.get("display_name") or program.get("summary") or program_id)[:120]})
+                         "program_label": str(program.get("display_name") or program.get("summary") or program_id)[:120],
+                         "held": _held_kind(workflow)})
+            with_pause(view, state, workflow_chain=list(record.get("_chain") or [record["id"]]), programs=program_chain(program))
             items.append(view)
-    order = {"you": 0, "agent": 1, "ci": 2, "queue": 3, "done": 4}
-    items.sort(key=lambda item: (order.get(item["waiting_on"], 5), -item["in_step_seconds"]))
-    return {"generated_at": _iso(now), "items": items, "capacity": coding_capacity(memory)}
+    order = {"you": 0, "paused": 1, "agent": 2, "ci": 3, "queue": 4, "done": 5}
+    items.sort(key=lambda item: (order.get(item["waiting_on"], 6), -item["in_step_seconds"]))
+    return {"generated_at": _iso(now), "items": items, "capacity": coding_capacity(memory),
+            "paused": pause.global_entry(state)}
 
 
 def _column(view: dict[str, Any] | None, *, done: bool, blocked_by: list[str]) -> str:
@@ -239,6 +279,8 @@ def _column(view: dict[str, Any] | None, *, done: bool, blocked_by: list[str]) -
         return "done"
     if view["kind"] == "failed":
         return "stopped"
+    if view["kind"] == "paused":
+        return "paused"  # held: its next coding run (or new tickets) waits for the resume
     if view["waiting_on"] == "you":
         return "waiting_for_you"
     if view["current_step"] in pa.STEP_LABELS:
@@ -264,11 +306,19 @@ def program_board(memory: Any, program_id: str, *, jira: Any = None, now: dateti
     completed = {str(k) for k in artifacts.get("completed_jira_issue_keys") or []}
     views: dict[str, dict[str, Any]] = {}
     attempts: dict[str, list[dict[str, Any]]] = {}
+    from ts_harness.workflows import pause
+
+    state = pause.read_state(memory)
+    programs = program_chain({**program, "id": program.get("id") or program_id})
     for record in sorted(_program_items(memory, program_id, running_only=False), key=lambda r: str(r.get("created_at") or "")):
         workflow = _workflow(memory, str(record["id"]))
         view = item_view(memory, workflow, now=now)
         if str(workflow.get("status") or "") != "running":
             view.update(outcome(workflow, [t for t in workflow.get("tasks") or [] if isinstance(t, dict)]))
+            view.update({"paused": None, "held": ""})
+        else:
+            view["held"] = _held_kind(workflow)
+            with_pause(view, state, workflow_chain=list(record.get("_chain") or [record["id"]]), programs=programs)
         label = view["jira_issue_key"] or view["label"]
         if label not in keys:
             keys.append(label)
@@ -317,6 +367,7 @@ def program_board(memory: Any, program_id: str, *, jira: Any = None, now: dateti
         "totals": [{"category": c, "label": CATEGORY_LABELS.get(c, c), "seconds": s, "share": round(s / total, 3)}
                    for c, s in sorted(totals.items(), key=lambda kv: -kv[1])],
         "parallel_limit": artifacts.get("max_parallel_tickets"),
+        "paused": pause.entry_for(state, program_chain=programs, include_global=True),
     }
 
 

@@ -457,6 +457,30 @@ class MemoryClient:
             body["steps"] = list(steps)
         return list((self._request("POST", "/workflow/repeated-step-runs", body) or {}).get("workflows") or [])
 
+    def hold_paused_task(self, task_id: str, *, hold: dict[str, Any], actor: str = "workflow-runner") -> dict[str, Any]:
+        """Park a task until its pause ends (ts_harness.workflows.pause)."""
+        return self._request("POST", "/workflow/task/hold-paused", {"id": task_id, "hold": hold, "actor": actor})
+
+    def list_paused_tasks(self, *, tenant_id: str = "default") -> dict[str, Any]:
+        """``{"tasks": [{task_id, workflow_id, step_name, program_id, hold, since, still_paused}]}``."""
+        return self._request("POST", "/workflow/paused-tasks", {"tenant_id": tenant_id}) or {}
+
+    def release_paused_tasks(self, *, tenant_id: str = "default", actor: str = "orchestrator") -> dict[str, Any]:
+        """Pending again: every held task no pause covers any more. ``{"released": [...], "still_held": n}``."""
+        return self._request("POST", "/workflow/paused-tasks/release", {"tenant_id": tenant_id, "actor": actor}) or {}
+
+    def shift_wait_deadlines(
+        self,
+        *,
+        seconds: int,
+        tenant_id: str = "default",
+        workflow_ids: list[str] | None = None,
+        program_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body = {"seconds": int(seconds), "tenant_id": tenant_id, "workflow_ids": list(workflow_ids or []),
+                "program_ids": list(program_ids or [])}
+        return self._request("POST", "/workflow/pause/shift-deadlines", body) or {}
+
     def list_stuck_tasks(self, *, tenant_id: str = "default") -> list[dict[str, Any]]:
         result = self._request("POST", "/workflow/stuck", {"tenant_id": tenant_id})
         return list(result.get("tasks") or [])

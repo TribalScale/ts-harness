@@ -1633,6 +1633,155 @@ def format_stuck_step_ack(result: dict[str, Any]) -> str:
     return f"Updated {label}."
 
 
+_PAUSE_COMMAND_RE = re.compile(r"^\s*/(pause|resume)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+_PROGRAM_WORDS = {"program", "programme"}
+_GLOBAL_WORDS = {"all", "everything", "global"}
+
+
+def parse_pause_command(user_text: str) -> tuple[str, str] | None:
+    """``(action, rest)`` for ``/pause [<ticket>|program|all] [reason]`` and ``/resume ...``."""
+    match = _PAUSE_COMMAND_RE.match(user_text or "")
+    if not match:
+        return None
+    return match.group(1).lower(), (match.group(2) or "").strip()
+
+
+def _pause_candidates(memory: Any, program_id: str, linked: set[str], tenant_id: str) -> list[dict[str, Any]]:
+    """The chat's tickets a ``/pause <ticket>`` can name: its program's running tickets, the
+    workflows the chat is linked to, and tickets of its program that are paused now."""
+    from ts_harness.gateway.pause_bff import TargetNotFound, ticket_target
+    from ts_harness.workflows import pause
+    from ts_harness.workflows.live_view import _program_items
+
+    ids: list[str] = []
+    if program_id:
+        try:
+            ids.extend(str(r.get("id") or "") for r in _program_items(memory, program_id, running_only=True))
+        except Exception:  # noqa: BLE001 - the linked workflows still count
+            pass
+        state = pause.read_state(memory)
+        ids.extend(wid for wid, entry in (state.get("workflows") or {}).items() if entry.get("program_id") == program_id)
+    ids.extend(sorted(linked))
+    found: list[dict[str, Any]] = []
+    for workflow_id in dict.fromkeys(i for i in ids if i):
+        try:
+            found.append(ticket_target(memory, workflow_id, tenant_id=tenant_id))
+        except TargetNotFound:
+            continue
+    return found
+
+
+def execute_pause_command(
+    session: SessionRecord,
+    *,
+    user_text: str,
+    actor_id: str,
+    channel: str,
+    auth: Any,
+    actor_email: str | None = None,
+    config: Any = None,
+    memory: Any = None,
+) -> dict[str, Any]:
+    """Pause or resume a ticket of this chat's program, the program itself, or (admins) everything."""
+    from ts_harness.gateway import pause_bff
+    from ts_harness.workflows import decisions, pause
+
+    parsed = parse_pause_command(user_text)
+    if parsed is None:
+        return {"status": "none"}
+    action, rest = parsed
+    metadata = dict(session.metadata or {})
+    if memory is None:
+        from ts_harness.memory.client import get_memory_client
+
+        memory = get_memory_client()
+    program_id = str(metadata.get("program_id") or "").strip()
+    linked = {str(metadata.get(key) or "").strip() for key in ("workflow_id", "active_workflow_id")} - {""}
+    words = rest.split(maxsplit=1)
+    first = words[0].lower() if words else ""
+    reason = words[1] if len(words) > 1 else ""
+    base: dict[str, Any] = {"action": action}
+
+    if first in _GLOBAL_WORDS:
+        denied = decisions.channel_permission_refusal(
+            metadata, channel=channel, auth=auth, permission="edit_config", actor_email=actor_email, config=config,
+        )
+        if denied:
+            return {**base, "scope": "global", "status": "denied", "error": denied, "admin_only": True}
+        scope, target = "global", {"target_id": "", "label": "", "kind": "global"}
+    elif first in _PROGRAM_WORDS:
+        if not program_id:
+            return {**base, "scope": "program", "status": "no_program"}
+        try:
+            target = pause_bff.program_target(memory, program_id, tenant_id=session.tenant_id)
+        except pause_bff.TargetNotFound:
+            return {**base, "scope": "program", "status": "no_program"}
+        scope = "program"
+    else:
+        candidates = _pause_candidates(memory, program_id, linked, session.tenant_id)
+        chosen = None
+        if first:
+            chosen = next((c for c in candidates if str(c.get("label") or "").lower() == first), None)
+            if chosen is None:
+                labels = [str(c.get("label") or "") for c in candidates]
+                return {**base, "scope": "ticket", "status": "unknown_ticket", "ticket": words[0], "tickets": labels}
+        else:
+            tickets = [c for c in candidates if c.get("kind") == "ticket"] or candidates
+            if len(tickets) != 1:
+                return {**base, "scope": "ticket", "status": "ambiguous" if tickets else "nothing_running",
+                        "tickets": [str(c.get("label") or "") for c in tickets]}
+            chosen = tickets[0]
+            reason = ""
+        scope, target = "ticket", chosen
+    if scope != "global":
+        denied = decisions.channel_permission_refusal(
+            metadata, channel=channel, auth=auth, permission="approve_gate", actor_email=actor_email, config=config,
+        )
+        if not denied:
+            from ts_harness.gateway.program_access import channel_program_refusal
+
+            denied = channel_program_refusal(
+                metadata, tenant_id=session.tenant_id, channel=channel, auth=auth, config=config, memory=memory,
+                program_id=str(target.get("program_id") or "") or None, route="pause_command",
+            )
+        if denied:
+            return {**base, "scope": scope, "status": "denied", "error": denied, "label": target.get("label")}
+    try:
+        result = pause_bff.apply(memory, action, scope, target, actor=str(actor_email or actor_id or "someone"),
+                                 tenant_id=session.tenant_id, reason=reason)
+    except (pause.PauseError, ValueError) as exc:
+        return {**base, "scope": scope, "error": str(exc), "label": target.get("label")}
+    return {**base, **result}
+
+
+def format_pause_ack(result: dict[str, Any]) -> str:
+    from ts_harness.gateway.pause_bff import message
+
+    action = str(result.get("action") or "pause")
+    status = result.get("status")
+    tickets = [t for t in result.get("tickets") or [] if t]
+    if status == "nothing_running":
+        return f"Nothing in this chat to {action}. Say `/{action} <ticket>` or `/{action} program`."
+    if status == "ambiguous":
+        examples = " or ".join(f"`/{action} {t}`" for t in tickets[:3])
+        return f"Several tickets are running ({', '.join(tickets)}). Say which one, e.g. {examples}, or `/{action} program`."
+    if status == "unknown_ticket":
+        known = f" Running here: {', '.join(tickets)}." if tickets else ""
+        return f"I can't find ticket {result.get('ticket')} in this chat's program.{known}"
+    if status == "no_program":
+        return f"This chat is not linked to a program, so there is no program to {action}."
+    if status == "denied":
+        if result.get("admin_only"):
+            return f"Only an admin can {action} all coding (the System page or `/{action} all`)."
+        error = str(result.get("error") or "")
+        if error and not error.startswith("missing permission"):
+            return f"I can't do that: {error}"
+        return f"You need the approve_gate permission to {action} coding here."
+    if result.get("error"):
+        return f"I couldn't {action} {result.get('label') or 'it'}: {result['error']}"
+    return message(result)
+
+
 def _parked_tool_approval(tasks: list[dict[str, Any]]) -> tuple[dict[str, Any], str] | None:
     from ts_harness.tools.approvals import AWAITING_TOOL_APPROVAL_PREFIX
 

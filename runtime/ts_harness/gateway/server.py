@@ -976,6 +976,9 @@ class RuntimeState:
             execute_stuck_step_command,
             format_stuck_step_ack,
             parse_stuck_step_command,
+            execute_pause_command,
+            format_pause_ack,
+            parse_pause_command,
             execute_bridge_workflow_proposal,
             execute_governed_workflow_proposal,
             execute_intake_response,
@@ -1173,6 +1176,41 @@ class RuntimeState:
                          "cancelled": [item["description"] for item in cancelled], "actor_email": actor_email},
             )
             return {"status": "succeeded", "session_id": session.session_id, "output": {"summary": summary}}
+        if parse_pause_command(user_text) is not None:
+            try:
+                pause_result = execute_pause_command(
+                    session,
+                    user_text=user_text,
+                    actor_id=auth.actor_id,
+                    channel=channel,
+                    auth=auth,
+                    actor_email=actor_email,
+                    config=self.config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                pause_result = {"action": (parse_pause_command(user_text) or ("pause", ""))[0], "error": str(exc)}
+            summary = format_pause_ack(pause_result)
+            get_transcript_store().append_turn(
+                session.session_id,
+                user_text=user_text,
+                assistant_messages=[{"role": "assistant", "content": summary}],
+            )
+            if pause_result.get("status") in {"paused", "resumed", "already_paused", "not_paused"}:
+                from ts_harness.gateway.pause_bff import audit_payload
+
+                self.audit.append(
+                    tenant_id=req.tenant_id,
+                    action_type=f"coding_{'paused' if pause_result.get('action') == 'pause' else 'resumed'}",
+                    actor_id=auth.actor_id,
+                    correlation_id=req.correlation_id,
+                    payload={**audit_payload(pause_result, actor=str(actor_email or auth.actor_id or ""), source=channel),
+                             "session_id": session.session_id},
+                )
+            return {
+                "status": "succeeded",
+                "session_id": session.session_id,
+                "output": {**{k: v for k, v in pause_result.items() if k != "released"}, "summary": summary},
+            }
         if parse_stuck_step_command(user_text) is not None:
             try:
                 stuck_result = execute_stuck_step_command(

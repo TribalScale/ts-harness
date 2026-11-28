@@ -13,7 +13,7 @@ come from `scripts/ops/redeploy.sh` instead (see [Deploy results](#deploy-result
 
 | Alert | Fires when | Key | Default |
 | --- | --- | --- | --- |
-| Waiting for a decision | A step has waited for a person (revise, accept, retry or stop) longer than the threshold. Time counts from when the step was parked for a decision, or from its last update. Example: "PROJ-7 has waited 5 h for a decision at `finalize_code_review` (the automatic revisions ran out)." | `stuck:<task id>` | 4 h |
+| Waiting for a decision | A step has waited for a person (revise, accept, retry or stop) longer than the threshold. Time counts from when the step was parked for a decision, or from its last update. Steps of a paused ticket, queue or program are left out while it is paused. Example: "PROJ-7 has waited 5 h for a decision at `finalize_code_review` (the automatic revisions ran out)." | `stuck:<task id>` | 4 h |
 | Lost coding jobs | At least this many coding jobs were marked lost in the last hour (the worker stopped heartbeating or overran). | `lost_jobs:last_hour` | 2 |
 | Not converging | A running work order's coding step (`deliver_work_order` or `implement`) has run at least this many times, the first run included. Each revision re-runs the step. | `revisions:<workflow id>` | 5 runs |
 | Hourly spend | LLM spend recorded in `llm_usage` over the last 60 minutes is above the threshold. | `spend:hour` | $20 |

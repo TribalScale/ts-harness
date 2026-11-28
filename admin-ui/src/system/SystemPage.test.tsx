@@ -84,14 +84,16 @@ describe("SystemPage health", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    // The coding pause card loads /admin/pause once; only health refreshes on the timer.
+    const healthCalls = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/healthz").length;
     expect(screen.getAllByText("Healthy")).toHaveLength(3);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(healthCalls()).toBe(1);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(healthCalls()).toBe(2);
   });
 
   it("connects the system tabs to the rendered panel", async () => {
@@ -110,7 +112,7 @@ describe("SystemPage health", () => {
     vi.useFakeTimers();
     mockFetch((url) => {
       if (url === "/healthz") {
-        const calls = vi.mocked(globalThis.fetch).mock.calls.length;
+        const calls = vi.mocked(globalThis.fetch).mock.calls.filter(([u]) => String(u) === "/healthz").length;
         return calls === 1
           ? jsonResponse(healthReport())
           : jsonResponse({ error: "temporary outage" }, 400);

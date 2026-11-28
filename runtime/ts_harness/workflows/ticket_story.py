@@ -144,6 +144,12 @@ def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any
     # For delivery metrics: which coding step run (revision) and why it ran.
     ids = {"task_id": str(task.get("id") or ""), "revision": revision, "trigger_kind": trigger_kind(task, revision)}
     events: list[dict[str, Any]] = []
+    if not jobs and _held(task):
+        # Held by a pause: no run yet, so no coding time; the pause event says who and since when.
+        events.append({**ids, "at": bar["start"], "kind": "coding", "title": title,
+                       "subtitle": f"{trigger}; waits for the resume" if trigger else "waits for the resume",
+                       "seconds": 0, "status": "paused"})
+        return events
     if not jobs:
         events.append({
             **ids, "at": bar["start"], "kind": "coding", "title": title, "subtitle": trigger,
@@ -187,6 +193,33 @@ def _coding_events(task: dict[str, Any], revision: int, jobs: list[dict[str, Any
             event["status"] = "failed"
             event["outcome"] = str(result.get("error") or job.get("error") or "The run failed")[:300]
         events.append(event)
+    return events
+
+
+def _held(task: dict[str, Any]) -> bool:
+    return str(task.get("status") or "") == "blocked" and str(task.get("error") or "") == pa.PAUSE_WAIT
+
+
+def _pause_events(task: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+    """A held step: who paused it and since when; a released one: how long it waited and who resumed."""
+    from ts_harness.workflows.pause import HOLD_KEY, LAST_KEY, status_label
+
+    data = _input(task)
+    events: list[dict[str, Any]] = []
+    last = data.get(LAST_KEY) if isinstance(data.get(LAST_KEY), dict) else None
+    if last and last.get("since"):
+        since, resumed = _parse(last.get("since")), _parse(last.get("resumed_at"))
+        events.append({"at": _iso(since), "kind": "paused", "status": "done", "seconds": _seconds(since, resumed),
+                       "title": f"{status_label(str(last.get('kind') or ''))}, paused by {display_actor(str(last.get('by') or ''))}",
+                       "subtitle": f"Resumed by {display_actor(str(last.get('resumed_by') or ''))}"
+                       + (f". Reason: {last['reason']}" if last.get("reason") else "")})
+    hold = data.get(HOLD_KEY) if isinstance(data.get(HOLD_KEY), dict) else None
+    if hold and _held(task):
+        since = _parse(hold.get("since")) or _parse(task.get("updated_at"))
+        events.append({"at": _iso(since), "kind": "paused", "status": "running", "seconds": _seconds(since, now),
+                       "title": f"{status_label(str(hold.get('kind') or ''))}, paused by {display_actor(str(hold.get('by') or ''))}",
+                       "subtitle": (f"Reason: {hold['reason']}. " if hold.get("reason") else "")
+                       + "It starts where it stopped once the pause is resumed."})
     return events
 
 
@@ -298,6 +331,7 @@ def _decision_events(tasks: list[dict[str, Any]], now: datetime) -> list[dict[st
                 events.append({"at": str(action.get("at") or ""), "kind": "decision", "title": f"Arbiter {verb}",
                                "subtitle": str(action.get("reason") or "")[:400], "status": "ok"})
         waiting = data.get(HUMAN_DECISION_KEY) if isinstance(data.get(HUMAN_DECISION_KEY), dict) else None
+        events.extend(_pause_events(task, now))
         if waiting and str(task.get("status") or "") == "blocked" and not error.startswith("awaiting_"):
             since = _parse(waiting.get("since")) or _parse(task.get("updated_at"))
             reason = WAIT_REASONS.get(str(waiting.get("reason") or ""), "a decision is needed")
@@ -360,7 +394,7 @@ def current_run(events: list[dict[str, Any]], now: datetime) -> dict[str, Any] |
 
 
 TOTAL_LABELS = {"coding": "Coding", "queue": "Queued for a coding slot", "ci": "CI checks",
-                "review": "Code review", "qa": "QA", "you": "Waiting for you"}
+                "review": "Code review", "qa": "QA", "you": "Waiting for you", "paused": "Paused"}
 
 
 def _totals(events: list[dict[str, Any]], bars: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> dict[str, int]:
@@ -374,6 +408,8 @@ def _totals(events: list[dict[str, Any]], bars: list[dict[str, Any]], by_id: dic
             totals["queue"] += int(event.get("queued_seconds") or 0)
         elif event.get("kind") == "ci":
             totals["ci"] += seconds
+        elif event.get("kind") == "paused":
+            totals["paused"] += seconds  # a person held it: not agent, CI or decision time
         elif event.get("kind") == "wait" or event.get("waited"):
             totals["you"] += seconds
     for bar in bars:

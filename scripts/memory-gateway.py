@@ -19,6 +19,7 @@ from typing import Any, Callable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memory_routes import coding_jobs as coding_job_routes  # noqa: E402
+from memory_routes import pause as pause_routes  # noqa: E402
 from memory_routes import coding_job_events as coding_job_event_routes  # noqa: E402
 from memory_routes import data_retention as data_retention_routes  # noqa: E402
 from memory_routes import budgets as budget_routes  # noqa: E402
@@ -5803,6 +5804,14 @@ class MemoryHandler(BaseHTTPRequestHandler):
                     self._send_json(200, resume_blocked_task(conn, body))
                 elif self.path == "/workflow/stuck":
                     self._send_json(200, list_stuck_tasks(conn, body))
+                elif self.path == "/workflow/task/hold-paused":
+                    self._send_json(200, pause_routes.hold_paused_task(conn, body))
+                elif self.path == "/workflow/paused-tasks":
+                    self._send_json(200, pause_routes.list_paused_tasks(conn, body))
+                elif self.path == "/workflow/paused-tasks/release":
+                    self._send_json(200, pause_routes.release_paused_tasks(conn, body))
+                elif self.path == "/workflow/pause/shift-deadlines":
+                    self._send_json(200, pause_routes.shift_wait_deadlines(conn, body))
                 elif self.path == "/workflow/running-tickets":
                     self._send_json(200, running_ticket_work(conn, body))
                 elif self.path == "/workflow/repeated-step-runs":

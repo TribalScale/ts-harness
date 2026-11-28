@@ -452,6 +452,10 @@ def arbitrate_stuck(
         engine = get_workflow_engine()
     # A hand-written ticket waiting for answers is already a product question (jira/ticket_readiness.py).
     stuck = [t for t in list(memory.list_stuck_tasks(tenant_id=tenant_id) or []) if not seen(t) and not _waiting_for_answers(t)]
+    # A paused ticket is left alone: no retry, revision or override until a person resumes it.
+    from ts_harness.workflows.pause import without_paused
+
+    stuck = without_paused(memory, stuck)
     results = []
     for task in stuck[:limit]:
         try:

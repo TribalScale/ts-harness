@@ -9,11 +9,13 @@ import { CurrentRunBreakdown, TicketStory } from "./TicketStory";
 import { FileEventPage } from "./FileEventPage";
 import { FileFeed } from "./FileFeed";
 import { AmendWorkOrder } from "./AmendWorkOrder";
+import { PauseBadge, PauseButton } from "./PauseControls";
 
 const POLL_MS = 10000;
 
 export const WAITING_LABELS: Record<LiveItem["waiting_on"], string> = {
   you: "Waiting for you",
+  paused: "Paused",
   agent: "Agent working",
   ci: "Waiting for CI",
   queue: "Queued for a coding slot",
@@ -22,6 +24,7 @@ export const WAITING_LABELS: Record<LiveItem["waiting_on"], string> = {
 
 export const WAITING_STATUS: Record<LiveItem["waiting_on"], SemanticStatus> = {
   you: "danger",
+  paused: "warning",
   agent: "neutral",
   ci: "warning",
   queue: "muted",
@@ -64,6 +67,7 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
       </div>
       {item.program_label && <div className="muted live-card-program">{item.program_label}</div>}
       <div className="live-card-state">{item.state}</div>
+      {item.paused && <PauseBadge entry={item.paused} own={item.paused.scope === "ticket"} />}
       <dl className="live-card-facts">
         <div>
           <dt>In this step</dt>
@@ -115,6 +119,15 @@ function LiveCard({ item, onChanged }: { item: LiveItem; onChanged?: () => void 
         {item.stuck_task_id && <a href={`#/inbox/stuck_step/${item.stuck_task_id}`}>Decide in Inbox</a>}
         {item.program_id && <a href={`#/programs/${item.program_id}`}>Program</a>}
         {item.kind !== "done" && <AmendWorkOrder workflowId={item.workflow_id} label={title} />}
+        {item.kind !== "done" && (!item.paused || item.paused.scope === "ticket") && (
+          <PauseButton
+            scope="ticket"
+            targetId={item.workflow_id}
+            paused={item.paused?.scope === "ticket"}
+            label={title}
+            onChanged={() => onChanged?.()}
+          />
+        )}
         <button type="button" className="link-button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? "Hide details" : "Details"}
         </button>
@@ -167,6 +180,7 @@ export function LivePage({
 
   const items = data?.items || [];
   const forYou = items.filter((item) => item.waiting_on === "you").length;
+  const paused = items.filter((item) => item.paused).length;
   return (
     <div className="page live-page">
       <header className="page-header">
@@ -191,6 +205,14 @@ export function LivePage({
       {tab === "history" && <HistoryView />}
       {tab === "metrics" && <MetricsView />}
       {tab === "now" && error && <div className="error-banner" role="alert">{error}</div>}
+      {tab === "now" && data?.paused && (
+        <div className="pause-banner" role="status">
+          <strong>All coding is paused.</strong> {data.paused.by ? `Paused by ${data.paused.by}` : ""}
+          {data.paused.at ? ` at ${new Date(data.paused.at).toLocaleString()}` : ""}
+          {data.paused.reason ? ` · ${data.paused.reason}` : ""}. Running steps finish; queued coding jobs wait.
+          An admin resumes it on the <a href="#/system">System page</a>.
+        </div>
+      )}
       {tab === "now" && data && (
         <section className="live-capacity" aria-label="Coding capacity">
           <span>
@@ -206,6 +228,11 @@ export function LivePage({
           <span className={forYou ? "live-capacity-you" : ""}>
             <strong>{forYou}</strong> waiting for you
           </span>
+          {paused > 0 && (
+            <span>
+              <strong>{paused}</strong> paused
+            </span>
+          )}
         </section>
       )}
       {tab === "now" && data && !items.length && <p className="muted">Nothing is being built right now.</p>}

@@ -114,8 +114,11 @@ def detect_stuck_steps(memory: Any, settings: AlertSettings, now: datetime, *, t
     from ts_harness.workflows.ticket_story import WAIT_REASONS
     from ts_harness.workflows.work_order_waves import HUMAN_DECISION_KEY
 
+    from ts_harness.workflows.pause import without_paused
+
     alerts = []
-    for row in memory.list_stuck_tasks(tenant_id=tenant_id):
+    # Time a ticket spends paused is not stuck work: a person chose to hold it.
+    for row in without_paused(memory, list(memory.list_stuck_tasks(tenant_id=tenant_id) or [])):
         task_input = row.get("input") if isinstance(row.get("input"), dict) else {}
         waiting = task_input.get(HUMAN_DECISION_KEY) if isinstance(task_input.get(HUMAN_DECISION_KEY), dict) else {}
         since = _parse(waiting.get("since")) or _parse(row.get("updated_at"))

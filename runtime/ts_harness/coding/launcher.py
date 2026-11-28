@@ -440,6 +440,16 @@ def coding_schedule(environ: Mapping[str, str] | None = None) -> tuple[dict[str,
     return quotas, scheduling.coding_global
 
 
+def globally_paused(memory: Any) -> dict[str, Any] | None:
+    """The global pause entry (``runtime_kv`` coding-pause/state), or None. Unreadable means not
+    paused: the claim itself also refuses while the flag is set (memory_routes/pause.py)."""
+    if not hasattr(memory, "kv_get"):
+        return None
+    from ts_harness.workflows.pause import global_entry, read_state
+
+    return global_entry(read_state(memory))
+
+
 def launcher_tick(
     memory: Any, launcher: Launcher, *, max_running: int, quotas: dict[str, int] | None = None
 ) -> dict[str, list[str]]:
@@ -453,7 +463,12 @@ def launcher_tick(
             sync_egress(memory)
         except Exception as exc:  # noqa: BLE001 - a failed sync keeps the last allowlist
             _log("coding_egress_sync_failed", error=str(exc)[:300])
-    claimed = memory.claim_coding_jobs(launcher=launcher.name, max_running=max_running, quotas=quotas)
+    paused = globally_paused(memory)
+    # Everything paused (an admin, System page): claim and start nothing. Queued jobs stay queued,
+    # running workers finish, and the stop sweep below still runs; no container is stopped for it.
+    claimed = {} if paused else memory.claim_coding_jobs(launcher=launcher.name, max_running=max_running, quotas=quotas)
+    if paused:
+        _log("coding_launcher_paused", paused_by=paused.get("by"), paused_at=paused.get("at"))
     for job in claimed.get("jobs") or []:
         token = str(job.pop("token", ""))
         if waiting:
@@ -490,7 +505,7 @@ def launcher_tick(
             prune()
         except Exception as exc:  # noqa: BLE001 - pruning never stops the launcher
             _log("coding_workspace_prune_failed", error=str(exc)[:300])
-    return {"started": started, "failed": failed, "waiting": waiting, "stopped": stopped}
+    return {"started": started, "failed": failed, "waiting": waiting, "stopped": stopped, "paused": bool(paused)}
 
 
 def run_launcher_loop(

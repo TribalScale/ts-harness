@@ -295,6 +295,10 @@ PROVIDER_INTERRUPTED_RETRIES = 2
 # Coding runs that stopped for a reason outside the work and pushed what they had: queued again,
 # and the new run continues from the branch.
 RESUMABLE_STOPS = ("provider_interrupted", "time_limit", "stalled", "killed")
+# A pause (ts_harness.workflows.pause) holds these instead of running them: the coding steps when
+# they run through the agent loop, and the system steps that start new tickets.
+PAUSE_HELD_AGENT_STEPS = frozenset({"deliver_work_order", "implement", "implement_delivery"})
+PAUSE_HELD_SYSTEM_STEPS = frozenset({"fill_ticket_pool", "fork_work_order_wave"})
 
 
 def compute_poll_backoff(base_interval: int, failures: int, *, cap: int = 60) -> int:
@@ -661,6 +665,9 @@ class MemoryApiClient:
     def kv_get(self, namespace: str, key: str) -> dict[str, Any]:
         quoted = urllib.parse.quote(key, safe="")
         return self._request("GET", f"/runtime-kv/{namespace}/{quoted}")
+
+    def hold_paused_task(self, task_id: str, *, hold: dict[str, Any], actor: str = "workflow-runner") -> dict[str, Any]:
+        return self._request("POST", "/workflow/task/hold-paused", {"id": task_id, "hold": hold, "actor": actor})
 
 
 # ---------------------------------------------------------------------------
@@ -1395,6 +1402,10 @@ class WorkflowRunner:
             self._add_design_input(task, task_input)
             self._dispatch_coding_job(task, stage, task_input, contract, dispatch_started)
             return
+        if (stage is not None and stage.execution == "coding_job") or task.get("step_name") in PAUSE_HELD_AGENT_STEPS:
+            # Coding run through the agent loop (coding jobs off): a pause holds it the same way.
+            if self._hold_for_pause(task):
+                return
 
         if task.get("step_name") == "qa_gate" and not task_input.get("files"):
             try:
@@ -1604,6 +1615,8 @@ class WorkflowRunner:
             return
 
         job = next((j for j in jobs if j.get("status") in coding_job_stage.ACTIVE), None)
+        if job is None and self._hold_for_pause(task):
+            return
         if job is None:
             try:
                 program_id = (self.memory.task_program(task_id) or {}).get("program_id")
@@ -1631,6 +1644,35 @@ class WorkflowRunner:
         )
         self.memory.block_task(task_id, coding_job_stage.WAIT_ERROR)
         log_event("coding_job_queued", workflow_id=task.get("workflow_id"), task_id=task_id, job_id=job["id"])
+
+    def _hold_for_pause(self, task: dict[str, Any], *, retry: bool = False, kind: str = "") -> bool:
+        """True when a pause covers the task's ticket, queue or program: the task is held (blocked
+        on ``workflow.resumed``) instead of starting a coding run or new tickets. Resume puts it
+        back to pending with its input as it was (ts_harness.workflows.pause)."""
+        if not hasattr(self.memory, "hold_paused_task"):
+            return False
+        from ts_harness.workflows import pause
+
+        try:
+            entry = pause.task_hold(self.memory, task)
+        except Exception as exc:  # noqa: BLE001 - an unreadable pause never stops work
+            log_event("pause_check_error", task_id=task.get("id"), error=str(exc)[:300])
+            return False
+        if entry is None:
+            return False
+        kind = kind or pause.hold_kind(task.get("input") if isinstance(task.get("input"), dict) else {}, retry=retry)
+        try:
+            pause.hold_task(self.memory, task, entry, kind)
+        except Exception as exc:  # noqa: BLE001 - still paused: the claim expires and the task is checked again
+            log_event("pause_hold_error", task_id=task.get("id"), error=str(exc)[:300])
+            return True
+        _runner_metrics.inc("runner_tasks_held_by_pause")
+        log_event(
+            "task_held_by_pause",
+            workflow_id=task.get("workflow_id"), task_id=task.get("id"), step_name=task.get("step_name"),
+            kind=kind, scope=entry.get("scope"), target_id=entry.get("target_id"), paused_by=entry.get("by"),
+        )
+        return True
 
     def _remembered_memory(self, repo_url: str) -> int:
         """Memory a recent successful job of this repo needed after running out: start there."""
@@ -1663,6 +1705,8 @@ class WorkflowRunner:
         except Exception:
             program_id = None
         spec = {**coding_job_stage.stage_spec(task, task_input, program_id=program_id), "worker_memory_mb": larger}
+        if self._hold_for_pause(task, retry=True):
+            return True  # the finished job stays unconsumed: resume retries it from here
         job = self.memory.create_coding_job(
             spec=spec,
             workflow_id=str(task.get("workflow_id") or "") or None,
@@ -1713,6 +1757,8 @@ class WorkflowRunner:
         spec = coding_job_stage.stage_spec(task, task_input, program_id=program_id)
         if finished.get("worker_memory_mb"):
             spec = {**spec, "worker_memory_mb": int(finished["worker_memory_mb"])}
+        if self._hold_for_pause(task, retry=True):
+            return True  # the finished job stays unconsumed: resume retries it from here
         job = self.memory.create_coding_job(
             spec=spec,
             workflow_id=str(task.get("workflow_id") or "") or None,
@@ -2044,6 +2090,9 @@ class WorkflowRunner:
         completes with output or blocks the task with a reason.
         """
         stage = self._stage_for_task(task)
+        hook = str(((stage.barrier if stage is not None else None) or {}).get("hook") or "")
+        if hook in PAUSE_HELD_SYSTEM_STEPS and self._hold_for_pause(task, kind="queue_start"):
+            return  # a paused queue or program starts no new tickets
         agg = self._run_barrier_step(task, dict(stage.barrier if stage is not None else {}))
         if agg.get("status") != "succeeded":
             reason = str(agg.get("reason") or "delivery barrier blocked")

@@ -7,6 +7,7 @@ export const CATEGORY_LABELS: Record<TimelineBar["category"], string> = {
   qa: "QA",
   merge: "Waiting for merge",
   decision: "Waiting for a decision",
+  paused: "Paused",
   other: "Other",
 };
 

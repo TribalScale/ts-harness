@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiFetch } from "../api/client";
 import type {
+  HeldTask,
   ImprovementProposal,
   InboxItem,
   InboxType,
+  PauseScope,
   SkillDraftDetail,
   StuckDecision,
 } from "../api/types";
@@ -20,6 +22,7 @@ import { SplitView } from "../layout/SplitView";
 import { useMediaQuery } from "../layout/useMediaQuery";
 import { GateReview } from "../programs/GateReview";
 import { ProposalDetail } from "../live/ImprovementsPanel";
+import { PauseButton } from "../live/PauseControls";
 
 const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "all", label: "All for me" },
@@ -30,7 +33,77 @@ const FILTERS: { key: "all" | InboxType; label: string }[] = [
   { key: "knowledge_note", label: "Notes" },
   { key: "pending_proposal", label: "Proposals" },
   { key: "improvement_proposal", label: "Improvements" },
+  { key: "paused", label: "Paused" },
 ];
+
+const HELD_KIND_TEXT: Record<string, string> = {
+  revision: "Paused (revision waiting)",
+  first_run: "Paused (first coding run waiting)",
+  refresh: "Paused (branch refresh waiting)",
+  retry: "Paused (retry waiting)",
+  queue_start: "Paused (new tickets waiting)",
+};
+
+/** A paused ticket, ticket queue, program or all coding: who, when, why, what waits, and Resume. */
+function PausedDetail({ item, onChanged }: { item: InboxItem; onChanged: () => void }) {
+  const meta = (item.meta || {}) as {
+    scope?: PauseScope;
+    target_id?: string;
+    by?: string;
+    at?: string;
+    reason?: string;
+    label?: string;
+    held?: HeldTask[];
+    can_resume?: boolean;
+  };
+  const held = meta.held || [];
+  return (
+    <div className="detail-sections">
+      <section className="detail-card">
+        <h3>Paused</h3>
+        <p>
+          {item.title}. Paused by {meta.by || "someone"}
+          {meta.at ? ` at ${new Date(meta.at).toLocaleString()}` : ""}.
+        </p>
+        {meta.reason && <p className="muted">Reason: {meta.reason}</p>}
+        <p className="muted">
+          Steps that were already running finish. The next coding run or revision waits here, with its feedback kept,
+          and starts where it stopped when you resume.
+        </p>
+      </section>
+      <section className="detail-card">
+        <h3>Waiting for the resume</h3>
+        {held.length ? (
+          <ul>
+            {held.map((task) => (
+              <li key={task.task_id}>
+                {HELD_KIND_TEXT[task.hold.kind || ""] || "Paused"} · <span className="mono">{task.step_name}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">Nothing is held yet: the next coding run will wait here.</p>
+        )}
+      </section>
+      {meta.scope === "program" && meta.target_id && (
+        <p>
+          <a href={`#/programs/${meta.target_id}`}>Open program</a>
+        </p>
+      )}
+      {meta.can_resume && meta.scope ? (
+        <PauseButton
+          scope={meta.scope}
+          targetId={meta.target_id || ""}
+          paused
+          label={meta.scope === "global" ? "all coding" : meta.label || "it"}
+          onChanged={onChanged}
+        />
+      ) : (
+        <p className="muted">Only an admin can resume all coding (System page).</p>
+      )}
+    </div>
+  );
+}
 
 const STUCK_DECISION_ORDER: StuckDecision[] = ["stop", "accept", "retry", "revise"];
 const STUCK_DECISION_LABEL: Record<StuckDecision, string> = {
@@ -73,6 +146,7 @@ function badgeClass(type: InboxType): string {
   if (type === "knowledge_note") return "badge badge-skill";
   if (type === "pending_proposal") return "badge badge-tool";
   if (type === "improvement_proposal") return "badge badge-skill";
+  if (type === "paused") return "badge badge-stuck";
   return "badge badge-gate";
 }
 
@@ -83,6 +157,7 @@ function typeLabel(type: InboxType): string {
   if (type === "knowledge_note") return "Knowledge note";
   if (type === "pending_proposal") return "Chat proposal";
   if (type === "improvement_proposal") return "Improvement";
+  if (type === "paused") return "Paused";
   return "Workflow gate";
 }
 
@@ -299,6 +374,7 @@ export function InboxPage({
       improvement_proposal: visibleItems.filter(
         (item) => item.type === "improvement_proposal",
       ).length,
+      paused: visibleItems.filter((item) => item.type === "paused").length,
     }),
     [visibleItems],
   );
@@ -723,6 +799,8 @@ export function InboxPage({
   function renderDetailSections(type: InboxType) {
     if (type === "stuck_step")
       return renderStuckSections(detail || selectedItem?.meta || {});
+    if (type === "paused" && selectedItem)
+      return <PausedDetail item={selectedItem} onChanged={() => void load()} />;
     if (type === "improvement_proposal" && selectedItem?.meta?.proposal)
       return <ProposalDetail proposal={selectedItem.meta.proposal as ImprovementProposal} />;
     const fallbackDetail = selectedItem ? itemRecord(selectedItem) : null;

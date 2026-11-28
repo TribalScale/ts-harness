@@ -35,6 +35,11 @@ queued), then waits for every `ts-coding-*` container to exit, printing progress
 minutes. The launcher stays stopped through phase 12 and the build, and the final `up -d`
 starts it again. If any step fails, the launcher is started again on exit.
 
+To keep coding paused across a deploy, use **Pause all coding** on the System page (see
+"Pausing and resuming" in [governed-delivery-flow.md](governed-delivery-flow.md)) rather than
+leaving the launcher container stopped. The pause is stored in Postgres, so the launcher this
+script starts again still claims nothing until an admin resumes.
+
 | Variable | Default | Effect |
 |---|---|---|
 | `CODING_DRAIN_TIMEOUT_MINUTES` | `120` | How long to wait. On timeout nothing is changed, the launcher is started again and the script exits 1. |
