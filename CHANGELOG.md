@@ -440,6 +440,9 @@ First public release.
 
 ### Fixed
 
+- Once a ticket reaches its coding-run cap, the arbiter no longer starts more coding runs (a revise, or a retry of the coding step). It still diagnoses and recommends, and may re-run a step that doesn't code, like QA. It had sent a capped ticket back twice more.
+- A conflict fix that merges the base locally now publishes the screenshots and design-frame captures its verification took. QA after such a fix had no captures to compare and blocked. After a base update GitHub merged (no local run), QA gets the last published captures, with a note saying so.
+- When several scenarios tag the same design frame (another ticket's feature on the base branch tags it too), the frame is captured from this work order's own scenario. QA had judged a ticket on another ticket's scenario and data.
 - The readiness check for hand-written tickets no longer stops on assumptions the ticket or the code it mirrors already settles. An assumption blocks only when nothing settles it and the model asks a question about it; with no question there is nothing to wait for. The chat gets a short message ("PROJ-60 needs 1 answer before it's built", the questions, how to answer) instead of a "Step … is blocked … barrier_blocked:" error with the whole draft pasted in; the draft stays on the Jira ticket.
 - A work order's listed file that is already exactly what its commands produce (another ticket regenerated it) no longer blocks the "files untouched" check forever: the agent lists it in `.ts-harness/already-current.json` with the evidence, and the PR description shows it for code review. The arbiter treats "the work is already done" as a question for the ticket owner (close as delivered?).
 - Stopping a work order now ends its workflow too, so it no longer shows as running on Live and the program board; the ticket story still says who stopped it.

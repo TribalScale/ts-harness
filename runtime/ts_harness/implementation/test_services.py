@@ -1373,8 +1373,13 @@ def capture_frames(
     env: dict[str, str],
     *,
     timeout: int = 900,
+    work_order_id: str = "",
 ) -> tuple[list[dict[str, Any]], str]:
     """Run each frame's ``@frame-D<n>`` scenario at the frame's size; screenshot its last state.
+
+    When several scenarios carry the same frame tag (other tickets' features on the base branch
+    tag the same frame), the one in this work order's own feature file wins: QA once judged a
+    ticket on another ticket's scenario and data.
 
     ``frames`` are ``{id, title, width, height}``. Returns one capture per frame, ``status``
     ``captured`` (``file`` is ``<out_dir>/frame-D7.png``), ``failed`` (the scenario failed; a
@@ -1420,6 +1425,13 @@ def capture_frames(
         except (OSError, ValueError):
             tests = []
             notes.append(f"frames {width}x{height}: no report (exit {code})\n{text[-800:]}")
+        own = str(work_order_id or "").strip().lower()
+
+        def _ours(test: dict[str, Any]) -> bool:
+            return bool(own) and own in str(test.get("title") or "").lower()
+
+        # This work order's scenarios first, so another ticket's scenario only fills a frame it lacks.
+        tests = sorted(tests, key=lambda test: 0 if _ours(test) else 1)
         for test in tests:
             ref = _frame_of(test, ids)
             if ref is None or captures[ref]["status"] == "captured":

@@ -2293,12 +2293,17 @@ class OpenCodeBackend:
                 remote_url=github_authenticated_url(repo_url, repo_token(repo_url)),
             )
             head_sha = (self._git(repo_dir, "rev-parse", "HEAD").stdout or "").strip() or None
+            # The verification above took the screenshots and design-frame captures; publish them like
+            # a coding run does, or QA after a conflict fix has no captures to compare (seen live).
+            progress.detail("publishing screenshots")
+            screenshots = self._publish_screenshots(repo_dir, test_env, branch=head_ref, pr_url=pr_url, env=_git_env(repo_url))
             lap("push")
             progress.begin("done", timings)
             return CodingResult(
                 ok=True,
                 branch=head_ref,
                 timings=timings,
+                screenshots=screenshots,
                 summary=f"Merged {base_ref} into {head_ref} ({method}) for {pr_url}",
                 changed_files=resolved,
                 log_tail=log,

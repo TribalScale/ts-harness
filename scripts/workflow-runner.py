@@ -165,9 +165,20 @@ def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> d
     ]
     if not delivered:
         return {}
-    latest = sorted(delivered, key=lambda item: str(item.get("created_at") or ""))[-1]
-    shots = latest["output"].get("screenshots") if isinstance(latest["output"].get("screenshots"), dict) else {}
-    if not shots.get("files") or not shots.get("commit") or "/" not in str(shots.get("repo") or ""):
+    def _published(item: dict[str, Any]) -> dict[str, Any]:
+        shots = item["output"].get("screenshots") if isinstance(item["output"].get("screenshots"), dict) else {}
+        return shots if shots.get("files") and shots.get("commit") and "/" in str(shots.get("repo") or "") else {}
+
+    ordered = sorted(delivered, key=lambda item: str(item.get("created_at") or ""))
+    latest = ordered[-1]
+    shots = _published(latest)
+    earlier = False
+    if not shots and latest["output"].get("refresh_method"):
+        # A base update GitHub merged (no local run) publishes nothing: QA compares the last
+        # published captures; the PR's own changes are the same since then.
+        shots = next((_published(item) for item in reversed(ordered[:-1]) if _published(item)), {})
+        earlier = bool(shots)
+    if not shots:
         return {}
     import base64
 
@@ -194,6 +205,8 @@ def qa_screenshot_input(tasks: list[dict[str, Any]], *, github: Any = None) -> d
             "note": (
                 "From the Playwright tests the change added or edited: `step-N` is the page as the test's Nth "
                 "sampled assertion passed; a name without a step is the end of the test. The images follow this message."
+                + (" They come from the last run that published captures; the newest run only merged the base branch."
+                   if earlier else "")
             ),
         },
         "_images": images,
