@@ -3305,3 +3305,19 @@ form {
 .memory-facts dt { color: var(--muted); font-weight: 700; }
 .memory-facts dd { margin: 0; }
 .memory-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+
+/* Pause and resume (ticket, ticket queue, program, all coding). */
+.live-card-paused { border-left-color: var(--warning, #b7791f); }
+.live-bar-paused,
+.story-bar-paused { background: repeating-linear-gradient(45deg, var(--warning, #b7791f) 0 4px, transparent 4px 8px); }
+.board-chip-paused { background: rgba(183, 121, 31, 0.18); }
+.pause-badge { margin: 0.35rem 0; padding: 0.3rem 0.6rem; border-left: 3px solid var(--warning, #b7791f); background: rgba(183, 121, 31, 0.08); font-size: 0.85em; }
+.pause-banner { margin: 0.5rem 0 0.75rem; padding: 0.6rem 0.8rem; border: 1px solid var(--warning, #b7791f); border-radius: 6px; background: rgba(183, 121, 31, 0.1); }
+.pause-control,
+.pause-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.pause-ask input { min-width: 12rem; max-width: 100%; }
+.pause-message { font-size: 0.85em; }
+.board-pause { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.coding-pause { margin-bottom: 1rem; }
+.coding-pause-list { padding-left: 1.1rem; display: grid; gap: 0.3rem; }
+.story-event-paused .story-dot { background: var(--warning, #b7791f); }

@@ -2448,6 +2448,148 @@ async def admin_workflows_amend(request: Request) -> Response:
     return _json(result)
 
 
+def _pause_scope_target(body: dict[str, Any], auth: Any, *, route: str) -> tuple[str, dict[str, Any] | None, Response | None]:
+    """``(scope, target, error response)`` for a pause or resume, after the permission checks.
+
+    Ticket and queue (a workflow) and program pauses need ``approve_gate`` and approve access to
+    the program, like any other decision on its tickets; the global pause needs an admin.
+    """
+    from ts_harness.gateway import pause_bff
+    from ts_harness.workflows import pause
+
+    try:
+        scope = pause.scope_name(str(body.get("scope") or ""))
+    except pause.PauseError as exc:
+        return "", None, _json({"error": str(exc)}, 400)
+    runtime = get_runtime()
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        if scope == "global":
+            _require_admin(runtime, auth, "edit_config")
+            return scope, {"target_id": "", "label": "", "kind": "global"}, None
+        _require_admin(runtime, auth, "approve_gate")
+    except AuthError as exc:
+        return scope, None, _json({"error": str(exc)}, exc.status)
+    memory = get_memory_client()
+    try:
+        if scope == "program":
+            program_id = str(body.get("program_id") or body.get("target_id") or "").strip()
+            if not program_id:
+                return scope, None, _json({"error": "program_id is required"}, 400)
+            target = pause_bff.program_target(memory, program_id, tenant_id=tenant_id)
+            _require_program_level(target["program_id"], auth, "approve", route=route, memory=memory)
+            return scope, target, None
+        workflow_id = str(body.get("workflow_id") or body.get("target_id") or "").strip()
+        if not workflow_id:
+            return scope, None, _json({"error": "workflow_id is required"}, 400)
+        target = pause_bff.ticket_target(memory, workflow_id, tenant_id=tenant_id)
+        if target.get("task_id"):
+            _require_task_program_level(str(target["task_id"]), auth, "approve", route=route)
+        return scope, target, None
+    except pause_bff.TargetNotFound as exc:
+        return scope, None, _json({"error": str(exc)}, 404)
+    except ProgramAccessDenied as exc:
+        return scope, None, _json({"error": str(exc)}, exc.status)
+
+
+async def _admin_pause_action(body: Any, auth: Any, action: str) -> Response:
+    """Pause or resume after sign-in; ``_pause_scope_target`` checks the scope's own permission."""
+    body = body if isinstance(body, dict) else {}
+    scope, target, denied = _pause_scope_target(body, auth, route=action)
+    if denied is not None:
+        return denied
+    from ts_harness.gateway import pause_bff
+    from ts_harness.workflows import pause
+
+    if action == "pause" and scope == "ticket" and (target or {}).get("status") not in {"", "running", "blocked"}:
+        return _json({"error": f"{(target or {}).get('label') or 'the ticket'} is not running"}, 409)
+    actor = _decision_actor(auth)
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        result = pause_bff.apply(get_memory_client(), action, scope, target, actor=actor, tenant_id=tenant_id,
+                                 reason=str(body.get("reason") or ""))
+    except pause.PauseError as exc:
+        return _json({"error": str(exc)}, 400)
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_pause_error", action=action, scope=scope, error=str(exc))
+        return _json({"error": str(exc)}, 500)
+    get_runtime().audit.append(
+        tenant_id=tenant_id,
+        action_type=f"coding_{'paused' if action == 'pause' else 'resumed'}",
+        actor_id=auth.actor_id,
+        payload=pause_bff.audit_payload(result, actor=actor, source="console"),
+    )
+    log_event(f"admin_coding_{action}", scope=scope, target_id=result.get("target_id"), status=result.get("status"), actor=actor)
+    return _json({**result, "message": pause_bff.message(result)})
+
+
+async def admin_pause(request: Request) -> Response:
+    """Pause coding for a ticket or ticket queue (``workflow_id``), a program, or everything."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    return await _admin_pause_action(body, auth, "pause")
+
+
+async def admin_resume(request: Request) -> Response:
+    """Resume what a pause held; a no-op with a clear message when nothing was paused."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    return await _admin_pause_action(body, auth, "resume")
+
+
+async def admin_pause_state(request: Request) -> Response:
+    """Every pause (global, programs, tickets) and the steps they hold, for the programs the caller can read."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        runtime = get_runtime()
+        _require_admin(runtime, auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    from ts_harness.gateway.admin_bff import is_admin
+    from ts_harness.workflows import pause
+
+    memory = get_memory_client()
+    readable: dict[str, bool] = {}
+
+    def allowed(program_id: str) -> bool:
+        if not program_id:
+            return True
+        if program_id not in readable:
+            try:
+                _require_program_level(program_id, auth, "read", route="pause_state", memory=memory)
+                readable[program_id] = True
+            except Exception:  # noqa: BLE001 - not readable: left out
+                readable[program_id] = False
+        return readable[program_id]
+
+    try:
+        state = pause.forget_finished(memory, pause.read_state(memory, strict=True))
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": f"pause state unavailable: {exc}"}, 503)
+    tenant_id = str(auth.tenant_id or "default")
+    held = [t for t in pause.held_tasks(memory, tenant_id=tenant_id) if allowed(str(t.get("program_id") or ""))]
+    payload = pause.view(state, held)
+    payload["programs"] = [p for p in payload["programs"] if allowed(str(p.get("program_id") or ""))]
+    payload["workflows"] = [w for w in payload["workflows"] if allowed(str(w.get("program_id") or ""))]
+    payload["can_pause_global"] = is_admin(auth, runtime)
+    return _json(payload)
+
+
 async def admin_workflow_amendments(request: Request) -> Response:
     """The work order's original text and every amendment, oldest first."""
     try:
@@ -4958,6 +5100,9 @@ routes = [
     Route("/admin/workflows/approve", endpoint=admin_workflows_approve, methods=["POST"]),
     Route("/admin/workflows/decide", endpoint=admin_workflows_decide, methods=["POST"]),
     Route("/admin/workflows/amend", endpoint=admin_workflows_amend, methods=["POST"]),
+    Route("/admin/pause", endpoint=admin_pause_state, methods=["GET"]),
+    Route("/admin/pause", endpoint=admin_pause, methods=["POST"]),
+    Route("/admin/resume", endpoint=admin_resume, methods=["POST"]),
     Route("/admin/workflows/{workflow_id}/amendments", endpoint=admin_workflow_amendments, methods=["GET"]),
     Route("/admin/workflows/reject", endpoint=admin_workflows_reject, methods=["POST"]),
     Route("/admin/workflow-definitions", endpoint=admin_workflow_definitions_list, methods=["GET"]),

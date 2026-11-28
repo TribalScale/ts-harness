@@ -371,8 +371,44 @@ def task_program(conn, task_id: str) -> dict[str, Any]:
             (tid,),
         )
         row = cur.fetchone()
+        # The chains say which pauses cover the task (ts_harness.workflows.pause): its workflow and
+        # every parent (a ticket queue, a wave), and its program and every parent program.
+        cur.execute(
+            """
+            WITH RECURSIVE chain AS (
+                SELECT w.id, w.parent_workflow_id, 0 AS depth
+                FROM workflow_tasks t JOIN workflows w ON w.id = t.workflow_id
+                WHERE t.id = %s
+              UNION ALL
+                SELECT w.id, w.parent_workflow_id, chain.depth + 1
+                FROM workflows w JOIN chain ON w.id = chain.parent_workflow_id
+                WHERE chain.depth < 20
+            )
+            SELECT id::text AS id FROM chain ORDER BY depth
+            """,
+            (tid,),
+        )
+        workflow_chain = [str(r["id"]) for r in cur.fetchall()]
+        program_chain: list[str] = []
+        if row:
+            cur.execute(
+                """
+                WITH RECURSIVE chain AS (
+                    SELECT id, parent_program_id, 0 AS depth FROM delivery_programs WHERE id = %s
+                  UNION ALL
+                    SELECT p.id, p.parent_program_id, chain.depth + 1
+                    FROM delivery_programs p JOIN chain ON p.id = chain.parent_program_id
+                    WHERE chain.depth < 20
+                )
+                SELECT id::text AS id FROM chain ORDER BY depth
+                """,
+                (row["program_id"],),
+            )
+            program_chain = [str(r["id"]) for r in cur.fetchall()]
     return {
         "task_id": tid,
         "program_id": str(row["program_id"]) if row else None,
         "workflow_id": str(own["workflow_id"]) if own else None,
+        "workflow_chain": workflow_chain,
+        "program_chain": program_chain,
     }

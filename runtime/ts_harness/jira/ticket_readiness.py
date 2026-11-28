@@ -418,6 +418,12 @@ def recheck_waiting_tickets(*, tenant_id: str = "default", memory: Any = None, e
         mark = (task.get("input") or {}).get(HUMAN_DECISION_KEY) if isinstance(task.get("input"), dict) else None
         if isinstance(mark, dict) and mark.get("reason") == WAIT_REASON and mark.get("jira_issue_key"):
             waiting.append((task, mark))
+    if waiting:
+        # A paused ticket stays waiting: its reply is read once a person resumes it.
+        from ts_harness.workflows.pause import without_paused
+
+        kept = {str(t.get("id")) for t in without_paused(memory, [t for t, _ in waiting])}
+        waiting = [(t, m) for t, m in waiting if str(t.get("id")) in kept]
     if not waiting:
         return {"checked": 0, "resumed": 0}
     if jira is None:

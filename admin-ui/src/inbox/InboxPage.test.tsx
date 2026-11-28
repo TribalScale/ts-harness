@@ -765,3 +765,43 @@ it("an off-limits idea can only be dismissed", async () => {
   expect(await screen.findByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 });
+
+it("shows a paused ticket with who paused it and what waits, and resumes it", async () => {
+  const posts: { url: string; body: Record<string, unknown> }[] = [];
+  const pausedItem: InboxItem = {
+    type: "paused",
+    id: "ticket:wf-7",
+    title: "Ticket PROJ-7 is paused",
+    subtitle: "Paused by alice@example.com · Paused (revision waiting)",
+    created_at: "2026-11-28T10:00:00Z",
+    meta: {
+      scope: "ticket",
+      target_id: "wf-7",
+      by: "alice@example.com",
+      at: "2026-11-28T10:00:00Z",
+      reason: "waiting on design",
+      label: "PROJ-7",
+      can_resume: true,
+      held: [{ task_id: "t1", workflow_id: "wf-7", step_name: "deliver_work_order", hold: { kind: "revision" }, still_paused: true }],
+    },
+  };
+  mockFetch((url, init) => {
+    if (url === "/admin/inbox") return jsonResponse({ items: posts.length ? [] : [pausedItem] });
+    if (url === "/admin/resume") {
+      posts.push({ url, body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ scope: "ticket", target_id: "wf-7", status: "resumed", message: "Resumed PROJ-7." });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  renderPage(<StatefulInbox initialType="paused" initialId="ticket:wf-7" />);
+
+  expect(await screen.findByRole("button", { name: /Paused 1/ })).toBeInTheDocument();
+  const detail = await screen.findByRole("region", { name: /Paused detail/i });
+  expect(within(detail).getAllByText(/Paused by alice@example.com/).length).toBeGreaterThan(0);
+  expect(within(detail).getByText("Reason: waiting on design")).toBeInTheDocument();
+  expect(within(detail).getByRole("listitem")).toHaveTextContent("Paused (revision waiting) · deliver_work_order");
+  await userEvent.click(within(detail).getByRole("button", { name: "Resume PROJ-7" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ scope: "ticket", workflow_id: "wf-7" });
+});

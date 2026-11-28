@@ -734,6 +734,33 @@ The arbiter reads the step's error, the coding job's result, log tail and file c
 - The record is `_arbiter` on the task input.
 - Projects with `revision_autonomy: conservative` get labels and recommendations only. `TS_HARNESS_STUCK_ARBITER=off` turns the arbiter off. Without a diagnosis model it does nothing.
 
+## Pausing and resuming
+
+Pause holds the **next** coding run. A step already running finishes: a coding run, a code review or a QA run in progress completes as usual. Three levels:
+
+| Level | Who | What is held | Where |
+| --- | --- | --- | --- |
+| **Ticket** (one delivery workflow) | `approve_gate` and approve access to its program, like any decision on its tickets | every new coding job for it: the first run, a revision, a branch refresh, an automatic retry | **Pause** on the ticket card (Live) or the ticket on the program board, `/pause <ticket>` in the program's chat, `POST /admin/pause {"scope": "ticket", "workflow_id": ...}` |
+| **Ticket queue** (a pool workflow) | the same | as a ticket, for every ticket the queue started, and the queue starts no new tickets | `POST /admin/pause` with the pool's `workflow_id` |
+| **Program** | `approve_gate` and approve access to the program | as a ticket, for every workflow of the program and of its sub-programs; its ticket pools start no new tickets (`fill_pool` is held, `refill` starts nothing) and its work-order waves are not forked | **Pause this program** on the program board, `/pause program` in the program's chat, `POST /admin/pause {"scope": "program", "program_id": ...}` |
+| **Everything** | admins (`edit_config`) | the coding launcher claims and starts no queued job. Jobs keep queueing, running workers finish, code review and QA keep running. No container is stopped | **Pause all coding** on the System page, `/pause all`, `POST /admin/pause {"scope": "global"}` |
+
+`/resume <ticket>`, `/resume program`, `/resume all`, **Resume** on the same cards and `POST /admin/resume` undo them. Chat replies confirm each pause and resume. Pausing something already paused, or resuming something that is not paused, changes nothing and says so. An optional reason (the text after the ticket key in chat, the reason box in the console) is shown with the pause.
+
+**How a ticket is held.** When the runner would create a coding job for a paused ticket (`scripts/workflow-runner.py` `_dispatch_coding_job`, the two automatic-retry paths, and the agent-loop coding path when coding jobs are off), it holds the task instead (`POST /workflow/task/hold-paused`): the task is blocked with `awaiting_external:workflow.resumed` and gets a `_pause_hold` marker on its input (who paused, when, which scope, and the kind of run waiting: `revision`, `first_run`, `refresh`, `retry`, or `queue_start` for a held `fill_pool`). The rest of the input is untouched, so a revision keeps its review or QA feedback. An automatic retry is held before the finished job is consumed, so the resume finds it and retries from there. Because the hold is an external wait, not a decision, the Inbox's stuck list, the stuck-step arbiter, the readiness re-check, the stuck-work ops alert and the wave joins treat it as waiting, never as stuck or failed. The coding-run cap counts the held step once, as it would have counted the run. Pausing is not a person stepping in for the autonomy metric, so the self-improvement canary is unaffected.
+
+**Queued jobs are never lost.** A coding job that was already queued when the pause started stays queued: the memory API's claim (`claim_coding_jobs`) skips it and marks `held_reason = paused` (or `coding paused for everything`) until the pause ends. Running jobs finish normally.
+
+**The arbiter, readiness re-check and alerts leave a paused ticket alone.** `arbitrate_stuck` and `recheck_waiting_tickets` skip stuck steps of paused tickets (a decision waits for the resume), the stuck-work alert in `ops_alerts.py` does not fire for them, and `escalate-stale-waits` does not escalate their waits.
+
+**Resume picks up where it stopped.** Resuming removes the pause, then releases every held task no pause covers any more (`POST /workflow/paused-tasks/release`): it goes back to pending with its input as it was, and the marker moves to `_pause_last` with who resumed and when. A held revision then starts with its feedback. The scope's wait and gate deadlines move on by the time it was paused (`POST /workflow/pause/shift-deadlines`), so paused time does not count toward escalation or expiry. The scope's ticket pools are woken so they start the tickets that became ready meanwhile. A ticket resumed while its queue or program is still paused stays held, and the reply says which pause still holds it.
+
+**What people see.** Live, the ticket card, the program board and the Inbox show who paused it and when, with the reason. A held step reads **Paused (revision waiting)** (or first coding run, branch refresh, retry, new tickets waiting); held tickets sit in a **Paused** board column, and Live sorts them right after the ones waiting for you. The ticket story shows each pause (who paused, how long, who resumed) and counts paused time as **Paused**, not as coding time or time waiting for you. Everything paused shows a banner on Live. The Inbox lists every pause you can resume (type **Paused**) with what it holds.
+
+**Storage.** One JSON document in `runtime_kv` (namespace `coding-pause`, key `state`), shared by every replica and kept in Postgres, so a pause survives restarts and redeploys: `{"global": {...} | null, "programs": {"<program id>": {...}}, "workflows": {"<workflow id>": {...}}}`, each entry with `by`, `at`, `reason` and a label. Updates are compare-and-set. The memory API reads the same document inside its claim and release transactions. No migration. Audit: `coding_paused` and `coding_resumed` (scope, target, status, reason, who, source), plus the task-level `workflow_task_blocked` and `workflow_task_external_resumed` events.
+
+**Replacing a hand-stopped launcher.** Stopping the coding launcher container from a shell is no longer the way to pause everything. Start the launcher again and use **Pause all coding** on the System page instead: queued jobs stay queued until an admin resumes, and no running worker is touched.
+
 ## Merge Gate
 
 After QA passes, Slack posts the QA summary plus a merge ask (no generic “let me know if you want to continue” footer):
@@ -957,6 +984,7 @@ The `escalate-stale-waits` system job runs every 15 minutes:
 
 - A wait past `escalate_at` is announced in the bound Slack thread (or the parent workflow's thread for wave children), mentioning the users who hold `escalate_to_role`. Audit: `workflow_wait_escalated`.
 - A wait past `expires_at` stays blocked. The job records a `recommended_action` on the task (for example `review_and_merge_or_cancel_pr` or `decide_or_reassign_expired_gate`), which `program_status` and the portfolio board show. Audit: `workflow_wait_expired`.
+- Waits of a paused ticket, queue or program are skipped while it is paused, and resuming moves their deadlines on by the time it was paused (see "Pausing and resuming").
 
 ## Cancel and cleanup
 

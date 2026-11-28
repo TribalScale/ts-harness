@@ -194,6 +194,7 @@ def build_inbox(
         )
 
     items.extend(_stuck_step_items(memory, auth, approvable))
+    items.extend(_paused_items(memory, auth, approvable, admin=is_admin(auth, runtime)))
     items.extend(_knowledge_note_items(memory, auth, runtime))
     items.extend(_proposal_items(auth))
     if is_admin(auth, runtime):
@@ -467,6 +468,55 @@ def _stuck_step_items(memory: Any, auth: AuthContext, approvable: Any = None) ->
                 "meta": {**summary, "status": "blocked", "updated_at": task.get("updated_at")},
             }
         )
+    return items
+
+
+def _paused_items(memory: Any, auth: AuthContext, approvable: Any = None, *, admin: bool = False) -> list[dict[str, Any]]:
+    """What is paused (ts_harness.workflows.pause): who paused it, when, and the steps waiting for a resume."""
+    from ts_harness.workflows import pause
+
+    state = pause.read_state(memory)
+    if pause.is_empty(state):
+        return []
+    state = pause.forget_finished(memory, state)
+    held = pause.held_tasks(memory, tenant_id=str(auth.tenant_id or "default"))
+    view = pause.view(state, held)
+    items: list[dict[str, Any]] = []
+
+    def item(scope: str, target_id: str, entry: dict[str, Any], *, title: str, waiting: list[dict[str, Any]],
+             can_resume: bool) -> dict[str, Any]:
+        kinds = sorted({str((t.get("hold") or {}).get("kind") or "") for t in waiting} - {""})
+        detail = ", ".join(pause.status_label(kind) for kind in kinds) or "nothing held yet"
+        item_id = f"{scope}:{target_id or 'all'}"
+        return {
+            "type": "paused",
+            "id": item_id,
+            "title": title,
+            "subtitle": f"Paused by {entry.get('by') or 'someone'} · {detail}",
+            "created_at": entry.get("at"),
+            "href": f"/#/inbox/paused/{quote(item_id, safe='')}",
+            "meta": {"scope": scope, "target_id": target_id, "by": entry.get("by"), "at": entry.get("at"),
+                     "reason": entry.get("reason") or "", "label": entry.get("label") or "",
+                     "kind": entry.get("kind") or scope, "held": waiting, "can_resume": can_resume},
+        }
+
+    if view["global"]:
+        items.append(item("global", "", view["global"], title="All coding is paused", waiting=[], can_resume=admin))
+    for program in view["programs"]:
+        program_id = str(program.get("program_id") or "")
+        if approvable is not None and not approvable(program_id):
+            continue
+        waiting = [t for t in held if str(t.get("program_id") or "") == program_id]
+        items.append(item("program", program_id, program, title=f"Program {program.get('label') or program_id} is paused",
+                          waiting=waiting, can_resume=True))
+    for workflow in view["workflows"]:
+        workflow_id = str(workflow.get("workflow_id") or "")
+        program_id = str(workflow.get("program_id") or "")
+        if approvable is not None and program_id and not approvable(program_id):
+            continue
+        noun = "Ticket queue" if workflow.get("kind") == "queue" else "Ticket"
+        items.append(item("ticket", workflow_id, workflow, title=f"{noun} {workflow.get('label') or workflow_id} is paused",
+                          waiting=list(workflow.get("held") or []), can_resume=True))
     return items
 
 

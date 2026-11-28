@@ -659,6 +659,11 @@ def escalate_stale_waits(
     memory = memory or get_memory_client()
     notify = notify or _notify_escalation
     waits = list((memory.list_due_waits(tenant_id=tenant_id) or {}).get("waits") or [])
+    # A paused ticket's waits do not escalate while it is paused; resuming moves their deadlines
+    # on by the time it was paused (ts_harness.workflows.pause.release_after_resume).
+    from ts_harness.workflows.pause import without_paused
+
+    waits = without_paused(memory, waits, task_key="task_id")
     escalated = expired = errors = 0
     for wait in waits:
         kind = "expired" if wait.get("due") == "expired" else "escalated"

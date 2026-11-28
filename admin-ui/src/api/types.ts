@@ -5,7 +5,8 @@ export type InboxType =
   | "stuck_step"
   | "knowledge_note"
   | "pending_proposal"
-  | "improvement_proposal";
+  | "improvement_proposal"
+  | "paused";
 
 export type StuckDecision = "retry" | "revise" | "accept" | "stop";
 
@@ -48,7 +49,7 @@ export interface WorkflowProgress {
   pr_url: string;
   current_step: string;
   state: string;
-  kind: "running" | "waiting" | "stuck" | "blocked" | "done" | "failed";
+  kind: "running" | "waiting" | "paused" | "stuck" | "blocked" | "done" | "failed";
   revisions: number;
   stuck_task_id: string;
   updated_at: string;
@@ -646,7 +647,7 @@ export interface TimelineBar {
   task_id: string;
   step_name: string;
   label: string;
-  category: "coding" | "ci" | "review" | "qa" | "merge" | "decision" | "other";
+  category: "coding" | "ci" | "review" | "qa" | "merge" | "decision" | "paused" | "other";
   status: string;
   run: number;
   start: string;
@@ -667,7 +668,7 @@ export interface LiveItem {
   stuck_task_id: string;
   coding_job?: CodingJobProgress | null;
   jira_issue_key: string;
-  waiting_on: "you" | "agent" | "ci" | "queue" | "done";
+  waiting_on: "you" | "paused" | "agent" | "ci" | "queue" | "done";
   in_step_since: string;
   in_step_seconds: number;
   started_at: string;
@@ -676,12 +677,56 @@ export interface LiveItem {
   timeline: TimelineBar[];
   program_id?: string;
   program_label?: string;
+  /** The pause covering this ticket (its own, its queue's, its program's), or null. */
+  paused?: PauseEntry | null;
+  /** The run waiting for the resume when one is held: revision, first_run, refresh, retry. */
+  held?: string;
 }
 
 export interface LiveResponse {
   generated_at: string;
   items: LiveItem[];
   capacity: { running: number; queued: number; limit: number | null };
+  /** All coding paused by an admin (System page), or null. */
+  paused?: PauseEntry | null;
+}
+
+export type PauseScope = "ticket" | "program" | "global";
+
+/** One pause (GET /admin/pause, Live, the program board): who paused it, when and why. */
+export interface PauseEntry {
+  scope?: "ticket" | "queue" | "program" | "global";
+  target_id?: string;
+  by?: string;
+  at?: string;
+  reason?: string;
+  label?: string;
+  kind?: string;
+}
+
+export interface HeldTask {
+  task_id: string;
+  workflow_id: string;
+  step_name: string;
+  program_id?: string | null;
+  hold: { kind?: string; since?: string; by?: string; scope?: string };
+  still_paused: boolean;
+}
+
+export interface PauseState {
+  global: PauseEntry | null;
+  programs: (PauseEntry & { program_id: string })[];
+  workflows: (PauseEntry & { workflow_id: string; program_id?: string; held: HeldTask[] })[];
+  held: HeldTask[];
+  can_pause_global: boolean;
+}
+
+export interface PauseResult {
+  scope: PauseScope;
+  target_id: string;
+  status: "paused" | "already_paused" | "resumed" | "not_paused";
+  message?: string;
+  released?: { task_id: string; workflow_id: string; step_name: string; kind?: string }[];
 }
 
 export interface RunOutcome {
@@ -980,10 +1025,10 @@ export interface PrePushReview {
 
 export interface StoryEvent {
   at: string;
-  kind: "coding" | "ci" | "gate" | "wait" | "decision" | "done";
+  kind: "coding" | "ci" | "gate" | "wait" | "decision" | "done" | "paused";
   title: string;
   subtitle?: string;
-  status: "ok" | "blocked" | "failed" | "running" | "done";
+  status: "ok" | "blocked" | "failed" | "running" | "done" | "paused";
   seconds?: number | null;
   model?: string;
   queued_seconds?: number;
@@ -1063,6 +1108,8 @@ export interface BoardResponse {
   items: BoardItem[];
   totals: { category: string; label: string; seconds: number; share: number }[];
   parallel_limit: number | null;
+  /** The pause covering the program (its own, a parent program's, or all coding), or null. */
+  paused?: PauseEntry | null;
 }
 
 /** One file change a coding run made (the live feed). */

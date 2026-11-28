@@ -350,6 +350,9 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
 
     memory = ctx.memory_client
     children = pinned_children(task)
+    if paused(memory, task):
+        # A paused queue or program starts no new tickets; resuming wakes the pool (wake_resumed_pools).
+        return children
     _, tasks = load_workflow_payload(memory, str(task.get("workflow_id") or ""))
     fill_task = next((item for item in tasks if item.get("step_name") == "fill_pool"), {})
     fill_output = fill_task.get("output") if isinstance(fill_task.get("output"), dict) else {}
@@ -393,6 +396,16 @@ def refill(ctx: Any, task: dict[str, Any], *, jira: Any = None) -> list[dict[str
     task.setdefault("input", {})["_wait_options"] = options
     logger.info("ticket pool %s started %s", task.get("workflow_id"), [c["label"] for c in new])
     return pinned
+
+
+def paused(memory: Any, task: dict[str, Any]) -> bool:
+    """A pause covers this pool (its own queue pause, a parent's or its program's)."""
+    from ts_harness.workflows import pause
+
+    try:
+        return pause.task_hold(memory, task) is not None
+    except Exception:  # noqa: BLE001 - an unreadable pause never stops the pool
+        return False
 
 
 def waiting_on_other_runs(ctx: Any, task: dict[str, Any], children: list[dict[str, str]], *, jira: Any = None) -> list[str]:
@@ -444,6 +457,42 @@ def wake_pools(memory: Any, key: str, *, tenant_id: str = "default", actor: str 
             woken.append(str(pool["workflow_id"]))
         except Exception as exc:  # noqa: BLE001 - the pool re-checks on its own next child event
             logger.info("ticket pool %s not woken for %s: %s", pool.get("workflow_id"), key, exc)
+    return woken
+
+
+def wake_resumed_pools(memory: Any, *, tenant_id: str = "default", actor: str = "workflow-runner",
+                       scope: str = "", target_id: str = "") -> list[str]:
+    """After a resume: each running pool of the resumed queue or program that no pause covers any
+    more looks again and starts the tickets that became ready while it was paused (``refill``
+    started none)."""
+    from ts_harness.workflows import pause
+    from ts_harness.workflows.work_order_waves import CHILD_EVENT
+
+    try:
+        pools = _rows(memory.running_ticket_work(tenant_id=tenant_id or "default"), "pools")
+    except Exception:  # noqa: BLE001
+        return []
+    state = pause.read_state(memory)
+    woken: list[str] = []
+    for pool in pools:
+        if pool.get("join_status") != "blocked":
+            continue
+        workflow_id = str(pool.get("workflow_id") or "")
+        workflows, programs = pause.chains_for_task(memory, str(pool.get("join_task_id") or ""), workflow_id=workflow_id)
+        if target_id and target_id not in (workflows if scope == "ticket" else programs):
+            continue
+        if pause.entry_for(state, workflow_chain=workflows, program_chain=programs):
+            continue
+        try:
+            from ts_harness.workflows.engine import get_workflow_engine
+
+            get_workflow_engine().resume_external(
+                workflow_id, event_type=CHILD_EVENT, payload={"resumed": "the pause ended"},
+                actor=actor, tenant_id=tenant_id,
+            )
+            woken.append(workflow_id)
+        except Exception as exc:  # noqa: BLE001 - not waiting on its children right now
+            logger.info("ticket pool %s not woken after resume: %s", workflow_id, exc)
     return woken
 
 

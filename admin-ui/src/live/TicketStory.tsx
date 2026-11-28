@@ -177,10 +177,14 @@ function EventRow({ event }: { event: StoryEvent }) {
       <div className="story-body">
         <div className="story-title">
           <strong>{event.title}</strong>
-          {event.subtitle && event.kind !== "decision" && <span className="muted"> · {event.subtitle}</span>}
+          {event.subtitle && event.kind !== "decision" && event.kind !== "paused" && (
+            <span className="muted"> · {event.subtitle}</span>
+          )}
           {meta.length > 0 && <span className="story-meta">{meta.join(" · ")}</span>}
         </div>
-        {event.kind === "decision" && event.subtitle && <p className="story-guidance">{event.subtitle}</p>}
+        {(event.kind === "decision" || event.kind === "paused") && event.subtitle && (
+          <p className="story-guidance">{event.subtitle}</p>
+        )}
         {event.phases && <p className="story-detail">{phaseLine(event.phases)}</p>}
         {stepLines(event.steps).map((line) => (
           <p key={line} className="story-detail muted">

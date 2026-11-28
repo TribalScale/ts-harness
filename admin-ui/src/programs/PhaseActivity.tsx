@@ -17,6 +17,7 @@ const POLL_MS = 15000;
 const KIND_STATUS: Record<WorkflowProgress["kind"], SemanticStatus> = {
   running: "neutral",
   waiting: "warning",
+  paused: "warning",
   stuck: "danger",
   blocked: "danger",
   done: "success",
