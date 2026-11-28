@@ -457,4 +457,22 @@ def decide(
     engine._maybe_notify(ctx, "blocked")
     engine._maybe_complete_program_phase(ctx)
     engine._sync_session(workflow_id, workflow_type, tenant_id, task=task)
-    return {**base, "status": "stopped"}
+    ended = _end_stopped_workflow(engine, ctx, stopped_error)
+    return {**base, "status": "stopped", "workflow_ended": ended}
+
+
+def _end_stopped_workflow(engine: Any, ctx: Any, stopped_error: str) -> bool:
+    """A stopped work order's workflow ends too, so it no longer shows as running (Live, program board).
+
+    The cancel keeps the "stopped by" text as each open step's error, so the ticket story still
+    says who stopped it, and a ticket queue counts it as stopped. No second chat message is sent.
+    """
+    try:
+        ctx.extras["reason"] = stopped_error
+        engine.registry.invoke("cancel_workflow", ctx)
+        return True
+    except Exception:  # noqa: BLE001 - the stop stands; the workflow is just left open
+        import logging
+
+        logging.getLogger(__name__).warning("stopped work order's workflow not ended: %s", ctx.workflow_id, exc_info=True)
+        return False

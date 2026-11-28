@@ -67,9 +67,30 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(tr.decide(minor, autonomy="autonomous", go_ahead=False), "go")
 
     def test_behaviour_assumptions_and_unready_tickets_wait(self):
-        behaviour = {"status": "assumptions", "work_order": WORK_ORDER, "assumptions": [{"text": "hide zero counts", "kind": "behaviour"}]}
+        behaviour = {"status": "assumptions", "work_order": WORK_ORDER, "questions": ["Hide rows with zero comments?"],
+                     "assumptions": [{"text": "hide zero counts", "kind": "behaviour", "settled_by": ""}]}
         self.assertEqual(tr.decide(behaviour, autonomy="autonomous", go_ahead=False), "wait")
         self.assertEqual(tr.decide({"status": "not_ready", "questions": ["Which list?"]}, autonomy="autonomous", go_ahead=False), "wait")
+
+    def test_assumptions_the_ticket_or_code_settles_or_with_nothing_to_ask_do_not_wait(self):
+        # A run once stopped on four "behaviour" assumptions the ticket itself decided, while its
+        # own reason said only minor assumptions were needed.
+        settled = {"status": "assumptions", "work_order": WORK_ORDER, "questions": ["Is message null when a slot exists?"],
+                   "assumptions": [{"text": "order has the override's shape", "kind": "behaviour", "settled_by": "existing_code"},
+                                   {"text": "422 when not flagged", "kind": "behaviour", "settled_by": "ticket"}]}
+        self.assertEqual(tr.decide(settled, autonomy="autonomous", go_ahead=False), "go")
+        no_question = {"status": "assumptions", "work_order": WORK_ORDER,
+                       "assumptions": [{"text": "message is top-level", "kind": "behaviour", "settled_by": ""}]}
+        self.assertEqual(tr.decide(no_question, autonomy="autonomous", go_ahead=False), "go")
+
+    def test_the_chat_gets_the_questions_not_the_draft(self):
+        result = {"status": "assumptions", "work_order": WORK_ORDER, "questions": ["Hide rows with zero comments?"],
+                  "assumptions": [{"text": "hide zero counts", "kind": "behaviour", "settled_by": ""}]}
+        text = tr.chat_text("PROJ-7", result)
+        self.assertTrue(text.startswith("PROJ-7 needs 1 answer before it's built."))
+        self.assertIn("1. Hide rows with zero comments?", text)
+        self.assertIn("go ahead", text)
+        self.assertNotIn("Acceptance Tests", text)
 
     def test_go_ahead_accepts_the_assumptions(self):
         behaviour = {"status": "assumptions", "work_order": WORK_ORDER, "assumptions": [{"text": "hide zero counts", "kind": "behaviour"}]}
@@ -123,6 +144,7 @@ class CheckReadyTests(unittest.TestCase):
                            issue=_issue(), summary="s", description="d", repo_url="https://github.com/org/web",
                            base_branch="dev", github=github, autonomy="autonomous",
                            model_call=_model({"status": "assumptions", "work_order": WORK_ORDER,
+                                              "questions": ["Hide rows with zero comments?"],
                                               "assumptions": [{"text": "zero counts are hidden", "kind": "behaviour"}]}))
         mark = memory.patch_task_input.call_args.args[1][HUMAN_DECISION_KEY]
         self.assertEqual((mark["reason"], mark["jira_issue_key"]), ("ticket_not_ready", "PROJ-7"))
@@ -130,7 +152,7 @@ class CheckReadyTests(unittest.TestCase):
     def test_go_ahead_after_the_questions_builds_with_the_assumptions_listed(self):
         result = {"status": "assumptions", "work_order": WORK_ORDER, "assumptions": [{"text": "zero counts are hidden", "kind": "behaviour"}]}
         out, _ = _check(result, guidance="The previous run stopped: ...\n\nGuidance from Sam:\ngo ahead")
-        self.assertIn("## Assumptions\n- zero counts are hidden (changes behaviour or scope)", out["body"])
+        self.assertIn("## Assumptions\n- zero counts are hidden", out["body"])
 
     def test_no_model_or_switched_off_goes_through_as_before(self):
         with mock.patch.dict("os.environ", {"TS_HARNESS_TICKET_READINESS": "off"}):

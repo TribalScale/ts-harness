@@ -73,8 +73,10 @@ Answers from people since the questions were asked:
 Reply with JSON only:
 {{"status": "ready" | "assumptions" | "not_ready",
   "work_order": "for ready or assumptions: markdown with ## Summary, ## Requirements, ## Acceptance Tests (Given/When/Then), ## In Scope, ## Out of Scope, ## Files (likely paths from the repository list)",
-  "assumptions": [{{"text": "what you assumed", "kind": "minor" if it changes nothing a user sees or the system promises (placement, naming, an internal helper), "behaviour" if it decides what users see or can do, data rules, an API's shape, a permission or the scope}}],
-  "questions": ["for not_ready, or to confirm behaviour assumptions: specific questions a product owner can answer in a sentence"],
+  "assumptions": [{{"text": "what you assumed",
+                   "settled_by": "ticket" if the ticket's own words already decide it, "existing_code" if it follows what the code or an endpoint the ticket mirrors already does, "" if neither decides it,
+                   "kind": "minor" if it changes nothing a user sees or the system promises (placement, naming, an internal helper) OR it is settled by the ticket or the existing code; "behaviour" ONLY if nothing settles it and it decides what users see or can do, data rules, an API's shape, a permission or the scope}}],
+  "questions": ["one question per behaviour assumption (and for not_ready): specific, answerable in a sentence; never ask what the ticket already says"],
   "reason": "one sentence"}}
 Use "not_ready" when the goal itself is unclear, or the ticket contradicts itself, or no testable outcome can be stated.
 """
@@ -212,16 +214,32 @@ def decide(result: dict[str, Any], *, autonomy: str, go_ahead: bool) -> str:
         return "go"
     if status == "not_ready":
         return "wait"
-    behaviour = [a for a in result.get("assumptions") or [] if isinstance(a, dict) and a.get("kind") != "minor"]
-    if behaviour:
+    if blocking_assumptions(result):
         return "wait"
     if autonomy == "conservative" and (status == "assumptions" or result.get("assumptions")):
         return "wait"
     return "go"
 
 
+def blocking_assumptions(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Behaviour assumptions that really need a person: nothing settles them and there is a question.
+
+    The model over-labels: a run marked four assumptions "changes behaviour" that the ticket itself
+    decided, while its reason said only minor assumptions were needed. An assumption the ticket or
+    the code it mirrors settles is minor, and with no question to ask there is nothing to wait for.
+    """
+    questions = [q for q in result.get("questions") or [] if str(q).strip()]
+    if not questions:
+        return []
+    return [
+        a for a in result.get("assumptions") or []
+        if isinstance(a, dict) and a.get("kind") == "behaviour" and not str(a.get("settled_by") or "").strip()
+    ]
+
+
 def _assumption_lines(result: dict[str, Any]) -> list[str]:
-    return [f"- {a.get('text')}" + (" (changes behaviour or scope)" if a.get("kind") != "minor" else "")
+    blocking = {id(a) for a in blocking_assumptions(result)}
+    return [f"- {a.get('text')}" + (" (needs your answer)" if id(a) in blocking else "")
             for a in result.get("assumptions") or [] if isinstance(a, dict) and a.get("text")]
 
 
@@ -246,6 +264,24 @@ def questions_text(key: str, result: dict[str, Any]) -> str:
         lines += ["", "Draft work order:", "", str(result["work_order"]).strip()]
     lines += ["", "Answer here on the ticket, in the chat with `/retry <answers>`, or in the TS Harness Inbox. "
                   "Reply \"go ahead\" to build it with these assumptions."]
+    return "\n".join(lines)
+
+
+CHAT_MARK = "needs_answers:"
+
+
+def chat_text(key: str, result: dict[str, Any]) -> str:
+    """The short version for the chat and the Inbox: the questions and how to answer, no draft."""
+    questions = [str(q) for q in result.get("questions") or [] if str(q).strip()]
+    if str(result.get("status") or "") == "not_ready":
+        head = f"{key} isn't ready to build: {result.get('reason') or 'the ticket leaves things unclear'}."
+    else:
+        head = f"{key} needs {len(questions) or 1} answer{'s' if len(questions) > 1 else ''} before it's built."
+    lines = [head]
+    if questions:
+        lines += ["", *[f"{i}. {q}" for i, q in enumerate(questions, 1)]]
+    lines += ["", "Reply `go ahead` to build it with the harness's assumptions, or answer here (`/retry <answers>`), "
+                  "on the Jira ticket, or in the Inbox. The draft work order and its assumptions are on the Jira ticket."]
     return "\n".join(lines)
 
 
@@ -366,7 +402,7 @@ def check_ready(
             "reason": WAIT_REASON, "since": _now(), "asked_at": _now(), "jira_issue_key": key}})
     except Exception as exc:  # noqa: BLE001
         logger.warning("waiting mark not saved on %s: %s", key, exc)
-    raise StepBlocked(text.removeprefix(COMMENT_MARK).strip(), output={"readiness": result})
+    raise StepBlocked(f"{CHAT_MARK} {chat_text(key, result)}", output={"readiness": result, "jira_comment": text})
 
 
 def recheck_waiting_tickets(*, tenant_id: str = "default", memory: Any = None, engine: Any = None, jira: Any = None) -> dict[str, Any]:

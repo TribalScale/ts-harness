@@ -43,7 +43,11 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         and _already_posted(ctx.workflow_id, str(task.get("id") or ""), notify_error)
     ):
         return {"status": "skipped", "reason": "same block already posted"}
-    if mapped == "blocked" and notify_error and "sending it back to OpenCode" not in notify_error:
+    if mapped == "blocked" and notify_error and "needs_answers:" in notify_error:
+        # A hand-written ticket's readiness questions (jira/ticket_readiness.py): already a
+        # complete message for a person, not a failure to wrap.
+        notify_error = notify_error.split("needs_answers:", 1)[1].strip()
+    elif mapped == "blocked" and notify_error and "sending it back to OpenCode" not in notify_error:
         if not _is_wait_error(notify_error):
             notify_error = (
                 f"Step `{step_name or 'unknown'}` is blocked and will not retry "
