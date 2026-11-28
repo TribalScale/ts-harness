@@ -2384,6 +2384,101 @@ async def admin_workflows_decide(request: Request) -> Response:
     return _json(result)
 
 
+def _amendable_workflow(workflow_id: str, auth: Any, *, route: str) -> tuple[dict[str, Any] | None, Response | None]:
+    """The workflow record when the caller may amend its work order, else the error response."""
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        payload = get_memory_client().get_workflow(workflow_id) or {}
+    except Exception:
+        payload = {}
+    workflow = payload.get("workflow") or {}
+    if not workflow or str(workflow.get("tenant_id") or "default") != tenant_id:
+        return None, _json({"error": "workflow not found"}, 404)
+    tasks = list(payload.get("tasks") or [])
+    if tasks:
+        try:
+            # The same program check as a decision on the ticket's steps.
+            _require_task_program_level(str(tasks[0].get("id") or ""), auth, "approve", route=route)
+        except ProgramAccessDenied as exc:
+            return None, _json({"error": str(exc)}, exc.status)
+    return payload, None
+
+
+async def admin_workflows_amend(request: Request) -> Response:
+    """Append a ``## Scope amendment`` to a running ticket's work order (see workflows/work_order_amendments.py)."""
+    try:
+        _check_origin(request)
+        body = await request.json()
+        auth = _auth(request, body if isinstance(body, dict) else {})
+        _require_admin(get_runtime(), auth, "approve_gate")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    except Exception:
+        return _json({"error": "invalid json"}, 400)
+    body = body if isinstance(body, dict) else {}
+    workflow_id = str(body.get("workflow_id") or "").strip()
+    text = str(body.get("text") or "").strip()
+    if not workflow_id or not text:
+        return _json({"error": "workflow_id and text are required"}, 400)
+    _payload, denied = _amendable_workflow(workflow_id, auth, route="amend")
+    if denied is not None:
+        return denied
+    from ts_harness.workflows import work_order_amendments as amendments
+
+    actor = _decision_actor(auth)
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        result = amendments.amend_work_order(
+            get_memory_client(), workflow_id, text, person=actor, actor=actor, source="console",
+        )
+    except amendments.AmendmentError as exc:
+        return _json({"error": str(exc)}, 409)
+    except Exception as exc:  # noqa: BLE001
+        log_event("admin_workflow_amend_error", workflow_id=workflow_id, error=str(exc))
+        return _json({"error": str(exc)}, 500)
+    pr_url = ""
+    try:
+        pr_url = amendments.workflow_pr_url(list((_payload or {}).get("tasks") or []))
+    except Exception:  # noqa: BLE001
+        pr_url = ""
+    result["acknowledged"] = amendments.acknowledge(
+        workflow_id, amendments.acknowledgement(result), pr_url=pr_url, tenant_id=tenant_id, actor=actor,
+    )
+    log_event("admin_workflow_amended", workflow_id=workflow_id, actor=actor)
+    return _json(result)
+
+
+async def admin_workflow_amendments(request: Request) -> Response:
+    """The work order's original text and every amendment, oldest first."""
+    try:
+        _check_origin(request)
+        auth = _auth(request, {})
+        _require_admin(get_runtime(), auth, "view")
+    except AuthError as exc:
+        return _json({"error": str(exc)}, exc.status)
+    workflow_id = str(request.path_params.get("workflow_id") or "")
+    tenant_id = str(auth.tenant_id or "default")
+    try:
+        payload = get_memory_client().get_workflow(workflow_id) or {}
+    except Exception:
+        payload = {}
+    workflow = payload.get("workflow") or {}
+    if not workflow or str(workflow.get("tenant_id") or "default") != tenant_id:
+        return _json({"error": "workflow not found"}, 404)
+    tasks = list(payload.get("tasks") or [])
+    if tasks:
+        try:
+            _require_task_program_level(str(tasks[0].get("id") or ""), auth, "read", route="amendments")
+        except ProgramAccessDenied as exc:
+            return _json({"error": str(exc)}, exc.status)
+    from ts_harness.workflows.work_order_amendments import amendment_history
+
+    try:
+        return _json(amendment_history(get_memory_client(), workflow_id))
+    except Exception as exc:  # noqa: BLE001
+        return _json({"error": str(exc)}, 500)
+
+
 # ── Workflow definition admin BFF ─────────────────────────────────────────────
 
 
@@ -4862,6 +4957,8 @@ routes = [
     Route("/admin/workflows/gate-review", endpoint=admin_workflows_gate_review, methods=["GET"]),
     Route("/admin/workflows/approve", endpoint=admin_workflows_approve, methods=["POST"]),
     Route("/admin/workflows/decide", endpoint=admin_workflows_decide, methods=["POST"]),
+    Route("/admin/workflows/amend", endpoint=admin_workflows_amend, methods=["POST"]),
+    Route("/admin/workflows/{workflow_id}/amendments", endpoint=admin_workflow_amendments, methods=["GET"]),
     Route("/admin/workflows/reject", endpoint=admin_workflows_reject, methods=["POST"]),
     Route("/admin/workflow-definitions", endpoint=admin_workflow_definitions_list, methods=["GET"]),
     Route(

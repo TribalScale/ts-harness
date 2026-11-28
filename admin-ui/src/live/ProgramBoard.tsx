@@ -6,6 +6,7 @@ import { WAITING_LABELS, WAITING_STATUS } from "./LivePage";
 import { OUTCOME_LABELS } from "./HistoryView";
 import { CATEGORY_LABELS, Timeline, formatDuration } from "./Timeline";
 import { TicketStory } from "./TicketStory";
+import { AmendWorkOrder } from "./AmendWorkOrder";
 
 const POLL_MS = 15000;
 
@@ -113,6 +114,11 @@ export function ProgramBoard({ programId }: { programId: string }) {
               label={WAITING_LABELS[opened.item.waiting_on]}
             />
           </div>
+          {opened.column !== "done" && opened.column !== "stopped" && (
+            <div className="live-card-links">
+              <AmendWorkOrder workflowId={opened.item.workflow_id} label={opened.key} />
+            </div>
+          )}
           <TicketStory programId={programId} workflowId={opened.item.workflow_id} />
           {(opened.attempts || []).length > 0 && (
             <details className="board-attempts">

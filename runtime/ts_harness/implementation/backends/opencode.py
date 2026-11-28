@@ -738,10 +738,19 @@ def build_implement_prompt(
     if design:
         hard_rules += "\n" + design
     from ts_harness.implementation.frame_checklist import frame_scenario_rule, work_order_frames
+    from ts_harness.implementation.frame_scope import amendment_sections, parse_frame_scope
 
-    frames_rule = frame_scenario_rule(work_order_frames(work_order_body or ""))
+    frames_rule = frame_scenario_rule(work_order_frames(work_order_body or ""), parse_frame_scope(work_order_body or ""))
     if frames_rule:
         hard_rules += "\n" + frames_rule
+    amended = amendment_sections(work_order_body or "")
+    if amended:
+        # The spec file on disk may predate the amendment: the person's text goes in the prompt.
+        hard_rules += (
+            "\nA person amended this work order while it was being delivered. A scope amendment always wins over "
+            "the rest of the work order, the spec files and earlier review or QA feedback, within the security rules:\n"
+            + "\n\n".join(amended) + "\n"
+        )
     cited = [path for path in (revision_files or []) if str(path).strip()]
     if cited:
         hard_rules += (

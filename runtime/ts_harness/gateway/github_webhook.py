@@ -13,7 +13,9 @@ Each delivery is normalized into one event with a ``kind``:
   independent-review publisher) instead of waits.
 * ``github.pr_closed``, a changes-requested ``github.pr_review`` and a
   ``/revise`` ``github.pr_comment`` check the PR's merge wait for a human
-  rejection right away instead of on the next poll.
+  rejection right away instead of on the next poll. An ``/amend <text>``
+  comment appends a scope amendment to the PR's running work order at any
+  stage (``pr_commands.handle_amend_command``).
 * ``github.installation`` and ``github.installation_repositories`` keep the
   GitHub App installations table current.
 
@@ -215,7 +217,7 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
         issue = body.get("issue") or {}
         comment = body.get("comment") or {}
         text = str(comment.get("body") or "").strip()
-        if action != "created" or issue.get("pull_request") is None or not re.match(r"^/(retry|revise|accept|stop)\b", text, re.I):
+        if action != "created" or issue.get("pull_request") is None or not re.match(r"^/(retry|revise|accept|stop|amend)\b", text, re.I):
             return None
         return {
             "kind": "github.pr_comment",
@@ -224,6 +226,8 @@ def parse_github_event(body: dict[str, Any], event_name: str | None = None) -> d
             "number": issue.get("number"),
             "author": _login(comment.get("user")),
             "body": text,
+            # ``/amend`` is applied once per comment, whether the webhook or the poller sees it first.
+            "comment_id": str(comment.get("id") or ""),
         }
 
     if name == "installation":

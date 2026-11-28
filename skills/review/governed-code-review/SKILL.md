@@ -7,7 +7,7 @@ allowed_agents: [review-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.11.0
+version: 1.12.0
 ---
 
 # Governed Code Review
@@ -45,6 +45,15 @@ Then:
    requested on this PR, oldest first. They amend the work order: where one
    conflicts with the work order or an earlier request, the latest request
    wins. Never flag code for doing what a human requested.
+   A `## Scope amendment (by <person>, <date>)` section was added to the work
+   order by a person while it was running. It amends the work order and always
+   wins over anything above it (its scope, files, criteria, frames); the latest
+   amendment wins over earlier ones. Review against the work order as amended.
+   A `## Frame scope` or `## Shared frames` section means other tickets build
+   the rest of a shared design frame in their own PRs: the PR is expected to
+   build only the regions it owns. Missing work in a region another ticket owns
+   is not a finding; rebuilding or restyling that region here is a `major`
+   `scope` finding.
 4. Read `input.scope_findings`. They list, as `minor` information, the files
    outside a declared `## Files` list. The coding agent may change files the
    list does not name, so judge each one: a file the work needs (an importer,

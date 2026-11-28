@@ -291,6 +291,16 @@ class MemoryClient:
             {"input": input_data, "actor": actor},
         )
 
+    def patch_task_output(
+        self, task_id: str, output: dict[str, Any], *, actor: str = "orchestrator", reason: str = ""
+    ) -> dict[str, Any]:
+        """Replace a task's output (an amended work order); the gateway audits the change."""
+        return self._request(
+            "PATCH",
+            f"/workflow/task/{task_id}/output",
+            {"output": output, "actor": actor, "reason": reason},
+        )
+
     def propose_plan(
         self,
         workflow_id: str,

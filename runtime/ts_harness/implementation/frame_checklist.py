@@ -225,11 +225,27 @@ def frame_tag(ref_id: str) -> str:
     return f"{FRAME_TAG_PREFIX}{ref_id}"
 
 
-def frame_scenario_rule(frames: list[dict[str, Any]]) -> str:
-    """Coding prompt section: build every Shows item and add a capturable scenario per frame."""
+def frame_scenario_rule(frames: list[dict[str, Any]], scope: dict[str, Any] | None = None) -> str:
+    """Coding prompt section: build every Shows item and add a capturable scenario per frame.
+
+    ``scope`` (``frame_scope.parse_frame_scope``) narrows a shared frame to the part this work
+    order owns: the rest is another ticket's, built in its own PR.
+    """
     if not frames:
         return ""
-    return (
+    shared = ""
+    for frame in frames:
+        part = (scope or {}).get(frame["id"])
+        if part is None:
+            continue
+        others = "; ".join(f"{o['owner']}: {o['region']}" if o.get("owner") else o["region"] for o in part.others)
+        shared += (
+            f"Frame {frame['id']} is shared with other tickets. Build only the part this work order owns: "
+            f"{'; '.join(part.owns) or 'see the Frame scope section'}."
+            + (f" Leave the rest to its owners ({others}); don't rebuild or restyle it here." if others else "")
+            + "\n"
+        )
+    return shared + (
         "Frame checklist. Each design frame below is part of this work order: build everything listed under "
         "Shows for it (panels, card content, selected and dimmed states, colours, type), even where the prose "
         "doesn't repeat it.\n"

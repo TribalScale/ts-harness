@@ -1037,6 +1037,25 @@ export interface BoardItem {
   attempts?: (LiveItem & RunOutcome)[];
 }
 
+/** A person's scope amendment to a running work order (GET /admin/workflows/{id}/amendments). */
+export interface WorkOrderAmendment {
+  id: string;
+  text: string;
+  person: string;
+  source: string;
+  date: string;
+  at: string;
+  comment_id?: string;
+  pr_url?: string;
+}
+
+export interface WorkOrderAmendments {
+  workflow_id: string;
+  original: string;
+  current: string;
+  amendments: WorkOrderAmendment[];
+}
+
 export interface BoardResponse {
   generated_at: string;
   program_id: string;

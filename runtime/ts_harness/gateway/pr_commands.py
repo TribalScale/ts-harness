@@ -15,7 +15,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-COMMAND = re.compile(r"^\s*/(retry|revise|accept|stop)\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL)
+COMMAND = re.compile(r"^\s*/(retry|revise|accept|stop|amend)\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL)
+WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
 
 
 def parse_command(text: str) -> tuple[str, str] | None:
@@ -97,6 +98,8 @@ def handle_pr_command(
     if parsed is None:
         return {"status": "not_a_command"}
     action, rest = parsed
+    if action == "amend":
+        return handle_amend_command(event, tenant_id=tenant_id, memory=memory, engine=engine, config=config, reply=reply)
     pr_url = str(event.get("pr_url") or "")
     login = str(event.get("author") or "")
     if memory is None:
@@ -151,6 +154,104 @@ def handle_pr_command(
     }[action]
     say(pr_url, f"Done, @{login}: {done}.")
     return {"status": "decided", "action": action, "work_order": work_order, "result": result}
+
+
+def _write_permission(pr_url: str, login: str) -> str:
+    from ts_harness.integrations.github_client import github_for, parse_github_pr_url
+
+    parsed = parse_github_pr_url(pr_url)
+    if parsed is None or not login:
+        return "none"
+    return github_for(pr_url).collaborator_permission(parsed[0], parsed[1], login)
+
+
+def handle_amend_command(
+    event: dict[str, Any],
+    *,
+    tenant_id: str = "default",
+    memory: Any = None,
+    engine: Any = None,
+    config: Any = None,
+    reply: Any = None,
+    permission: Any = None,
+    delivery: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """``/amend <text>``: append a scope amendment to the PR's running work order, at any stage.
+
+    The commenter needs write access to the repository. One amendment per comment: the comment
+    id makes it idempotent, so the webhook and the poller never apply the same comment twice.
+    """
+    from ts_harness.workflows import work_order_amendments as amendments
+
+    parsed = parse_command(str(event.get("body") or ""))
+    text = parsed[1] if parsed and parsed[0] == "amend" else ""
+    pr_url = str(event.get("pr_url") or "")
+    login = str(event.get("author") or "")
+    comment_id = str(event.get("comment_id") or "")
+    if memory is None:
+        from ts_harness.memory.client import get_memory_client
+
+        memory = get_memory_client()
+    say = reply or _reply_on_pr
+    found = delivery or amendments.delivery_for_pr(memory, pr_url, tenant_id=tenant_id)
+    if found is None:
+        say(pr_url, f"@{login} `/amend` did nothing: no running delivery has this pull request.")
+        return {"status": "no_delivery", "action": "amend"}
+    work_order = str(found.get("work_order") or "the work order")
+    workflow_id = str(found["workflow_id"])
+    if amendments.comment_handled(memory, workflow_id, comment_id):
+        return {"status": "duplicate", "action": "amend", "work_order": work_order}
+    try:
+        return _amend(
+            amendments, memory, found, text, pr_url=pr_url, login=login, comment_id=comment_id, tenant_id=tenant_id,
+            engine=engine, config=config, say=say, permission=permission,
+        )
+    finally:
+        try:
+            amendments.mark_comment_handled(memory, workflow_id, comment_id)
+        except Exception as exc:  # noqa: BLE001 - the amendment record still dedupes applied comments
+            logger.warning("could not remember /amend comment %s: %s", comment_id, exc)
+
+
+def _amend(
+    amendments: Any, memory: Any, found: dict[str, Any], text: str, *, pr_url: str, login: str, comment_id: str,
+    tenant_id: str, engine: Any, config: Any, say: Any, permission: Any,
+) -> dict[str, Any]:
+    work_order = str(found.get("work_order") or "the work order")
+    try:
+        level = str((permission or _write_permission)(pr_url, login) or "none").lower()
+    except Exception as exc:  # noqa: BLE001 - without the check nobody amends
+        logger.warning("write permission check failed for %s on %s: %s", login, pr_url, exc)
+        level = "none"
+    if level not in WRITE_PERMISSIONS:
+        say(pr_url, f"@{login} I can't amend {work_order}: `/amend` needs write access to this repository.")
+        return {"status": "denied", "action": "amend", "work_order": work_order}
+    if config is None:
+        from ts_harness.workflows.decisions import _live_config
+
+        try:
+            config = _live_config()
+        except Exception:  # noqa: BLE001 - the GitHub login names the person instead
+            config = None
+    try:
+        email, _roles, _record = _commenter(login, memory=memory, config=config, tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001
+        email = ""
+    try:
+        result = amendments.amend_work_order(
+            memory, str(found["workflow_id"]), text, person=email or f"@{login}", actor=email or f"github:{login}",
+            source="pr_comment", comment_id=comment_id, pr_url=pr_url,
+        )
+    except amendments.AmendmentError as exc:
+        say(pr_url, f"@{login} `/amend` for {work_order} did not go through: {exc}")
+        return {"status": "error", "action": "amend", "work_order": work_order, "error": str(exc)}
+    if result["status"] == "duplicate":
+        return {"status": "duplicate", "action": "amend", "work_order": work_order}
+    amendments.acknowledge(
+        str(found["workflow_id"]), f"@{login} {amendments.acknowledgement(result)}", pr_url=pr_url,
+        tenant_id=tenant_id, actor=email or f"github:{login}", engine=engine, reply=say,
+    )
+    return {"status": "amended", "action": "amend", "work_order": work_order, "workflow_id": found["workflow_id"]}
 
 
 def _reply_on_pr(pr_url: str, body: str) -> None:

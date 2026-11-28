@@ -3,7 +3,7 @@ name: story-writer
 description: Turn an approved PRD into a numbered Jira plan (jira_from_prd plan_stories) - epic, user-facing, technical and enabler stories with inline acceptance criteria and Blocks order - for human approval before anything is filed.
 category: pm
 allowed_agents: [pm-agent]
-version: 1.2.0
+version: 1.3.0
 ---
 
 # Story writer
@@ -65,7 +65,10 @@ A coding agent sees only its ticket. Before writing acceptance criteria, pin:
   each card's content, selected and dimmed states, background and text colours, type). Data in a
   frame is an example; write the rule. Add one scenario per frame ("Then it matches D7"). The
   coding agent writes a frame scenario per entry, the harness captures it at the frame's size, and
-  QA checks every Shows item against the capture.
+  QA checks every Shows item against the capture. When several stories build parts of the same
+  frame, give each a `## Frame scope` section: `### D1`, `- Owns:` (the regions or elements this
+  story builds) and `- Owned by other tickets:` (`<story or key>: region` for the rest), with each
+  region owned by exactly one story. QA then judges each story only on its own part.
 
 Collect every unresolved product question into one `open_questions` list, each with the answer you
 would pick. A question the PRD lists as open and that blocks a story is never settled silently.

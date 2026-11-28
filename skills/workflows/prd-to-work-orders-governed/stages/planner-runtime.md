@@ -201,6 +201,30 @@ Given ... When ... Then ...
   - The planner contract rejects a WO whose frames have no checklist entry, or
     an entry without a Route, a State or a Shows list.
 
+- **A frame several WOs build is split between them.** When two or more WOs
+  name the same frame (one builds the blocks, one the rows, one the header and
+  toolbar), each gets a `## Frame scope` section that says which regions or
+  elements of that frame it owns, taken from its In Scope and Files, and which
+  sibling WO owns the rest:
+
+  ```markdown
+  ## Frame scope
+
+  ### D1
+  - Owns:
+    - schedule blocks on the week grid (block cards, progress bars, late badges)
+  - Owned by other work orders:
+    - WO-004: grid rows and their tones (row surfaces #F3F4F6)
+    - WO-005: week header and toolbar
+  ```
+
+  QA then judges each WO only on its own part, and differences in the rest are
+  notes; the whole-frame match is checked after delivery. The planner contract
+  rejects a shared frame without a scope entry in every WO that names it, and
+  two WOs that both list the same region under `Owns`. Put a colour or region
+  under exactly one WO's `Owns`; a WO's frame acceptance line ("Then it
+  matches D1") covers its owned part.
+
 - **Realistic data from day one.** A screen that shows nothing on a fresh environment can't be
   checked by anyone. When a feature needs configuration data before it does anything (rules,
   calendars, standards, lookup tables), the API WO that adds it also adds a sample to the API's

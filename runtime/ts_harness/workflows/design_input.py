@@ -128,10 +128,19 @@ def design_input(
     if store is None:
         return out
     if step in QA_STEPS:
+        from ts_harness.implementation.frame_scope import qa_frame_scope, scope_design_checks
         from ts_harness.workflows.frame_review import frame_review_input
 
+        body = _work_order_body(task_input, tasks)
+        scope = qa_frame_scope(body)
+        if scope:
+            # A shared frame: QA judges only the part this work order owns.
+            out["frame_scope"] = scope
         existing = list(task_input.get("_images") or [])
         framed = frame_review_input(refs, task_input.get("frame_captures"), store)
+        if framed.get("design_checks"):
+            own_ref = str(task_input.get("work_order_ref") or task_input.get("work_order_id") or "")
+            framed["design_checks"] = scope_design_checks(framed["design_checks"], body, own_ref=own_ref)
         if framed.get("_images"):
             # Each frame next to its capture replaces the separate design images; two test
             # screenshots stay for behaviour the frames don't show.

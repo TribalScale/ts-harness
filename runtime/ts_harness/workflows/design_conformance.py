@@ -14,6 +14,12 @@ page behind a white design, white rows where the design is grey). Routes that co
 captured are listed too. New findings become one proposed bug per night, like smoke failures:
 the bug program's gates wait for a person before anything reaches Jira.
 
+A frame several tickets build in parts (``## Frame scope``, implementation/frame_scope.py) is
+judged per ticket only for the part each owns; this run is where the whole frame is compared.
+Its record lists every work order that delivered part of it (``work_order_refs``) and the
+siblings that own the rest (``shared_with``), and the bug names them all, so a gap between
+tickets (a region nobody owned, two tickets disagreeing) is reported as such.
+
 Layout and missing panels need judgement, not sampling: the bug lists each frame with its
 Figma link and its capture, so the bug's investigation (and the person approving it) can look.
 
@@ -61,7 +67,9 @@ def delivered_frames(
 ) -> list[dict[str, Any]]:
     """The frames a passed work order names, with route, size and design image, ready to record."""
     from ts_harness.implementation.frame_checklist import frames_to_capture, work_order_frames
+    from ts_harness.implementation.frame_scope import parse_frame_scope
 
+    scopes = parse_frame_scope(work_order_body)
     by_id = {str(ref.get("id")): ref for ref in refs if isinstance(ref, dict)}
     sizes = {frame["id"]: frame for frame in frames_to_capture(work_order_body)}
     out: list[dict[str, Any]] = []
@@ -83,6 +91,11 @@ def delivered_frames(
                 "object_key": ref["object_key"],
                 "url": ref.get("url") or "",
                 "work_order_ref": work_order_ref,
+                # A shared frame: this work order built only its part; the nightly run checks the whole.
+                "owns": list(scopes[frame["id"]].owns) if frame["id"] in scopes else [],
+                "shared_with": sorted(
+                    {o["owner"] for o in scopes[frame["id"]].others if o.get("owner")} if frame["id"] in scopes else set()
+                ),
             }
         )
     return out
@@ -102,7 +115,19 @@ def record_frames(
         state = dict(value or {})
         known = dict(state.get("frames") or {})
         for frame in frames:
-            known[frame["key"]] = {**frame, "recorded_at": now}
+            before = known.get(frame["key"]) or {}
+            # Every work order that built part of a shared frame, so a gap between them is named.
+            builders = [
+                *[str(r) for r in before.get("work_order_refs") or [before.get("work_order_ref")] if r],
+                *([str(frame["work_order_ref"])] if frame.get("work_order_ref") else []),
+            ]
+            shared = {*(before.get("shared_with") or []), *(frame.get("shared_with") or [])}
+            known[frame["key"]] = {
+                **frame,
+                "work_order_refs": list(dict.fromkeys(builders)),
+                "shared_with": sorted(shared - set(builders)),
+                "recorded_at": now,
+            }
         newest = sorted(known.values(), key=lambda f: -float(f.get("recorded_at") or 0))[
             :MAX_FRAMES_PER_REPO
         ]
@@ -189,7 +214,8 @@ def findings_for_run(
             continue
         base = {
             k: frame.get(k)
-            for k in ("key", "id", "title", "route", "width", "height", "url", "work_order_ref")
+            for k in ("key", "id", "title", "route", "width", "height", "url", "work_order_ref",
+                      "work_order_refs", "shared_with")
         }
         base["capture"] = (
             f"https://github.com/{repo}/blob/{commit}/{result.get('file')}?raw=true"
@@ -247,9 +273,22 @@ def bug_summary(repo: str, run_url: str, findings: list[dict[str, Any]]) -> str:
     ]
     for finding in findings:
         head = f"- {finding.get('id')} · {finding.get('title')} (route {finding.get('route')}, {finding.get('width')}×{finding.get('height')})"
-        if finding.get("work_order_ref"):
-            head += f", built by {finding['work_order_ref']}"
+        builders = [str(r) for r in finding.get("work_order_refs") or [finding.get("work_order_ref")] if r]
+        pending = [str(r) for r in finding.get("shared_with") or [] if r not in builders]
+        if len(builders) > 1 or pending:
+            head += f", built in parts by {', '.join(builders + pending)}"
+        elif builders:
+            head += f", built by {builders[0]}"
         lines.append(head)
+        if len(builders) > 1 or pending:
+            # Each ticket was checked only for its own part: a gap here is between tickets.
+            lines.append(
+                "  - Shared frame: each ticket's QA judged only the part it owns, so this is where the whole "
+                "frame is compared. A difference may sit between tickets (a region no ticket owned, or two "
+                "tickets disagreeing)"
+                + (f"; not delivered yet: {', '.join(pending)}" if pending else "")
+                + "."
+            )
         if finding.get("url"):
             lines.append(f"  - Design: {finding['url']}")
         if finding.get("capture"):

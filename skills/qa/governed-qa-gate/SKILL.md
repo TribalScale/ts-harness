@@ -7,7 +7,7 @@ allowed_agents: [qa-agent]
 disable-model-invocation: false
 always_inline: true
 approval_status: approved
-version: 1.10.0
+version: 1.11.0
 ---
 
 # Governed QA Gate
@@ -103,6 +103,41 @@ Then:
    - What a frame shows is required even when the work order's prose doesn't
      repeat it: the frames are part of the work order. Data, dates and order
      numbers in the frame are examples, not requirements.
+   **A shared frame is judged only for the part this work order owns.** When
+   the work order has a `## Frame scope` section (also in `input.frame_scope`:
+   per frame, `owns` and `others` with the ticket that owns each other region)
+   or a `## Shared frames` note, other tickets build the rest of that frame in
+   their own PRs, in parallel:
+   - Compare only the owned regions and elements. A difference in a region
+     another ticket owns (its rows, its toolbar, its header) is a **note**, not
+     a defect: list it in the PR's `notes` with the owning ticket, and do not
+     fail the PR or any criterion for it.
+   - In `input.design_checks`, a colour mismatch marked `owned: false` (with
+     its `owner`) is in a region another ticket owns, or the work order gives
+     it to another ticket: a note, never a defect. Where a mismatch has no
+     `owned` mark, decide from the images whether it falls in an owned region.
+   - A whole-page criterion on a shared frame ("Then the page matches D1") is
+     judged for the owned part only; mark it `pass` when the owned part
+     matches and say in the note that the rest belongs to the other tickets.
+     The whole-frame match is checked after delivery by the design
+     conformance run, which reports gaps between tickets.
+   **A wrong data state is one test-data defect.** When a capture shows a
+   different data state than the frame draws (the plan still loading, an empty
+   or sparse list, seeded states the frame shows missing: no late or stacked
+   orders, no overdue rows), the UI can't be judged there. Report **all** such
+   gaps in **one** defect with `category: "test_data"`, as an object:
+   `{"category": "test_data", "summary": "...", "criteria": [every criterion
+   it affects], "regions": [...], "fix": "the frame scenario or seed to fix
+   and what data it needs"}`. Mark the affected criteria `fail` with a note
+   pointing at that defect (the one defect covers every criterion it lists).
+   Do not raise separate UI defects for those regions, in this round or later
+   ones, unless the UI itself is still wrong once the data is right.
+   **A person's scope amendment always wins.** A `## Scope amendment (by
+   <person>, <date>)` section in the work order was added by a person while the
+   work order was running. It amends the work order: where it conflicts with
+   anything above it (a frame, a criterion, the frame scope, an earlier QA
+   ruling), the amendment wins, and the latest amendment wins over earlier
+   ones. Meeting it is not a defect; judge the criteria as amended.
    **Check the base branch before calling something missing.** The patch shows
    only what changed. When a criterion names something the patch does not add
    (a translation key, a config entry, a helper), call `read_pr_file` with the
@@ -146,11 +181,26 @@ Then:
    decide, and list each one that is not met as its own defect. Do not stop at
    the first failure: each QA rejection costs a full revision, and a second
    pass that only now mentions a gap that was there all along wastes one.
-   Every criterion marked `fail` has a matching entry in `defects`.
+   For a frame, go through every owned region of it (surfaces, cards and their
+   content such as progress bars, panels, clusters, controls, type) in this
+   pass, not one kind of difference per round.
+   Every criterion marked `fail` has a matching entry in `defects` (a
+   `test_data` defect covers the criteria it lists).
+   **Stay consistent with earlier rounds.** `input.previous_qa_rounds` lists
+   your earlier verdicts on this work order, oldest first: each round's
+   defects, failed criteria and notes. First check each earlier defect again
+   (fixed or not). Do not reverse an earlier ruling (a layout you accepted, a
+   region you said was another ticket's, a difference you called a note)
+   unless the work order changed since, through a `## Scope amendment` or
+   `input.human_change_requests`. A difference that was visible in an earlier
+   round and not reported then is still a defect if it is one, but say in
+   its note that it was missed earlier.
    For each PR, evaluate acceptance criteria and record evidence:
    - `acceptance_criteria`: per-criterion `pass`, `fail` or `unverified` with a short note.
    - `tests`: tests exercised or the host verify summary reused as evidence.
    - `defects`: blocking issues found (empty when the PR passes).
+   - `notes`: differences that do not block, such as those in a region another
+     ticket owns, each naming that ticket (optional).
 5. Set each PR `status` to `success` or `failed`.
 6. Set top-level `status` to `success` **only if every** per-PR `status` is
    `success`; otherwise `failed`.
@@ -173,6 +223,7 @@ Then:
         ],
         "tests": ["host verify: 42 passed"],
         "defects": [],
+        "notes": ["D1 toolbar spacing differs; the toolbar belongs to PROJ-13"],
         "summary": "Meets all AC."
       }
     ]
