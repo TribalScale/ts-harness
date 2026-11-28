@@ -154,6 +154,11 @@ class HumanDecisionTests(unittest.TestCase):
         self.assertTrue(block_args.args[1].startswith("stopped_by_human: alice"))
         self.complete_phase.assert_called_once()
         self.assertIn("alice stopped WO-003", self.notified[-1]["channel_text"])
+        # The workflow ends too (it no longer shows as running), keeping who stopped it.
+        self.assertTrue(result["workflow_ended"])
+        cancel_args = self.client.cancel_workflow.call_args
+        self.assertEqual(cancel_args.args[0], "wf-d")
+        self.assertTrue(cancel_args.kwargs["reason"].startswith("stopped_by_human: alice"))
 
     def test_only_a_stuck_step_can_be_decided(self):
         self._state([_deliver(1), _finalize(status="succeeded")])

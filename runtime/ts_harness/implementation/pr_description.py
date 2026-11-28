@@ -136,6 +136,20 @@ def pr_body(
 
     beyond = [f for f in out_of_scope_files or [] if f]
     files = [f for f in changed_files if f]
+    if repo_dir is not None:
+        from ts_harness.implementation.verification import already_current_files
+
+        current = already_current_files(Path(repo_dir))
+        if current:
+            parts += [
+                "## Listed files already up to date",
+                "",
+                "The work order names these files, but they already match what its commands produce, so this "
+                "change leaves them as they are. The code review gate checks the evidence.",
+                "",
+                *[f"- `{name}`: {evidence}" for name, evidence in list(current.items())[:MAX_FILES]],
+                "",
+            ]
     if beyond:
         parts += [
             "## Beyond the work order's files",

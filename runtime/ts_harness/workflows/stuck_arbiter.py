@@ -92,7 +92,7 @@ Categories:
 - agent_off_track: the coding agent did work the ticket does not ask for, weakened a safety check, rewrote tests to pass, or keeps failing the same finding; a revision with precise guidance fixes it
 - reviewer_wrong: a blocking review finding contradicts the work order or a person's request, or the diff already fixes it
 - work_order_unclear: the work order contradicts itself or leaves a decision open that changes the result
-- product_decision: a choice only the product owner can make
+- product_decision: a choice only the product owner can make. Also when the agent found the work already done on the base branch (another ticket delivered it, nothing is left to change): ask whether to close the ticket as already delivered, naming the evidence
 
 Reply with JSON only:
 {{"category": one of the categories,
