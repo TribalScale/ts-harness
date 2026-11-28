@@ -147,6 +147,24 @@ def _gate_kind(step: str) -> str:
     return "qa" if step == "qa_gate" else "review"
 
 
+DEFAULT_MAX_CODING_RUNS = 10
+
+
+def max_coding_runs() -> int:
+    """``TS_HARNESS_MAX_CODING_RUNS`` (default 10, 0 = no cap): coding runs a ticket may have in all."""
+    import os
+
+    try:
+        return max(0, int(os.environ.get("TS_HARNESS_MAX_CODING_RUNS") or DEFAULT_MAX_CODING_RUNS))
+    except ValueError:
+        return DEFAULT_MAX_CODING_RUNS
+
+
+def coding_runs(tasks: list[dict[str, Any]], step: str) -> int:
+    """Runs of the coding step so far, whatever sent them back (the first run included)."""
+    return sum(1 for task in tasks if task.get("step_name") == step and task.get("status") != "cancelled")
+
+
 def _revision_budget(task: dict[str, Any]) -> str:
     task_input = task.get("input") if isinstance(task.get("input"), dict) else {}
     return str(task_input.get("_revision_budget") or "")
@@ -384,6 +402,22 @@ def handle(ctx: HookContext) -> dict[str, Any]:
         # The unbudgeted count includes the graph's own first run of the step;
         # a human grant restarts the count at the granted revision.
         limit = max_revisions if budget or grant or granted_at is not None else 1 + max_revisions
+        runs = coding_runs(tasks, revise_step)
+        cap = max_coding_runs()
+        if not grant and cap and runs >= cap:
+            # Every kind of revision counts here (review/QA, CI, conflicts, people's requests):
+            # a ticket that has needed this many runs has a problem another automatic round
+            # won't fix, so the arbiter and a person look at it. A person's (or the arbiter's)
+            # explicit revise still goes through.
+            return {
+                "status": "revision_limit",
+                "reason": "run_limit",
+                "workflow_id": ctx.workflow_id,
+                "existing_revisions": len(existing),
+                "max_revisions": max_revisions,
+                "runs": runs,
+                "max_runs": cap,
+            }
         conflict = None if grant else conflicting_gates(existing, str(gate.get("step_name") or ""), ctx.reject_comments or "")
         arbiter_plan: dict[str, Any] | None = None
         if conflict:

@@ -291,6 +291,7 @@ _STUCK_REASONS = {
     "revision_limit": "Revision limit reached",
     "conflicting_feedback": "Code review and QA disagree",
     "ticket_not_ready": "Needs product decision",
+    "run_limit": "Too many coding runs",
 }
 
 
