@@ -811,7 +811,7 @@ class RefreshTests(unittest.TestCase):
         steps = progress.step_timings()
         self.assertEqual(steps["setup"][0]["label"], "cloning and fetching")
         self.assertTrue(steps["coding"][0]["label"].startswith("merging "))
-        self.assertEqual([s["label"] for s in steps["push"]], ["scanning for secrets", "pushing the branch"])
+        self.assertEqual([s["label"] for s in steps["push"]], ["scanning for secrets", "pushing the branch", "publishing screenshots"])
         progress.reset()
 
     def test_remaining_markers_fail(self):

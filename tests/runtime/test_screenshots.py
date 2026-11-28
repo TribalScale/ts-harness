@@ -176,3 +176,24 @@ class AssertionFrameTests(unittest.TestCase):
             files = ts.screenshot_files(Path(tmp))
             self.assertEqual([p.name for p in files], ["step-1.jpeg", "step-2.jpeg", "step-3.jpeg", "step-4.jpeg"])
             self.assertEqual(ts.screenshot_name(files[0]), "tests-search-chromium-step-1.jpeg")
+
+
+
+class QaScreenshotFallbackTests(unittest.TestCase):
+    def test_after_a_base_update_with_no_captures_qa_gets_the_last_published_ones(self):
+        published = {"repo": "org/web", "files": ["frame-D1.png"], "commit": "abc"}
+
+        class Client:
+            def get_file(self, owner, repo, name, ref):
+                return {"content": "aGVsbG8="}
+
+        tasks = [
+            {"status": "succeeded", "created_at": "1", "output": {"verify_summary": "x", "screenshots": published}},
+            {"status": "succeeded", "created_at": "2", "output": {"verify_summary": "x", "screenshots": {}, "refresh_method": "server_merge"}},
+        ]
+        extra = _runner_module().qa_screenshot_input(tasks, github=Client())
+        self.assertEqual(extra["screenshots"]["files"], ["frame-D1.png"])
+        self.assertIn("last run that published captures", extra["screenshots"]["note"])
+        # A coding run that published nothing does not borrow older pictures.
+        tasks[1]["output"].pop("refresh_method")
+        self.assertEqual(_runner_module().qa_screenshot_input(tasks, github=Client()), {})

@@ -267,6 +267,10 @@ def decide(
         return hand_off("this project asks a person before the harness acts")
     if taken >= MAX_ACTIONS_PER_STEP:
         return hand_off(f"the arbiter already acted {taken} times on this step")
+    if str(summary.get("reason") or "") == "run_limit" and starts_coding_run(action, str(summary.get("step_name") or "")):
+        # The ticket used all its coding runs: another one is a person's call. The arbiter still
+        # diagnoses and recommends, and may re-run a step that doesn't code (QA, a check).
+        return hand_off("the ticket has had the most coding runs it gets, so a person decides on another")
     try:
         confidence = float(verdict.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -286,6 +290,14 @@ def decide(
             return hand_off(problem)
         return {"do": "accept", "guidance": override_note(verdict), "why": reason}
     return hand_off(reason or "no safe action")
+
+
+CODING_STEPS = frozenset({"deliver_work_order", "implement", "implement_delivery"})
+
+
+def starts_coding_run(action: str, step: str) -> bool:
+    """A revise always starts a coding run; a retry does when the stuck step is the coding step."""
+    return action == "revise" or (action == "retry" and step in CODING_STEPS)
 
 
 def override_problem(verdict: dict[str, Any], *, summary: dict[str, Any], task: dict[str, Any]) -> str:

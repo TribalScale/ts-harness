@@ -697,7 +697,9 @@ def verify_implementation(
         if frames:
             from ts_harness.implementation.test_services import capture_frames
 
-            frame_captures, note = capture_frames(repo_dir, frames, frames_dir(test_env), test_env.merged_env())
+            frame_captures, note = capture_frames(
+                repo_dir, frames, frames_dir(test_env), test_env.merged_env(), work_order_id=work_order_id
+            )
             logs.append(note)
 
     coverage: dict[str, Any] = {}

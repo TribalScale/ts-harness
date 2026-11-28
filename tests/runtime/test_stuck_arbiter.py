@@ -68,6 +68,16 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(self.decide(_verdict(guidance=""))["do"])
         self.assertIsNone(self.decide(_verdict(), summary=_summary(decisions=("retry", "stop")))["do"])
 
+    def test_at_the_run_cap_it_starts_no_coding_run_but_may_rerun_qa(self):
+        capped = _summary(step="finalize_code_review", decisions=("retry", "revise", "accept", "stop"), reason="run_limit")
+        plan = self.decide(_verdict(), summary=capped)
+        self.assertIsNone(plan["do"])
+        self.assertEqual(plan["recommendation"], {"action": "revise", "guidance": "Keep only the badge."})
+        qa = _summary(step="qa_gate", decisions=("retry", "revise", "accept", "stop"), reason="run_limit")
+        self.assertEqual(self.decide(_verdict(category="infrastructure", action="retry"), summary=qa)["do"], "retry")
+        coding = _summary(reason="run_limit")
+        self.assertIsNone(self.decide(_verdict(category="infrastructure", action="retry"), summary=coding)["do"])
+
     def test_no_verdict_hands_off(self):
         self.assertEqual(self.decide(None)["label"], "Arbiter handed off")
 
