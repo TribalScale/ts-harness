@@ -895,6 +895,17 @@ def _arbitrate_stuck_steps(tenant_id: str = "default") -> dict[str, Any]:
     return arbitrate_stuck(tenant_id=tenant_id)
 
 
+def harness_self_issues() -> dict[str, Any]:
+    """File harness bugs on the harness's own repository and start self-fix PRs (improvement/harness_loop.py)."""
+    from ts_harness.improvement.harness_loop import sweep
+
+    try:
+        return sweep()
+    except Exception as exc:  # noqa: BLE001 - never an error loop: logged, tried again next run
+        logger.warning("harness self-issue sweep failed: %s", exc)
+        return {"status": "error", "error": str(exc)[:300]}
+
+
 SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "poll_github_merges": poll_github_merges,
     "escalate_stale_waits": escalate_stale_waits,
@@ -910,6 +921,7 @@ SYSTEM_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "draft_failure_notes": draft_failure_notes,
     "retry_program_phases": lambda: _retry_program_phases(),
     "arbitrate_stuck_steps": lambda: _arbitrate_stuck_steps(),
+    "harness_self_issues": harness_self_issues,
 }
 
 PAYLOAD_HANDLERS = frozenset({"start_program"})

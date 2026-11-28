@@ -80,6 +80,16 @@ OFF_LIMITS: tuple[dict[str, str], ...] = (
     {"kind": "path", "match": "runtime/ts_harness/improvement/versions.py", "why": "run tagging the comparisons rely on"},
     {"kind": "path", "match": "runtime/ts_harness/improvement/off_limits.py", "why": "this list"},
     {"kind": "path", "match": "runtime/ts_harness/workflows/human_decisions.py", "why": "what counts as a person stepping in"},
+    # The harness-level loop: its privacy filter, switches and self-fix limits
+    {"kind": "path", "match": "runtime/ts_harness/improvement/sanitize.py", "why": "keeps client data out of harness issues"},
+    {"kind": "path", "match": "runtime/ts_harness/improvement/harness_loop.py", "why": "what is filed against the harness"},
+    {"kind": "path", "match": "runtime/ts_harness/improvement/self_fix.py", "why": "self-fix rules and rate limits"},
+    {"kind": "path", "match": "scripts/memory_routes/harness_issues.py", "why": "one self-fix per issue"},
+    {"kind": "path", "match": "database/migrations/057_harness_self_issues.sql", "why": "harness issue ledger"},
+    {"kind": "constant", "match": "ts_harness.improvement.self_fix:MAX_OPEN_FIXES", "why": "open self-fix PRs"},
+    {"kind": "constant", "match": "ts_harness.improvement.self_fix:MAX_FIXES_PER_WEEK", "why": "self-fixes per week"},
+    {"kind": "setting", "match": "TS_HARNESS_SELF_*", "why": "the harness-level loop's switches"},
+    {"kind": "setting", "match": "program_defaults.harness_loop.*", "why": "the harness-level loop's switches"},
 )
 
 

@@ -1166,6 +1166,20 @@ class MemoryClient:
         """Record a self-improvement charge (``cost_usd``, ``purpose``, ``ref``, ``model``, tokens, ``actor``)."""
         return self._request("POST", "/budgets/improvement/charges", body)
 
+    def list_harness_issues(self, *, tenant_id: str = "default", limit: int = 50) -> dict[str, Any]:
+        """Harness self-issues, most recently seen first, with ``open_fixes`` and ``fixes_last_7_days``."""
+        from urllib.parse import urlencode
+
+        return self._request("GET", f"/harness-issues?{urlencode({'tenant_id': tenant_id, 'limit': limit})}")
+
+    def record_harness_occurrence(self, **body: Any) -> dict[str, Any]:
+        """Record one occurrence of a harness failure class (sanitised fields only); upsert by fingerprint."""
+        return self._request("POST", "/harness-issues/occurrences", body)
+
+    def update_harness_issue(self, issue_id: str, **body: Any) -> dict[str, Any]:
+        """Update a harness self-issue's GitHub issue and self-fix fields."""
+        return self._request("PATCH", f"/harness-issues/{issue_id}", body)
+
     def claim_program_budget_alerts(self, *, tenant_id: str = "default") -> dict[str, Any]:
         return self._request("POST", "/budgets/program-alerts", {"tenant_id": tenant_id})
 

@@ -116,6 +116,15 @@
       "active_start": "00:00",
       "active_end": "23:59",
       "timezone": "UTC"
+    },
+    {
+      "name": "harness-self-issues",
+      "kind": "system",
+      "handler": "harness_self_issues",
+      "interval_seconds": 600,
+      "active_start": "00:00",
+      "active_end": "23:59",
+      "timezone": "UTC"
     }
   ]
 }

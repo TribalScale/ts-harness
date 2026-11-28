@@ -350,6 +350,10 @@ write_runtime_env_file() {
         TS_HARNESS_ALERT_DAILY_USD \
         TS_HARNESS_ALERT_DISK_PERCENT \
         TS_HARNESS_ALERT_DISK_PATH \
+        TS_HARNESS_SELF_REPO \
+        TS_HARNESS_SELF_REPO_BRANCH \
+        TS_HARNESS_SELF_ISSUES \
+        TS_HARNESS_SELF_FIX \
         PGSSLMODE; do
         value="${!key:-}"
         if [[ -n "${value//[[:space:]]/}" ]]; then
@@ -559,6 +563,11 @@ INSTANCE_ENV_KEYS=(
     TS_HARNESS_ALERT_DAILY_USD
     TS_HARNESS_ALERT_DISK_PERCENT
     TS_HARNESS_ALERT_DISK_PATH
+    # The harness-level self-improvement loop (docs/runbooks/self-improvement.md).
+    TS_HARNESS_SELF_REPO
+    TS_HARNESS_SELF_REPO_BRANCH
+    TS_HARNESS_SELF_ISSUES
+    TS_HARNESS_SELF_FIX
     TS_HARNESS_INTAKE_BUCKET
     TS_HARNESS_INTAKE_VISION_MODEL
     TS_HARNESS_INTAKE_MAX_DOC_CHARS
